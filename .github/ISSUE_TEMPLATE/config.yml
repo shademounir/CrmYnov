@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Jira CRMY
+    url: https://mounirbaali-1778581315657.atlassian.net/jira/software/projects/CRMY/boards/67/backlog
+    about: Le backlog et les demandes de travail sont gérés dans Jira.
+  - name: Signalement de sécurité
+    url: https://github.com/shademounir/CrmYnov/security
+    about: Ne publiez jamais une vulnérabilité ou un secret dans une issue publique.
