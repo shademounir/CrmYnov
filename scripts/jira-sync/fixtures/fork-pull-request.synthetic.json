@@ -1,0 +1,18 @@
+{
+  "action": "opened",
+  "pull_request": {
+    "draft": true,
+    "title": "feat(CRMY-900): external synthetic change",
+    "body": "Synthetic external pull request.",
+    "head": {
+      "ref": "feature/CRMY-900-external-change",
+      "repo": {
+        "full_name": "external-example/crm-fork"
+      }
+    },
+    "base": {
+      "ref": "develop"
+    },
+    "merged": false
+  }
+}

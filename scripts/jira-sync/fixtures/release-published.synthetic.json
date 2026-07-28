@@ -1,0 +1,16 @@
+{
+  "action": "published",
+  "ticketKey": "CRMY-900",
+  "release": {
+    "draft": false,
+    "tag_name": "v0.1.0"
+  },
+  "releaseEvidence": {
+    "humanApproved": true,
+    "ciGreen": true,
+    "mergedToMain": true,
+    "tagCreated": true,
+    "releasePublished": true,
+    "listedInManifest": true
+  }
+}

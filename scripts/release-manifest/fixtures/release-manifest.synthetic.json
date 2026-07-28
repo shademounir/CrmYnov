@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "version": "v0.1.0",
+  "targetCommit": "1111111111111111111111111111111111111111",
+  "projectKey": "CRMY",
+  "tickets": [
+    "CRMY-900",
+    "CRMY-901"
+  ],
+  "sha256": "74cc4cb5d70832ab8b498aff24319b79e1b81dd92964fcfed59871d7511190ae"
+}

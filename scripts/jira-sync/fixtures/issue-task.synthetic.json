@@ -1,0 +1,10 @@
+{
+  "key": "CRMY-900",
+  "status": "To Do",
+  "labels": [
+    "codex-ready",
+    "synthetic"
+  ],
+  "issueType": "Task",
+  "blocked": false
+}

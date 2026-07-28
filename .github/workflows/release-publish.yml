@@ -1,0 +1,112 @@
+name: Validate published release and simulate Jira completion
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: release-jira-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-simulate:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      JIRA_BASE_URL: ""
+      JIRA_CLOUD_ID: ""
+      JIRA_USER_EMAIL: ""
+      JIRA_API_TOKEN: ""
+      JIRA_PROJECT_KEY: CRMY
+      JIRA_SYNC_ENABLED: "false"
+      JIRA_SYNC_DRY_RUN: "true"
+      JIRA_SYNC_ALLOWED_ACTORS: ${{ github.repository_owner }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_PUBLISHED: "true"
+      RELEASE_HUMAN_APPROVED: "true"
+    steps:
+      - name: Check out the published tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Verify release PR, main ancestry and successful checks
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f release-manifest.json
+          release_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${release_commit}" origin/main
+          manifest_target="$(
+            node --input-type=module -e \
+              "import fs from 'node:fs'; process.stdout.write(JSON.parse(fs.readFileSync('release-manifest.json','utf8')).targetCommit)"
+          )"
+          release_pr="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${release_commit}/pulls" \
+              --jq '[.[] | select(.base.ref == "main" and .merged_at != null)][0].number'
+          )"
+          test -n "${release_pr}"
+          release_author="$(
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}" \
+              --jq '.user.login'
+          )"
+          independent_approvals="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/reviews" \
+              --jq '.[] | select(.state == "APPROVED") | .user.login' |
+              sort -u |
+              grep -Fvx "${release_author}" || true
+          )"
+          test -n "${independent_approvals}"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/commits" \
+            --jq '.[].sha' |
+            grep -Fx "${manifest_target}"
+          checks_json="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${release_commit}/check-runs"
+          )"
+          node -e '
+            const body = JSON.parse(process.argv[1]);
+            const runId = process.argv[2];
+            const conclusions = body.check_runs
+              .filter((check) => !String(check.details_url).includes(`/actions/runs/${runId}`))
+              .map((check) => check.conclusion);
+            if (conclusions.length === 0 ||
+                conclusions.some((value) => !["success", "neutral", "skipped"].includes(value))) {
+              process.exit(1);
+            }
+          ' "${checks_json}" "${GITHUB_RUN_ID}"
+          echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
+          echo "source_included=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Test automation
+        run: npm test
+
+      - name: Simulate Jira completion for manifest tickets
+        env:
+          RELEASE_COMMIT: ${{ steps.evidence.outputs.release_commit }}
+          RELEASE_SOURCE_INCLUDED: ${{ steps.evidence.outputs.source_included }}
+          RELEASE_CI_GREEN: "true"
+          RELEASE_MERGED_TO_MAIN: "true"
+        run: node scripts/release-manifest/release-sync.mjs release-manifest.json
