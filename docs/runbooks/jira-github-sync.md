@@ -10,10 +10,11 @@ JIRA_SYNC_ENABLED=false
 JIRA_SYNC_DRY_RUN=true
 ```
 
-It never posts Jira comments and never uses the administrative `Réouvrir`
-transition. A missing credential, missing issue key, external fork, unauthorized
-actor, blocked ticket, or missing `codex-ready` label produces a refusal or safe
-no-op.
+It generates a structured, sanitized `plannedComment` but never posts it in the
+current mode. It never uses the administrative `Réouvrir` transition. A missing
+credential, missing issue key, external fork, unauthorized actor, actor without
+repository write permission, blocked ticket, or missing `codex-ready` label
+produces a refusal or safe no-op.
 
 ## Architecture
 
@@ -21,11 +22,15 @@ no-op.
 2. The event normalizer extracts a key only from approved
    `feature/CRMY-<number>-description` or
    `fix/CRMY-<number>-description` branches, or from explicit release input.
-3. Fork and actor controls run before Jira is read.
+3. Fork, explicit actor allowlist, and repository write-permission controls run
+   before Jira is read.
 4. The Jira client reads status, labels, type, and blocking links when read-only
    credentials exist.
-5. The policy engine selects one approved transition or refuses the event.
-6. The client returns a dry-run record. Its mutation path is unreachable unless
+5. A deterministic SHA-256 key is checked against a Jira issue property.
+6. The policy engine selects one approved transition or validates an expected
+   no-op.
+7. A `plannedComment` is built only from allowlisted technical fields.
+8. The client returns a dry-run record. Its mutation path is unreachable unless
    both `JIRA_SYNC_ENABLED=true` and `JIRA_SYNC_DRY_RUN=false`.
 
 All output uses a sanitized configuration summary. The API token and user email
@@ -58,6 +63,7 @@ Names only; do not commit values:
 - `JIRA_SYNC_ENABLED`
 - `JIRA_SYNC_DRY_RUN`
 - `JIRA_SYNC_ALLOWED_ACTORS`
+- `JIRA_SYNC_ACTOR_PERMISSION`
 
 `JIRA_API_TOKEN` must eventually be an environment secret. Non-sensitive
 identifiers can be environment variables. In the committed workflows all four
@@ -71,7 +77,10 @@ reviewer.
 
 - The workflow uses `pull_request`, never `pull_request_target`.
 - Fork pull requests are refused before checkout and receive no Jira secret.
-- Only the repository owner is allowed by the committed workflow.
+- The committed allowlist contains only `shademounir`; the job-level restriction
+  also remains limited to the repository owner during the initial dry-run.
+- The workflow queries GitHub before checkout and accepts only `write`,
+  `maintain`, or `admin` repository permission.
 - `GITHUB_TOKEN` permissions are limited to repository and PR reads.
 - Checkout credentials are not persisted.
 - Third-party actions are pinned to immutable commit SHAs.
@@ -93,7 +102,9 @@ This procedure is intentionally manual and is not authorized by this change:
 2. Add it to a dedicated project role with only:
    - Browse Projects;
    - transition permission for transitions `2`, `3`, `4`, and `5`;
-   - comment permission only if a later Product Owner decision requires it.
+   - Add Comments;
+   - the minimum permission Jira requires to read and write the dedicated issue
+     property `crmynov.sync.<sha256>`.
 3. Do not grant Administer Projects, Administer Jira, transition `6`, sprint
    administration, issue deletion, or priority editing.
 4. Create an API token under that dedicated identity.
@@ -120,10 +131,30 @@ Activation requires a new Product Owner decision and a separate reviewed PR:
 
 ## Idempotence and error handling
 
-Each decision receives a deterministic SHA-256 key based on the delivery,
-intent, ticket, and transition. Workflow concurrency serializes equivalent
-events. Jira status preconditions make redelivery a no-op after a successful
-transition.
+Each decision receives a deterministic SHA-256 key based only on stable event
+identity: repository, normalized intent, Jira key, branch or PR identity,
+review identity, commit SHA, or release identity. GitHub run IDs and local state
+are excluded, so two independent workflow executions produce the same key.
+
+The key is stored in the Jira issue property
+`crmynov.sync.<sha256>`. Before mutation the workflow reads the property:
+
+- existing property: `duplicate_event`, no transition and no comment;
+- absent property in dry-run: simulated claim and completion, with no PUT;
+- absent property in active mode: write `processing`, perform the validated
+  transition or no-op, add the structured comment, then write `completed`.
+
+The property is the persistent source of truth. GitHub cache, local files, and
+rewritten history are never used. Workflow concurrency reduces simultaneous
+races. If execution stops after `processing`, automatic retry remains blocked
+and requires an audited manual decision before the property can be cleared.
+
+`plannedComment` contains only Jira key, normalized event, sanitized branch,
+reconstructed PR number and URL, commit SHA, CI result, release version,
+GitHub Actions run ID, and UTC date. PR bodies, titles, actors, emails, tokens,
+environment values, and complete payloads are never copied. In active mode the
+comment is posted only after transition success or validation of the expected
+no-op.
 
 HTTP 401, 403, 404, 429, and 5xx responses are categorized without returning
 credentials or response bodies. A 429 retains only the retry interval. No

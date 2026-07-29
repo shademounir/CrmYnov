@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   checks: read
+  pull-requests: read
 
 concurrency:
   group: release-jira-${{ github.event.release.tag_name }}
@@ -19,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GH_TOKEN: ${{ github.token }}
       JIRA_BASE_URL: ""
       JIRA_CLOUD_ID: ""
       JIRA_USER_EMAIL: ""
@@ -27,11 +27,36 @@ jobs:
       JIRA_PROJECT_KEY: CRMY
       JIRA_SYNC_ENABLED: "false"
       JIRA_SYNC_DRY_RUN: "true"
-      JIRA_SYNC_ALLOWED_ACTORS: ${{ github.repository_owner }}
+      JIRA_SYNC_ALLOWED_ACTORS: shademounir
+      REQUIRED_RELEASE_CHECKS: ${{ vars.REQUIRED_RELEASE_CHECKS }}
       RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_ID: ${{ github.event.release.id }}
+      RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
       RELEASE_PUBLISHED: "true"
       RELEASE_HUMAN_APPROVED: "true"
     steps:
+      - name: Verify actor allowlist and repository write permission
+        id: actor
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case ",${JIRA_SYNC_ALLOWED_ACTORS}," in
+            *",${GITHUB_ACTOR},"*) ;;
+            *) exit 1 ;;
+          esac
+          permission="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" \
+              --jq '.permission'
+          )"
+          case "${permission}" in
+            admin|maintain|write) ;;
+            *) exit 1 ;;
+          esac
+          echo "permission=${permission}" >> "${GITHUB_OUTPUT}"
+
       - name: Check out the published tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -48,6 +73,8 @@ jobs:
       - name: Verify release PR, main ancestry and successful checks
         id: evidence
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test -f release-manifest.json
@@ -81,24 +108,14 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/commits" \
             --jq '.[].sha' |
             grep -Fx "${manifest_target}"
-          checks_json="$(
-            gh api \
-              -H "Accept: application/vnd.github+json" \
-              "repos/${GITHUB_REPOSITORY}/commits/${release_commit}/check-runs"
-          )"
-          node -e '
-            const body = JSON.parse(process.argv[1]);
-            const runId = process.argv[2];
-            const conclusions = body.check_runs
-              .filter((check) => !String(check.details_url).includes(`/actions/runs/${runId}`))
-              .map((check) => check.conclusion);
-            if (conclusions.length === 0 ||
-                conclusions.some((value) => !["success", "neutral", "skipped"].includes(value))) {
-              process.exit(1);
-            }
-          ' "${checks_json}" "${GITHUB_RUN_ID}"
           echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
           echo "source_included=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate explicit required release checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.evidence.outputs.release_commit }}
+        run: node scripts/release-manifest/verify-checks.mjs
 
       - name: Test automation
         run: npm test
@@ -109,4 +126,5 @@ jobs:
           RELEASE_SOURCE_INCLUDED: ${{ steps.evidence.outputs.source_included }}
           RELEASE_CI_GREEN: "true"
           RELEASE_MERGED_TO_MAIN: "true"
+          JIRA_SYNC_ACTOR_PERMISSION: ${{ steps.actor.outputs.permission }}
         run: node scripts/release-manifest/release-sync.mjs release-manifest.json

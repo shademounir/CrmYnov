@@ -244,12 +244,37 @@ export function actorIsAllowed(actor, allowedActors) {
   return Boolean(actor && allowedActors.includes(actor));
 }
 
-export function idempotencyKey({ deliveryId, intent, issueKey, transitionId }) {
+export function actorHasWritePermission(permission) {
+  return ["write", "maintain", "admin"].includes(
+    String(permission ?? "").toLowerCase(),
+  );
+}
+
+export function idempotencyKey({
+  repository,
+  intent,
+  issueKey,
+  payload,
+}) {
+  const eventIdentity = {
+    repository,
+    intent,
+    issueKey,
+    branch: payload?.pull_request?.head?.ref ?? payload?.ref ?? null,
+    branchSha:
+      payload?.pull_request?.head?.sha ??
+      payload?.review?.commit_id ??
+      payload?.after ??
+      null,
+    pullRequestNumber:
+      payload?.pull_request?.number ?? payload?.number ?? null,
+    pullRequestAction: payload?.action ?? null,
+    reviewId: payload?.review?.id ?? null,
+    reviewState: payload?.review?.state ?? null,
+    releaseId: payload?.release?.id ?? null,
+    releaseTag: payload?.release?.tag_name ?? null,
+  };
   return createHash("sha256")
-    .update(
-      [deliveryId || "no-delivery", intent, issueKey, transitionId || "none"].join(
-        ":",
-      ),
-    )
+    .update(JSON.stringify(eventIdentity))
     .digest("hex");
 }

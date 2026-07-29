@@ -1,4 +1,5 @@
 import {
+  actorHasWritePermission,
   actorIsAllowed,
   evaluateTransition,
   idempotencyKey,
@@ -8,6 +9,7 @@ import {
 } from "./domain.mjs";
 import { hasReadCredentials, safeConfigSummary } from "./config.mjs";
 import { JiraClient } from "./jira-client.mjs";
+import { buildPlannedComment } from "./planned-comment.mjs";
 
 export async function runSync({
   eventName,
@@ -15,10 +17,12 @@ export async function runSync({
   config,
   repository,
   actor,
-  deliveryId,
+  actorPermission,
+  githubActionsRunId,
   fetchImpl,
   issueOverride,
-  idempotencyStore = new Set(),
+  persistenceOverride,
+  now,
 }) {
   const event = normalizeGithubEvent(eventName, payload, config.projectKey);
   const baseResult = {
@@ -40,6 +44,22 @@ export async function runSync({
   if (!actorIsAllowed(actor, config.allowedActors)) {
     return { ...baseResult, decision: "denied", reason: "actor_not_allowed" };
   }
+  if (!actorHasWritePermission(actorPermission)) {
+    return {
+      ...baseResult,
+      decision: "denied",
+      reason: "actor_write_permission_required",
+    };
+  }
+
+  const plannedComment = buildPlannedComment({
+    issueKey: event.issueKey,
+    intent: event.intent,
+    payload,
+    repository,
+    githubActionsRunId,
+    now,
+  });
 
   const client = new JiraClient(config, fetchImpl);
   if (!issueOverride && !hasReadCredentials(config)) {
@@ -47,10 +67,32 @@ export async function runSync({
       ...baseResult,
       decision: "no_op",
       reason: "jira_read_credentials_missing",
+      plannedComment,
     };
   }
 
   const issue = issueOverride ?? (await client.getIssue(event.issueKey));
+  const eventKey = idempotencyKey({
+    repository,
+    intent: event.intent,
+    issueKey: event.issueKey,
+    payload,
+  });
+  const persistence = persistenceOverride ?? client;
+  const existingRecord = await persistence.getEventRecord(
+    event.issueKey,
+    eventKey,
+  );
+  if (existingRecord) {
+    return {
+      ...baseResult,
+      decision: "no_op",
+      reason: "duplicate_event",
+      idempotencyKey: eventKey,
+      plannedComment,
+    };
+  }
+
   const evaluation = evaluateTransition({
     intent: event.intent,
     issue,
@@ -58,45 +100,66 @@ export async function runSync({
     projectKey: config.projectKey,
   });
 
-  if (evaluation.decision !== "transition") {
+  if (evaluation.decision === "denied") {
     return {
       ...baseResult,
       decision: evaluation.decision,
       reason: evaluation.reason,
+      idempotencyKey: eventKey,
+      plannedComment,
     };
   }
 
-  const key = idempotencyKey({
-    deliveryId,
-    intent: event.intent,
-    issueKey: event.issueKey,
-    transitionId: evaluation.transition.id,
-  });
-  if (idempotencyStore.has(key)) {
-    return {
-      ...baseResult,
-      decision: "no_op",
-      reason: "duplicate_event",
-      idempotencyKey: key,
-    };
-  }
-  idempotencyStore.add(key);
-
-  const transitionResult = await client.transition(
+  const dateUtc = plannedComment?.dateUtc ?? new Date().toISOString();
+  const claimResult = await persistence.recordEvent(
     event.issueKey,
-    evaluation.transition,
-    key,
+    eventKey,
+    "processing",
+    dateUtc,
   );
+  const transitionResult =
+    evaluation.decision === "transition"
+      ? await client.transition(
+          event.issueKey,
+          evaluation.transition,
+          eventKey,
+        )
+      : { mutated: false, mode: "validated-no-op" };
+  const commentResult = await client.addComment(event.issueKey, plannedComment);
+  const completionResult = await persistence.recordEvent(
+    event.issueKey,
+    eventKey,
+    "completed",
+    dateUtc,
+  );
+  const mutated = [
+    claimResult,
+    transitionResult,
+    commentResult,
+    completionResult,
+  ].some((result) => result.mutated === true);
+
   return {
     ...baseResult,
-    decision: "transition",
+    decision: evaluation.decision,
     reason: evaluation.reason,
-    transition: {
-      id: evaluation.transition.id,
-      name: evaluation.transition.name,
-      from: evaluation.transition.from,
-      to: evaluation.transition.to,
+    transition: evaluation.transition
+      ? {
+          id: evaluation.transition.id,
+          name: evaluation.transition.name,
+          from: evaluation.transition.from,
+          to: evaluation.transition.to,
+        }
+      : null,
+    idempotencyKey: eventKey,
+    plannedComment,
+    persistence: {
+      existing: false,
+      claimMutated: claimResult.mutated,
+      completionMutated: completionResult.mutated,
     },
-    ...transitionResult,
+    commentMutated: commentResult.mutated,
+    transitionMutated: transitionResult.mutated,
+    mutated,
   };
 }

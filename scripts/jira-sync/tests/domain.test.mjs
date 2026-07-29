@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   evaluateTransition,
+  idempotencyKey,
   INTENT,
   normalizeGithubEvent,
   STATUS,
@@ -176,4 +177,35 @@ test("blocked ticket is denied", () => {
     issue: { ...eligibleIssue, blocked: true },
   });
   assert.equal(result.reason, "issue_blocked");
+});
+
+test("republished release keeps the same persistent idempotency key", () => {
+  const input = {
+    repository: "example/crm-synthetic",
+    intent: INTENT.RELEASE_PUBLISHED,
+    issueKey: "CRMY-900",
+  };
+  const first = idempotencyKey({
+    ...input,
+    payload: {
+      action: "published",
+      release: {
+        id: 700,
+        tag_name: "v0.1.0",
+        published_at: "2026-01-15T10:00:00Z",
+      },
+    },
+  });
+  const second = idempotencyKey({
+    ...input,
+    payload: {
+      action: "published",
+      release: {
+        id: 700,
+        tag_name: "v0.1.0",
+        published_at: "2026-01-16T10:00:00Z",
+      },
+    },
+  });
+  assert.equal(second, first);
 });

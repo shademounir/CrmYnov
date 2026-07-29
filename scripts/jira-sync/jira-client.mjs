@@ -2,6 +2,7 @@ import {
   hasReadCredentials,
   mutationAllowed,
 } from "./config.mjs";
+import { plannedCommentToAdf } from "./planned-comment.mjs";
 
 export class JiraHttpError extends Error {
   constructor(status, message, retryAfter = null) {
@@ -121,5 +122,92 @@ export class JiraClient {
       transitionId: transition.id,
       idempotencyKey,
     };
+  }
+
+  async getEventRecord(issueKey, idempotencyKey) {
+    if (!hasReadCredentials(this.config)) {
+      return null;
+    }
+
+    const propertyKey = `crmynov.sync.${idempotencyKey}`;
+    const response = await this.fetch(
+      `${this.config.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/properties/${encodeURIComponent(propertyKey)}`,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: authorizationHeader(
+            this.config.userEmail,
+            this.config.apiToken,
+          ),
+        },
+      },
+    );
+
+    if (response.status === 404) return null;
+    if (!response.ok) throw await responseError(response);
+    const body = await response.json();
+    return body.value ?? null;
+  }
+
+  async recordEvent(issueKey, idempotencyKey, state, dateUtc) {
+    if (!mutationAllowed(this.config)) {
+      return {
+        mutated: false,
+        mode: "dry-run",
+        state,
+        propertyKey: `crmynov.sync.${idempotencyKey}`,
+      };
+    }
+
+    const propertyKey = `crmynov.sync.${idempotencyKey}`;
+    const response = await this.fetch(
+      `${this.config.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/properties/${encodeURIComponent(propertyKey)}`,
+      {
+        method: "PUT",
+        headers: {
+          Accept: "application/json",
+          Authorization: authorizationHeader(
+            this.config.userEmail,
+            this.config.apiToken,
+          ),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          schemaVersion: 1,
+          idempotencyKey,
+          state,
+          dateUtc,
+        }),
+      },
+    );
+
+    if (!response.ok) throw await responseError(response);
+    return { mutated: true, mode: "active", state, propertyKey };
+  }
+
+  async addComment(issueKey, plannedComment) {
+    if (!mutationAllowed(this.config)) {
+      return { mutated: false, mode: "dry-run" };
+    }
+
+    const response = await this.fetch(
+      `${this.config.baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: authorizationHeader(
+            this.config.userEmail,
+            this.config.apiToken,
+          ),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ body: plannedCommentToAdf(plannedComment) }),
+      },
+    );
+
+    if (!response.ok) throw await responseError(response);
+    return { mutated: true, mode: "active" };
   }
 }

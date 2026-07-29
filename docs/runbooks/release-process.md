@@ -41,7 +41,7 @@ through a pull request to `main`.
    - the tagged commit is associated with a human-merged release PR to `main`;
    - the manifest source commit belongs to that release PR, including when the
      PR was squash-merged;
-   - all check runs are successful, neutral, or skipped;
+   - every explicitly required check is present, completed, and successful;
    - the tag and commit match the manifest;
    - each Jira ticket is listed in that manifest.
 10. Review the dry-run output. No Jira mutation is currently permitted.
@@ -52,6 +52,25 @@ The Jira Done plan is refused when any evidence is missing, the ticket is not
 In Review, the ticket lacks `codex-ready`, it is blocked, or its type is Epic.
 A closed or merged functional PR is never sufficient evidence for Done.
 
+`REQUIRED_RELEASE_CHECKS` is a mandatory comma-separated repository variable.
+An absent or empty value refuses the release. The baseline list is:
+
+- `unit-tests`;
+- `lint`;
+- `type-check`;
+- `build`;
+- `CodeQL`;
+- `dependency-review`;
+- `secret-scan`;
+- `IaC-scan`;
+- `container-scan`;
+- `SonarQube Quality Gate`.
+
+Check runs are retrieved with `per_page=100` until `total_count` is reached.
+Missing pages, missing checks, pending checks, cancelled checks, and any
+conclusion other than `success` refuse Jira completion. Additional checks do
+not block the release.
+
 ## Public repository protections
 
 Release manifests contain ticket keys and commit identifiers only. They must
@@ -61,7 +80,8 @@ tokens, internal hostnames, or environment values.
 The release workflow:
 
 - is triggered from trusted release metadata, not `pull_request_target`;
-- uses read-only repository and check permissions;
+- uses only `contents: read`, `checks: read`, and `pull-requests: read`; all
+  unspecified token permissions remain `none`;
 - checks out the immutable published tag;
 - persists no checkout credentials;
 - does not create a tag or release;

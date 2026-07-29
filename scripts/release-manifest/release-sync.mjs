@@ -20,7 +20,6 @@ const config = loadConfig();
 const releaseTag = requiredEnv("RELEASE_TAG");
 const repository = requiredEnv("GITHUB_REPOSITORY");
 const actor = requiredEnv("GITHUB_ACTOR");
-const idempotencyStore = new Set();
 const results = [];
 
 for (const issueKey of manifest.tickets) {
@@ -41,14 +40,20 @@ for (const issueKey of manifest.tickets) {
       payload: {
         action: "published",
         ticketKey: issueKey,
-        release: { draft: false, tag_name: releaseTag },
+        releaseCommit: process.env.RELEASE_COMMIT,
+        release: {
+          id: process.env.RELEASE_ID,
+          draft: false,
+          tag_name: releaseTag,
+          published_at: process.env.RELEASE_PUBLISHED_AT,
+        },
         releaseEvidence: evidence,
       },
       config,
       repository,
       actor,
-      deliveryId: `${process.env.GITHUB_RUN_ID ?? "local"}:${issueKey}`,
-      idempotencyStore,
+      actorPermission: process.env.JIRA_SYNC_ACTOR_PERMISSION,
+      githubActionsRunId: process.env.GITHUB_RUN_ID,
     }),
   );
 }

@@ -7,6 +7,7 @@ on:
       - develop
     types:
       - opened
+      - synchronize
       - reopened
       - converted_to_draft
       - ready_for_review
@@ -40,8 +41,30 @@ jobs:
       JIRA_PROJECT_KEY: CRMY
       JIRA_SYNC_ENABLED: "false"
       JIRA_SYNC_DRY_RUN: "true"
-      JIRA_SYNC_ALLOWED_ACTORS: ${{ github.repository_owner }}
+      JIRA_SYNC_ALLOWED_ACTORS: shademounir
     steps:
+      - name: Verify actor allowlist and repository write permission
+        id: actor
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case ",${JIRA_SYNC_ALLOWED_ACTORS}," in
+            *",${GITHUB_ACTOR},"*) ;;
+            *) exit 1 ;;
+          esac
+          permission="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" \
+              --jq '.permission'
+          )"
+          case "${permission}" in
+            admin|maintain|write) ;;
+            *) exit 1 ;;
+          esac
+          echo "permission=${permission}" >> "${GITHUB_OUTPUT}"
+
       - name: Check out trusted repository content
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -61,4 +84,6 @@ jobs:
         run: npm run security:history
 
       - name: Simulate Jira decision
+        env:
+          JIRA_SYNC_ACTOR_PERMISSION: ${{ steps.actor.outputs.permission }}
         run: node scripts/jira-sync/cli.mjs

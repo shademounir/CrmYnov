@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
 
+export {
+  fetchAllCheckRuns,
+  parseRequiredChecks,
+  validateRequiredChecks,
+} from "./checks.mjs";
+
 const VERSION_PATTERN = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 

@@ -21,7 +21,8 @@ const result = await runSync({
   config,
   repository: process.env.GITHUB_REPOSITORY,
   actor: process.env.GITHUB_ACTOR,
-  deliveryId: process.env.GITHUB_RUN_ID,
+  actorPermission: process.env.JIRA_SYNC_ACTOR_PERMISSION,
+  githubActionsRunId: process.env.GITHUB_RUN_ID,
 });
 
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
