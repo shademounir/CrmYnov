@@ -12,10 +12,10 @@
 `main` et `develop` doivent appliquer :
 
 - pull request obligatoire ;
-- une approbation humaine indépendante au minimum ;
-- revue CODEOWNERS ;
-- invalidation des approbations devenues obsolètes ;
-- approbation d’une personne autre que l’auteur du dernier push ;
+- gouvernance `solo-owner` acceptée pour bootstrap, MVP, DEV et STAGING ;
+- validation manuelle par le Product Owner ;
+- label `po-approved` réservé au Product Owner ;
+- checks obligatoires réussis ;
 - conversations résolues ;
 - historique linéaire ;
 - administrateurs soumis aux règles ;
@@ -28,6 +28,7 @@ Les checks obligatoires seront ajoutés après leur première exécution réussi
 
 - Squash merge uniquement.
 - Auto-merge désactivé.
+- Aucune fusion par Codex ou une automatisation.
 - Suppression automatique de la branche après fusion.
 - Aucune fusion vers `main` pendant la Gate -1.
 - `main` reçoit uniquement une release explicitement validée.
@@ -47,9 +48,11 @@ Les checks obligatoires seront ajoutés après leur première exécution réussi
 
 ## Contrôles manuels restants
 
-- Ajouter au dépôt au moins un reviewer humain indépendant du compte auteur.
 - Vérifier que la liaison Jira affiche branches, commits et PR contenant une clé `CRMY`.
 - Confirmer l’organisation et le projet SonarQube Cloud avant d’ajouter un secret `SONAR_TOKEN`.
+- Finaliser puis enregistrer les noms exacts des checks CI obligatoires.
+- Réévaluer le besoin d’un second reviewer avant l’ouverture de PROD à des
+  données réelles.
 - Maintenir `main` inchangée jusqu’à une release validée.
 
 ## Rollback

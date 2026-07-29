@@ -44,6 +44,14 @@ Lister explicitement ce qui n’est pas traité dans cette PR.
 
 ## Validation humaine
 
-- [ ] Une personne autre que l’auteur a approuvé la PR.
+- [ ] Revue manuelle effectuée par le Product Owner.
+- [ ] Label `po-approved` ajouté manuellement par le Product Owner.
 - [ ] Toutes les conversations sont résolues.
-- [ ] La branche est à jour et les contrôles obligatoires sont verts.
+- [ ] La branche est à jour.
+- [ ] Les contrôles obligatoires sont verts.
+- [ ] Auto-merge désactivé.
+- [ ] Merge exclusivement manuel.
+
+> Codex et les automatisations ne sont pas autorisés à cocher les validations
+> Product Owner, ajouter `po-approved`, passer la PR en Ready ou effectuer le
+> merge.
