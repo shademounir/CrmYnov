@@ -1,0 +1,127 @@
+name: Validate published release and simulate Jira completion
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+concurrency:
+  group: release-jira-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-simulate:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      JIRA_BASE_URL: ""
+      JIRA_CLOUD_ID: ""
+      JIRA_USER_EMAIL: ""
+      JIRA_API_TOKEN: ""
+      JIRA_PROJECT_KEY: CRMY
+      JIRA_SYNC_ENABLED: "false"
+      JIRA_SYNC_DRY_RUN: "true"
+      JIRA_SYNC_ALLOWED_ACTORS: shademounir
+      REQUIRED_RELEASE_CHECKS: ${{ vars.REQUIRED_RELEASE_CHECKS }}
+      RELEASE_APPROVAL_MODE: ${{ vars.RELEASE_APPROVAL_MODE }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_ID: ${{ github.event.release.id }}
+      RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
+      RELEASE_PUBLISHED: "true"
+    steps:
+      - name: Verify actor allowlist and repository write permission
+        id: actor
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case ",${JIRA_SYNC_ALLOWED_ACTORS}," in
+            *",${GITHUB_ACTOR},"*) ;;
+            *) exit 1 ;;
+          esac
+          permission="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/collaborators/${GITHUB_ACTOR}/permission" \
+              --jq '.permission'
+          )"
+          case "${permission}" in
+            admin|maintain|write) ;;
+            *) exit 1 ;;
+          esac
+          echo "permission=${permission}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out the published tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Verify release PR, main ancestry and successful checks
+        id: evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -f release-manifest.json
+          release_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${release_commit}" origin/main
+          manifest_target="$(
+            node --input-type=module -e \
+              "import fs from 'node:fs'; process.stdout.write(JSON.parse(fs.readFileSync('release-manifest.json','utf8')).targetCommit)"
+          )"
+          release_pr="$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${release_commit}/pulls" \
+              --jq '[.[] | select(.base.ref == "main" and .merged_at != null)][0].number'
+          )"
+          test -n "${release_pr}"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/commits" \
+            --jq '.[].sha' |
+            grep -Fx "${manifest_target}"
+          echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
+          echo "release_pr=${release_pr}" >> "${GITHUB_OUTPUT}"
+          echo "source_included=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate manual Product Owner approval
+        id: approval
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ steps.evidence.outputs.release_pr }}
+        run: node scripts/release-manifest/verify-approval.mjs
+
+      - name: Validate explicit required release checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.evidence.outputs.release_commit }}
+        run: node scripts/release-manifest/verify-checks.mjs
+
+      - name: Test automation
+        run: npm test
+
+      - name: Simulate Jira completion for manifest tickets
+        env:
+          RELEASE_COMMIT: ${{ steps.evidence.outputs.release_commit }}
+          RELEASE_SOURCE_INCLUDED: ${{ steps.evidence.outputs.source_included }}
+          RELEASE_CI_GREEN: "true"
+          RELEASE_MERGED_TO_MAIN: "true"
+          RELEASE_HUMAN_APPROVED: ${{ steps.approval.outputs.human_approved }}
+          JIRA_SYNC_ACTOR_PERMISSION: ${{ steps.actor.outputs.permission }}
+        run: node scripts/release-manifest/release-sync.mjs release-manifest.json
