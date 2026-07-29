@@ -31,14 +31,21 @@ through a pull request to `main`.
 3. Review the manifest for ticket scope and absence of personal or sensitive
    data.
 4. Open a release PR from `release/<version>` to `main`.
-5. Obtain the required independent approval and successful required checks.
-6. Merge the release PR without bypassing protection.
+5. The Product Owner reviews the diff, acceptance criteria, tests, risks, and
+   rollback, completes the PR checklist, adds `po-approved`, and marks the PR
+   ready for review manually.
+6. The Product Owner merges the release PR manually without bypassing
+   protection. Codex and GitHub Actions must never perform these actions.
 7. Create the tag on the exact manifest commit.
 8. Publish the GitHub Release manually.
 9. Let `release-publish.yml` prove:
    - the release was published by the authorized actor;
    - the tag commit is in `main`;
    - the tagged commit is associated with a human-merged release PR to `main`;
+   - `RELEASE_APPROVAL_MODE` is exactly `solo-owner`;
+   - the release PR is non-Draft, authored and merged by an allowlisted actor,
+     carries `po-approved`, has no auto-merge request, and repository auto-merge
+     is disabled;
    - the manifest source commit belongs to that release PR, including when the
      PR was squash-merged;
    - every explicitly required check is present, completed, and successful;
@@ -71,6 +78,11 @@ Missing pages, missing checks, pending checks, cancelled checks, and any
 conclusion other than `success` refuse Jira completion. Additional checks do
 not block the release.
 
+`RELEASE_APPROVAL_MODE` is also mandatory and must equal `solo-owner`. A
+missing value, any other value, a Draft release PR, a missing `po-approved`
+label, an unauthorized author or merger, or auto-merge evidence refuses Jira
+completion.
+
 ## Public repository protections
 
 Release manifests contain ticket keys and commit identifiers only. They must
@@ -85,6 +97,8 @@ The release workflow:
 - checks out the immutable published tag;
 - persists no checkout credentials;
 - does not create a tag or release;
+- does not create, add, or remove `po-approved`;
+- does not mark a PR ready, merge a PR, or enable auto-merge;
 - keeps Jira synchronization disabled and in dry-run mode.
 
 ## Rollback

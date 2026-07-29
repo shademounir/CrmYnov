@@ -29,11 +29,11 @@ jobs:
       JIRA_SYNC_DRY_RUN: "true"
       JIRA_SYNC_ALLOWED_ACTORS: shademounir
       REQUIRED_RELEASE_CHECKS: ${{ vars.REQUIRED_RELEASE_CHECKS }}
+      RELEASE_APPROVAL_MODE: ${{ vars.RELEASE_APPROVAL_MODE }}
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       RELEASE_ID: ${{ github.event.release.id }}
       RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
       RELEASE_PUBLISHED: "true"
-      RELEASE_HUMAN_APPROVED: "true"
     steps:
       - name: Verify actor allowlist and repository write permission
         id: actor
@@ -92,24 +92,20 @@ jobs:
               --jq '[.[] | select(.base.ref == "main" and .merged_at != null)][0].number'
           )"
           test -n "${release_pr}"
-          release_author="$(
-            gh api "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}" \
-              --jq '.user.login'
-          )"
-          independent_approvals="$(
-            gh api --paginate \
-              "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/reviews" \
-              --jq '.[] | select(.state == "APPROVED") | .user.login' |
-              sort -u |
-              grep -Fvx "${release_author}" || true
-          )"
-          test -n "${independent_approvals}"
           gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/commits" \
             --jq '.[].sha' |
             grep -Fx "${manifest_target}"
           echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
+          echo "release_pr=${release_pr}" >> "${GITHUB_OUTPUT}"
           echo "source_included=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate manual Product Owner approval
+        id: approval
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ steps.evidence.outputs.release_pr }}
+        run: node scripts/release-manifest/verify-approval.mjs
 
       - name: Validate explicit required release checks
         env:
@@ -126,5 +122,6 @@ jobs:
           RELEASE_SOURCE_INCLUDED: ${{ steps.evidence.outputs.source_included }}
           RELEASE_CI_GREEN: "true"
           RELEASE_MERGED_TO_MAIN: "true"
+          RELEASE_HUMAN_APPROVED: ${{ steps.approval.outputs.human_approved }}
           JIRA_SYNC_ACTOR_PERMISSION: ${{ steps.actor.outputs.permission }}
         run: node scripts/release-manifest/release-sync.mjs release-manifest.json

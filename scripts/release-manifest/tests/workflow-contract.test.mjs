@@ -23,3 +23,21 @@ test("workflows never use pull_request_target", async () => {
   const workflow = await readFile(releaseWorkflowUrl, "utf8");
   assert.equal(workflow.includes("pull_request_target"), false);
 });
+
+test("release workflow uses fail-closed solo-owner approval evidence", async () => {
+  const workflow = await readFile(releaseWorkflowUrl, "utf8");
+  assert.match(
+    workflow,
+    /RELEASE_APPROVAL_MODE: \$\{\{ vars\.RELEASE_APPROVAL_MODE \}\}/,
+  );
+  assert.match(workflow, /verify-approval\.mjs/);
+  assert.match(
+    workflow,
+    /RELEASE_HUMAN_APPROVED: \$\{\{ steps\.approval\.outputs\.human_approved \}\}/,
+  );
+  assert.doesNotMatch(workflow, /independent_approvals|\/reviews/);
+  assert.doesNotMatch(
+    workflow,
+    /gh pr (?:ready|merge)|--auto-merge|issues\/.*\/labels/,
+  );
+});

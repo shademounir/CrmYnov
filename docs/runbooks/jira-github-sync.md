@@ -69,9 +69,8 @@ Names only; do not commit values:
 identifiers can be environment variables. In the committed workflows all four
 credential fields are explicit empty strings: no repository or environment
 secret is read. No environment or secret is created by this change. Before
-credentials are added, a separate reviewed change must bind only trusted
-workflow execution to a `jira-dry-run` GitHub Environment protected by a human
-reviewer.
+credentials are added, a separate Product Owner-approved change must bind only
+trusted workflow execution to a protected `jira-dry-run` GitHub Environment.
 
 ## Public repository controls
 
@@ -120,10 +119,9 @@ Activation requires a new Product Owner decision and a separate reviewed PR:
 1. Complete a real read-only dry-run limited to CRMY-23.
 2. Confirm that the dedicated identity cannot administer Jira or use
    `Réouvrir`.
-3. Verify branch protection, required reviews, secret scanning, CodeQL, and
-   full-history scanning.
-4. Protect the GitHub Environment with required reviewers and restrict it to
-   approved branches.
+3. Verify branch protection, manual `po-approved` evidence, secret scanning,
+   CodeQL, and full-history scanning.
+4. Protect the GitHub Environment and restrict it to approved branches.
 5. Change `JIRA_SYNC_ENABLED` to `true` while retaining
    `JIRA_SYNC_DRY_RUN=true`; review the resulting plans.
 6. Only after a second explicit approval, set `JIRA_SYNC_DRY_RUN=false`.
