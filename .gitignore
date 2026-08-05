@@ -9,3 +9,15 @@ coverage/
 *.p12
 *.pfx
 *-service-account.json
+
+# Terraform local and sensitive artifacts
+**/.terraform/
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/*.tfplan
+**/*.tfvars
+!**/*.tfvars.example
+**/crash.log
+**/crash.*.log
+**/.terraformrc
+**/terraform.rc

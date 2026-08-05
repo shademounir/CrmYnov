@@ -10,6 +10,7 @@
     "test": "node --test",
     "test:jira-sync": "node --test scripts/jira-sync/tests/*.test.mjs",
     "test:release-manifest": "node --test scripts/release-manifest/tests/*.test.mjs",
+    "test:terraform": "node --test infra/tests/*.test.mjs",
     "security:scan": "node --test scripts/jira-sync/tests/security.test.mjs",
     "security:history": "node scripts/jira-sync/history-scan.mjs"
   }
