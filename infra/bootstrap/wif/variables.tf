@@ -31,11 +31,19 @@ variable "region" {
   default     = "europe-southwest1"
 }
 
-variable "terraform_service_account_email" {
-  description = "Optional existing identity to impersonate while bootstrapping tf-bootstrap."
+variable "bootstrap_administrator_service_account_email" {
+  description = "Optional pre-existing, approved administrator identity to impersonate for the WIF/security root. Null means the authorized human executes directly. It must never be tf-bootstrap."
   type        = string
   default     = null
   nullable    = true
+
+  validation {
+    condition = (
+      var.bootstrap_administrator_service_account_email == null ||
+      var.bootstrap_administrator_service_account_email != "tf-bootstrap@${var.bootstrap_project_id}.iam.gserviceaccount.com"
+    )
+    error_message = "The WIF/security root must be executed by an authorized human or a distinct pre-existing administrator identity; tf-bootstrap cannot administer itself."
+  }
 }
 
 variable "terraform_impersonators" {

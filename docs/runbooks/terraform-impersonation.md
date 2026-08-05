@@ -10,5 +10,11 @@
    root and backend.
 6. Clear process-scoped variables after execution.
 
+This procedure applies only after the initial Foundation and state migration
+have been completed and validated. The WIF/security root is excluded:
+`tf-bootstrap` must never impersonate an administrator or execute a root that
+grants its own permissions. That root is executed by the authorized temporary
+institutional human or a distinct, pre-existing approved administrator identity.
+
 Do not use application-default credentials unless a separate decision enables
 them. ADC was absent during Gate -1 and was not activated.

@@ -9,9 +9,11 @@
 | GCP-05 | Temporary Owner persists | 24-hour runbook and incident threshold | Record removal evidence |
 | GCP-06 | WIF claim bypass | Exact repository and numeric IDs, ref, Environment | Test negative claims before activation |
 | GCP-07 | State loss or disclosure | Four private versioned buckets and migration runbook | Human verification before local deletion |
-| GCP-08 | Excessive Terraform IAM | Explicit role matrix; no basic roles | Review roles against actual Phase 0/1 calls |
+| GCP-08 | Excessive Terraform IAM | Explicit role matrix; no basic roles; Billing User and Billing Costs Manager are additive while Billing Admin is forbidden | Review roles against actual Phase 0/1 calls |
 | GCP-09 | CNDP status inferred automatically | Documentary checklist only | PO tracks formalities independently |
 | GCP-10 | Public repository disclosure | Synthetic examples, secret/history scans | Keep execution values outside Git and PR logs |
+| GCP-11 | `tf-bootstrap` self-administers WIF or its own IAM | WIF root uses a renamed administrator input and rejects the `tf-bootstrap` email; execution matrix requires a distinct authorized administrator | Revalidate the executing principal before every WIF/security change |
+| GCP-12 | Static Terraform regression reaches review | Mandatory no-credential format, init, validate and HIGH/CRITICAL IaC checks | The first stable green runs must be observed before branch protection is extended |
 
 Formalités CNDP suivies par le Product Owner. La documentation du projet ne
 constitue pas une validation juridique automatique de conformité.

@@ -91,6 +91,12 @@ resource "google_billing_account_iam_member" "terraform_billing_user" {
   member             = local.terraform_bootstrap_member
 }
 
+resource "google_billing_account_iam_member" "terraform_billing_costs_manager" {
+  billing_account_id = var.billing_account_id
+  role               = "roles/billing.costsManager"
+  member             = local.terraform_bootstrap_member
+}
+
 module "terraform_project_iam" {
   source   = "../../modules/iam"
   for_each = local.managed_projects

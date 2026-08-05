@@ -4,8 +4,11 @@ This root module describes the future `CRM Ynov` folder, the four approved
 projects, billing associations, strictly required APIs, and alert-only budgets.
 
 It deliberately has no backend block. The first authorized execution uses a
-temporary local state, creates and validates the state buckets through the
-separate `state` root, then migrates immediately to GCS under human control.
+temporary local state and is run by the authorized temporary institutional
+human. That human creates and validates the state buckets through the separate
+`state` root, then migrates immediately to GCS under human control. Only after
+the migration and identity validation may later Foundation operations
+impersonate `tf-bootstrap`.
 
 ## Preconditions before any plan or apply
 
