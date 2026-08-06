@@ -11,6 +11,12 @@ export {
   SOLO_OWNER_MODE,
   validateSoloOwnerApproval,
 } from "./approval.mjs";
+export {
+  RELEASE_PROFILE,
+  releaseProfile,
+} from "./profiles.mjs";
+
+import { releaseProfile } from "./profiles.mjs";
 
 const VERSION_PATTERN = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -31,6 +37,7 @@ export function manifestDigest(manifest) {
   const canonical = JSON.stringify({
     schemaVersion: manifest.schemaVersion,
     version: manifest.version,
+    profile: manifest.profile,
     targetCommit: manifest.targetCommit,
     projectKey: manifest.projectKey,
     tickets: manifest.tickets,
@@ -40,6 +47,7 @@ export function manifestDigest(manifest) {
 
 export function createManifest({
   version,
+  profile,
   targetCommit,
   tickets,
   projectKey = "CRMY",
@@ -50,10 +58,12 @@ export function createManifest({
   if (!SHA_PATTERN.test(targetCommit)) {
     throw new Error("Release target must be a full 40-character commit SHA.");
   }
+  releaseProfile(profile);
 
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     version,
+    profile,
     targetCommit: targetCommit.toLowerCase(),
     projectKey,
     tickets: normalizedTickets(tickets, projectKey),
@@ -64,23 +74,28 @@ export function createManifest({
 export function validateManifest(manifest) {
   const rebuilt = createManifest({
     version: manifest.version,
+    profile: manifest.profile,
     targetCommit: manifest.targetCommit,
     projectKey: manifest.projectKey,
     tickets: manifest.tickets,
   });
-  if (manifest.schemaVersion !== 1 || manifest.sha256 !== rebuilt.sha256) {
+  if (manifest.schemaVersion !== 2 || manifest.sha256 !== rebuilt.sha256) {
     throw new Error("Release manifest integrity check failed.");
   }
   return rebuilt;
 }
 
-export function issueIsInManifest(manifest, issueKey) {
+export function issueIsInManifest(manifest, issueKey, issueType) {
+  if (issueType === "Epic") {
+    throw new Error("Epic tickets are forbidden in a release closure manifest.");
+  }
   return validateManifest(manifest).tickets.includes(issueKey);
 }
 
 export function releaseEvidence({
   manifest,
   issueKey,
+  issueType,
   releaseTag,
   sourceIncludedInReleasePr,
   humanApproved,
@@ -97,6 +112,6 @@ export function releaseEvidence({
       releaseTag === validManifest.version &&
       sourceIncludedInReleasePr === true,
     releasePublished: releasePublished === true,
-    listedInManifest: validManifest.tickets.includes(issueKey),
+    listedInManifest: issueIsInManifest(validManifest, issueKey, issueType),
   };
 }

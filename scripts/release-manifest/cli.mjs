@@ -7,6 +7,7 @@ function argument(name) {
 }
 
 const version = argument("--version");
+const profile = argument("--profile");
 const targetCommit = argument("--sha");
 const output = argument("--output") || "release-manifest.json";
 const tickets = String(argument("--tickets") ?? "")
@@ -14,7 +15,7 @@ const tickets = String(argument("--tickets") ?? "")
   .map((ticket) => ticket.trim())
   .filter(Boolean);
 
-const manifest = createManifest({ version, targetCommit, tickets });
+const manifest = createManifest({ version, profile, targetCommit, tickets });
 await writeFile(output, `${JSON.stringify(manifest, null, 2)}\n`, {
   encoding: "utf8",
   flag: "wx",

@@ -28,7 +28,6 @@ jobs:
       JIRA_SYNC_ENABLED: "false"
       JIRA_SYNC_DRY_RUN: "true"
       JIRA_SYNC_ALLOWED_ACTORS: shademounir
-      REQUIRED_RELEASE_CHECKS: ${{ vars.REQUIRED_RELEASE_CHECKS }}
       RELEASE_APPROVAL_MODE: ${{ vars.RELEASE_APPROVAL_MODE }}
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       RELEASE_ID: ${{ github.event.release.id }}
@@ -96,9 +95,11 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/pulls/${release_pr}/commits" \
             --jq '.[].sha' |
             grep -Fx "${manifest_target}"
-          echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
-          echo "release_pr=${release_pr}" >> "${GITHUB_OUTPUT}"
-          echo "source_included=true" >> "${GITHUB_OUTPUT}"
+          {
+            echo "release_commit=${release_commit}"
+            echo "release_pr=${release_pr}"
+            echo "source_included=true"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Validate manual Product Owner approval
         id: approval

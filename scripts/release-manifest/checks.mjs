@@ -26,7 +26,11 @@ function latestRunsByName(checkRuns) {
   return byName;
 }
 
-export function validateRequiredChecks(requiredChecks, checkRuns) {
+export function validateRequiredChecks(
+  requiredChecks,
+  checkRuns,
+  { expectedSha } = {},
+) {
   if (!Array.isArray(requiredChecks) || requiredChecks.length === 0) {
     throw new Error("Required release check list is empty.");
   }
@@ -35,6 +39,7 @@ export function validateRequiredChecks(requiredChecks, checkRuns) {
   const missing = [];
   const incomplete = [];
   const unsuccessful = [];
+  const wrongSha = [];
 
   for (const name of requiredChecks) {
     const run = byName.get(name);
@@ -44,12 +49,14 @@ export function validateRequiredChecks(requiredChecks, checkRuns) {
       incomplete.push(name);
     } else if (run.conclusion !== "success") {
       unsuccessful.push(name);
+    } else if (expectedSha && run.head_sha !== expectedSha) {
+      wrongSha.push(name);
     }
   }
 
-  if (missing.length || incomplete.length || unsuccessful.length) {
+  if (missing.length || incomplete.length || unsuccessful.length || wrongSha.length) {
     const error = new Error("Required release checks are not satisfied.");
-    error.details = { missing, incomplete, unsuccessful };
+    error.details = { missing, incomplete, unsuccessful, wrongSha };
     throw error;
   }
 

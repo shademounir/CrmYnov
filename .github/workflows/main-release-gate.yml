@@ -1,0 +1,146 @@
+name: Main release gate
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-release-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - &trusted-source
+        name: Enforce trusted event source
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_OWNER: ${{ github.repository_owner }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              test "$HEAD_REPOSITORY" = "$EXPECTED_REPOSITORY"
+              test "$ACTOR" = "$EXPECTED_OWNER"
+              ;;
+            push|workflow_dispatch)
+              test "$ACTOR" = "$EXPECTED_OWNER"
+              ;;
+            *) exit 1 ;;
+          esac
+
+      - &checkout
+        name: Check out the exact event SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - &verify-sha
+        name: Verify checked-out SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - &setup-node
+        name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install locked Node dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run complete Node test suite
+        run: npm test
+
+  terraform-static:
+    name: terraform-static
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - *trusted-source
+      - *checkout
+      - *verify-sha
+
+      - name: Set up Terraform 1.15.8
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Initialize without backend and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for root in foundation state wif; do
+            terraform -chdir="infra/bootstrap/$root" init \
+              -backend=false \
+              -input=false \
+              -lockfile=readonly \
+              -no-color
+            terraform -chdir="infra/bootstrap/$root" validate -no-color
+          done
+
+  iac-security:
+    name: iac-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - *trusted-source
+      - *checkout
+      - *verify-sha
+
+      - name: Scan Terraform configuration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          version: v0.70.0
+          cache: false
+          format: table
+          hide-progress: true
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - *trusted-source
+      - *checkout
+      - *verify-sha
+      - *setup-node
+
+      - name: Scan repository content
+        run: npm run security:scan
+
+      - name: Scan complete Git history
+        run: npm run security:history
