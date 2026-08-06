@@ -1,0 +1,3 @@
+# IAM is deliberately omitted. Supply separate least-privilege bindings for
+# bootstrap, dev, staging, and prod in an untracked *.tfvars file.
+# state_iam_bindings = {}

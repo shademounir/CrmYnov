@@ -1,0 +1,10 @@
+# Full billing ID and approved impersonators must be injected through an
+# untracked *.tfvars file during a separately authorized execution.
+billing_account_id = "INJECT_SECURELY_AT_EXECUTION"
+folder_id           = "INJECT_PHASE_0_FOLDER_ID"
+
+# Optional: use only a distinct, pre-existing administrator identity approved
+# for the WIF/security root. Never set this to tf-bootstrap.
+# bootstrap_administrator_service_account_email = "wif-admin@example-project.iam.gserviceaccount.com"
+
+# terraform_impersonators = ["group:cloud-admins@example.invalid"]
