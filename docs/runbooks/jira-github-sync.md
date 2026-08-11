@@ -65,12 +65,31 @@ Names only; do not commit values:
 - `JIRA_SYNC_ALLOWED_ACTORS`
 - `JIRA_SYNC_ACTOR_PERMISSION`
 
-`JIRA_API_TOKEN` must eventually be an environment secret. Non-sensitive
-identifiers can be environment variables. In the committed workflows all four
-credential fields are explicit empty strings: no repository or environment
-secret is read. No environment or secret is created by this change. Before
-credentials are added, a separate Product Owner-approved change must bind only
-trusted workflow execution to a protected `jira-dry-run` GitHub Environment.
+`JIRA_API_TOKEN` is a Repository Actions secret. Non-sensitive identifiers are
+Repository Actions variables. Pull-request workflows continue to use explicit
+empty credential fields and cannot read that secret. Only the separately
+versioned, manually dispatched read-only probe references it.
+
+## Read-only Jira probe
+
+The versioned `.github/workflows/jira-readonly-probe.yml` workflow is reserved
+for a future, explicitly authorized connectivity check. It is limited to
+`workflow_dispatch`, `contents: read`, the exact `main` revision and the
+repository-owned workflow definition. It must not run from a pull request or
+before the workflow has been integrated into `main`.
+
+The probe performs only Jira GET requests for current-account identity, CRMY
+project metadata, CRMY-111 fields, effective permissions and available
+transitions. It never executes a transition. Its output contains only sanitized
+booleans, counts, keys and the Jira status-category key; it never prints the
+token, authorization header, email, raw environment or complete responses.
+`JIRA_SYNC_ENABLED=false` and `JIRA_SYNC_DRY_RUN=true` are enforced before the
+first request.
+
+`JIRA_CLOUD_ID` is not required for the selected Basic-authenticated REST API
+under `JIRA_BASE_URL/rest/api/3`. It must be introduced only if a later approved
+migration uses an Atlassian scoped-token or OAuth endpoint under
+`api.atlassian.com/ex/jira/{cloudId}`.
 
 ## Public repository controls
 

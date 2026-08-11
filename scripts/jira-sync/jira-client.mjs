@@ -37,12 +37,20 @@ async function responseError(response) {
   );
 }
 
-function isBlocked(fields) {
-  if (fields.labels?.includes("blocked")) return true;
-  return (fields.issuelinks ?? []).some((link) => {
-    const inward = String(link?.type?.inward ?? "").toLowerCase();
-    return Boolean(link?.inwardIssue && inward.includes("blocked"));
-  });
+function blockerKeys(fields) {
+  if (!Array.isArray(fields.issuelinks)) {
+    throw new Error("jira_issue_links_invalid");
+  }
+
+  const keys = [];
+  for (const link of fields.issuelinks) {
+    const inward = String(link?.type?.inward ?? "").trim().toLowerCase();
+    if (inward !== "is blocked by" || !link?.inwardIssue) continue;
+    const key = String(link?.inwardIssue?.key ?? "").trim().toUpperCase();
+    if (!key) throw new Error("jira_blocker_key_missing");
+    keys.push(key);
+  }
+  return [...new Set(keys)].sort();
 }
 
 export class JiraClient {
@@ -73,13 +81,112 @@ export class JiraClient {
 
     if (!response.ok) throw await responseError(response);
     const body = await response.json();
+    if (
+      !body?.key ||
+      !body?.fields?.status?.name ||
+      !body?.fields?.issuetype?.name ||
+      !Array.isArray(body?.fields?.labels)
+    ) {
+      return {
+        key: body?.key ?? issueKey,
+        status: body?.fields?.status?.name ?? "Unknown",
+        labels: Array.isArray(body?.fields?.labels) ? body.fields.labels : [],
+        issueType: body?.fields?.issuetype?.name ?? "Unknown",
+        blocked: true,
+        blockerError: "jira_issue_response_incomplete",
+      };
+    }
+
+    let blocked = body.fields.labels?.includes("blocked") === true;
+    let blockerError = null;
+    if (!blocked) {
+      try {
+        blocked = await this.hasOpenBlocker(blockerKeys(body.fields));
+      } catch (error) {
+        blocked = true;
+        blockerError =
+          error instanceof JiraHttpError
+            ? `jira_blocker_${error.category}`
+            : String(error?.message ?? "jira_blocker_resolution_failed").startsWith(
+                  "jira_",
+                )
+              ? error.message
+              : "jira_blocker_resolution_failed";
+      }
+    }
     return {
       key: body.key,
       status: body.fields.status.name,
       labels: body.fields.labels ?? [],
       issueType: body.fields.issuetype.name,
-      blocked: isBlocked(body.fields),
+      blocked,
+      blockerError,
     };
+  }
+
+  async hasOpenBlocker(keys) {
+    if (keys.length === 0) return false;
+
+    const expected = new Set(keys);
+    const categories = new Map();
+    const seenTokens = new Set();
+    let nextPageToken = null;
+
+    do {
+      if (nextPageToken && seenTokens.has(nextPageToken)) {
+        throw new Error("jira_blocker_pagination_loop");
+      }
+      if (nextPageToken) seenTokens.add(nextPageToken);
+
+      const parameters = new URLSearchParams({
+        jql: `key in (${keys.map((key) => `\"${key}\"`).join(",")})`,
+        fields: "status",
+        maxResults: "50",
+      });
+      if (nextPageToken) parameters.set("nextPageToken", nextPageToken);
+
+      const response = await this.fetch(
+        `${this.config.baseUrl}/rest/api/3/search/jql?${parameters}`,
+        {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            Authorization: authorizationHeader(
+              this.config.userEmail,
+              this.config.apiToken,
+            ),
+          },
+        },
+      );
+      if (!response.ok) throw await responseError(response);
+
+      const body = await response.json();
+      if (!Array.isArray(body?.issues) || typeof body?.isLast !== "boolean") {
+        throw new Error("jira_blocker_page_incomplete");
+      }
+      for (const issue of body.issues) {
+        const key = String(issue?.key ?? "").toUpperCase();
+        const category = issue?.fields?.status?.statusCategory?.key;
+        if (
+          !expected.has(key) ||
+          typeof category !== "string" ||
+          !category.trim()
+        ) {
+          throw new Error("jira_blocker_status_category_missing");
+        }
+        categories.set(key, category.toLowerCase());
+      }
+
+      nextPageToken = body.isLast ? null : body.nextPageToken;
+      if (!body.isLast && !nextPageToken) {
+        throw new Error("jira_blocker_pagination_incomplete");
+      }
+    } while (nextPageToken);
+
+    if (categories.size !== expected.size) {
+      throw new Error("jira_blocker_issue_inaccessible");
+    }
+    return [...categories.values()].some((category) => category !== "done");
   }
 
   async transition(issueKey, transition, idempotencyKey) {
