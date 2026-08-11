@@ -79,17 +79,35 @@ repository-owned workflow definition. It must not run from a pull request or
 before the workflow has been integrated into `main`.
 
 The probe performs only Jira GET requests for current-account identity, CRMY
-project metadata, CRMY-111 fields, effective permissions and available
-transitions. It never executes a transition. Its output contains only sanitized
-booleans, counts, keys and the Jira status-category key; it never prints the
-token, authorization header, email, raw environment or complete responses.
+project metadata, the Jira permission catalogue, CRMY-111-scoped effective
+permissions, CRMY-111 fields, available transitions and any blocker statuses
+required by CRMY-111. Identity is validated before any permission or project
+request. The effective-permission query uses one `issueKey` context and a
+comma-separated `permissions` value containing only keys exposed by the
+catalogue; unsupported desired keys are reported as
+`notVerifiableByEndpoint`. An empty intersection fails closed. The probe never
+executes a transition.
+Its output contains only sanitized booleans, counts, keys, permission results,
+transition identifiers/names/destinations, the selected authentication mode and
+HTTP status codes. Jira error diagnostics are allowlisted, redacted and bounded;
+the probe never prints the token, authorization header, email, raw environment
+or complete responses.
 `JIRA_SYNC_ENABLED=false` and `JIRA_SYNC_DRY_RUN=true` are enforced before the
 first request.
 
-`JIRA_CLOUD_ID` is not required for the selected Basic-authenticated REST API
-under `JIRA_BASE_URL/rest/api/3`. It must be introduced only if a later approved
-migration uses an Atlassian scoped-token or OAuth endpoint under
-`api.atlassian.com/ex/jira/{cloudId}`.
+Classic Basic authentication is always tried first under
+`JIRA_BASE_URL/rest/api/3`. A classic `401` is only a signal to try the second
+official route, not proof that the token is scoped. For that fallback, the
+probe reads `JIRA_BASE_URL/_edge/tenant_info` without an Authorization header,
+validates the Cloud ID as a UUID and then uses Basic authentication under
+`https://api.atlassian.com/ex/jira/{cloudId}`. Only the configured Atlassian
+tenant and `api.atlassian.com` are allowed, and HTTP redirects are never
+followed.
+
+If classic mode succeeds, `JIRA_CLOUD_ID` remains absent. If scoped mode is the
+only successful route, create the Repository Actions variable
+`JIRA_CLOUD_ID` only after verifying that the UUID reported by the probe came
+from the expected tenant.
 
 ## Public repository controls
 
