@@ -101,7 +101,7 @@ jobs:
             echo "source_included=true"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Validate manual Product Owner approval
+      - name: Validate release approval policy
         id: approval
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -129,6 +129,6 @@ jobs:
           RELEASE_SOURCE_INCLUDED: ${{ steps.evidence.outputs.source_included }}
           RELEASE_CI_GREEN: "true"
           RELEASE_MERGED_TO_MAIN: "true"
-          RELEASE_HUMAN_APPROVED: ${{ steps.approval.outputs.human_approved }}
+          RELEASE_APPROVAL_VALIDATED: ${{ steps.approval.outputs.approval_validated }}
           JIRA_SYNC_ACTOR_PERMISSION: ${{ steps.actor.outputs.permission }}
         run: node scripts/release-manifest/release-sync.mjs release-manifest.json

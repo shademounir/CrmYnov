@@ -1,0 +1,71 @@
+name: Pull request automated policy
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - converted_to_draft
+
+permissions:
+  contents: read
+  checks: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-policy:
+    name: pr-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PR_POLICY_ALLOWED_ACTORS: shademounir
+      PR_APPROVAL_MODE: ${{ vars.PR_APPROVAL_MODE || 'automated-policy' }}
+    steps:
+      - name: Refuse untrusted event source before checkout
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "${SOURCE_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          case ",${PR_POLICY_ALLOWED_ACTORS}," in
+            *",${GITHUB_ACTOR},"*) ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Check out the reviewed revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run policy tests and security scans
+        run: |
+          npm test
+          npm run security:history
+
+      - name: Validate pull request policy evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/pr-policy/cli.mjs

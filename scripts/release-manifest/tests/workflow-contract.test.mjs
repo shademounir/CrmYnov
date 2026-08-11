@@ -33,7 +33,7 @@ test("workflows never use pull_request_target", async () => {
   assert.equal(workflow.includes("pull_request_target"), false);
 });
 
-test("release workflow uses fail-closed solo-owner approval evidence", async () => {
+test("release workflow uses fail-closed policy approval evidence", async () => {
   const workflow = await readFile(releaseWorkflowUrl, "utf8");
   assert.match(
     workflow,
@@ -42,7 +42,7 @@ test("release workflow uses fail-closed solo-owner approval evidence", async () 
   assert.match(workflow, /verify-approval\.mjs/);
   assert.match(
     workflow,
-    /RELEASE_HUMAN_APPROVED: \$\{\{ steps\.approval\.outputs\.human_approved \}\}/,
+    /RELEASE_APPROVAL_VALIDATED: \$\{\{ steps\.approval\.outputs\.approval_validated \}\}/,
   );
   assert.doesNotMatch(workflow, /independent_approvals|\/reviews/);
   assert.doesNotMatch(

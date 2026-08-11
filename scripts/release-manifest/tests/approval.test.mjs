@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateSoloOwnerApproval } from "../approval.mjs";
+import {
+  validateReleaseApproval,
+  validateSoloOwnerApproval,
+} from "../approval.mjs";
 
 function validEvidence() {
   return {
@@ -30,12 +33,63 @@ test("solo-owner accepts explicit manual Product Owner evidence", () => {
     mergedBy: "shademounir",
     manuallyMerged: true,
     humanApproved: true,
+    approvalValidated: true,
     repositoryAutoMerge: {
       source: "github_api",
       state: "disabled",
     },
   });
 });
+
+function validAutomatedEvidence() {
+  const value = validEvidence();
+  value.approvalMode = "automated-policy";
+  value.releaseProfile = "gate-1";
+  value.pullRequest.head = {
+    ref: "release/v0.1.0-gate.2",
+    sha: value.releaseCommit,
+  };
+  value.pullRequest.labels = [{ name: "policy-approved" }];
+  value.pullRequest.auto_merge = { enabled_by: { login: "shademounir" } };
+  value.policyCheckRuns = [{
+    id: 1,
+    name: "pr-policy",
+    status: "completed",
+    conclusion: "success",
+    head_sha: value.releaseCommit,
+  }];
+  return value;
+}
+
+test("automated-policy accepts an allowlisted technical Gate release", () => {
+  assert.deepEqual(validateReleaseApproval(validAutomatedEvidence()), {
+    approvalMode: "automated-policy",
+    policyLabel: "policy-approved",
+    author: "shademounir",
+    mergedBy: "shademounir",
+    mergeMethod: "native_auto_merge",
+    approvalValidated: true,
+  });
+});
+
+for (const [name, mutate, reason] of [
+  ["missing policy label", (value) => { value.pullRequest.labels = []; }, "policy_approved_label_missing"],
+  ["po-approved label", (value) => { value.pullRequest.labels.push({ name: "po-approved" }); }, "po_approved_forbidden_in_automated_policy"],
+  ["PROD/application profile", (value) => { value.releaseProfile = "application"; }, "automated_policy_prod_forbidden"],
+  ["non-release branch", (value) => { value.pullRequest.head.ref = "feature/CRMY-113-test"; }, "release_branch_not_allowed"],
+  ["missing pr-policy check", (value) => { value.policyCheckRuns = []; }, "pr_policy_check_missing"],
+  ["pending pr-policy check", (value) => { value.policyCheckRuns[0].status = "in_progress"; }, "pr_policy_check_pending"],
+  ["failed pr-policy check", (value) => { value.policyCheckRuns[0].conclusion = "failure"; }, "pr_policy_check_failed"],
+]) {
+  test(`automated-policy refuses ${name}`, () => {
+    const value = validAutomatedEvidence();
+    mutate(value);
+    assert.throws(
+      () => validateReleaseApproval(value),
+      (error) => error.reason === reason,
+    );
+  });
+}
 
 function validAttestationEvidence() {
   const value = validEvidence();

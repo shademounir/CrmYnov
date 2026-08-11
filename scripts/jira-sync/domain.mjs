@@ -121,8 +121,9 @@ export function normalizeGithubEvent(eventName, payload, projectKey) {
 }
 
 function releaseEvidenceIsComplete(evidence) {
-  return [
-    "humanApproved",
+  const approvalValidated =
+    evidence?.approvalValidated === true || evidence?.humanApproved === true;
+  return approvalValidated && [
     "ciGreen",
     "mergedToMain",
     "tagCreated",
