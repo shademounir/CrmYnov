@@ -67,3 +67,47 @@ test("no real environment file is committed", async () => {
     .filter((name) => name !== ".env.example");
   assert.deepEqual(environmentFiles, []);
 });
+
+test("Jira read-only probe is manual, main-only and least-privileged", async () => {
+  const workflow = await readFile(
+    path.join(repositoryRoot, ".github/workflows/jira-readonly-probe.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /pull_request(?:_target)?:/);
+  assert.match(workflow, /permissions:\s*\n\s*contents: read/);
+  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /ref: refs\/heads\/main/);
+  assert.match(workflow, /secrets\.JIRA_API_TOKEN/);
+  assert.equal(workflow.match(/secrets\.JIRA_API_TOKEN/g)?.length, 1);
+  assert.match(
+    workflow,
+    /name: Execute read-only Jira probe[\s\S]*?env:\s*\n\s*JIRA_API_TOKEN: \$\{\{ secrets\.JIRA_API_TOKEN \}\}/,
+  );
+  assert.match(workflow, /vars\.JIRA_SYNC_ENABLED/);
+  assert.doesNotMatch(workflow, /environment:/);
+});
+
+test("Jira read-only probe implementation cannot use write HTTP methods", async () => {
+  const probe = await readFile(
+    path.join(repositoryRoot, "scripts/jira-sync/readonly-probe.mjs"),
+    "utf8",
+  );
+  assert.match(probe, /method: "GET"/);
+  assert.doesNotMatch(probe, /method:\s*"(?:POST|PUT|PATCH|DELETE)"/);
+  assert.doesNotMatch(probe, /console\.(?:log|dir|table)/);
+  assert.doesNotMatch(probe, /process\.env/);
+});
+
+test("pull-request workflows cannot access the Jira API token secret", async () => {
+  const workflowDirectory = path.join(repositoryRoot, ".github/workflows");
+  const findings = [];
+  for (const entry of await readdir(workflowDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !/\.ya?ml$/.test(entry.name)) continue;
+    const workflow = await readFile(path.join(workflowDirectory, entry.name), "utf8");
+    if (/pull_request:\s*/.test(workflow) && /secrets\.JIRA_API_TOKEN/.test(workflow)) {
+      findings.push(entry.name);
+    }
+  }
+  assert.deepEqual(findings, []);
+});
