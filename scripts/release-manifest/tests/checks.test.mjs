@@ -20,7 +20,13 @@ const REQUIRED = [
 ];
 
 function successful(name, id = 1) {
-  return { id, name, status: "completed", conclusion: "success" };
+  return {
+    id,
+    name,
+    status: "completed",
+    conclusion: "success",
+    head_sha: "1111111111111111111111111111111111111111",
+  };
 }
 
 test("empty required check variable is refused", () => {
@@ -58,6 +64,21 @@ test("pending required check is refused", () => {
   assert.throws(
     () => validateRequiredChecks(REQUIRED, runs),
     (error) => error.details.incomplete.includes("unit-tests"),
+  );
+});
+
+test("required check attached to a different SHA is refused", () => {
+  const runs = REQUIRED.map(successful);
+  runs[0] = {
+    ...runs[0],
+    head_sha: "2222222222222222222222222222222222222222",
+  };
+  assert.throws(
+    () =>
+      validateRequiredChecks(REQUIRED, runs, {
+        expectedSha: "1111111111111111111111111111111111111111",
+      }),
+    (error) => error.details.wrongSha.includes("unit-tests"),
   );
 });
 

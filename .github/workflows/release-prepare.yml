@@ -4,9 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Semantic version, for example v0.1.0
+        description: Semantic version, for example v0.1.0-gate.1
         required: true
         type: string
+      profile:
+        description: Validated release profile
+        required: true
+        type: choice
+        default: gate-1
+        options:
+          - gate-1
+          - application
       tickets:
         description: Comma-separated CRMY ticket keys
         required: true
@@ -52,6 +60,7 @@ jobs:
         run: >-
           node scripts/release-manifest/cli.mjs
           --version "${{ inputs.version }}"
+          --profile "${{ inputs.profile }}"
           --sha "${{ inputs.target_sha }}"
           --tickets "${{ inputs.tickets }}"
           --output release-manifest.json

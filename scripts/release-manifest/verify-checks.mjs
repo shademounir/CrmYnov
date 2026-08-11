@@ -1,14 +1,23 @@
 import {
   fetchAllCheckRuns,
-  parseRequiredChecks,
+  releaseProfile,
+  validateManifest,
   validateRequiredChecks,
-} from "./checks.mjs";
+} from "./index.mjs";
+import { readFile } from "node:fs/promises";
 
-const requiredChecks = parseRequiredChecks(process.env.REQUIRED_RELEASE_CHECKS);
+const manifest = validateManifest(
+  JSON.parse(
+    await readFile(process.env.RELEASE_MANIFEST_PATH || "release-manifest.json", "utf8"),
+  ),
+);
+const requiredChecks = releaseProfile(manifest.profile).requiredChecks;
 const checkRuns = await fetchAllCheckRuns({
   repository: process.env.GITHUB_REPOSITORY,
   commitSha: process.env.RELEASE_COMMIT,
   token: process.env.GITHUB_TOKEN,
 });
-const result = validateRequiredChecks(requiredChecks, checkRuns);
+const result = validateRequiredChecks(requiredChecks, checkRuns, {
+  expectedSha: process.env.RELEASE_COMMIT,
+});
 process.stdout.write(`${JSON.stringify(result)}\n`);
