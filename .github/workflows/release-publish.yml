@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   checks: read
+  issues: read
   pull-requests: read
 
 concurrency:
@@ -108,10 +109,6 @@ jobs:
           RELEASE_PR_NUMBER: ${{ steps.evidence.outputs.release_pr }}
           RELEASE_COMMIT: ${{ steps.evidence.outputs.release_commit }}
           RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
-          REPOSITORY_AUTO_MERGE_ATTESTED_STATE: ${{ vars.REPOSITORY_AUTO_MERGE_ATTESTED_STATE }}
-          REPOSITORY_AUTO_MERGE_ATTESTED_BY: ${{ vars.REPOSITORY_AUTO_MERGE_ATTESTED_BY }}
-          REPOSITORY_AUTO_MERGE_ATTESTED_SHA: ${{ vars.REPOSITORY_AUTO_MERGE_ATTESTED_SHA }}
-          REPOSITORY_AUTO_MERGE_ATTESTED_AT: ${{ vars.REPOSITORY_AUTO_MERGE_ATTESTED_AT }}
         run: node scripts/release-manifest/verify-approval.mjs
 
       - name: Validate explicit required release checks

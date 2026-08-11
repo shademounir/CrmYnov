@@ -8,9 +8,9 @@ export {
 export {
   AUTOMATED_POLICY_MODE,
   fetchSoloOwnerApprovalEvidence,
+  MANUAL_PO_MODE,
   POLICY_APPROVED_LABEL,
   PRODUCT_OWNER_LABEL,
-  SOLO_OWNER_MODE,
   validateReleaseApproval,
   validateSoloOwnerApproval,
 } from "./approval.mjs";

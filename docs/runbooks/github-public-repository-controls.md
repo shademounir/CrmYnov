@@ -74,7 +74,7 @@ Codex and GitHub Actions may verify this evidence but must never add or remove
 the label, complete the checklist, mark a PR ready, merge, enable auto-merge, or
 use administrator bypass.
 
-## Current branch protection
+## Bootstrap branch protection snapshot
 
 The API-reported state for both `develop` and `main` is:
 
@@ -84,7 +84,8 @@ The API-reported state for both `develop` and `main` is:
 - linear history required;
 - force push and deletion disabled;
 - administrator enforcement enabled;
-- repository auto-merge disabled.
+- repository auto-merge disabled at bootstrap time; it is now enabled for the
+  separately governed `automated-policy` path and does not relax `manual-po`.
 
 Required status checks are not yet configured because no common baseline check
 exists on the target branches. GitHub refused enabling strict status-check
