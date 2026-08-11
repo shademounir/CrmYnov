@@ -47,7 +47,15 @@ async function checkRuns() {
       `/repos/${repository}/commits/${checkSha}/check-runs?per_page=100`,
     );
     const runs = response.check_runs ?? [];
-    const byName = new Map(runs.map((run) => [run.name, run]));
+    const byName = new Map();
+    for (const run of runs) {
+      if (
+        !byName.has(run.name) ||
+        Number(run.id ?? 0) >= Number(byName.get(run.name)?.id ?? 0)
+      ) {
+        byName.set(run.name, run);
+      }
+    }
     if (requiredChecks.every((name) => byName.get(name)?.status === "completed")) {
       return { requiredChecks, runs };
     }
