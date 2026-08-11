@@ -21,6 +21,11 @@ test("release workflow declares every required read permission", async () => {
   assert.match(permissions, /checks: read/);
   assert.match(permissions, /pull-requests: read/);
   assert.doesNotMatch(permissions, /:\s*write/);
+  assert.doesNotMatch(permissions, /administration:/);
+  assert.equal(
+    permissions.trim(),
+    ["contents: read", "  checks: read", "  pull-requests: read"].join("\n"),
+  );
 });
 
 test("workflows never use pull_request_target", async () => {
@@ -44,6 +49,26 @@ test("release workflow uses fail-closed solo-owner approval evidence", async () 
     workflow,
     /gh pr (?:ready|merge)|--auto-merge|issues\/.*\/labels/,
   );
+  assert.match(
+    workflow,
+    /RELEASE_COMMIT: \$\{\{ steps\.evidence\.outputs\.release_commit \}\}/,
+  );
+  assert.match(
+    workflow,
+    /RELEASE_PUBLISHED_AT: \$\{\{ github\.event\.release\.published_at \}\}/,
+  );
+  for (const variable of [
+    "REPOSITORY_AUTO_MERGE_ATTESTED_STATE",
+    "REPOSITORY_AUTO_MERGE_ATTESTED_BY",
+    "REPOSITORY_AUTO_MERGE_ATTESTED_SHA",
+    "REPOSITORY_AUTO_MERGE_ATTESTED_AT",
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`${variable}: \\$\\{\\{ vars\\.${variable} \\}\\}`),
+    );
+  }
+  assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 
 test("main release gate covers pull requests, pushes and controlled dispatch", async () => {

@@ -6,8 +6,9 @@ This one-time bootstrap exception applies only to the first technical Gate-1
 release. It does not authorize an application release, a Google Cloud change,
 or automatic promotion.
 
-The target prerelease version is `v0.1.0-gate.1`. Preparing or validating that
-string does not create a tag or GitHub Release.
+The original prerelease `v0.1.0-gate.1` is retained as the failed published
+attempt and must not be rewritten, moved, or republished. A corrected attempt
+uses `v0.1.0-gate.2` only after separate Product Owner authorization.
 
 ## Bootstrap constraint
 
@@ -38,6 +39,13 @@ workflow.
    authorized change. Preserve every other protection.
 8. Only after those proofs may the Product Owner separately authorize the
    manual tag and GitHub Release.
+
+Before publication, follow the repository auto-merge evidence procedure in
+`docs/runbooks/release-process.md`. Prefer the explicit GitHub API value. If
+the minimally scoped token omits it, the Product Owner may provide the four
+short-lived repository variables bound to the exact release commit. An API
+value of `true` is always blocking, and the release PR must report
+`auto_merge: null`.
 
 No step creates a GCP credential, authenticates to GCP, or runs Terraform
 `plan`, `apply`, `destroy`, or `import`.

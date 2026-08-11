@@ -71,7 +71,8 @@ before they exist will fail because required checks are absent.
    - `RELEASE_APPROVAL_MODE` is exactly `solo-owner`;
    - the release PR is non-Draft, authored and merged by an allowlisted actor,
      carries `po-approved`, has no auto-merge request, and repository auto-merge
-     is disabled;
+     is disabled through GitHub API evidence or the controlled Product Owner
+     attestation described below;
    - the manifest source commit belongs to that release PR, including when the
      PR was squash-merged;
    - every explicitly required check is present, completed, and successful;
@@ -79,11 +80,53 @@ before they exist will fail because required checks are absent.
    - each Jira ticket is listed in that manifest.
 11. Review the dry-run output. No Jira mutation is currently permitted.
 
+## Repository auto-merge evidence
+
+The workflow keeps its minimal `GITHUB_TOKEN` permissions (`contents: read`,
+`checks: read`, and `pull-requests: read`). With that token, GitHub can omit
+`repository.allow_auto_merge` even when the setting is disabled. The workflow
+does not request administration permission and does not use an administrator
+PAT to work around that API limitation.
+
+Evidence remains fail-closed:
+
+- an explicit API value `false` is sufficient and needs no attestation;
+- an explicit API value `true` always refuses publication validation and
+  cannot be overridden;
+- an absent, null, or unusable API value requires all four repository
+  variables below;
+- the release PR must still report `auto_merge: null` in every case.
+
+Immediately before publishing a release, the Product Owner manually verifies
+that repository auto-merge is disabled, then configures these GitHub repository
+variables (never secrets):
+
+- `REPOSITORY_AUTO_MERGE_ATTESTED_STATE=disabled`;
+- `REPOSITORY_AUTO_MERGE_ATTESTED_BY=<allowlisted Product Owner login>`;
+- `REPOSITORY_AUTO_MERGE_ATTESTED_SHA=<exact release commit SHA>`;
+- `REPOSITORY_AUTO_MERGE_ATTESTED_AT=<UTC ISO-8601 timestamp>`.
+
+The attestation is accepted only when it is complete, made by an allowlisted
+actor, bound to the exact release commit, not dated in the future, and less
+than 24 hours old when the GitHub Release is published. Validation output
+contains only the evidence source, disabled state, actor, SHA, and timestamp;
+it never prints tokens or broader repository metadata.
+
+The attestation variables are operational evidence, not durable configuration.
+After a successful validation, or when abandoning a release attempt, the
+Product Owner removes all four variables. Removing them is also the rollback:
+when API evidence is unavailable, the validator returns to fail-closed refusal.
+
 ## Refusal conditions
 
 The Jira Done plan is refused when any evidence is missing, the ticket is not
 In Review, the ticket lacks `codex-ready`, it is blocked, or its type is Epic.
 A closed or merged functional PR is never sufficient evidence for Done.
+
+Repository auto-merge validation refuses with explicit reasons when the API
+reports enabled, evidence is unavailable, an attestation is incomplete, its
+actor is not allowlisted, its SHA differs, its date is invalid or in the
+future, or it is 24 hours old or older.
 
 The required check list is selected from the integrity-checked manifest
 profile. An empty profile list, unsupported profile, missing check, pending
@@ -134,3 +177,7 @@ If a future active synchronization completes an incorrect ticket, disable the
 sync, revoke the Jira token, inspect the audit log, and request a Jira
 Administrator to decide whether the controlled `Réouvrir` transition is
 appropriate.
+
+`v0.1.0-gate.1` is retained as the failed published attempt and must never be
+rewritten. Any corrected Gate-1 publication uses the next version
+`v0.1.0-gate.2` after separate Product Owner authorization.

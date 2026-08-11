@@ -18,11 +18,91 @@ function refuse(reason) {
   throw error;
 }
 
+const MAX_ATTESTATION_AGE_MS = 24 * 60 * 60 * 1000;
+const UTC_TIMESTAMP_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+function timestamp(value) {
+  const input = String(value ?? "");
+  if (!UTC_TIMESTAMP_PATTERN.test(input)) return undefined;
+  const parsed = Date.parse(input);
+  if (!Number.isFinite(parsed)) return undefined;
+  const canonicalInput = input.includes(".")
+    ? input.replace(/\.(\d{1,3})Z$/, (_, digits) =>
+        `.${digits.padEnd(3, "0")}Z`,
+      )
+    : input.replace(/Z$/, ".000Z");
+  return new Date(parsed).toISOString() === canonicalInput ? parsed : undefined;
+}
+
+function validateRepositoryAutoMerge({
+  repository,
+  allowedActors,
+  releaseCommit,
+  releasePublishedAt,
+  attestation,
+}) {
+  if (repository.allow_auto_merge === true) {
+    refuse("repository_auto_merge_enabled");
+  }
+  if (repository.allow_auto_merge === false) {
+    return { source: "github_api", state: "disabled" };
+  }
+
+  const proof = {
+    state: String(attestation?.state ?? "").trim(),
+    actor: String(attestation?.actor ?? "").trim(),
+    sha: String(attestation?.sha ?? "").trim(),
+    at: String(attestation?.at ?? "").trim(),
+  };
+  const populated = Object.values(proof).filter(Boolean).length;
+  if (populated === 0) refuse("repository_auto_merge_state_unavailable");
+  if (populated !== 4) refuse("repository_auto_merge_attestation_incomplete");
+  if (proof.state !== "disabled") {
+    refuse("repository_auto_merge_state_unavailable");
+  }
+  if (!allowedActors.includes(proof.actor)) {
+    refuse("repository_auto_merge_attestation_actor_not_allowed");
+  }
+  if (
+    !COMMIT_SHA_PATTERN.test(String(releaseCommit ?? "")) ||
+    !COMMIT_SHA_PATTERN.test(proof.sha) ||
+    proof.sha.toLowerCase() !== releaseCommit.toLowerCase()
+  ) {
+    refuse("repository_auto_merge_attestation_sha_mismatch");
+  }
+
+  const attestedAt = timestamp(proof.at);
+  const publishedAt = timestamp(releasePublishedAt);
+  if (
+    attestedAt === undefined ||
+    publishedAt === undefined ||
+    attestedAt > publishedAt
+  ) {
+    refuse("repository_auto_merge_attestation_invalid_date");
+  }
+  if (publishedAt - attestedAt >= MAX_ATTESTATION_AGE_MS) {
+    refuse("repository_auto_merge_attestation_expired");
+  }
+
+  return {
+    source: "po_attestation",
+    state: "disabled",
+    actor: proof.actor,
+    sha: proof.sha,
+    at: proof.at,
+  };
+}
+
 export function validateSoloOwnerApproval({
   approvalMode,
   pullRequest,
   repository,
   allowedActors,
+  releaseCommit,
+  releasePublishedAt,
+  repositoryAutoMergeAttestation,
 }) {
   if (approvalMode !== SOLO_OWNER_MODE) refuse("approval_mode_not_supported");
 
@@ -48,9 +128,13 @@ export function validateSoloOwnerApproval({
   }
 
   if (pullRequest.auto_merge !== null) refuse("auto_merge_was_configured");
-  if (repository.allow_auto_merge !== false) {
-    refuse("repository_auto_merge_not_disabled");
-  }
+  const repositoryAutoMerge = validateRepositoryAutoMerge({
+    repository,
+    allowedActors: actors,
+    releaseCommit,
+    releasePublishedAt,
+    attestation: repositoryAutoMergeAttestation,
+  });
 
   return {
     approvalMode: SOLO_OWNER_MODE,
@@ -59,6 +143,7 @@ export function validateSoloOwnerApproval({
     mergedBy,
     manuallyMerged: true,
     humanApproved: true,
+    repositoryAutoMerge,
   };
 }
 
