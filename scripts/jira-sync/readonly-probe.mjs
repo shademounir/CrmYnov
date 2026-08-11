@@ -11,14 +11,53 @@ const FORBIDDEN_PERMISSIONS = [
   "DELETE_ISSUES",
   "DELETE_ALL_COMMENTS",
   "DELETE_OWN_COMMENTS",
-  "MANAGE_SPRINTS_PERMISSION",
 ];
+const DESIRED_PERMISSIONS = [...REQUIRED_PERMISSIONS, ...FORBIDDEN_PERMISSIONS];
+const MAX_DIAGNOSTIC_LENGTH = 1024;
 
 class ProbeHttpError extends Error {
-  constructor(status) {
+  constructor(status, diagnostic) {
     super(`jira_readonly_probe_http_${status}`);
     this.status = status;
+    this.diagnostic = diagnostic;
   }
+}
+
+function sanitizeDiagnosticString(value) {
+  return String(value)
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .replace(/https:\/\/[^\s"']+\?[^\s"']*/gi, "[redacted-url]")
+    .replace(/\b(?:accountId|account_id)\s*[:=]\s*[^\s,;}]+/gi, "accountId=[redacted]")
+    .replace(/\b\d{5,}:[0-9a-f-]{8,}\b/gi, "[redacted-account-id]")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, "[redacted-id]")
+    .slice(0, 256);
+}
+
+function sanitizeDiagnosticValue(value, depth = 0) {
+  if (depth > 3 || value === null || value === undefined) return undefined;
+  if (["string", "number", "boolean"].includes(typeof value)) {
+    return typeof value === "string" ? sanitizeDiagnosticString(value) : value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 10).map((entry) => sanitizeDiagnosticValue(entry, depth + 1));
+  }
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).slice(0, 20).map(([key, entry]) => [
+      sanitizeDiagnosticString(key),
+      sanitizeDiagnosticValue(entry, depth + 1),
+    ]));
+  }
+  return undefined;
+}
+
+function sanitizeHttpDiagnostic(body, httpStatus) {
+  const diagnostic = { status: httpStatus };
+  for (const key of ["errorMessages", "errors", "code", "status"]) {
+    if (body && Object.hasOwn(body, key)) diagnostic[key] = sanitizeDiagnosticValue(body[key]);
+  }
+  const serialized = JSON.stringify(diagnostic);
+  if (serialized.length <= MAX_DIAGNOSTIC_LENGTH) return diagnostic;
+  return { status: httpStatus, code: "jira_error_diagnostic_truncated" };
 }
 
 function validateBaseUrl(baseUrl) {
@@ -76,7 +115,15 @@ async function jsonGet({ fetchImpl, base, path, authorization, operation, status
     });
   }
   if (!response.ok) {
-    throw Object.assign(new ProbeHttpError(response.status), {
+    let body;
+    try {
+      body = await response.json();
+    } catch {
+      body = undefined;
+    }
+    const diagnostic = sanitizeHttpDiagnostic(body, response.status);
+    statuses[statuses.length - 1].diagnostic = diagnostic;
+    throw Object.assign(new ProbeHttpError(response.status, diagnostic), {
       probeResult: { http: [...statuses] },
     });
   }
@@ -89,23 +136,55 @@ async function jsonGet({ fetchImpl, base, path, authorization, operation, status
   }
 }
 
-function permissionMatrix(body) {
-  const permissions = body?.permissions;
-  if (!permissions || typeof permissions !== "object") {
+function permissionMatrix(catalogBody, effectiveBody) {
+  const catalog = catalogBody?.permissions;
+  const effective = effectiveBody?.permissions;
+  if (!catalog || typeof catalog !== "object") {
+    throw new Error("jira_readonly_probe_permission_catalog_invalid");
+  }
+  if (!effective || typeof effective !== "object") {
     throw new Error("jira_readonly_probe_permissions_invalid");
   }
+  const supported = DESIRED_PERMISSIONS.filter((key) => Object.hasOwn(catalog, key));
+  const notVerifiable = DESIRED_PERMISSIONS.filter((key) => !supported.includes(key));
   const required = Object.fromEntries(
-    REQUIRED_PERMISSIONS.map((key) => [key, permissions[key]?.havePermission === true]),
+    REQUIRED_PERMISSIONS.filter((key) => supported.includes(key))
+      .map((key) => [key, effective[key]?.havePermission === true]),
   );
   const forbidden = Object.fromEntries(
-    FORBIDDEN_PERMISSIONS.map((key) => [key, permissions[key]?.havePermission === true]),
+    FORBIDDEN_PERMISSIONS.filter((key) => supported.includes(key))
+      .map((key) => [key, effective[key]?.havePermission === true]),
   );
   return {
+    queried: supported,
+    notVerifiableByEndpoint: notVerifiable,
     required,
     forbidden,
     requiredMissing: Object.entries(required).filter(([, value]) => !value).map(([key]) => key),
+    requiredNotVerifiable: REQUIRED_PERMISSIONS.filter((key) => notVerifiable.includes(key)),
     forbiddenGranted: Object.entries(forbidden).filter(([, value]) => value).map(([key]) => key),
   };
+}
+
+function validateIdentity(account, config, mode, cloudId, statuses) {
+  const identity = {
+    active: account?.active === true,
+    accountType: account?.accountType,
+    emailMatchesExpected: account?.emailAddress === config.userEmail,
+  };
+  if (!identity.active || !identity.emailMatchesExpected) {
+    throw Object.assign(new Error("jira_readonly_probe_identity_mismatch"), {
+      probeResult: {
+        config: safeConfigSummary(config),
+        mode,
+        cloudId: mode === "scoped" ? cloudId : null,
+        account: identity,
+        http: [...statuses],
+        mutated: false,
+      },
+    });
+  }
+  return identity;
 }
 
 function blockerKeys(issue) {
@@ -184,17 +263,28 @@ export async function runReadonlyProbe(config, fetchImpl = globalThis.fetch) {
     account = await jsonGet({ fetchImpl, base: apiBase, path: "/rest/api/3/myself", authorization, operation: "identity_scoped", statuses });
   }
 
+  const identity = validateIdentity(account, config, mode, cloudId, statuses);
   const get = (path, operation) => jsonGet({ fetchImpl, base: apiBase, path, authorization, operation, statuses });
   const projectKey = encodeURIComponent(config.projectKey);
   const issueKey = encodeURIComponent("CRMY-111");
-  const [project, issue, permissionBody, transitions] = await Promise.all([
-    get(`/rest/api/3/project/${projectKey}`, "project"),
-    get(`/rest/api/3/issue/${issueKey}?fields=status,labels,issuetype,issuelinks`, "issue"),
-    get(`/rest/api/3/mypermissions?projectKey=${projectKey}`, "permissions"),
-    get(`/rest/api/3/issue/${issueKey}/transitions?expand=transitions.fields`, "transitions"),
-  ]);
+  const permissionCatalog = await get("/rest/api/3/permissions", "permission_catalog");
+  const supportedPermissions = DESIRED_PERMISSIONS.filter((key) =>
+    Object.hasOwn(permissionCatalog?.permissions ?? {}, key));
+  if (supportedPermissions.length === 0) {
+    throw Object.assign(new Error("jira_readonly_probe_permission_query_empty"), {
+      probeResult: { config: safeConfigSummary(config), mode, account: identity, http: [...statuses], mutated: false },
+    });
+  }
+  const permissionQuery = new URLSearchParams({
+    permissions: supportedPermissions.join(","),
+    issueKey: "CRMY-111",
+  });
+  const permissionBody = await get(`/rest/api/3/mypermissions?${permissionQuery}`, "permissions");
+  const project = await get(`/rest/api/3/project/${projectKey}`, "project");
+  const issue = await get(`/rest/api/3/issue/${issueKey}?fields=status,labels,issuetype,issuelinks`, "issue");
+  const transitions = await get(`/rest/api/3/issue/${issueKey}/transitions?expand=transitions.fields`, "transitions");
   const blockers = await readBlockers({ keys: blockerKeys(issue), get });
-  const permissions = permissionMatrix(permissionBody);
+  const permissions = permissionMatrix(permissionCatalog, permissionBody);
   const transitionList = Array.isArray(transitions?.transitions) ? transitions.transitions : null;
   if (!transitionList) throw new Error("jira_readonly_probe_transitions_invalid");
 
@@ -202,11 +292,7 @@ export async function runReadonlyProbe(config, fetchImpl = globalThis.fetch) {
     config: safeConfigSummary(config),
     mode,
     cloudId: mode === "scoped" ? cloudId : null,
-    account: {
-      active: account?.active === true,
-      accountType: account?.accountType,
-      emailMatchesExpected: account?.emailAddress === config.userEmail,
-    },
+    account: identity,
     project: { key: project?.key, matchesExpected: project?.key === config.projectKey },
     issue: {
       key: issue?.key,
@@ -217,6 +303,14 @@ export async function runReadonlyProbe(config, fetchImpl = globalThis.fetch) {
     permissions,
     transitions: {
       count: transitionList.length,
+      available: transitionList.map((entry) => ({
+        id: String(entry?.id ?? ""),
+        name: String(entry?.name ?? "").slice(0, 128),
+        destination: {
+          id: String(entry?.to?.id ?? ""),
+          name: String(entry?.to?.name ?? "").slice(0, 128),
+        },
+      })),
       administrativeReopenAvailable: transitionList.some((entry) =>
         String(entry?.name ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes("reouvrir"),
       ),
@@ -225,13 +319,10 @@ export async function runReadonlyProbe(config, fetchImpl = globalThis.fetch) {
     mutated: false,
   };
 
-  if (!result.account.active || !result.account.emailMatchesExpected) {
-    throw Object.assign(new Error("jira_readonly_probe_identity_mismatch"), { probeResult: result });
-  }
   if (!result.project.matchesExpected) {
     throw Object.assign(new Error("jira_readonly_probe_project_mismatch"), { probeResult: result });
   }
-  if (permissions.requiredMissing.length > 0) {
+  if (permissions.requiredMissing.length > 0 || permissions.requiredNotVerifiable.length > 0) {
     throw Object.assign(new Error("jira_readonly_probe_required_permission_missing"), { probeResult: result });
   }
   if (permissions.forbiddenGranted.length > 0 || result.transitions.administrativeReopenAvailable) {

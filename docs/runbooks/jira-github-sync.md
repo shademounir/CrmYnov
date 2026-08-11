@@ -79,11 +79,19 @@ repository-owned workflow definition. It must not run from a pull request or
 before the workflow has been integrated into `main`.
 
 The probe performs only Jira GET requests for current-account identity, CRMY
-project metadata, CRMY-111 fields, effective permissions, available transitions
-and any blocker statuses required by CRMY-111. It never executes a transition.
+project metadata, the Jira permission catalogue, CRMY-111-scoped effective
+permissions, CRMY-111 fields, available transitions and any blocker statuses
+required by CRMY-111. Identity is validated before any permission or project
+request. The effective-permission query uses one `issueKey` context and a
+comma-separated `permissions` value containing only keys exposed by the
+catalogue; unsupported desired keys are reported as
+`notVerifiableByEndpoint`. An empty intersection fails closed. The probe never
+executes a transition.
 Its output contains only sanitized booleans, counts, keys, permission results,
-the selected authentication mode and HTTP status codes; it never prints the
-token, authorization header, email, raw environment or complete responses.
+transition identifiers/names/destinations, the selected authentication mode and
+HTTP status codes. Jira error diagnostics are allowlisted, redacted and bounded;
+the probe never prints the token, authorization header, email, raw environment
+or complete responses.
 `JIRA_SYNC_ENABLED=false` and `JIRA_SYNC_DRY_RUN=true` are enforced before the
 first request.
 
