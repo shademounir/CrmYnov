@@ -6,7 +6,9 @@
   "projectKey": "CRMY",
   "tickets": [
     "CRMY-108",
-    "CRMY-109"
+    "CRMY-109",
+    "CRMY-110",
+    "CRMY-23"
   ],
-  "sha256": "f5da886f118aaad09912675cc08b04a4fb2a5e04d822b41418248d8c42faabe3"
+  "sha256": "81c55e6a252a6de1463760b40974bf65007463e121b4c6ea4479bc7cf38b9830"
 }
