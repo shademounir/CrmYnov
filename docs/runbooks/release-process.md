@@ -70,12 +70,12 @@ before they exist will fail because required checks are absent.
    - the tag commit is in `main`;
    - the tagged commit is associated with a validated release PR to `main`;
    - `RELEASE_APPROVAL_MODE` is `automated-policy` for a technical Gate or
-     `solo-owner` for the retained manual path;
+     `manual-po` for the retained manual path;
    - an automated Gate carries `policy-approved`, has a successful `pr-policy`
      check on the release branch SHA, and was merged by an allowlisted actor;
-   - a manual release carries `po-approved`, has no auto-merge request, and
-     proves repository auto-merge is disabled through API evidence or the
-     controlled Product Owner attestation described below;
+   - a manual release carries `po-approved`, has no auto-merge request or
+     auto-merge timeline event, and has a traceable Product Owner decision
+     bound to the exact PR number and head SHA;
    - the manifest source commit belongs to that release PR, including when the
      PR was squash-merged;
    - every explicitly required check is present, completed, and successful;
@@ -83,42 +83,27 @@ before they exist will fail because required checks are absent.
    - each Jira ticket is listed in that manifest.
 11. Review the dry-run output. No Jira mutation is currently permitted.
 
-## Repository auto-merge evidence
+## Manual Product Owner decision evidence
 
-The workflow keeps its minimal `GITHUB_TOKEN` permissions (`contents: read`,
-`checks: read`, and `pull-requests: read`). With that token, GitHub can omit
-`repository.allow_auto_merge` even when the setting is disabled. The workflow
-does not request administration permission and does not use an administrator
-PAT to work around that API limitation.
+Repository auto-merge may stay enabled for technical `automated-policy` PRs.
+The `manual-po` proof is deliberately scoped to the sensitive PR and remains
+fail-closed. The release workflow uses only read permissions (`contents`,
+`checks`, `issues`, and `pull-requests`) and no administrator PAT.
 
-Evidence remains fail-closed:
+After reviewing the exact head SHA, the Product Owner posts this PR comment
+manually, replacing the placeholders:
 
-- an explicit API value `false` is sufficient and needs no attestation;
-- an explicit API value `true` always refuses publication validation and
-  cannot be overridden;
-- an absent, null, or unusable API value requires all four repository
-  variables below;
-- the release PR must still report `auto_merge: null` in every case.
+```text
+<!-- manual-po-decision {"schemaVersion":1,"decision":"approved","pullRequest":<number>,"headSha":"<40-character SHA>"} -->
+```
 
-Immediately before publishing a release, the Product Owner manually verifies
-that repository auto-merge is disabled, then configures these GitHub repository
-variables (never secrets):
-
-- `REPOSITORY_AUTO_MERGE_ATTESTED_STATE=disabled`;
-- `REPOSITORY_AUTO_MERGE_ATTESTED_BY=<allowlisted Product Owner login>`;
-- `REPOSITORY_AUTO_MERGE_ATTESTED_SHA=<exact release commit SHA>`;
-- `REPOSITORY_AUTO_MERGE_ATTESTED_AT=<UTC ISO-8601 timestamp>`.
-
-The attestation is accepted only when it is complete, made by an allowlisted
-actor, bound to the exact release commit, not dated in the future, and less
-than 24 hours old when the GitHub Release is published. Validation output
-contains only the evidence source, disabled state, actor, SHA, and timestamp;
-it never prints tokens or broader repository metadata.
-
-The attestation variables are operational evidence, not durable configuration.
-After a successful validation, or when abandoning a release attempt, the
-Product Owner removes all four variables. Removing them is also the rollback:
-when API evidence is unavailable, the validator returns to fail-closed refusal.
+GitHub supplies the immutable comment id, author, and creation timestamp. The
+validator accepts only the latest structured decision marker, requires its
+author to be allowlisted, binds it to the PR number and head SHA, and requires
+it to predate the manual merge. `po-approved` remains independently mandatory.
+The PR must report `auto_merge: null`, and its timeline must contain neither an
+`auto_merge_enabled` nor an `auto_merge_disabled` event. A later `revoked`
+decision marker makes validation fail closed.
 
 ## Refusal conditions
 
@@ -126,10 +111,9 @@ The Jira Done plan is refused when any evidence is missing, the ticket is not
 In Review, the ticket lacks `codex-ready`, it is blocked, or its type is Epic.
 A closed or merged functional PR is never sufficient evidence for Done.
 
-In manual mode, repository auto-merge validation refuses with explicit reasons when the API
-reports enabled, evidence is unavailable, an attestation is incomplete, its
-actor is not allowlisted, its SHA differs, its date is invalid or in the
-future, or it is 24 hours old or older.
+In manual mode, validation refuses when the structured decision is missing,
+revoked, untraceable, written by a non-allowlisted actor, bound to another PR
+or SHA, dated after merge, or when any PR auto-merge evidence exists.
 
 The required check list is selected from the integrity-checked manifest
 profile. An empty profile list, unsupported profile, missing check, pending
@@ -147,8 +131,9 @@ not block the release.
 `gate-1` profile, a `release/v...` branch, `policy-approved`, allowlisted author
 and merger, and a successful `pr-policy` check on the exact release-branch SHA.
 It explicitly rejects `po-approved` and every application/PROD profile. The
-retained `solo-owner` path continues to require manual evidence and refuses
-configured PR auto-merge.
+retained `manual-po` path continues to require traceable manual evidence and
+refuses configured PR auto-merge or any auto-merge timeline event. Global
+repository auto-merge state does not decide the manual PR outcome.
 
 ## Public repository protections
 
@@ -159,7 +144,8 @@ tokens, internal hostnames, or environment values.
 The release workflow:
 
 - is triggered from trusted release metadata, not `pull_request_target`;
-- uses only `contents: read`, `checks: read`, and `pull-requests: read`; all
+- uses only `contents: read`, `checks: read`, `issues: read`, and
+  `pull-requests: read`; all
   unspecified token permissions remain `none`;
 - checks out the immutable published tag;
 - persists no checkout credentials;

@@ -19,12 +19,13 @@ test("release workflow declares every required read permission", async () => {
   assert.ok(permissions);
   assert.match(permissions, /contents: read/);
   assert.match(permissions, /checks: read/);
+  assert.match(permissions, /issues: read/);
   assert.match(permissions, /pull-requests: read/);
   assert.doesNotMatch(permissions, /:\s*write/);
   assert.doesNotMatch(permissions, /administration:/);
   assert.equal(
     permissions.trim(),
-    ["contents: read", "  checks: read", "  pull-requests: read"].join("\n"),
+    ["contents: read", "  checks: read", "  issues: read", "  pull-requests: read"].join("\n"),
   );
 });
 
@@ -57,17 +58,7 @@ test("release workflow uses fail-closed policy approval evidence", async () => {
     workflow,
     /RELEASE_PUBLISHED_AT: \$\{\{ github\.event\.release\.published_at \}\}/,
   );
-  for (const variable of [
-    "REPOSITORY_AUTO_MERGE_ATTESTED_STATE",
-    "REPOSITORY_AUTO_MERGE_ATTESTED_BY",
-    "REPOSITORY_AUTO_MERGE_ATTESTED_SHA",
-    "REPOSITORY_AUTO_MERGE_ATTESTED_AT",
-  ]) {
-    assert.match(
-      workflow,
-      new RegExp(`${variable}: \\$\\{\\{ vars\\.${variable} \\}\\}`),
-    );
-  }
+  assert.doesNotMatch(workflow, /REPOSITORY_AUTO_MERGE_ATTESTED_/);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 

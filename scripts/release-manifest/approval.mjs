@@ -1,4 +1,4 @@
-const SOLO_OWNER_MODE = "solo-owner";
+const MANUAL_PO_MODE = "manual-po";
 const AUTOMATED_POLICY_MODE = "automated-policy";
 const PRODUCT_OWNER_LABEL = "po-approved";
 const POLICY_APPROVED_LABEL = "policy-approved";
@@ -20,7 +20,6 @@ function refuse(reason) {
   throw error;
 }
 
-const MAX_ATTESTATION_AGE_MS = 24 * 60 * 60 * 1000;
 const UTC_TIMESTAMP_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -38,62 +37,36 @@ function timestamp(value) {
   return new Date(parsed).toISOString() === canonicalInput ? parsed : undefined;
 }
 
-function validateRepositoryAutoMerge({
-  repository,
-  allowedActors,
-  releaseCommit,
-  releasePublishedAt,
-  attestation,
-}) {
-  if (repository.allow_auto_merge === true) {
-    refuse("repository_auto_merge_enabled");
-  }
-  if (repository.allow_auto_merge === false) {
-    return { source: "github_api", state: "disabled" };
-  }
-
-  const proof = {
-    state: String(attestation?.state ?? "").trim(),
-    actor: String(attestation?.actor ?? "").trim(),
-    sha: String(attestation?.sha ?? "").trim(),
-    at: String(attestation?.at ?? "").trim(),
-  };
-  const populated = Object.values(proof).filter(Boolean).length;
-  if (populated === 0) refuse("repository_auto_merge_state_unavailable");
-  if (populated !== 4) refuse("repository_auto_merge_attestation_incomplete");
-  if (proof.state !== "disabled") {
-    refuse("repository_auto_merge_state_unavailable");
-  }
-  if (!allowedActors.includes(proof.actor)) {
-    refuse("repository_auto_merge_attestation_actor_not_allowed");
+function validateManualPoDecision({ decision, pullRequest, allowedActors }) {
+  if (!decision) refuse("manual_po_decision_missing");
+  if (decision.decision !== "approved") refuse("manual_po_decision_not_approved");
+  if (decision.pullRequest !== pullRequest.number) {
+    refuse("manual_po_decision_pr_mismatch");
   }
   if (
-    !COMMIT_SHA_PATTERN.test(String(releaseCommit ?? "")) ||
-    !COMMIT_SHA_PATTERN.test(proof.sha) ||
-    proof.sha.toLowerCase() !== releaseCommit.toLowerCase()
+    !COMMIT_SHA_PATTERN.test(decision.headSha ?? "") ||
+    decision.headSha.toLowerCase() !== String(pullRequest.head?.sha ?? "").toLowerCase()
   ) {
-    refuse("repository_auto_merge_attestation_sha_mismatch");
+    refuse("manual_po_decision_sha_mismatch");
   }
-
-  const attestedAt = timestamp(proof.at);
-  const publishedAt = timestamp(releasePublishedAt);
-  if (
-    attestedAt === undefined ||
-    publishedAt === undefined ||
-    attestedAt > publishedAt
-  ) {
-    refuse("repository_auto_merge_attestation_invalid_date");
+  if (!allowedActors.includes(decision.actor)) {
+    refuse("manual_po_decision_actor_not_allowed");
   }
-  if (publishedAt - attestedAt >= MAX_ATTESTATION_AGE_MS) {
-    refuse("repository_auto_merge_attestation_expired");
+  if (!Number.isSafeInteger(decision.commentId) || decision.commentId <= 0) {
+    refuse("manual_po_decision_not_traceable");
   }
-
+  const decidedAt = timestamp(decision.createdAt);
+  const mergedAt = timestamp(pullRequest.merged_at);
+  if (decidedAt === undefined || mergedAt === undefined || decidedAt > mergedAt) {
+    refuse("manual_po_decision_invalid_date");
+  }
   return {
-    source: "po_attestation",
-    state: "disabled",
-    actor: proof.actor,
-    sha: proof.sha,
-    at: proof.at,
+    source: "github_issue_comment",
+    actor: decision.actor,
+    commentId: decision.commentId,
+    createdAt: decision.createdAt,
+    pullRequest: decision.pullRequest,
+    headSha: decision.headSha,
   };
 }
 
@@ -102,13 +75,12 @@ export function validateReleaseApproval({
   pullRequest,
   repository,
   allowedActors,
-  releaseCommit,
-  releasePublishedAt,
-  repositoryAutoMergeAttestation,
+  manualPoDecision,
+  autoMergeEvents = [],
   releaseProfile,
   policyCheckRuns = [],
 }) {
-  if (![SOLO_OWNER_MODE, AUTOMATED_POLICY_MODE].includes(approvalMode)) {
+  if (![MANUAL_PO_MODE, AUTOMATED_POLICY_MODE].includes(approvalMode)) {
     refuse("approval_mode_not_supported");
   }
 
@@ -164,30 +136,62 @@ export function validateReleaseApproval({
   }
 
   if (!labels.includes(PRODUCT_OWNER_LABEL)) refuse("po_approved_label_missing");
+  if (labels.includes(POLICY_APPROVED_LABEL)) {
+    refuse("policy_approved_forbidden_in_manual_po");
+  }
   if (pullRequest.auto_merge !== null) refuse("auto_merge_was_configured");
-  const repositoryAutoMerge = validateRepositoryAutoMerge({
-    repository,
+  if (autoMergeEvents.length > 0) refuse("auto_merge_event_detected");
+  const productOwnerDecision = validateManualPoDecision({
+    decision: manualPoDecision,
+    pullRequest,
     allowedActors: actors,
-    releaseCommit,
-    releasePublishedAt,
-    attestation: repositoryAutoMergeAttestation,
   });
 
   return {
-    approvalMode: SOLO_OWNER_MODE,
+    approvalMode: MANUAL_PO_MODE,
     productOwnerLabel: PRODUCT_OWNER_LABEL,
     author,
     mergedBy,
     manuallyMerged: true,
     humanApproved: true,
     approvalValidated: true,
-    repositoryAutoMerge,
+    productOwnerDecision,
   };
 }
 
 export function validateSoloOwnerApproval(input) {
-  if (input.approvalMode !== SOLO_OWNER_MODE) refuse("approval_mode_not_supported");
+  if (input.approvalMode !== MANUAL_PO_MODE) refuse("approval_mode_not_supported");
   return validateReleaseApproval(input);
+}
+
+export function parseManualPoDecision(body) {
+  const match = /<!-- manual-po-decision\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
+  if (!match) return undefined;
+  try {
+    const value = JSON.parse(match[1]);
+    return value?.schemaVersion === 1 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function selectManualPoDecision(comments, { pullRequestNumber, headSha }) {
+  const markers = (comments ?? [])
+    .map((comment) => ({ comment, decision: parseManualPoDecision(comment.body) }))
+    .filter(({ decision }) => decision)
+    .sort((left, right) => Number(right.comment.id) - Number(left.comment.id));
+  if (markers.length === 0) return undefined;
+  const { comment, decision } = markers[0];
+  return {
+    decision: decision.decision,
+    pullRequest: decision.pullRequest,
+    headSha: decision.headSha,
+    actor: comment.user?.login,
+    commentId: Number(comment.id),
+    createdAt: comment.created_at,
+    expectedPullRequest: pullRequestNumber,
+    expectedHeadSha: headSha,
+  };
 }
 
 export async function fetchSoloOwnerApprovalEvidence({
@@ -229,10 +233,29 @@ export async function fetchSoloOwnerApprovalEvidence({
   }
 
   const pullRequest = await pullRequestResponse.json();
-  const policyCheckResponse = await fetchImpl(
-    `https://api.github.com/repos/${repositoryName}/commits/${pullRequest.head?.sha}/check-runs?per_page=100`,
-    { headers },
-  );
+  async function pages(path, label) {
+    const values = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const response = await fetchImpl(
+        `https://api.github.com${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`,
+        { headers },
+      );
+      if (!response.ok) throw new Error(`GitHub ${label} request failed (${response.status}).`);
+      const result = await response.json();
+      if (!Array.isArray(result)) throw new Error(`Invalid GitHub ${label} evidence.`);
+      values.push(...result);
+      if (result.length < 100) return values;
+    }
+    throw new Error(`GitHub ${label} pagination limit exceeded.`);
+  }
+  const [policyCheckResponse, comments, timeline] = await Promise.all([
+    fetchImpl(
+      `https://api.github.com/repos/${repositoryName}/commits/${pullRequest.head?.sha}/check-runs?per_page=100`,
+      { headers },
+    ),
+    pages(`/repos/${repositoryName}/issues/${pullRequestNumber}/comments`, "comments"),
+    pages(`/repos/${repositoryName}/issues/${pullRequestNumber}/timeline`, "timeline"),
+  ]);
   if (!policyCheckResponse.ok) {
     throw new Error(`GitHub policy check request failed (${policyCheckResponse.status}).`);
   }
@@ -243,6 +266,13 @@ export async function fetchSoloOwnerApprovalEvidence({
     policyCheckRuns: Array.isArray(policyChecks.check_runs)
       ? policyChecks.check_runs
       : [],
+    manualPoDecision: selectManualPoDecision(comments, {
+      pullRequestNumber,
+      headSha: pullRequest.head?.sha,
+    }),
+    autoMergeEvents: timeline
+      .filter((event) => ["auto_merge_enabled", "auto_merge_disabled"].includes(event.event))
+      .map((event) => ({ event: event.event, id: event.id, createdAt: event.created_at })),
   };
 }
 
@@ -250,5 +280,5 @@ export {
   AUTOMATED_POLICY_MODE,
   POLICY_APPROVED_LABEL,
   PRODUCT_OWNER_LABEL,
-  SOLO_OWNER_MODE,
+  MANUAL_PO_MODE,
 };

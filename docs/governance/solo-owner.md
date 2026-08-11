@@ -17,8 +17,11 @@ mandatory for production with real data and sensitive operations.
 6. The Product Owner manually reviews the diff, acceptance criteria, tests,
    risks, and rollback.
 7. The Product Owner alone completes the checklist and adds `po-approved`.
-8. The Product Owner alone marks the PR Ready for review.
-9. The Product Owner alone merges from the GitHub interface.
+8. The Product Owner posts the structured decision marker documented in the
+   release runbook, bound to the exact PR number and head SHA.
+9. The Product Owner alone marks the PR Ready for review.
+10. The Product Owner alone merges from the GitHub interface, without enabling
+    auto-merge on that PR.
 
 ## Reserved evidence
 
@@ -41,6 +44,7 @@ unchecked:
 - [ ] Security and residual risks reviewed
 - [ ] Rollback reviewed
 - [ ] `po-approved` added manually
+- [ ] SHA-bound `manual-po-decision` comment posted manually
 - [ ] PR marked Ready manually
 - [ ] Merge performed manually without bypass
 
@@ -56,7 +60,8 @@ For `develop` and `main`:
 - linear history;
 - force pushes and branch deletion disabled;
 - enforcement for the administrator;
-- auto-merge disabled.
+- repository auto-merge may remain enabled for `automated-policy`, but the
+  `manual-po` PR has `auto_merge: null` and no auto-merge timeline event.
 
 Until baseline workflows are present on the target branch, required check names
 must not be invented: doing so could make the bootstrap PR impossible to merge.
