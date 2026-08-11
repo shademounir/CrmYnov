@@ -1,0 +1,39 @@
+name: Tâche technique
+description: Documenter une tâche technique reliée à Jira.
+title: "[CRMY-XXX] "
+labels:
+  - technical
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ne saisissez aucun secret, identifiant ou donnée personnelle.
+  - type: input
+    id: jira
+    attributes:
+      label: Ticket Jira
+      description: Clé CRMY obligatoire.
+      placeholder: CRMY-123
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Résultat attendu
+      description: Décrire le résultat technique, sans étendre le périmètre du ticket.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Critères de sortie
+      description: Lister les preuves attendues.
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback
+      description: Décrire le retour arrière.
+    validations:
+      required: true

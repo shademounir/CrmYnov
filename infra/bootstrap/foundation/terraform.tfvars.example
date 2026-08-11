@@ -1,0 +1,9 @@
+# Copy to an untracked *.tfvars file only for a separately authorized execution.
+# The value below is deliberately non-functional and contains no billing identifier.
+billing_account_id = "INJECT_SECURELY_AT_EXECUTION"
+
+# The billing API returned USD during Gate -1. The PO must approve actual USD
+# amounts before apply; the provisional MAD amounts must not be copied here.
+budget_currency = "USD"
+
+# budget_amounts is intentionally omitted until that financial arbitration.

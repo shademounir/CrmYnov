@@ -1,0 +1,74 @@
+name: Prepare release manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version, for example v0.1.0-gate.1
+        required: true
+        type: string
+      profile:
+        description: Validated release profile
+        required: true
+        type: choice
+        default: gate-1
+        options:
+          - gate-1
+          - application
+      tickets:
+        description: Comma-separated CRMY ticket keys
+        required: true
+        type: string
+      target_sha:
+        description: Full commit SHA from develop
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    if: github.actor == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Validate release tooling
+        run: npm run test:release-manifest
+
+      - name: Verify target is a commit from develop
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.target_sha }}" =~ ^[0-9a-fA-F]{40}$ ]]
+          git fetch --no-tags origin develop
+          git cat-file -e "${{ inputs.target_sha }}^{commit}"
+          git merge-base --is-ancestor "${{ inputs.target_sha }}" origin/develop
+
+      - name: Build immutable manifest
+        run: >-
+          node scripts/release-manifest/cli.mjs
+          --version "${{ inputs.version }}"
+          --profile "${{ inputs.profile }}"
+          --sha "${{ inputs.target_sha }}"
+          --tickets "${{ inputs.tickets }}"
+          --output release-manifest.json
+
+      - name: Upload manifest for human-reviewed release PR
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-manifest-${{ inputs.version }}
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 14

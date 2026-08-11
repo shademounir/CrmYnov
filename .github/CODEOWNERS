@@ -1,0 +1,8 @@
+# Gouvernance globale
+* @shademounir
+
+# Zones sensibles
+/.github/ @shademounir
+/infra/ @shademounir
+/docs/security/ @shademounir
+/SECURITY.md @shademounir
