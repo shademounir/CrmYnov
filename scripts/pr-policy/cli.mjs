@@ -13,7 +13,6 @@ function required(name) {
 const repository = required("GITHUB_REPOSITORY");
 const token = required("GITHUB_TOKEN");
 const pullNumber = Number(required("PR_NUMBER"));
-const checkSha = required("GITHUB_SHA");
 const api = "https://api.github.com";
 const headers = {
   Accept: "application/vnd.github+json",
@@ -62,6 +61,10 @@ if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) {
 }
 
 const pull = await github(`/repos/${repository}/pulls/${pullNumber}`);
+const checkSha = pull.head?.sha;
+if (!/^[0-9a-f]{40}$/i.test(checkSha ?? "")) {
+  throw new Error("Invalid pull request head SHA.");
+}
 const [files, comments, comparison, checks] = await Promise.all([
   pages(`/repos/${repository}/pulls/${pullNumber}/files`),
   pages(`/repos/${repository}/issues/${pullNumber}/comments`),
