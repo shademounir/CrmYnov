@@ -1,4 +1,4 @@
-# Runbook — Human-validated release process
+# Runbook — Policy-validated release process
 
 ## Principle
 
@@ -45,7 +45,7 @@ The `application` profile remains fail-closed and additionally requires
 as available by this technical release. Any application release attempted
 before they exist will fail because required checks are absent.
 
-## Required human sequence
+## Required release sequence
 
 1. Confirm every included functional PR is merged into `develop`, reviewed, and
    green.
@@ -54,11 +54,12 @@ before they exist will fail because required checks are absent.
    data.
 4. Open a release PR from `release/<version>` to `main`. This is a separate
    future authorization; the current preparation PR targets only `develop`.
-5. The Product Owner reviews the diff, acceptance criteria, tests, risks, and
-   rollback, completes the PR checklist, adds `po-approved`, and marks the PR
-   ready for review manually.
-6. The Product Owner merges the release PR manually without bypassing
-   protection. Codex and GitHub Actions must never perform these actions.
+5. For a technical Gate, Codex records the SHA-bound Jira audit, adds
+   `policy-approved`, marks the PR Ready, and waits for `pr-policy` plus every
+   required Gate check. For PROD or an application profile, the Product Owner
+   instead records a manual decision and adds `po-approved`.
+6. Merge by squash without bypass. Technical Gates may use native auto-merge or
+   the explicitly authorized Codex fallback. PROD remains a manual PO merge.
 7. Confirm the four Gate-1 checks completed successfully on the exact resulting
    `main` SHA. For the first technical release, follow the bootstrap procedure
    in `docs/runbooks/gate1-first-release.md`.
@@ -67,11 +68,14 @@ before they exist will fail because required checks are absent.
 10. Let `release-publish.yml` prove:
    - the release was published by the authorized actor;
    - the tag commit is in `main`;
-   - the tagged commit is associated with a human-merged release PR to `main`;
-   - `RELEASE_APPROVAL_MODE` is exactly `solo-owner`;
-   - the release PR is non-Draft, authored and merged by an allowlisted actor,
-     carries `po-approved`, has no auto-merge request, and repository auto-merge
-     is disabled;
+   - the tagged commit is associated with a validated release PR to `main`;
+   - `RELEASE_APPROVAL_MODE` is `automated-policy` for a technical Gate or
+     `manual-po` for the retained manual path;
+   - an automated Gate carries `policy-approved`, has a successful `pr-policy`
+     check on the release branch SHA, and was merged by an allowlisted actor;
+   - a manual release carries `po-approved`, has no auto-merge request or
+     auto-merge timeline event, and has a traceable Product Owner decision
+     bound to the exact PR number and head SHA;
    - the manifest source commit belongs to that release PR, including when the
      PR was squash-merged;
    - every explicitly required check is present, completed, and successful;
@@ -79,28 +83,57 @@ before they exist will fail because required checks are absent.
    - each Jira ticket is listed in that manifest.
 11. Review the dry-run output. No Jira mutation is currently permitted.
 
+## Manual Product Owner decision evidence
+
+Repository auto-merge may stay enabled for technical `automated-policy` PRs.
+The `manual-po` proof is deliberately scoped to the sensitive PR and remains
+fail-closed. The release workflow uses only read permissions (`contents`,
+`checks`, `issues`, and `pull-requests`) and no administrator PAT.
+
+After reviewing the exact head SHA, the Product Owner posts this PR comment
+manually, replacing the placeholders:
+
+```text
+<!-- manual-po-decision {"schemaVersion":1,"decision":"approved","pullRequest":<number>,"headSha":"<40-character SHA>"} -->
+```
+
+GitHub supplies the immutable comment id, author, and creation timestamp. The
+validator accepts only the latest structured decision marker, requires its
+author to be allowlisted, binds it to the PR number and head SHA, and requires
+it to predate the manual merge. `po-approved` remains independently mandatory.
+The PR must report `auto_merge: null`, and its timeline must contain neither an
+`auto_merge_enabled` nor an `auto_merge_disabled` event. A later `revoked`
+decision marker makes validation fail closed.
+
 ## Refusal conditions
 
 The Jira Done plan is refused when any evidence is missing, the ticket is not
 In Review, the ticket lacks `codex-ready`, it is blocked, or its type is Epic.
 A closed or merged functional PR is never sufficient evidence for Done.
 
+In manual mode, validation refuses when the structured decision is missing,
+revoked, untraceable, written by a non-allowlisted actor, bound to another PR
+or SHA, dated after merge, or when any PR auto-merge evidence exists.
+
 The required check list is selected from the integrity-checked manifest
 profile. An empty profile list, unsupported profile, missing check, pending
 check, failed check, or check attached to a SHA other than the exact release
 commit refuses validation. A Draft or unmerged release PR, a base other than
-`main`, configured auto-merge, missing `po-approved`, absent ticket, or Epic
-closure is also refused.
+`main`, missing mode-specific evidence, absent ticket, or Epic closure is also
+refused.
 
 Check runs are retrieved with `per_page=100` until `total_count` is reached.
 Missing pages, missing checks, pending checks, cancelled checks, and any
 conclusion other than `success` refuse Jira completion. Additional checks do
 not block the release.
 
-`RELEASE_APPROVAL_MODE` is also mandatory and must equal `solo-owner`. A
-missing value, any other value, a Draft release PR, a missing `po-approved`
-label, an unauthorized author or merger, or auto-merge evidence refuses Jira
-completion.
+`RELEASE_APPROVAL_MODE` is mandatory. `automated-policy` accepts only the
+`gate-1` profile, a `release/v...` branch, `policy-approved`, allowlisted author
+and merger, and a successful `pr-policy` check on the exact release-branch SHA.
+It explicitly rejects `po-approved` and every application/PROD profile. The
+retained `manual-po` path continues to require traceable manual evidence and
+refuses configured PR auto-merge or any auto-merge timeline event. Global
+repository auto-merge state does not decide the manual PR outcome.
 
 ## Public repository protections
 
@@ -111,7 +144,8 @@ tokens, internal hostnames, or environment values.
 The release workflow:
 
 - is triggered from trusted release metadata, not `pull_request_target`;
-- uses only `contents: read`, `checks: read`, and `pull-requests: read`; all
+- uses only `contents: read`, `checks: read`, `issues: read`, and
+  `pull-requests: read`; all
   unspecified token permissions remain `none`;
 - checks out the immutable published tag;
 - persists no checkout credentials;
@@ -134,3 +168,7 @@ If a future active synchronization completes an incorrect ticket, disable the
 sync, revoke the Jira token, inspect the audit log, and request a Jira
 Administrator to decide whether the controlled `Réouvrir` transition is
 appropriate.
+
+`v0.1.0-gate.1` is retained as the failed published attempt and must never be
+rewritten. Any corrected Gate-1 publication uses the next version
+`v0.1.0-gate.2` after separate Product Owner authorization.

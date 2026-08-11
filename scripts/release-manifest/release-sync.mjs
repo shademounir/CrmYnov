@@ -29,7 +29,7 @@ for (const issueKey of manifest.tickets) {
     releaseTag,
     sourceIncludedInReleasePr:
       process.env.RELEASE_SOURCE_INCLUDED === "true",
-    humanApproved: process.env.RELEASE_HUMAN_APPROVED === "true",
+    approvalValidated: process.env.RELEASE_APPROVAL_VALIDATED === "true",
     ciGreen: process.env.RELEASE_CI_GREEN === "true",
     mergedToMain: process.env.RELEASE_MERGED_TO_MAIN === "true",
     releasePublished: process.env.RELEASE_PUBLISHED === "true",

@@ -52,29 +52,29 @@ ci(CRMY-25): add quality and security checks
 
 Toutes les PR fonctionnelles ciblent `develop`. `main` reçoit uniquement des PR de release validées.
 
-Une PR doit :
+Une PR en mode `automated-policy` doit :
 
 1. contenir la clé Jira dans son titre ;
 2. utiliser le modèle fourni ;
 3. rester limitée au ticket annoncé ;
 4. inclure les preuves de tests et l’analyse de sécurité ;
-5. faire l’objet d’une revue manuelle du diff par le Product Owner ;
-6. recevoir manuellement le label `po-approved` du Product Owner ;
-7. être passée manuellement en Ready par le Product Owner ;
-8. résoudre toutes les conversations ;
-9. être à jour avec sa branche cible ;
-10. réussir tous les contrôles obligatoires ;
-11. être fusionnée manuellement par squash par le Product Owner lorsque la
-    fusion est autorisée.
+5. recevoir `policy-approved` après audit Codex lié au SHA exact ;
+6. ne jamais porter `po-approved` ;
+7. résoudre toutes les conversations ;
+8. être à jour avec sa branche cible ;
+9. réussir tous les contrôles obligatoires, dont `pr-policy` ;
+10. être fusionnée par squash, via l’auto-merge natif ou le fallback Codex
+    explicitement autorisé, sans bypass.
 
-Codex ne peut ni valider la PR au nom du Product Owner, ni cocher sa checklist,
-ni ajouter ou retirer `po-approved`, ni passer la PR en Ready, ni activer
-l’auto-merge, ni effectuer la fusion.
+Codex peut auditer, ajouter `policy-approved`, passer Ready, activer
+l’auto-merge et fusionner lorsque la politique automatisée est entièrement
+satisfaite. Il ne peut jamais ajouter `po-approved` ni utiliser
+`policy-approved` comme preuve d’approbation humaine.
 
-Limite d’audit : Codex agit techniquement avec le même compte GitHub que le
-Product Owner, mais il lui est procéduralement interdit d’accomplir les actions
-réservées au Product Owner. Le besoin d’un second reviewer doit être réévalué
-avant l’ouverture de PROD à des données réelles.
+Le mode `manual-po` reste obligatoire pour PROD avec données réelles,
+Terraform `apply`/`destroy`, IAM, facturation, secrets, migrations destructives
+et exceptions de sécurité. Ces opérations exigent une décision, un commentaire
+et une action manuelle du Product Owner.
 
 ## Données et secrets
 

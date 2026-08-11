@@ -19,8 +19,14 @@ test("release workflow declares every required read permission", async () => {
   assert.ok(permissions);
   assert.match(permissions, /contents: read/);
   assert.match(permissions, /checks: read/);
+  assert.match(permissions, /issues: read/);
   assert.match(permissions, /pull-requests: read/);
   assert.doesNotMatch(permissions, /:\s*write/);
+  assert.doesNotMatch(permissions, /administration:/);
+  assert.equal(
+    permissions.trim(),
+    ["contents: read", "  checks: read", "  issues: read", "  pull-requests: read"].join("\n"),
+  );
 });
 
 test("workflows never use pull_request_target", async () => {
@@ -28,7 +34,7 @@ test("workflows never use pull_request_target", async () => {
   assert.equal(workflow.includes("pull_request_target"), false);
 });
 
-test("release workflow uses fail-closed solo-owner approval evidence", async () => {
+test("release workflow uses fail-closed policy approval evidence", async () => {
   const workflow = await readFile(releaseWorkflowUrl, "utf8");
   assert.match(
     workflow,
@@ -37,13 +43,23 @@ test("release workflow uses fail-closed solo-owner approval evidence", async () 
   assert.match(workflow, /verify-approval\.mjs/);
   assert.match(
     workflow,
-    /RELEASE_HUMAN_APPROVED: \$\{\{ steps\.approval\.outputs\.human_approved \}\}/,
+    /RELEASE_APPROVAL_VALIDATED: \$\{\{ steps\.approval\.outputs\.approval_validated \}\}/,
   );
   assert.doesNotMatch(workflow, /independent_approvals|\/reviews/);
   assert.doesNotMatch(
     workflow,
     /gh pr (?:ready|merge)|--auto-merge|issues\/.*\/labels/,
   );
+  assert.match(
+    workflow,
+    /RELEASE_COMMIT: \$\{\{ steps\.evidence\.outputs\.release_commit \}\}/,
+  );
+  assert.match(
+    workflow,
+    /RELEASE_PUBLISHED_AT: \$\{\{ github\.event\.release\.published_at \}\}/,
+  );
+  assert.doesNotMatch(workflow, /REPOSITORY_AUTO_MERGE_ATTESTED_/);
+  assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 
 test("main release gate covers pull requests, pushes and controlled dispatch", async () => {
