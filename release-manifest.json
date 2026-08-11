@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "version": "v0.1.0-gate.1",
+  "profile": "gate-1",
+  "targetCommit": "b6ef8ac49da851162c7b4601df34d4f7aad3cae0",
+  "projectKey": "CRMY",
+  "tickets": [
+    "CRMY-108",
+    "CRMY-109"
+  ],
+  "sha256": "f5da886f118aaad09912675cc08b04a4fb2a5e04d822b41418248d8c42faabe3"
+}
