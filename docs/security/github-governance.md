@@ -12,9 +12,9 @@
 `main` et `develop` doivent appliquer :
 
 - pull request obligatoire ;
-- gouvernance `solo-owner` acceptée pour bootstrap, MVP, DEV et STAGING ;
-- validation manuelle par le Product Owner ;
-- label `po-approved` réservé au Product Owner ;
+- gouvernance `automated-policy` pour DEV, STAGING et releases techniques Gate ;
+- gouvernance `manual-po` pour PROD et opérations sensibles ;
+- labels `policy-approved` technique et `po-approved` humain strictement séparés ;
 - checks obligatoires réussis ;
 - conversations résolues ;
 - historique linéaire ;
@@ -27,11 +27,11 @@ Les checks obligatoires seront ajoutés après leur première exécution réussi
 ## Politique de fusion
 
 - Squash merge uniquement.
-- Auto-merge désactivé.
-- Aucune fusion par Codex ou une automatisation.
+- Auto-merge natif autorisé uniquement après validation `automated-policy`.
+- Fusion Codex autorisée sans bypass uniquement dans le périmètre automatisé.
 - Suppression automatique de la branche après fusion.
-- Aucune fusion vers `main` pendant la Gate -1.
-- `main` reçoit uniquement une release explicitement validée.
+- `main` reçoit uniquement une release Gate validée par politique ou une
+  release PROD validée manuellement.
 
 ## Contrôles CI cibles
 

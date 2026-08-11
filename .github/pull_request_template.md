@@ -42,7 +42,16 @@ Décrire la procédure de retour arrière sans réécriture d’historique.
 
 Lister explicitement ce qui n’est pas traité dans cette PR.
 
-## Validation humaine
+## Mode de gouvernance
+
+- [ ] `automated-policy` : audit Codex lié au SHA, label `policy-approved`,
+      checks verts et fusion sans bypass.
+- [ ] `manual-po` : opération sensible ou PROD nécessitant une décision humaine.
+
+`policy-approved` constitue uniquement une preuve technique automatisée et ne
+doit jamais être présenté comme une approbation humaine.
+
+## Validation Product Owner — manual-po uniquement
 
 - [ ] Revue manuelle effectuée par le Product Owner.
 - [ ] Label `po-approved` ajouté manuellement par le Product Owner.
@@ -52,6 +61,7 @@ Lister explicitement ce qui n’est pas traité dans cette PR.
 - [ ] Auto-merge désactivé.
 - [ ] Merge exclusivement manuel.
 
-> Codex et les automatisations ne sont pas autorisés à cocher les validations
-> Product Owner, ajouter `po-approved`, passer la PR en Ready ou effectuer le
-> merge.
+> Codex et les automatisations ne sont jamais autorisés à cocher les validations
+> Product Owner ou à ajouter `po-approved`. En mode `automated-policy`, Codex
+> peut ajouter `policy-approved`, passer Ready et fusionner uniquement lorsque
+> tous les contrôles vérifiables sont satisfaits sans bypass.

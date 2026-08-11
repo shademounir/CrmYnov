@@ -1,5 +1,7 @@
 const SOLO_OWNER_MODE = "solo-owner";
+const AUTOMATED_POLICY_MODE = "automated-policy";
 const PRODUCT_OWNER_LABEL = "po-approved";
+const POLICY_APPROVED_LABEL = "policy-approved";
 
 function normalizedActors(value) {
   const values = Array.isArray(value) ? value : String(value ?? "").split(",");
@@ -95,7 +97,7 @@ function validateRepositoryAutoMerge({
   };
 }
 
-export function validateSoloOwnerApproval({
+export function validateReleaseApproval({
   approvalMode,
   pullRequest,
   repository,
@@ -103,8 +105,12 @@ export function validateSoloOwnerApproval({
   releaseCommit,
   releasePublishedAt,
   repositoryAutoMergeAttestation,
+  releaseProfile,
+  policyCheckRuns = [],
 }) {
-  if (approvalMode !== SOLO_OWNER_MODE) refuse("approval_mode_not_supported");
+  if (![SOLO_OWNER_MODE, AUTOMATED_POLICY_MODE].includes(approvalMode)) {
+    refuse("approval_mode_not_supported");
+  }
 
   const actors = normalizedActors(allowedActors);
   if (actors.length === 0) refuse("allowed_actor_list_empty");
@@ -123,10 +129,41 @@ export function validateSoloOwnerApproval({
   const labels = Array.isArray(pullRequest.labels)
     ? pullRequest.labels.map((label) => label?.name)
     : [];
-  if (!labels.includes(PRODUCT_OWNER_LABEL)) {
-    refuse("po_approved_label_missing");
+  if (approvalMode === AUTOMATED_POLICY_MODE) {
+    if (labels.includes(PRODUCT_OWNER_LABEL)) {
+      refuse("po_approved_forbidden_in_automated_policy");
+    }
+    if (!labels.includes(POLICY_APPROVED_LABEL)) {
+      refuse("policy_approved_label_missing");
+    }
+    if (!/^release\/v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pullRequest.head?.ref ?? "")) {
+      refuse("release_branch_not_allowed");
+    }
+    if (releaseProfile !== "gate-1") refuse("automated_policy_prod_forbidden");
+    const policyRuns = policyCheckRuns
+      .filter((run) => run.name === "pr-policy")
+      .sort((left, right) => Number(right.id ?? 0) - Number(left.id ?? 0));
+    const policyRun = policyRuns[0];
+    if (!policyRun) refuse("pr_policy_check_missing");
+    if (policyRun.status !== "completed") refuse("pr_policy_check_pending");
+    if (
+      policyRun.conclusion !== "success" ||
+      policyRun.head_sha !== pullRequest.head?.sha
+    ) {
+      refuse("pr_policy_check_failed");
+    }
+    return {
+      approvalMode: AUTOMATED_POLICY_MODE,
+      policyLabel: POLICY_APPROVED_LABEL,
+      author,
+      mergedBy,
+      mergeMethod:
+        pullRequest.auto_merge === null ? "codex_controlled" : "native_auto_merge",
+      approvalValidated: true,
+    };
   }
 
+  if (!labels.includes(PRODUCT_OWNER_LABEL)) refuse("po_approved_label_missing");
   if (pullRequest.auto_merge !== null) refuse("auto_merge_was_configured");
   const repositoryAutoMerge = validateRepositoryAutoMerge({
     repository,
@@ -143,8 +180,14 @@ export function validateSoloOwnerApproval({
     mergedBy,
     manuallyMerged: true,
     humanApproved: true,
+    approvalValidated: true,
     repositoryAutoMerge,
   };
+}
+
+export function validateSoloOwnerApproval(input) {
+  if (input.approvalMode !== SOLO_OWNER_MODE) refuse("approval_mode_not_supported");
+  return validateReleaseApproval(input);
 }
 
 export async function fetchSoloOwnerApprovalEvidence({
@@ -185,10 +228,27 @@ export async function fetchSoloOwnerApprovalEvidence({
     );
   }
 
+  const pullRequest = await pullRequestResponse.json();
+  const policyCheckResponse = await fetchImpl(
+    `https://api.github.com/repos/${repositoryName}/commits/${pullRequest.head?.sha}/check-runs?per_page=100`,
+    { headers },
+  );
+  if (!policyCheckResponse.ok) {
+    throw new Error(`GitHub policy check request failed (${policyCheckResponse.status}).`);
+  }
+  const policyChecks = await policyCheckResponse.json();
   return {
-    pullRequest: await pullRequestResponse.json(),
+    pullRequest,
     repository: await repositoryResponse.json(),
+    policyCheckRuns: Array.isArray(policyChecks.check_runs)
+      ? policyChecks.check_runs
+      : [],
   };
 }
 
-export { PRODUCT_OWNER_LABEL, SOLO_OWNER_MODE };
+export {
+  AUTOMATED_POLICY_MODE,
+  POLICY_APPROVED_LABEL,
+  PRODUCT_OWNER_LABEL,
+  SOLO_OWNER_MODE,
+};

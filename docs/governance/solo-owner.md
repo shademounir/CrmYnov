@@ -2,9 +2,10 @@
 
 ## Scope
 
-This governance is accepted for bootstrap, development, MVP, DEV, and STAGING.
-It does not authorize production use with real data. The need for a second
-reviewer must be reassessed before PROD receives real data.
+This document now describes the retained `manual-po` path. DEV, STAGING, and
+technical Gate releases use `automated-policy` as documented in
+`docs/governance/automated-policy.md`. Manual Product Owner evidence remains
+mandatory for production with real data and sensitive operations.
 
 ## Mandatory sequence
 

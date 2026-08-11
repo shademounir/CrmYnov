@@ -64,6 +64,7 @@ test("release evidence proves manifest membership and release PR source", () => 
       releasePublished: true,
     }),
     {
+      approvalValidated: true,
       humanApproved: true,
       ciGreen: true,
       mergedToMain: true,

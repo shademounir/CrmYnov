@@ -6,9 +6,12 @@ export {
   validateRequiredChecks,
 } from "./checks.mjs";
 export {
+  AUTOMATED_POLICY_MODE,
   fetchSoloOwnerApprovalEvidence,
+  POLICY_APPROVED_LABEL,
   PRODUCT_OWNER_LABEL,
   SOLO_OWNER_MODE,
+  validateReleaseApproval,
   validateSoloOwnerApproval,
 } from "./approval.mjs";
 export {
@@ -98,6 +101,7 @@ export function releaseEvidence({
   issueType,
   releaseTag,
   sourceIncludedInReleasePr,
+  approvalValidated,
   humanApproved,
   ciGreen,
   mergedToMain,
@@ -105,6 +109,8 @@ export function releaseEvidence({
 }) {
   const validManifest = validateManifest(manifest);
   return {
+    approvalValidated:
+      approvalValidated === true || humanApproved === true,
     humanApproved: humanApproved === true,
     ciGreen: ciGreen === true,
     mergedToMain: mergedToMain === true,
