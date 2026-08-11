@@ -85,6 +85,8 @@ test("Jira read-only probe is manual, main-only and least-privileged", async () 
     /name: Execute read-only Jira probe[\s\S]*?env:\s*\n\s*JIRA_API_TOKEN: \$\{\{ secrets\.JIRA_API_TOKEN \}\}/,
   );
   assert.match(workflow, /vars\.JIRA_SYNC_ENABLED/);
+  assert.match(workflow, /vars\.JIRA_CLOUD_ID/);
+  assert.match(workflow, /JIRA_SYNC_ALLOWED_ACTORS/);
   assert.doesNotMatch(workflow, /environment:/);
 });
 
@@ -94,6 +96,9 @@ test("Jira read-only probe implementation cannot use write HTTP methods", async 
     "utf8",
   );
   assert.match(probe, /method: "GET"/);
+  assert.match(probe, /redirect: "manual"/);
+  assert.match(probe, /_edge\/tenant_info/);
+  assert.match(probe, /api\.atlassian\.com/);
   assert.doesNotMatch(probe, /method:\s*"(?:POST|PUT|PATCH|DELETE)"/);
   assert.doesNotMatch(probe, /console\.(?:log|dir|table)/);
   assert.doesNotMatch(probe, /process\.env/);
