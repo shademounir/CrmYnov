@@ -10,22 +10,22 @@ variable "display_name" {
 }
 
 variable "currency_code" {
-  description = "ISO 4217 billing currency confirmed from the billing API."
+  description = "Approved Foundation billing currency."
   type        = string
 
   validation {
-    condition     = can(regex("^[A-Z]{3}$", var.currency_code))
-    error_message = "currency_code must be a three-letter ISO 4217 code."
+    condition     = var.currency_code == "USD"
+    error_message = "currency_code must remain USD for Foundation budgets."
   }
 }
 
-variable "amount" {
-  description = "Monthly budget amount in currency_code."
+variable "amount_cents" {
+  description = "Monthly budget amount expressed as integer cents."
   type        = number
 
   validation {
-    condition     = var.amount > 0
-    error_message = "amount must be greater than zero."
+    condition     = var.amount_cents > 0 && var.amount_cents == floor(var.amount_cents)
+    error_message = "amount_cents must be a strictly positive integer number of cents."
   }
 }
 

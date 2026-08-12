@@ -26,6 +26,11 @@ const wifRoot = path.join(infra, "bootstrap", "wif");
 const wifFiles = filesBelow(wifRoot, (file) => file.endsWith(".tf"));
 const wif = wifFiles.map((file) => readFileSync(file, "utf8")).join("\n");
 const wifMain = readFileSync(path.join(wifRoot, "main.tf"), "utf8");
+const foundationRoot = path.join(infra, "bootstrap", "foundation");
+const foundationVariables = readFileSync(path.join(foundationRoot, "variables.tf"), "utf8");
+const foundationExample = readFileSync(path.join(foundationRoot, "terraform.tfvars.example"), "utf8");
+const budgetModuleMain = readFileSync(path.join(infra, "modules", "budget", "main.tf"), "utf8");
+const budgetModuleVariables = readFileSync(path.join(infra, "modules", "budget", "variables.tf"), "utf8");
 
 test("approved project IDs are exact", () => {
   for (const projectId of [
@@ -55,6 +60,78 @@ test("Terraform billing roles are additive and exclude billing administration", 
   assert.match(billingUser, /member\s*=\s*local\.terraform_bootstrap_member/);
   assert.match(costsManager, /member\s*=\s*local\.terraform_bootstrap_member/);
   assert.doesNotMatch(terraform, /roles\/billing\.admin/i);
+});
+
+test("Foundation budgets use exact integer cents and exact units/nanos pairs", () => {
+  const approvedCents = {
+    bootstrap: 833,
+    dev: 4167,
+    staging: 3333,
+    prod: 10000,
+    folder: 18333,
+  };
+  const expectedMoney = {
+    bootstrap: { units: 8, nanos: 330000000 },
+    dev: { units: 41, nanos: 670000000 },
+    staging: { units: 33, nanos: 330000000 },
+    prod: { units: 100, nanos: 0 },
+    folder: { units: 183, nanos: 330000000 },
+  };
+
+  for (const [name, cents] of Object.entries(approvedCents)) {
+    assert.match(foundationExample, new RegExp(`${name}\\s*=\\s*${cents}\\b`));
+    const actual = { units: Math.floor(cents / 100), nanos: (cents % 100) * 10000000 };
+    assert.deepEqual(actual, expectedMoney[name]);
+    assert.ok(actual.nanos >= 0 && actual.nanos <= 999999999);
+    assert.equal(actual.nanos % 10000000, 0);
+  }
+
+  assert.equal(
+    approvedCents.bootstrap + approvedCents.dev + approvedCents.staging + approvedCents.prod,
+    approvedCents.folder,
+  );
+  assert.match(budgetModuleMain, /amount_units\s*=\s*floor\(var\.amount_cents\s*\/\s*100\)/);
+  assert.match(budgetModuleMain, /amount_nanos\s*=\s*\(var\.amount_cents\s*%\s*100\)\s*\*\s*10000000/);
+  assert.doesNotMatch(budgetModuleMain, /var\.amount\b/);
+  assert.doesNotMatch(budgetModuleMain, /\+\s*1\b/);
+  assert.doesNotMatch(budgetModuleMain, /round\s*\(/);
+});
+
+test("Foundation budget validations fail closed", () => {
+  const validAmount = (value) => Number.isInteger(value) && value > 0;
+  for (const invalid of [-1, 0, 833.5]) assert.equal(validAmount(invalid), false);
+
+  assert.match(foundationVariables, /amount_cents\s*>\s*0\s*&&\s*amount_cents\s*==\s*floor\(amount_cents\)/);
+  assert.match(foundationVariables, /var\.budget_amount_cents\.bootstrap[\s\S]*var\.budget_amount_cents\.folder/);
+  assert.match(budgetModuleVariables, /var\.amount_cents\s*>\s*0\s*&&\s*var\.amount_cents\s*==\s*floor\(var\.amount_cents\)/);
+  assert.match(budgetModuleVariables, /var\.currency_code\s*==\s*"USD"/);
+  assert.match(budgetModuleMain, /local\.amount_nanos\s*>=\s*0/);
+  assert.match(budgetModuleMain, /local\.amount_nanos\s*<=\s*999999999/);
+  assert.match(budgetModuleMain, /local\.amount_nanos\s*%\s*10000000\s*==\s*0/);
+
+  const invalidFolder = { bootstrap: 833, dev: 4167, staging: 3333, prod: 10000, folder: 18334 };
+  assert.notEqual(
+    invalidFolder.bootstrap + invalidFolder.dev + invalidFolder.staging + invalidFolder.prod,
+    invalidFolder.folder,
+  );
+});
+
+test("Foundation budget regression signatures cannot reappear in Terraform", () => {
+  const foundationTerraform = filesBelow(foundationRoot, (file) => file.endsWith(".tf"))
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+  const budgetTerraform = [budgetModuleMain, budgetModuleVariables].join("\n");
+  for (const signature of ["329999999", "669999999", "8.329999999", "33.329999999", "183.329999999"])
+    assert.ok(!foundationTerraform.includes(signature) && !budgetTerraform.includes(signature));
+});
+
+test("Foundation budget alert thresholds remain unchanged", () => {
+  for (const pattern of [
+    /threshold_percent\s*=\s*0\.50[\s\S]*spend_basis\s*=\s*"CURRENT_SPEND"/,
+    /threshold_percent\s*=\s*0\.80[\s\S]*spend_basis\s*=\s*"CURRENT_SPEND"/,
+    /threshold_percent\s*=\s*1\.00[\s\S]*spend_basis\s*=\s*"CURRENT_SPEND"/,
+    /threshold_percent\s*=\s*1\.00[\s\S]*spend_basis\s*=\s*"FORECASTED_SPEND"/,
+  ]) assert.match(budgetModuleMain, pattern);
 });
 
 test("WIF binds exact repository identity, branch, and environment", () => {

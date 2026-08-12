@@ -1,11 +1,13 @@
 # Budget policy
 
-The billing API returned `USD`. The Product Owner's provisional limits are
-expressed as MAD equivalents: Bootstrap 100, DEV 200, STAGING 100, PROD 100,
-and total 500. No exchange rate or converted USD value is embedded in code.
+The billing currency is `USD`. The Product Owner approved monthly alert budgets
+of USD 8.33 for Bootstrap, USD 41.67 for DEV, USD 33.33 for STAGING, USD 100.00
+for PROD, and USD 183.33 for the aggregate four-project folder budget.
 
-Before any apply, the Product Owner must approve explicit amounts in the actual
-billing currency. Terraform accepts those values as sensitive execution inputs.
+Terraform stores the source values exclusively as integer cents: 833, 4167,
+3333, 10000, and 18333. The aggregate invariant is exact:
+`833 + 4167 + 3333 + 10000 = 18333`. No exchange rate or parallel decimal
+dollar input is embedded in code.
 
 Every budget is alert-only:
 
