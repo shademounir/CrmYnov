@@ -2,8 +2,14 @@
 # The value below is deliberately non-functional and contains no billing identifier.
 billing_account_id = "INJECT_SECURELY_AT_EXECUTION"
 
-# The billing API returned USD during Gate -1. The PO must approve actual USD
-# amounts before apply; the provisional MAD amounts must not be copied here.
+# Currency and integer-cent amounts approved by the Product Owner. Cents are the
+# only monetary source of truth; do not add a parallel decimal-dollar variable.
 budget_currency = "USD"
 
-# budget_amounts is intentionally omitted until that financial arbitration.
+budget_amount_cents = {
+  bootstrap = 833
+  dev       = 4167
+  staging   = 3333
+  prod      = 10000
+  folder    = 18333
+}
