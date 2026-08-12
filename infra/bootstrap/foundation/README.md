@@ -21,3 +21,11 @@ impersonate `tf-bootstrap`.
 - the human Owner exception and its 24-hour expiry are recorded.
 
 No `plan`, `apply`, or GCP mutation is authorized by this repository change.
+
+## Budget input contract
+
+Foundation budgets use `budget_amount_cents` exclusively. The approved values
+are 833 (Bootstrap), 4167 (DEV), 3333 (STAGING), 10000 (PROD), and 18333
+(aggregate folder). The aggregate must exactly equal the four project budgets.
+The previous `budget_amounts` decimal-dollar input has been removed; callers
+must migrate to integer cents before a future separately authorized plan.

@@ -59,27 +59,27 @@ locals {
   budget_specs = {
     bootstrap = {
       display_name    = "CRM Ynov Bootstrap monthly budget"
-      amount          = var.budget_amounts.bootstrap
+      amount_cents    = var.budget_amount_cents.bootstrap
       project_numbers = toset([module.projects["bootstrap"].number])
     }
     dev = {
       display_name    = "CRM Ynov Development monthly budget"
-      amount          = var.budget_amounts.dev
+      amount_cents    = var.budget_amount_cents.dev
       project_numbers = toset([module.projects["dev"].number])
     }
     staging = {
       display_name    = "CRM Ynov Staging monthly budget"
-      amount          = var.budget_amounts.staging
+      amount_cents    = var.budget_amount_cents.staging
       project_numbers = toset([module.projects["staging"].number])
     }
     prod = {
       display_name    = "CRM Ynov Production monthly budget"
-      amount          = var.budget_amounts.prod
+      amount_cents    = var.budget_amount_cents.prod
       project_numbers = toset([module.projects["prod"].number])
     }
     folder = {
       display_name    = "CRM Ynov four-project monthly budget"
-      amount          = var.budget_amounts.folder
+      amount_cents    = var.budget_amount_cents.folder
       project_numbers = toset([for project in module.projects : project.number])
     }
   }
@@ -129,7 +129,7 @@ module "budgets" {
   billing_account_id = var.billing_account_id
   display_name       = each.value.display_name
   currency_code      = var.budget_currency
-  amount             = each.value.amount
+  amount_cents       = each.value.amount_cents
   project_numbers    = each.value.project_numbers
 
   depends_on = [google_project_service.required]

@@ -28,18 +28,18 @@ variable "billing_account_id" {
 }
 
 variable "budget_currency" {
-  description = "Billing currency read from the account API. USD was observed during Gate -1."
+  description = "Billing currency approved by the Product Owner for Foundation budgets."
   type        = string
   default     = "USD"
 
   validation {
-    condition     = can(regex("^[A-Z]{3}$", var.budget_currency))
-    error_message = "budget_currency must be a three-letter ISO 4217 code."
+    condition     = var.budget_currency == "USD"
+    error_message = "budget_currency must remain USD for the approved Foundation budget contract."
   }
 }
 
-variable "budget_amounts" {
-  description = "Approved monthly amounts in budget_currency. No MAD-to-USD conversion is embedded."
+variable "budget_amount_cents" {
+  description = "Approved monthly Foundation budgets expressed as integer cents, the sole monetary source of truth."
   type = object({
     bootstrap = number
     dev       = number
@@ -49,8 +49,21 @@ variable "budget_amounts" {
   })
 
   validation {
-    condition     = alltrue([for amount in values(var.budget_amounts) : amount > 0])
-    error_message = "Every approved budget amount must be greater than zero."
+    condition = alltrue([
+      for amount_cents in values(var.budget_amount_cents) :
+      amount_cents > 0 && amount_cents == floor(amount_cents)
+    ])
+    error_message = "Every approved budget must be a strictly positive integer number of cents."
+  }
+
+  validation {
+    condition = (
+      var.budget_amount_cents.bootstrap +
+      var.budget_amount_cents.dev +
+      var.budget_amount_cents.staging +
+      var.budget_amount_cents.prod
+    ) == var.budget_amount_cents.folder
+    error_message = "The folder budget must exactly equal the sum of bootstrap, dev, staging, and prod budgets."
   }
 }
 
