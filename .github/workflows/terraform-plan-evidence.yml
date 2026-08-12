@@ -1,0 +1,36 @@
+name: Terraform plan evidence
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  analyzer-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:terraform-plan
+
+  synthetic-wrapper:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - shell: powershell
+        run: >-
+          ./scripts/terraform-plan/run-foundation-plan.ps1
+          -SyntheticFixture
+          -FixturePath ./scripts/terraform-plan/fixtures/foundation-positive.synthetic.json
