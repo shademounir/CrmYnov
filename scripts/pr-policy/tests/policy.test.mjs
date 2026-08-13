@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  classifyApprovalMode,
   parseAuditComment,
+  parseManualPoDecision,
   selectAuditComment,
+  selectManualPoDecision,
   validatePullRequestPolicy,
 } from "../policy.mjs";
 
@@ -37,13 +40,40 @@ function validPolicy() {
       blocked: false,
       scope: "technical",
     },
-    changedFiles: ["scripts/pr-policy/policy.mjs"],
+    changedFiles: ["apps/web/src/page.tsx"],
     mergeable: true,
     branchUpToDate: true,
     requiredChecks: ["simulate", "terraform-static", "iac-security"],
     checkRuns: successfulRuns(),
     checkSha: SHA,
   };
+}
+
+const completeChecklist = `
+- [x] Revue manuelle effectuée par le Product Owner
+- [x] Label \`po-approved\` ajouté manuellement par le Product Owner
+- [x] Toutes les conversations sont résolues
+- [x] La branche est à jour
+- [x] Les contrôles obligatoires sont verts
+- [x] Auto-merge désactivé
+- [x] Merge exclusivement manuel
+`;
+
+function validManualPo(path = "scripts/pr-policy/policy.mjs") {
+  const value = validPolicy();
+  value.branch = "fix/CRMY-124-per-pr-approval-mode";
+  value.ticket.key = "CRMY-124";
+  value.changedFiles = [path];
+  value.labels = ["po-approved"];
+  value.pullRequestNumber = 42;
+  value.pullRequestBody = completeChecklist;
+  value.manualPoDecision = { actor: "shademounir", pullRequest: 42, headSha: SHA, commentId: 7 };
+  value.autoMerge = null;
+  value.autoMergeEvents = [];
+  value.conversationsResolved = true;
+  value.poLabelEvents = [{ actor: "shademounir", actorType: "User", id: 8 }];
+  value.automationRequested = false;
+  return value;
 }
 
 test("feature to develop is accepted", () => {
@@ -78,11 +108,6 @@ for (const [name, mutate, reason] of [
   ["Draft PR", (value) => { value.draft = true; }, "pull_request_is_draft"],
   ["missing policy-approved", (value) => { value.labels = []; }, "policy_approved_label_missing"],
   ["po-approved in automated mode", (value) => { value.labels.push("po-approved"); }, "po_approved_reserved_for_manual_scope"],
-  ["PROD scope", (value) => { value.ticket.scope = "prod"; }, "manual_po_scope_required"],
-  ["IAM file", (value) => { value.changedFiles = ["infra/bootstrap/foundation/iam.tf"]; }, "manual_po_scope_required"],
-  ["billing file", (value) => { value.changedFiles = ["infra/billing/account.tf"]; }, "manual_po_scope_required"],
-  ["secret file", (value) => { value.changedFiles = ["infra/secrets/manager.tf"]; }, "manual_po_scope_required"],
-  ["Terraform apply workflow", (value) => { value.changedFiles = [".github/workflows/terraform-apply.yml"]; }, "manual_po_scope_required"],
   ["missing check", (value) => { value.checkRuns = value.checkRuns.slice(1); }, "required_check_missing"],
   ["pending check", (value) => { value.checkRuns[0].status = "in_progress"; }, "required_check_pending"],
   ["failed check", (value) => { value.checkRuns[0].conclusion = "failure"; }, "required_check_failed"],
@@ -98,6 +123,77 @@ for (const [name, mutate, reason] of [
     );
   });
 }
+
+for (const [name, path, mode, reason] of [
+  ["ordinary application PR", "apps/web/src/page.tsx", "automated-policy", "ordinary-scope"],
+  ["non-sensitive documentation", "docs/architecture/overview.md", "automated-policy", "ordinary-scope"],
+  ["Phase 0 bootstrap", "infra/bootstrap/phase0/main.tf", "manual-po", "terraform-bootstrap-state"],
+  ["IAM", "infra/iam/bindings.tf", "manual-po", "iam-wif"],
+  ["WIF", "infra/bootstrap/wif/main.tf", "manual-po", "iam-wif"],
+  ["billing", "infra/billing/account.tf", "manual-po", "billing-budget"],
+  ["budget", "infra/modules/budget/main.tf", "manual-po", "billing-budget"],
+  ["secret", "config/secrets/runtime.yml", "manual-po", "secret-configuration"],
+  ["PROD", "infra/environments/prod/main.tf", "manual-po", "production"],
+  ["destructive migration", "migrations/drop-legacy.sql", "manual-po", "destructive-migration"],
+  ["governance workflow", ".github/workflows/pr-policy.yml", "manual-po", "github-governance"],
+  ["Terraform backend", "infra/environments/dev/backend.tf", "manual-po", "terraform-bootstrap-state"],
+  ["Terraform state", "infra/state/README.md", "manual-po", "terraform-bootstrap-state"],
+  ["branch protection", "config/branch-protection/develop.json", "manual-po", "security-rule-exception"],
+  ["security exception", "config/security/exceptions/temporary.yml", "manual-po", "security-rule-exception"],
+  ["write-capable Jira workflow", ".github/workflows/jira-sync.yml", "manual-po", "github-governance"],
+  ["unknown path", "misc/unknown.bin", "manual-po", "ambiguous-path"],
+]) {
+  test(`${name} classifies as ${mode}`, () => {
+    const result = classifyApprovalMode({ changedFiles: [path], ticket: { scope: "technical" }, defaultMode: "automated-policy" });
+    assert.equal(result.effectiveApprovalMode, mode);
+    assert.ok(result.reasons.includes(reason));
+  });
+}
+
+test("sensitive file dominates an ordinary file", () => {
+  const result = classifyApprovalMode({ changedFiles: ["apps/web/src/page.tsx", "infra/bootstrap/phase0/main.tf"], defaultMode: "automated-policy" });
+  assert.equal(result.effectiveApprovalMode, "manual-po");
+});
+
+test("empty diff fails closed to manual-po", () => {
+  assert.equal(classifyApprovalMode({ changedFiles: [], defaultMode: "automated-policy" }).effectiveApprovalMode, "manual-po");
+});
+
+test("manual-po accepts complete SHA-bound human evidence", () => {
+  const result = validatePullRequestPolicy(validManualPo());
+  assert.equal(result.effectiveApprovalMode, "manual-po");
+  assert.equal(result.approvalValidated, true);
+});
+
+for (const [name, mutate, reason] of [
+  ["missing po-approved", (value) => { value.labels = []; }, "po_approved_label_missing"],
+  ["policy-approved present", (value) => { value.labels.push("policy-approved"); }, "policy_approved_forbidden_in_manual_po"],
+  ["incomplete checklist", (value) => { value.pullRequestBody = value.pullRequestBody.replace("- [x] Merge exclusivement manuel", "- [ ] Merge exclusivement manuel"); }, "po_checklist_incomplete"],
+  ["wrong attestation SHA", (value) => { value.manualPoDecision.headSha = "b".repeat(40); }, "manual_po_decision_sha_mismatch"],
+  ["auto-merge configured", (value) => { value.autoMerge = {}; }, "auto_merge_was_configured"],
+  ["auto-merge timeline event", (value) => { value.autoMergeEvents = [{ event: "auto_merge_enabled" }]; }, "auto_merge_event_detected"],
+  ["fork", (value) => { value.sourceRepository = "external/fork"; }, "external_fork_not_allowed"],
+  ["unauthorized actor", (value) => { value.actor = "external"; }, "actor_not_allowed"],
+  ["automation attempt", (value) => { value.automationRequested = true; }, "manual_po_automation_attempted"],
+  ["untraceable PO label", (value) => { value.poLabelEvents = []; }, "po_approved_not_manually_traceable"],
+  ["unresolved conversation", (value) => { value.conversationsResolved = false; }, "conversations_unresolved"],
+  ["Draft PR", (value) => { value.draft = true; }, "manual_po_pull_request_is_draft"],
+]) {
+  test(`manual-po refuses ${name}`, () => {
+    const value = validManualPo();
+    mutate(value);
+    assert.throws(() => validatePullRequestPolicy(value), (error) => error.reason === reason);
+  });
+}
+
+test("manual-po marker is bound to PR, SHA and allowlisted human", () => {
+  const marker = `<!-- manual-po-decision {"schemaVersion":1,"decision":"approved","pullRequest":42,"headSha":"${SHA}"} -->`;
+  assert.equal(parseManualPoDecision(marker).decision, "approved");
+  const result = selectManualPoDecision([{ id: 7, body: marker, user: { login: "shademounir", type: "User" } }], {
+    pullRequestNumber: 42, headSha: SHA, allowedActors: ["shademounir"],
+  });
+  assert.equal(result.actor, "shademounir");
+});
 
 test("validation is idempotent", () => {
   const value = validPolicy();

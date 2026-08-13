@@ -4,13 +4,34 @@ const POLICY_LABEL = "policy-approved";
 const PO_LABEL = "po-approved";
 const VALID_TICKET_STATUSES = new Set(["To Do", "In Progress", "In Review"]);
 
-const SENSITIVE_PATHS = [
-  /^infra\/environments\/prod(?:\/|$)/i,
-  /^infra\/.*(?:iam|billing|secret)/i,
-  /^\.github\/workflows\/.*(?:prod|apply|destroy|iam|billing|secret)/i,
-  /(?:^|\/)(?:secrets?|billing|iam|migrations?)(?:\/|$)/i,
-  /(?:^|\/)(?:terraform-)?(?:apply|destroy)(?:\.|\/|$)/i,
-];
+const SENSITIVE_RULES = Object.freeze([
+  ["github-governance", /^(?:\.github\/(?:workflows|CODEOWNERS|pull_request_template)|docs\/(?:governance|security)|scripts\/pr-policy)(?:\/|\.|$)/i],
+  ["iam-wif", /(?:^|\/)(?:iam|wif|workload-identity|identity-federation)(?:\/|\.|-|$)/i],
+  ["billing-budget", /(?:^|\/)(?:billing|budgets?)(?:\/|\.|-|$)/i],
+  ["secret-configuration", /(?:^|\/)(?:secrets?|credentials?)(?:\/|\.|-|$)|(?:^|\/)\.env(?:\.|$)/i],
+  ["terraform-bootstrap-state", /^(?:infra\/bootstrap|infra\/.*(?:backend|state)|scripts\/terraform-|.*\.(?:tf|tfvars))(?:\/|\.|-|$)/i],
+  ["production", /(?:^|\/)(?:prod|production)(?:\/|\.|-|$)/i],
+  ["destructive-migration", /(?:^|\/)(?:migrations?|data-migrations?)(?:\/|\.|-|$)/i],
+  ["security-rule-exception", /(?:^|\/)(?:security|exceptions?|polic(?:y|ies)|branch-protection|rulesets?)(?:\/|\.|-|$)/i],
+  ["write-capable-workflow", /^\.github\/workflows\/.*(?:write|deploy|release|publish|apply|destroy|sync|mutation)/i],
+]);
+
+const ORDINARY_RULES = Object.freeze([
+  /^(?:apps|packages|libs)\/[A-Za-z0-9_.\/-]+$/,
+  /^docs\/(?!governance(?:\/|$)|security(?:\/|$)|risks?(?:\/|$))[A-Za-z0-9_.\/-]+\.md$/i,
+  /^(?:README|CONTRIBUTING|LICENSE)(?:\.[A-Za-z0-9]+)?$/i,
+  /^(?:test|tests)\/[A-Za-z0-9_.\/-]+$/,
+]);
+
+const PO_CHECKLIST = Object.freeze([
+  "Revue manuelle effectuée par le Product Owner",
+  "Label `po-approved` ajouté manuellement par le Product Owner",
+  "Toutes les conversations sont résolues",
+  "La branche est à jour",
+  "Les contrôles obligatoires sont verts",
+  "Auto-merge désactivé",
+  "Merge exclusivement manuel",
+]);
 
 function refuse(reason, details = {}) {
   const error = new Error(`Pull request policy refused: ${reason}.`);
@@ -44,22 +65,39 @@ function branchPolicy(branch, base) {
   refuse("branch_name_not_allowed");
 }
 
-function sensitiveFiles(files) {
-  return files.filter((file) => SENSITIVE_PATHS.some((pattern) => pattern.test(file)));
+export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode }) {
+  if (![AUTOMATED_POLICY_MODE, MANUAL_PO_MODE].includes(defaultMode)) {
+    refuse("default_approval_mode_invalid");
+  }
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
+    return { effectiveApprovalMode: MANUAL_PO_MODE, reasons: ["ambiguous-empty-diff"] };
+  }
+  const reasons = new Set();
+  if (ticket?.scope === "prod" || ticket?.scope === MANUAL_PO_MODE) reasons.add("ticket-sensitive-scope");
+  if (manifestProfile === "application") reasons.add("application-release");
+  for (const file of changedFiles) {
+    const path = String(file ?? "");
+    if (path === "release-manifest.json" && manifestProfile === "gate-1") continue;
+    const matches = SENSITIVE_RULES.filter(([, pattern]) => pattern.test(path));
+    if (matches.length) for (const [reason] of matches) reasons.add(reason);
+    else if (!ORDINARY_RULES.some((pattern) => pattern.test(path))) reasons.add("ambiguous-path");
+  }
+  if (reasons.size > 0 || defaultMode === MANUAL_PO_MODE) {
+    return {
+      effectiveApprovalMode: MANUAL_PO_MODE,
+      reasons: [...reasons].sort().length ? [...reasons].sort() : ["default-manual-po"],
+    };
+  }
+  return { effectiveApprovalMode: AUTOMATED_POLICY_MODE, reasons: ["ordinary-scope"] };
 }
 
 function validateChecks(required, runs, expectedSha) {
   const latest = new Map();
   for (const run of runs ?? []) {
     if (run.name === "pr-policy") continue;
-    if (!latest.has(run.name) || Number(run.id ?? 0) >= Number(latest.get(run.name)?.id ?? 0)) {
-      latest.set(run.name, run);
-    }
+    if (!latest.has(run.name) || Number(run.id ?? 0) >= Number(latest.get(run.name)?.id ?? 0)) latest.set(run.name, run);
   }
-  const missing = [];
-  const pending = [];
-  const failed = [];
-  const wrongSha = [];
+  const missing = [], pending = [], failed = [], wrongSha = [];
   for (const name of required) {
     const run = latest.get(name);
     if (!run) missing.push(name);
@@ -73,87 +111,17 @@ function validateChecks(required, runs, expectedSha) {
   if (wrongSha.length) refuse("required_check_wrong_sha", { wrongSha });
 }
 
-export function validatePullRequestPolicy({
-  approvalMode,
-  repository,
-  sourceRepository,
-  actor,
-  allowedActors,
-  branch,
-  base,
-  draft,
-  labels,
-  ticket,
-  changedFiles = [],
-  manifestProfile,
-  mergeable,
-  branchUpToDate,
-  requiredChecks = [],
-  checkRuns = [],
-  checkSha,
-}) {
-  if (approvalMode !== AUTOMATED_POLICY_MODE) refuse("approval_mode_not_automated_policy");
-  if (!repository || sourceRepository !== repository) refuse("external_fork_not_allowed");
-  const allowlist = actors(allowedActors);
-  if (!allowlist.includes(actor)) refuse("actor_not_allowed");
-
-  const branchResult = branchPolicy(branch, base);
-  const names = labelNames(labels);
-  if (names.includes(PO_LABEL)) refuse("po_approved_reserved_for_manual_scope");
-  if (!names.includes(POLICY_LABEL)) refuse("policy_approved_label_missing");
-  if (draft !== false) refuse("pull_request_is_draft");
-
+function validateTicket(ticket, branchResult) {
   if (!ticket?.key) refuse("jira_ticket_missing");
-  if (branchResult.ticketKey && ticket.key !== branchResult.ticketKey) {
-    refuse("jira_ticket_branch_mismatch");
-  }
+  if (branchResult.ticketKey && ticket.key !== branchResult.ticketKey) refuse("jira_ticket_branch_mismatch");
   if (ticket.issueType === "Epic") refuse("jira_epic_not_allowed");
-  if (!labelNames(ticket.labels).includes("codex-ready")) {
-    refuse("jira_codex_ready_missing");
-  }
-  if (ticket.blocked === true || labelNames(ticket.labels).includes("blocked")) {
-    refuse("jira_ticket_blocked");
-  }
+  if (!labelNames(ticket.labels).includes("codex-ready")) refuse("jira_codex_ready_missing");
+  if (ticket.blocked === true || labelNames(ticket.labels).includes("blocked")) refuse("jira_ticket_blocked");
   if (!VALID_TICKET_STATUSES.has(ticket.status)) refuse("jira_status_not_compatible");
-
-  const protectedFiles = sensitiveFiles(changedFiles);
-  if (
-    ticket.scope === "prod" ||
-    ticket.scope === MANUAL_PO_MODE ||
-    manifestProfile === "application" ||
-    protectedFiles.length > 0
-  ) {
-    refuse("manual_po_scope_required", { protectedFiles });
-  }
-  if (branchResult.kind === "release" && manifestProfile !== "gate-1") {
-    refuse("release_gate_profile_required");
-  }
-
-  const manifests = changedFiles.filter((file) => file.endsWith("release-manifest.json"));
-  if (manifests.length > 1 || manifests.some((file) => file !== "release-manifest.json")) {
-    refuse("release_manifest_collision");
-  }
-  if (mergeable !== true) refuse("pull_request_conflict");
-  if (branchUpToDate !== true) refuse("branch_not_up_to_date");
-  validateChecks(requiredChecks, checkRuns, checkSha);
-
-  return {
-    mode: AUTOMATED_POLICY_MODE,
-    policyLabel: POLICY_LABEL,
-    actor,
-    branch,
-    base,
-    branchKind: branchResult.kind,
-    ticketKey: ticket.key,
-    checks: [...requiredChecks],
-    sensitiveFiles: 0,
-    mergeable: true,
-    branchUpToDate: true,
-  };
 }
 
-export function parseAuditComment(body) {
-  const match = /<!-- codex-policy-audit\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
+export function parseManualPoDecision(body) {
+  const match = /<!-- manual-po-decision\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
   if (!match) return undefined;
   try {
     const value = JSON.parse(match[1]);
@@ -163,25 +131,104 @@ export function parseAuditComment(body) {
   }
 }
 
+export function selectManualPoDecision(comments, { pullRequestNumber, headSha, allowedActors }) {
+  const allowlist = actors(allowedActors);
+  const candidates = (comments ?? [])
+    .map((comment) => ({ comment, decision: parseManualPoDecision(comment.body) }))
+    .filter(({ comment, decision }) =>
+      decision && comment.user?.type === "User" && allowlist.includes(comment.user?.login),
+    )
+    .sort((left, right) => Number(right.comment.id) - Number(left.comment.id));
+  if (!candidates.length) refuse("manual_po_decision_missing");
+  const { comment, decision } = candidates[0];
+  if (decision.decision !== "approved") refuse("manual_po_decision_not_approved");
+  if (decision.pullRequest !== pullRequestNumber) refuse("manual_po_decision_pr_mismatch");
+  if (decision.headSha !== headSha) refuse("manual_po_decision_sha_mismatch");
+  return { actor: comment.user.login, commentId: Number(comment.id), headSha, pullRequest: pullRequestNumber };
+}
+
+export function validatePoChecklist(body) {
+  const missing = PO_CHECKLIST.filter((item) => {
+    const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return !new RegExp(`^\\s*- \\[x\\] ${escaped}\\.?\\s*$`, "im").test(String(body ?? ""));
+  });
+  if (missing.length) refuse("po_checklist_incomplete", { missingCount: missing.length });
+}
+
+export function validatePullRequestPolicy({
+  approvalMode: defaultMode,
+  repository, sourceRepository, actor, allowedActors, branch, base, draft, labels,
+  ticket, changedFiles = [], manifestProfile, mergeable, branchUpToDate,
+  requiredChecks = [], checkRuns = [], checkSha, pullRequestNumber, pullRequestBody,
+  manualPoDecision, autoMerge, autoMergeEvents = [], conversationsResolved,
+  poLabelEvents = [], automationRequested = false,
+}) {
+  if (!repository || sourceRepository !== repository) refuse("external_fork_not_allowed");
+  const allowlist = actors(allowedActors);
+  if (!allowlist.includes(actor)) refuse("actor_not_allowed");
+  const branchResult = branchPolicy(branch, base);
+  validateTicket(ticket, branchResult);
+  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode });
+  const names = labelNames(labels);
+
+  if (classification.effectiveApprovalMode === AUTOMATED_POLICY_MODE) {
+    if (names.includes(PO_LABEL)) refuse("po_approved_reserved_for_manual_scope");
+    if (!names.includes(POLICY_LABEL)) refuse("policy_approved_label_missing");
+    if (draft !== false) refuse("pull_request_is_draft");
+    if (branchResult.kind === "release" && manifestProfile !== "gate-1") refuse("release_gate_profile_required");
+  } else {
+    if (!names.includes(PO_LABEL)) refuse("po_approved_label_missing");
+    if (names.includes(POLICY_LABEL)) refuse("policy_approved_forbidden_in_manual_po");
+    if (draft !== false) refuse("manual_po_pull_request_is_draft");
+    validatePoChecklist(pullRequestBody);
+    if (!manualPoDecision) refuse("manual_po_decision_missing");
+    if (manualPoDecision.headSha !== checkSha) refuse("manual_po_decision_sha_mismatch");
+    if (manualPoDecision.pullRequest !== pullRequestNumber) refuse("manual_po_decision_pr_mismatch");
+    if (!allowlist.includes(manualPoDecision.actor)) refuse("manual_po_decision_actor_not_allowed");
+    if (autoMerge !== null) refuse("auto_merge_was_configured");
+    if (autoMergeEvents.length) refuse("auto_merge_event_detected");
+    if (automationRequested) refuse("manual_po_automation_attempted");
+    if (
+      poLabelEvents.length !== 1 ||
+      poLabelEvents[0]?.actorType !== "User" ||
+      !allowlist.includes(poLabelEvents[0]?.actor)
+    ) refuse("po_approved_not_manually_traceable");
+    if (conversationsResolved !== true) refuse("conversations_unresolved");
+  }
+
+  const manifests = changedFiles.filter((file) => file.endsWith("release-manifest.json"));
+  if (manifests.length > 1 || manifests.some((file) => file !== "release-manifest.json")) refuse("release_manifest_collision");
+  if (mergeable !== true) refuse("pull_request_conflict");
+  if (branchUpToDate !== true) refuse("branch_not_up_to_date");
+  validateChecks(requiredChecks, checkRuns, checkSha);
+
+  return {
+    mode: classification.effectiveApprovalMode,
+    effectiveApprovalMode: classification.effectiveApprovalMode,
+    classificationReasons: classification.reasons,
+    actor, branch, base, branchKind: branchResult.kind, ticketKey: ticket.key,
+    checks: [...requiredChecks], mergeable: true, branchUpToDate: true,
+    approvalValidated: true,
+  };
+}
+
+export function parseAuditComment(body) {
+  const match = /<!-- codex-policy-audit\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
+  if (!match) return undefined;
+  try {
+    const value = JSON.parse(match[1]);
+    return value?.schemaVersion === 1 ? value : undefined;
+  } catch { return undefined; }
+}
+
 export function selectAuditComment(comments, { headSha, allowedActors }) {
   const allowlist = actors(allowedActors);
   const candidates = (comments ?? [])
     .map((comment) => ({ comment, audit: parseAuditComment(comment.body) }))
-    .filter(({ comment, audit }) =>
-      audit &&
-      audit.headSha === headSha &&
-      audit.verifiedBy === comment.user?.login &&
-      allowlist.includes(comment.user?.login),
-    )
+    .filter(({ comment, audit }) => audit && audit.headSha === headSha && audit.verifiedBy === comment.user?.login && allowlist.includes(comment.user?.login))
     .sort((left, right) => Number(right.comment.id) - Number(left.comment.id));
-  if (candidates.length === 0) refuse("jira_audit_comment_missing");
+  if (!candidates.length) refuse("jira_audit_comment_missing");
   return candidates[0].audit;
 }
 
-export {
-  AUTOMATED_POLICY_MODE,
-  MANUAL_PO_MODE,
-  POLICY_LABEL,
-  PO_LABEL,
-  sensitiveFiles,
-};
+export { AUTOMATED_POLICY_MODE, MANUAL_PO_MODE, POLICY_LABEL, PO_LABEL, SENSITIVE_RULES };

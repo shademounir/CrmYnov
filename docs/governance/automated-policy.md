@@ -11,6 +11,11 @@ deployments. It is technical policy evidence and never implies human approval.
 security exceptions. Only the Product Owner may add `po-approved`, record the
 decision comment, and perform the protected operation.
 
+The effective mode is computed per PR as documented in
+`docs/governance/per-pr-approval-mode.md`. `PR_APPROVAL_MODE` is only the
+ordinary default; a sensitive or ambiguous diff always overrides it to
+`manual-po`.
+
 ## Automated-policy evidence
 
 The policy requires all of the following:

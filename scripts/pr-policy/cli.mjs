@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import {
   selectAuditComment,
+  selectManualPoDecision,
   validatePullRequestPolicy,
 } from "./policy.mjs";
 
@@ -84,6 +85,40 @@ const audit = selectAuditComment(comments, {
   allowedActors: required("PR_POLICY_ALLOWED_ACTORS"),
 });
 
+const [timeline, threadResponse] = await Promise.all([
+  pages(`/repos/${repository}/issues/${pullNumber}/timeline`),
+  (async () => {
+    const [owner, name] = repository.split("/");
+    const response = await fetch(`${api}/graphql`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}pageInfo{hasNextPage}}}}}`,
+        variables: { owner, name, number: pullNumber },
+      }),
+    });
+    if (!response.ok) throw new Error(`GitHub conversation request failed (${response.status}).`);
+    return response.json();
+  })(),
+]);
+if (threadResponse.errors) throw new Error("GitHub conversation evidence invalid.");
+const threads = threadResponse.data?.repository?.pullRequest?.reviewThreads?.nodes;
+if (!Array.isArray(threads)) throw new Error("GitHub conversation evidence missing.");
+if (threadResponse.data.repository.pullRequest.reviewThreads.pageInfo?.hasNextPage) {
+  throw new Error("GitHub conversation evidence pagination incomplete.");
+}
+
+let manualPoDecision;
+try {
+  manualPoDecision = selectManualPoDecision(comments, {
+    pullRequestNumber: pullNumber,
+    headSha: pull.head.sha,
+    allowedActors: required("PR_POLICY_ALLOWED_ACTORS"),
+  });
+} catch (error) {
+  if (error.reason !== "manual_po_decision_missing") throw error;
+}
+
 let manifestProfile;
 if (pull.head.ref.startsWith("release/")) {
   const manifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
@@ -110,6 +145,18 @@ const result = validatePullRequestPolicy({
   requiredChecks: checks.requiredChecks,
   checkRuns: checks.runs,
   checkSha,
+  pullRequestNumber: pullNumber,
+  pullRequestBody: pull.body,
+  manualPoDecision,
+  autoMerge: pull.auto_merge,
+  autoMergeEvents: timeline.filter((event) => ["auto_merge_enabled", "auto_merge_disabled"].includes(event.event)),
+  conversationsResolved: threads.every((thread) => thread.isResolved === true),
+  poLabelEvents: timeline
+    .filter((event) => event.event === "labeled" && event.label?.name === "po-approved")
+    .map((event) => ({ actor: event.actor?.login, actorType: event.actor?.type, id: event.id })),
+  automationRequested: timeline.some((event) =>
+    ["auto_merge_enabled", "merged"].includes(event.event) && event.actor?.type === "Bot",
+  ),
 });
 
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
