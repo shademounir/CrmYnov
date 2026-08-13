@@ -1,0 +1,15 @@
+.git
+.github
+.terraform
+**/.terraform
+**/.next
+**/dist
+coverage
+node_modules
+*.log
+.env
+.env.*
+!.env.example
+**/*.tfstate*
+**/*.tfplan
+**/*-service-account.json

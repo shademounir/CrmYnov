@@ -24,15 +24,11 @@ test("sorts reversed and multiple textual paths deterministically", async (conte
   assert.deepEqual(await findDockerfiles(root), expected);
 });
 
-test("preserves already ordered paths and accepts empty and excluded directories", async (context) => {
+test("preserves already ordered paths and ignores excluded directories", async (context) => {
   const root = await fixture(["a/Dockerfile", "b/Dockerfile.test", "node_modules/Dockerfile"]);
   context.after(() => rm(root, { recursive: true, force: true }));
   assert.deepEqual(await findDockerfiles(root), [join("a", "Dockerfile"), join("b", "Dockerfile.test")]);
 
-  const empty = await fixture();
-  context.after(() => rm(empty, { recursive: true, force: true }));
-  assert.deepEqual(await findDockerfiles(empty), []);
-  assert.equal(await verifyContainerReadiness(empty), "Container image scan deferred: no Dockerfile exists yet.\n");
 });
 
 test("uses an explicit lexical comparator with stable equality and no input mutation", () => {
@@ -45,11 +41,15 @@ test("uses an explicit lexical comparator with stable equality and no input muta
   assert.deepEqual(input, ["b", "a", "b"]);
 });
 
-test("reports every discovered Dockerfile in deterministic order", async (context) => {
-  const root = await fixture(["second/Dockerfile", "first/Dockerfile.prod"]);
+test("requires exactly the two application Dockerfiles", async (context) => {
+  const root = await fixture(["apps/api/Dockerfile", "apps/web/Dockerfile"]);
   context.after(() => rm(root, { recursive: true, force: true }));
+  assert.match(await verifyContainerReadiness(root), /apps[\\/]api[\\/]Dockerfile/);
+
+  const incomplete = await fixture(["apps/api/Dockerfile"]);
+  context.after(() => rm(incomplete, { recursive: true, force: true }));
   await assert.rejects(
-    verifyContainerReadiness(root),
-    /first[\\/]Dockerfile\.prod, second[\\/]Dockerfile/,
+    verifyContainerReadiness(incomplete),
+    /Expected exactly/,
   );
 });

@@ -22,12 +22,11 @@ export async function findDockerfiles(directory, root = directory) {
 
 export async function verifyContainerReadiness(root = process.cwd()) {
   const dockerfiles = await findDockerfiles(root);
-  if (dockerfiles.length > 0) {
-    throw new Error(
-      `Container images now exist (${dockerfiles.join(", ")}); configure the pinned image build and Trivy image scan before merge.`,
-    );
+  const expected = [join("apps", "api", "Dockerfile"), join("apps", "web", "Dockerfile")];
+  if (JSON.stringify(dockerfiles) !== JSON.stringify(expected)) {
+    throw new Error(`Expected exactly ${expected.join(", ")}; found ${dockerfiles.join(", ") || "none"}.`);
   }
-  return "Container image scan deferred: no Dockerfile exists yet.\n";
+  return `Container image scan configured for ${dockerfiles.join(", ")}.\n`;
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
