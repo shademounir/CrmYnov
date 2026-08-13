@@ -18,7 +18,10 @@ function invoke(mode, fixturePath = fixture) {
 test("SyntheticFixture succeeds and cleans its lock", async () => {
   const result = invoke("SyntheticFixture");
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(JSON.parse(result.stdout).mutated, false);
+  const evidence = JSON.parse(result.stdout);
+  assert.equal(evidence.schemaVersion, 2);
+  assert.equal(evidence.mutated, false);
+  assert.equal(evidence.operationEstimates.countersValidatedByRealPlan, false);
   await assert.rejects(access(lock));
 });
 

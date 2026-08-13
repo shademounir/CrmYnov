@@ -52,6 +52,19 @@ test("Phase 0 exclusively owns the bootstrap project resource", () => {
   assert.match(foundationMain, /data\s+"google_project"\s+"bootstrap"/);
 });
 
+test("Phase 0 documentation forbids plan before explicit import", () => {
+  const phase0Readme = readFileSync(path.join(phase0Root, "README.md"), "utf8");
+  assert.match(phase0Readme, /plan before project and service[\s\S]*imports is forbidden/i);
+  assert.match(phase0Readme, /explicitly[\s\S]*authorized import/i);
+});
+
+test("Foundation can only read and cannot create or import the bootstrap project", () => {
+  assert.match(foundationMain, /data\s+"google_project"\s+"bootstrap"/);
+  assert.doesNotMatch(foundationMain, /resource\s+"google_project"\s+"bootstrap"/);
+  assert.doesNotMatch(foundationMain, /import\s*\{[\s\S]*bootstrap/);
+  assert.doesNotMatch(foundationMain, /crmynov-bst-n7x4q2[\s\S]*module\s+"projects"/);
+});
+
 test("Phase 0 and Phase 1 API ownership sets are disjoint", () => {
   const phase0Services = [...phase0Main.matchAll(/"([a-z]+(?:[a-z0-9]*\.)*googleapis\.com)"/g)].map((match) => match[1]);
   const foundationBootstrapBlock = foundationMain.match(/bootstrap\s*=\s*toset\(\[([\s\S]*?)\]\)/)?.[1] ?? "";

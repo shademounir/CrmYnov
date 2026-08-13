@@ -1,87 +1,110 @@
-# ADR-0006 — Propriété Terraform du projet bootstrap en Phase 0
+# ADR-0006 — Adoption Terraform du projet bootstrap préexistant
 
-- Statut : proposé pour revue Product Owner
+- Statut : corrigé après revue Product Owner, proposé pour nouvelle revue
 - Date : 2026-08-13
 - Ticket : CRMY-123
 - Décideur attendu : Product Owner
 
 ## Contexte
 
-Le projet `crmynov-bst-n7x4q2` doit devenir le projet bootstrap et quota ADC de la Foundation, sans introduire un cinquième projet permanent. Il doit pouvoir être créé avant le folder `CRM Ynov`, puis y être déplacé sans recréation. Cette livraison est exclusivement code-only : elle ne crée ni projet, ni lien de facturation, ni API, ni configuration ADC.
+Le projet `crmynov-bst-n7x4q2` doit devenir le projet bootstrap et quota ADC de la Foundation, sans cinquième projet permanent. Il ne peut pas servir de quota project avant d'exister. Cette livraison reste code-only et ne crée ni projet, ni lien de facturation, ni API, ni configuration ADC, ni import Terraform réel.
 
 ## Options étudiées
 
 ### A — Projet externe non géré par Terraform
 
-Le projet est créé par une procédure hors Terraform et reste une dépendance externe.
+Le projet est créé hors Terraform et reste une dépendance externe. Cette option évite l'import, mais ne fournit pas de gouvernance Terraform durable sur son lifecycle, son parent et ses labels.
 
-- Avantage : démarrage simple.
-- Rejet : dérive non détectée, rollback et traçabilité incomplets, gouvernance durablement partagée entre procédures manuelles et Terraform.
+### B — Création contrôlée puis adoption dans un état Phase 0 dédié
 
-### B — Procédure contrôlée puis état Terraform Phase 0 dédié
+Une procédure Phase 0A crée uniquement le projet. Une Phase 0B séparément autorisée importe ensuite sa ressource `google_project` dans l'état Phase 0. Foundation ne possède jamais cette ressource.
 
-La Phase 0 crée le projet par une racine Terraform dédiée. Le projet, son rattachement de facturation et les trois API minimales restent possédés par cet état. Foundation Phase 1 reçoit l'identifiant comme entrée, lit le projet et ne possède jamais la ressource `google_project` bootstrap.
+### C — Création Phase 0 puis gestion conditionnelle par Foundation
 
-- Avantages : propriétaire unique par ressource, prévention de suppression, preuve reproductible, évolution du parent par le même état et compatibilité WIF/OIDC.
-- Contrainte : ordre d'exécution documenté et états distants séparés obligatoires avant toute exécution réelle.
-
-### C — Phase 0 puis gestion conditionnelle par Foundation
-
-La Phase 0 crée le projet, puis Foundation active conditionnellement sa gestion.
-
-- Avantage : une seule racine finale.
-- Rejet : transfert de propriété fragile, risque de double état, import conditionnel difficile à auditer et possibilité de recréation lors d'une mauvaise combinaison de variables.
+Foundation pourrait adopter conditionnellement le projet, mais cette option expose à une double propriété, à un import ambigu et à une recréation du même project ID.
 
 ## Décision
 
-L'option **B** est retenue.
+L'option **B** est retenue avec quatre étapes obligatoirement ordonnées.
 
-Le modèle de propriété est le suivant :
+### Phase 0A — création procédurale
 
-| Ressource | État propriétaire |
+1. Vérifier l'identité humaine, l'organisation et la disponibilité du project ID.
+2. Obtenir une autorisation Product Owner dédiée à une tentative unique.
+3. Créer uniquement `crmynov-bst-n7x4q2` dans l'organisation approuvée.
+4. Ne créer aucune autre ressource CRM, aucune clé de service account et ne lancer aucune Foundation Terraform.
+
+### Phase 0B — adoption Terraform
+
+1. Vérifier que le projet existe, que son project ID et son organisation sont exacts et qu'il n'est pas pending deletion.
+2. Vérifier qu'aucun autre état Terraform ne contient ce projet.
+3. Obtenir une autorisation explicite d'import distincte.
+4. Importer uniquement le projet dans `google_project.bootstrap` de l'état Phase 0 dédié.
+5. Vérifier immédiatement que `deletion_policy = "PREVENT"`, `auto_create_network = false` et la cible de parent sont compatibles sans remplacement.
+
+Un plan avant cet import est interdit. Foundation Phase 1 ne peut ni créer, ni importer, ni posséder le projet bootstrap.
+
+### Phase 0C — quota, API et socle
+
+1. Vérifier `serviceusage.services.use` pour l'identité humaine sur le projet existant. Aucune API ne « configure » l'ADC : la définition du quota project est une écriture locale dans l'ADC ; Service Usage fournit la permission obligatoire pour désigner et utiliser ce projet.
+2. Par une procédure séparément autorisée, activer la liste fermée des trois API nécessaires avant le premier plan : Service Usage, Cloud Resource Manager et Cloud Billing.
+3. Importer chacune des trois ressources `google_project_service.phase0` dans le même état Phase 0 avant le plan. Une API activée procéduralement ne doit jamais apparaître comme une création Terraform.
+4. Configurer ensuite l'ADC avec le projet existant comme quota project, sous autorisation séparée.
+5. Préparer le rattachement de facturation comme ressource Phase 0 et produire un plan Terraform Phase 0 JSON séparé.
+6. Valider le JSON réel avant tout apply. Les compteurs documentés avant ce plan sont indicatifs.
+
+### Phase 1 — Foundation
+
+Foundation lit le bootstrap avec `data.google_project.bootstrap`. Elle crée le folder, DEV, STAGING et PROD, leurs liens de facturation, ses API disjointes et les budgets. Elle ne recrée, n'importe ni ne possède le bootstrap.
+
+## Propriété exacte
+
+| Ressource ou opération | Propriétaire |
 |---|---|
-| Projet bootstrap | Phase 0 uniquement |
-| Lien de facturation bootstrap | Phase 0 uniquement |
-| API minimales bootstrap (Resource Manager, Billing, Service Usage) | Phase 0 uniquement |
-| Folder CRM | Foundation Phase 1 uniquement |
-| Projets DEV, STAGING et PROD et leurs liens de facturation | Foundation Phase 1 uniquement |
-| API complémentaires bootstrap et API des environnements | Foundation Phase 1, avec adresses distinctes |
-| Cinq budgets Foundation | Foundation Phase 1 uniquement |
+| Création initiale du projet bootstrap | Procédure Phase 0A, avant Terraform |
+| `google_project.bootstrap` après import | État Terraform Phase 0 exclusivement |
+| Activation initiale des 3 API | Procédure Phase 0C explicitement autorisée |
+| `google_project_service.phase0` après import | État Terraform Phase 0 exclusivement |
+| Lien de facturation bootstrap | État Terraform Phase 0 exclusivement |
+| Configuration locale du quota ADC | Procédure locale Phase 0C, hors Terraform |
+| Folder CRM, projets DEV/STAGING/PROD et leurs liens | Foundation Phase 1 exclusivement |
+| API complémentaires et budgets | Foundation Phase 1, adresses disjointes |
 
-Un projet n'est donc jamais possédé par deux ressources `google_project` ni par deux états. Les services API sont eux aussi répartis en ensembles fermés et disjoints. Aucun import vers Foundation n'est autorisé.
+Les inventaires d'état Phase 0, Phase 1 et tout état historique doivent être comparés avant import. Toute présence du bootstrap dans un état différent est un NO-GO.
 
-## Contrat d'enchaînement
+## Contrat API
 
-1. Phase 0 reçoit les valeurs approuvées, notamment le compte de facturation hors Git.
-2. Après autorisation séparée, son état dédié crée le projet au niveau de l'organisation, rattache la facturation et active exactement trois API.
-3. Une procédure locale séparée peut configurer ce projet comme quota project ADC après vérification de l'identité ; cette action n'est pas une ressource Terraform.
-4. Foundation Phase 1 reçoit `bootstrap_project_id`, vérifie le projet par une data source, crée le folder et les trois projets d'environnement, puis gère seulement ses ressources exclusives.
-5. Après création du folder, une exécution Phase 0 séparément autorisée peut renseigner `bootstrap_parent_folder_id`. Le même état déplace le projet ; il ne le remplace pas.
+- Aucune API Google Cloud ne réalise l'écriture locale du quota project ADC. `serviceusage.googleapis.com` permet la gestion des services, tandis que la permission IAM `serviceusage.services.use` est obligatoire pour désigner et utiliser le projet comme quota project.
+- `cloudresourcemanager.googleapis.com` est nécessaire aux lectures et à la gestion du lifecycle/parent du projet.
+- `cloudbilling.googleapis.com` est nécessaire au rattachement et à la lecture de facturation.
+- Ces trois API doivent être actives avant le premier plan Phase 0 qui les utilise.
+- Leur activation initiale est procédurale, puis chaque ressource est importée dans l'état Phase 0 avant plan. Terraform n'en annonce donc pas la création.
+- `billingbudgets`, `iam`, `iamcredentials`, `sts` et `storage` restent en Phase 1.
 
-Le SHA Git et les preuves expurgées relient les deux phases. Les backends Phase 0 et Phase 1 doivent utiliser des préfixes GCS distincts avant toute exécution réelle.
+## Compteurs et statut de preuve
 
-## Sécurité et garde-fous
+Les nombres suivants sont des **estimations de contrat**, jamais une preuve de plan :
 
-- `deletion_policy = "PREVENT"` est obligatoire sur le projet bootstrap.
-- Aucun compte de service ni clé JSON n'est créé ; WIF/OIDC reste la cible.
-- Aucun secret, token ou identifiant complet de facturation n'entre dans Git ou dans une preuve.
-- L'identité humaine, l'organisation, le project ID, la région, le SHA et l'allowlist d'API sont validés en fail-closed.
-- Le mode réel du wrapper Phase 0 est désactivé par défaut et cette livraison ne contient aucun chemin d'exécution GCP autorisé.
-- Une tentative concurrente ou répétée est refusée par le contrat d'exécution.
+- création procédurale Phase 0A : **1 projet** ;
+- adoption Phase 0B : **1 ressource projet importée** ;
+- adoption API Phase 0C : **3 ressources service importées** ;
+- premier plan Phase 0 après imports : **1 création indicative** pour le lien de facturation ;
+- changements Phase 0 : **indéterminés** jusqu'au plan JSON réel ; toute replacement ou destruction sera refusée ;
+- plan Phase 1 : **26 créations indicatives** ;
+- total consolidé visé après application des deux états : **31 ressources Terraform gérées** — 5 en Phase 0 et 26 en Phase 1.
 
-## Compteurs attendus
+La création procédurale et les imports sont des événements séparés ; ils ne sont pas comptés comme des créations du plan. Aucun compteur ne devient opposable avant analyse d'un plan JSON réel.
 
-- Phase 0 Terraform : **5 créations** — 1 projet, 1 lien de facturation et 3 activations d'API.
-- Phase 1 Foundation : **26 créations** — 1 folder, 3 projets, 3 liens de facturation, 14 activations d'API et 5 budgets.
-- Total consolidé : **31 créations**.
-- Configuration locale du quota project ADC : 1 opération procédurale, hors ressources Terraform et hors de la présente autorisation.
+## Sécurité et rollback
 
-L'ancien contrat monolithique `31 create` devient donc deux contrats explicites `5 + 26`, sans conserver artificiellement `31` dans l'analyseur Phase 1.
-
-## Rollback
-
-Avant toute mutation, le rollback consiste à abandonner la branche. Après une future Phase 0 autorisée : désactiver toute utilisation comme quota project, conserver le projet sous `PREVENT`, corriger la cause, puis reprendre avec le même état. Une suppression de projet, un unlink de facturation ou une suppression d'état exige une autorisation Product Owner distincte. Foundation ne doit jamais importer ni supprimer le projet bootstrap pour effectuer un rollback.
+- Aucune clé de service account ; WIF/OIDC reste la cible.
+- Aucun secret ou identifiant complet de facturation dans Git ou les preuves.
+- Le wrapper reste limité à `SyntheticFixture` et `ContractSimulation`; `Real` échoue par défaut.
+- Un import exige une autorisation explicite et n'est jamais déclenché par le code actuel.
+- Après Phase 0A, un échec conserve le projet ; aucune suppression automatique.
+- Après import, corriger avec le même état. Ne jamais retirer la ressource de l'état ou l'importer ailleurs sans nouvelle autorisation.
+- Un déplacement futur vers le folder est effectué par le même état Phase 0 et doit être prouvé non destructif.
 
 ## Conséquences
 
-La Phase 1 dépend d'une Phase 0 réussie et vérifiée. Le déplacement ultérieur vers le folder est une opération gouvernée du même état Phase 0. Ce choix évite un seed permanent supplémentaire et maintient exactement quatre projets cibles.
+Phase 0A est un bootstrap minimal hors Terraform, nécessaire pour casser le cycle de quota. Phase 0B établit ensuite une propriété Terraform unique et durable. La Phase 1 dépend des preuves 0A/0B/0C et reste incapable de recréer le bootstrap.

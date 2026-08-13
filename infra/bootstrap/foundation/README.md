@@ -4,7 +4,7 @@ This root module describes the future `CRM Ynov` folder, the three environment
 projects, their billing associations, complementary APIs, and five alert-only
 budgets. The fourth approved project, `crmynov-bst-n7x4q2`, is an external
 dependency owned by the dedicated Phase 0 state (ADR-0006); this root reads it
-and never recreates or relinks it.
+and never recreates, imports, owns, or relinks it.
 
 It deliberately has no backend block. The first authorized execution uses a
 temporary local state and is run by the authorized temporary institutional

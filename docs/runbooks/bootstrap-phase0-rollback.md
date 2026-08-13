@@ -12,10 +12,16 @@ redacted evidence, and set `rollbackRequired=true` only when a cloud mutation
 was observed. Never delete the Terraform state or project to hide a partial
 result.
 
-- Before project creation: no cloud rollback.
-- Project created but billing/API incomplete: retain the project under
-  `deletion_policy = "PREVENT"`, diagnose, and resume with the same Phase 0
-  state after separate approval.
+- Before Phase 0A project creation: no cloud rollback.
+- After Phase 0A but before import: retain the project, diagnose, and never let
+  Foundation adopt it.
+- Failed or partial Phase 0B import: stop before plan, preserve both project and
+  state evidence, check all other states, and resume only with explicit import
+  authorization. Never import the same project into another state.
+- After Phase 0B: retain the project under `deletion_policy = "PREVENT"` and
+  repair through the same Phase 0 state.
+- API activated but not imported: stop before plan and import the exact service
+  address after authorization; do not let Terraform claim it as a creation.
 - Quota project configured locally: remove or replace that local ADC setting
   only through an explicitly authorized procedure; do not modify the ADC file
   manually.

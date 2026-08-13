@@ -5,6 +5,7 @@ export const EXPECTED = Object.freeze({
   bootstrapProjectId: "crmynov-bst-n7x4q2",
   region: "europe-southwest1",
   humanIdentity: "casablancaynovcampus@gmail.com",
+  projectAddress: "google_project.bootstrap",
   services: Object.freeze([
     "cloudbilling.googleapis.com",
     "cloudresourcemanager.googleapis.com",
@@ -49,6 +50,32 @@ function assertSafe(value) {
   if (forbidden.some((pattern) => pattern.test(serialized))) refuse("sensitive_output");
 }
 
+function validateState(input) {
+  if (input.observed?.quotaProjectConfigured === true && input.observed?.projectExists !== true) {
+    refuse("quota_before_project_exists");
+  }
+  if (input.observed?.projectExists !== true) refuse("project_absent");
+  if (input.observed?.projectId !== EXPECTED.bootstrapProjectId) refuse("observed_project_id_mismatch");
+  if (input.observed?.organizationId !== EXPECTED.organizationId) refuse("observed_organization_mismatch");
+  if (input.observed?.lifecycleState !== "ACTIVE") refuse("project_lifecycle_invalid");
+  if (input.import?.explicitlyAuthorized !== true) refuse("import_not_authorized");
+  if (input.import?.projectImported !== true) refuse("plan_before_import");
+  if (input.import?.projectAddress !== EXPECTED.projectAddress) refuse("project_import_address_mismatch");
+  if (!Array.isArray(input.import?.serviceAddresses) || input.import.serviceAddresses.length !== EXPECTED.services.length) {
+    refuse("service_imports_incomplete");
+  }
+  if (input.import?.otherStateContainsProject === true) refuse("project_in_other_state");
+  if (input.terraformOwners?.bootstrapProject !== "phase0" || input.terraformOwners?.foundationOwnsBootstrapProject !== false) {
+    refuse("terraform_ownership_conflict");
+  }
+  if (input.foundation?.createsBootstrap === true || input.foundation?.importsBootstrap === true) {
+    refuse("foundation_bootstrap_ownership_forbidden");
+  }
+  if (input.observed?.quotaProjectConfigured === true && input.observed?.serviceUsagePermission !== true) {
+    refuse("serviceusage_permission_missing");
+  }
+}
+
 export function analyzePhase0Contract(input, { mode, now = new Date().toISOString() } = {}) {
   if (!["SyntheticFixture", "ContractSimulation"].includes(mode)) refuse("mode_forbidden");
   if (!input || typeof input !== "object" || Array.isArray(input)) refuse("input_invalid");
@@ -63,33 +90,34 @@ export function analyzePhase0Contract(input, { mode, now = new Date().toISOStrin
   const actualServices = [...new Set(input.services)].sort();
   if (actualServices.length !== input.services.length) refuse("service_duplicate");
   if (JSON.stringify(actualServices) !== JSON.stringify([...EXPECTED.services].sort())) refuse("service_allowlist_mismatch");
-  if (input.projectAlreadyExists === true) refuse("project_already_exists");
   if (input.partialExecution === true) refuse("partial_execution_detected");
   if (input.concurrentInvocation === true || input.previousAttempt === true) refuse("single_attempt_violation");
-  if (input.terraformOwners?.bootstrapProject !== "phase0" || input.terraformOwners?.foundationOwnsBootstrapProject !== false) {
-    refuse("terraform_ownership_conflict");
-  }
+  validateState(input);
   if (input.observed?.cleanupSucceeded !== true) refuse("cleanup_failed");
 
-  const operations = {
-    projectCreates: 1,
-    billingLinks: 1,
-    apiEnables: EXPECTED.services.length,
-    quotaProjectConfigurations: 1,
-    terraformCreates: 5,
-  };
   const evidence = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode,
     gitSha: input.gitSha,
     projectId: EXPECTED.bootstrapProjectId,
     expectedParent: input.bootstrapParentFolderId ? "folder" : "organization",
-    billingActive: Boolean(input.observed?.billingActive),
+    projectExists: true,
+    projectImported: true,
+    serviceImportsComplete: true,
+    billingActive: Boolean(input.observed.billingActive),
     expectedApis: [...EXPECTED.services],
-    quotaProjectConfigured: Boolean(input.observed?.quotaProjectConfigured),
-    adcPresent: Boolean(input.observed?.adcPresent),
-    identityVerified: Boolean(input.observed?.identityVerified),
-    operations,
+    quotaProjectConfigured: Boolean(input.observed.quotaProjectConfigured),
+    adcPresent: Boolean(input.observed.adcPresent),
+    identityVerified: Boolean(input.observed.identityVerified),
+    operationEstimates: {
+      proceduralProjectCreates: 1,
+      terraformImports: 4,
+      phase0PlanCreatesIndicative: 1,
+      phase0PlanChanges: "unknown-until-real-plan-json",
+      phase1PlanCreatesIndicative: 26,
+      consolidatedManagedResourcesTarget: 31,
+      countersValidatedByRealPlan: false,
+    },
     startedAtUtc: input.startedAtUtc,
     completedAtUtc: now,
     mutated: false,
@@ -100,6 +128,7 @@ export function analyzePhase0Contract(input, { mode, now = new Date().toISOStrin
       bootstrapProjectId: input.bootstrapProjectId,
       gitSha: input.gitSha,
       services: actualServices,
+      projectAddress: input.import.projectAddress,
     })).digest("hex"),
   };
   if (!/^\d{4}-\d{2}-\d{2}T/.test(evidence.startedAtUtc ?? "")) refuse("start_timestamp_invalid");
@@ -110,7 +139,7 @@ export function analyzePhase0Contract(input, { mode, now = new Date().toISOStrin
 
 export function publicFailure(error) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     valid: false,
     errorCode: error instanceof ContractError ? error.code : "internal_error",
     mutated: false,

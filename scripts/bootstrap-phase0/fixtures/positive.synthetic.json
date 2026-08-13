@@ -18,19 +18,38 @@
   "humanIdentity": "casablancaynovcampus@gmail.com",
   "gitSha": "bcdf2bf78753bbeb48d8d37b51c7c543c5dd34ac",
   "startedAtUtc": "2026-08-13T08:00:00.000Z",
-  "projectAlreadyExists": false,
   "partialExecution": false,
   "concurrentInvocation": false,
   "previousAttempt": false,
+  "import": {
+    "explicitlyAuthorized": true,
+    "projectImported": true,
+    "projectAddress": "google_project.bootstrap",
+    "serviceAddresses": [
+      "google_project_service.phase0[cloudbilling.googleapis.com]",
+      "google_project_service.phase0[cloudresourcemanager.googleapis.com]",
+      "google_project_service.phase0[serviceusage.googleapis.com]"
+    ],
+    "otherStateContainsProject": false
+  },
   "terraformOwners": {
     "bootstrapProject": "phase0",
     "foundationOwnsBootstrapProject": false
   },
+  "foundation": {
+    "createsBootstrap": false,
+    "importsBootstrap": false
+  },
   "observed": {
+    "projectExists": true,
+    "projectId": "crmynov-bst-n7x4q2",
+    "organizationId": "1046537507934",
+    "lifecycleState": "ACTIVE",
     "billingActive": false,
     "quotaProjectConfigured": false,
+    "serviceUsagePermission": true,
     "adcPresent": false,
-    "identityVerified": false,
+    "identityVerified": true,
     "cleanupSucceeded": true
   }
 }

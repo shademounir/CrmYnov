@@ -1,26 +1,44 @@
-# Phase 0 bootstrap — future execution runbook
+# Bootstrap Phase 0 — future execution runbook
 
-Status: **code-only; real execution forbidden until a separate Product Owner authorization**.
+Status: **code-only; every real step below requires a separate Product Owner authorization**.
 
-## Purpose and ownership
+## Invariant
 
-Phase 0 prepares the existing four-project architecture by creating
-`crmynov-bst-n7x4q2`; it does not add a seed project. ADR-0006 assigns the
-bootstrap project, billing link, and three minimal services exclusively to the
-`infra/bootstrap/phase0` Terraform state. Foundation never owns that project.
+`crmynov-bst-n7x4q2` is one of the four permanent projects. No seed/quota project is added. Foundation Phase 1 only reads it. ADR-0006 assigns its durable Terraform ownership to the dedicated Phase 0 state after import.
 
-## Closed API allowlist
+## Phase 0A — create only the project
 
-| API | Phase | Rationale |
-|---|---|---|
-| `cloudresourcemanager.googleapis.com` | Phase 0 mandatory | Project lifecycle and later parent move |
-| `cloudbilling.googleapis.com` | Phase 0 mandatory | Attach the approved billing account |
-| `serviceusage.googleapis.com` | Phase 0 mandatory | Enable and verify the closed service allowlist; quota project use relies on Service Usage |
-| `billingbudgets.googleapis.com` | Phase 1 only | Five budgets are owned by Foundation |
-| `iam.googleapis.com` | Phase 1 only | Bootstrap identities are introduced after Foundation |
-| `iamcredentials.googleapis.com` | Phase 1 only | WIF service-account impersonation is not required to create Phase 0 |
-| `sts.googleapis.com` | Phase 1 only | Token exchange belongs to WIF/OIDC |
-| `storage.googleapis.com` | Phase 1 only | Remote Terraform state is prepared after bootstrap |
+Preflight must confirm the exact human identity, organization `1046537507934`, globally available project ID and single-attempt lock. A separately authorized procedure then creates only `crmynov-bst-n7x4q2`.
+
+Forbidden in 0A: quota configuration, Foundation, billing link, CRM folder, other project, service-account key, API beyond unavoidable platform defaults.
+
+## Phase 0B — adopt the project
+
+Before import, verify:
+
+- project exists and ID is exact;
+- organization is exact and lifecycle is `ACTIVE`;
+- no Phase 1 or historical Terraform state contains the project;
+- target address is exactly `google_project.bootstrap`;
+- `deletion_policy = "PREVENT"` and `auto_create_network = false` cannot cause replacement.
+
+Import requires its own explicit authorization. A plan before successful import is prohibited. The current code never executes import.
+
+## Phase 0C — quota, APIs and billing
+
+### API bootstrap contract
+
+| API | Why it is needed | Initial activation | Durable ownership |
+|---|---|---|---|
+| `serviceusage.googleapis.com` | Manage/inspect enabled services; quota project use requires the IAM permission `serviceusage.services.use` | Controlled procedure before ADC quota and first plan | Import `google_project_service.phase0[...]` into Phase 0 |
+| `cloudresourcemanager.googleapis.com` | Verify project lifecycle, organization and later parent | Controlled procedure before first plan | Import into Phase 0 |
+| `cloudbilling.googleapis.com` | Read and attach project billing | Controlled procedure before first plan | Import into Phase 0 |
+
+No cloud API configures the local ADC quota field itself. The local ADC procedure writes that setting, while the identity must have `serviceusage.services.use` on the existing project before doing so. All three services must be active before the first Phase 0 plan because that plan inspects their state and the project/billing resources. Each activation is imported into its exact Phase 0 resource address before plan; Terraform must not report it as a creation.
+
+Phase 1 alone owns `billingbudgets.googleapis.com`, `iam.googleapis.com`, `iamcredentials.googleapis.com`, `sts.googleapis.com`, and `storage.googleapis.com` for its disjoint resources.
+
+After project and service imports, configure the local ADC quota project only under separate approval, inject the billing account outside Git, and produce a Phase 0 plan JSON. The plan must refuse delete/replacement/import and be reviewed before any apply.
 
 Official references:
 
@@ -29,13 +47,23 @@ Official references:
 - [Cloud Billing project linkage](https://docs.cloud.google.com/billing/docs/how-to/modify-project)
 - [ADC quota-project troubleshooting](https://docs.cloud.google.com/docs/authentication/troubleshoot-adc)
 
-## Contract inputs
+## Phase 1
 
-The approved organization ID, project ID, region, labels, API allowlist, human
-identity, and exact Git SHA are mandatory. The billing account is supplied only
-through an ephemeral execution channel and is represented in evidence by a
-boolean. A future execution must verify project absence and identity before any
-mutation.
+Foundation uses `data.google_project.bootstrap`; it never creates or imports the bootstrap. It creates the folder, DEV/STAGING/PROD, their billing links, disjoint services, and five budgets. A later authorized Phase 0 change may move the bootstrap to the folder using the same state.
+
+## Indicative counters
+
+| Stage | Indicative value | Nature |
+|---|---:|---|
+| Phase 0A | 1 project | Procedural creation, not a plan action |
+| Phase 0B | 1 import | Project adoption |
+| Phase 0C before plan | 3 imports | Adoption of preactivated services |
+| First Phase 0 plan after imports | 1 create | Expected billing link only; not proven |
+| Phase 0 changes | Unknown | Must come from real JSON |
+| Phase 1 plan | 26 creates | Synthetic contract only |
+| Consolidated managed target | 31 resources | 5 Phase 0 + 26 Phase 1 |
+
+No number is authoritative until the corresponding real plan JSON is validated.
 
 ## Code-only verification
 
@@ -44,24 +72,4 @@ node scripts/bootstrap-phase0/run-phase0.mjs --mode SyntheticFixture --fixture s
 node scripts/bootstrap-phase0/run-phase0.mjs --mode ContractSimulation --fixture scripts/bootstrap-phase0/fixtures/positive.synthetic.json
 ```
 
-`--mode Real` deliberately returns `real_mode_disabled`. The current wrapper
-does not invoke `gcloud` or Terraform. It uses an exclusive local lock and
-removes it deterministically.
-
-## Future authorized sequence
-
-1. Confirm a clean reviewed SHA and acquire a single-attempt lock.
-2. Verify identity, organization, project-ID availability, billing entitlement,
-   and the exact API allowlist without displaying credentials.
-3. Configure a dedicated Phase 0 remote state prefix.
-4. Obtain explicit approval for a Phase 0 plan and then for apply; these are
-   distinct approvals.
-5. Verify the project, billing boolean, three enabled APIs, and redacted proof.
-6. Configure the local ADC quota project only after a separate authorization.
-7. Run Foundation Phase 1 with the bootstrap project as an external input.
-8. After the folder exists, request approval to update Phase 0 with the folder
-   ID so the same state moves the project non-destructively.
-
-No step permits a service-account key. WIF/OIDC remains the target identity
-model. Exact future commands intentionally remain outside this code-only
-delivery to prevent accidental execution.
+`--mode Real` returns `real_mode_disabled`. The current wrapper invokes neither `gcloud` nor Terraform and removes its exclusive local lock deterministically.

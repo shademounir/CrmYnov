@@ -15,7 +15,7 @@ function args(argv) {
 
 const invocation = args(process.argv.slice(2));
 if (invocation.mode === "Real") {
-  process.stdout.write(`${JSON.stringify({ schemaVersion: 1, valid: false, errorCode: "real_mode_disabled", mutated: false, cleanupSucceeded: true, rollbackRequired: false })}\n`);
+  process.stdout.write(`${JSON.stringify({ schemaVersion: 2, valid: false, errorCode: "real_mode_disabled", mutated: false, cleanupSucceeded: true, rollbackRequired: false })}\n`);
   process.exitCode = 1;
 } else {
   const lock = resolve(tmpdir(), "crmynov-phase0-code-only.lock");
@@ -30,7 +30,7 @@ if (invocation.mode === "Real") {
     process.stdout.write(`${JSON.stringify(analyzePhase0Contract(input, { mode: invocation.mode }))}\n`);
   } catch (error) {
     const failure = error?.code === "EEXIST"
-      ? { schemaVersion: 1, valid: false, errorCode: "single_attempt_violation", mutated: false, cleanupSucceeded: false, rollbackRequired: false }
+      ? { schemaVersion: 2, valid: false, errorCode: "single_attempt_violation", mutated: false, cleanupSucceeded: false, rollbackRequired: false }
       : publicFailure(error);
     process.stdout.write(`${JSON.stringify(failure)}\n`);
     process.exitCode = 1;
