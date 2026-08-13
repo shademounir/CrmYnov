@@ -10,8 +10,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:integration": "node --import tsx --test test/integration/*.test.ts",
     "test:e2e": "node --import tsx --test test/e2e/*.test.ts",
-    "prisma:validate": "cross-env DATABASE_URL=postgresql://synthetic:synthetic@localhost:5432/synthetic prisma validate",
-    "prisma:generate": "cross-env DATABASE_URL=postgresql://synthetic:synthetic@localhost:5432/synthetic prisma generate"
+    "prisma:validate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma validate",
+    "prisma:generate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma generate"
   },
   "dependencies": {
     "@crm/shared": "0.0.0",

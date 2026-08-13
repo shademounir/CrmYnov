@@ -12,7 +12,7 @@ COPY apps/web apps/web
 COPY packages/shared packages/shared
 RUN npm run build --workspace=@crm/shared && npm run build --workspace=@crm/web
 
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace
 COPY --from=build --chown=nonroot:nonroot /workspace/apps/web/.next/standalone ./
