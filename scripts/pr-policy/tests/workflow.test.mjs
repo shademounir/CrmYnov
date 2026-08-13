@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workflowUrl = new URL("../../../.github/workflows/pr-policy.yml", import.meta.url);
+const cliUrl = new URL("../cli.mjs", import.meta.url);
 
 test("pr-policy workflow has stable triggers and job name", async () => {
   const workflow = await readFile(workflowUrl, "utf8");
@@ -31,4 +32,13 @@ test("untrusted forks are refused before checkout", async () => {
   assert.ok(workflow.indexOf("Refuse untrusted event source") < workflow.indexOf("actions/checkout@"));
   assert.match(workflow, /SOURCE_REPOSITORY/);
   assert.match(workflow, /EXPECTED_REPOSITORY/);
+});
+
+test("manual-po evidence collection is read-only and cannot perform reserved PO actions", async () => {
+  const cli = await readFile(cliUrl, "utf8");
+  assert.match(cli, /reviewThreads\(first:100\)/);
+  assert.doesNotMatch(cli, /\bmutation\b/);
+  assert.doesNotMatch(cli, /method:\s*["'](?:PUT|PATCH|DELETE)["']/);
+  assert.doesNotMatch(cli, /\/merge(?:s|\b)|\/requested_reviewers|\/labels(?:\?|`|\")/);
+  assert.doesNotMatch(cli, /gh\s+pr\s+(?:ready|merge)|--auto-merge/);
 });
