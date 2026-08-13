@@ -7,6 +7,9 @@ technical Gate releases use `automated-policy` as documented in
 `docs/governance/automated-policy.md`. Manual Product Owner evidence remains
 mandatory for production with real data and sensitive operations.
 
+The per-PR classifier and exact machine-verifiable evidence are documented in
+`docs/governance/per-pr-approval-mode.md`.
+
 ## Mandatory sequence
 
 1. Codex reads the authorized Jira ticket.

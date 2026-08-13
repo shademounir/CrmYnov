@@ -29,6 +29,7 @@ jobs:
     timeout-minutes: 15
     env:
       PR_POLICY_ALLOWED_ACTORS: shademounir
+      # Default for ordinary PRs only. Sensitive scope always overrides to manual-po.
       PR_APPROVAL_MODE: ${{ vars.PR_APPROVAL_MODE || 'automated-policy' }}
     steps:
       - name: Refuse untrusted event source before checkout
