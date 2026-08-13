@@ -1,0 +1,36 @@
+{
+  "organizationId": "1046537507934",
+  "bootstrapProjectId": "crmynov-bst-n7x4q2",
+  "billingAccountPresent": true,
+  "region": "europe-southwest1",
+  "labels": {
+    "application": "crm-ynov",
+    "environment": "bootstrap",
+    "managed-by": "terraform",
+    "owner": "admissions",
+    "phase": "phase-0"
+  },
+  "services": [
+    "cloudbilling.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "serviceusage.googleapis.com"
+  ],
+  "humanIdentity": "casablancaynovcampus@gmail.com",
+  "gitSha": "bcdf2bf78753bbeb48d8d37b51c7c543c5dd34ac",
+  "startedAtUtc": "2026-08-13T08:00:00.000Z",
+  "projectAlreadyExists": false,
+  "partialExecution": false,
+  "concurrentInvocation": false,
+  "previousAttempt": false,
+  "terraformOwners": {
+    "bootstrapProject": "phase0",
+    "foundationOwnsBootstrapProject": false
+  },
+  "observed": {
+    "billingActive": false,
+    "quotaProjectConfigured": false,
+    "adcPresent": false,
+    "identityVerified": false,
+    "cleanupSucceeded": true
+  }
+}

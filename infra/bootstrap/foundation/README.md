@@ -1,7 +1,10 @@
 # Phase 0 — Foundation
 
-This root module describes the future `CRM Ynov` folder, the four approved
-projects, billing associations, strictly required APIs, and alert-only budgets.
+This root module describes the future `CRM Ynov` folder, the three environment
+projects, their billing associations, complementary APIs, and five alert-only
+budgets. The fourth approved project, `crmynov-bst-n7x4q2`, is an external
+dependency owned by the dedicated Phase 0 state (ADR-0006); this root reads it
+and never recreates or relinks it.
 
 It deliberately has no backend block. The first authorized execution uses a
 temporary local state and is run by the authorized temporary institutional
@@ -13,8 +16,9 @@ impersonate `tf-bootstrap`.
 ## Preconditions before any plan or apply
 
 - temporary `resourcemanager.folderCreator` access is granted and time-boxed;
-- capacity for four project creations is confirmed;
-- each project ID is confirmed globally available;
+- Phase 0 is complete and its redacted proof is approved;
+- capacity for three project creations is confirmed;
+- each environment project ID is confirmed globally available;
 - the full billing ID is injected through a secure, untracked variable;
 - the Product Owner approves real USD amounts because the billing account is
   denominated in USD and no MAD conversion is encoded;

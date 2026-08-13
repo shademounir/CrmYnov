@@ -108,8 +108,8 @@ or recorded arguments.
 
 Success requires exactly:
 
-- 31 creates and zero update/delete/replace/import;
-- one folder, four projects, four `google_billing_project_info`, 17 project
+- 26 creates and zero update/delete/replace/import;
+- one folder, three projects, three `google_billing_project_info`, 14 project
   services, and five budgets;
 - USD budgets: bootstrap `8/330000000`, dev `41/670000000`, staging
   `33/330000000`, prod `100/0`, folder `183/330000000`.

@@ -5,9 +5,9 @@ import { pathToFileURL } from "node:url";
 
 const EXPECTED_TYPES = Object.freeze({
   google_folder: 1,
-  google_project: 4,
-  google_billing_project_info: 4,
-  google_project_service: 17,
+  google_project: 3,
+  google_billing_project_info: 3,
+  google_project_service: 14,
   google_billing_budget: 5,
 });
 
@@ -179,7 +179,7 @@ export function analyzePlanBytes(bytes) {
   const plannedBudgetCount = planned.filter((item) => item.type === "google_billing_budget").length;
   if (plannedBudgetCount < 5) refuse("budget_missing", "budget");
   if (plannedBudgetCount > 5) refuse("budget_duplicate", "budget");
-  if (actionCounts.create !== 31) refuse("create_count_mismatch", "contract");
+  if (actionCounts.create !== 26) refuse("create_count_mismatch", "contract");
 
   const typeCounts = Object.fromEntries(Object.keys(EXPECTED_TYPES).map((type) => [type, 0]));
   for (const resource of planned.filter((item) => item.mode !== "data")) {

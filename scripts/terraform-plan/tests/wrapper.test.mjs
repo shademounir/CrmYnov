@@ -77,7 +77,7 @@ test("synthetic wrapper emits the exact evidence contract without inventing a pl
   assert.equal(output.schemaVersion, 2);
   assert.equal(output.valid, true);
   assert.equal(output.mode, "synthetic_fixture");
-  assert.equal(output.actions.create, 31);
+  assert.equal(output.actions.create, 26);
   assert.equal(output.plan.status, "synthetic_not_produced");
   assert.equal(output.plan.sha256, null);
   assert.match(output.json.sha256, /^[a-f0-9]{64}$/);
@@ -138,7 +138,7 @@ test("contract harness executes the exact ordered path and links all evidence", 
     }
     assert.equal(run.summary.terraformVersion, "1.15.8");
     assert.equal(run.summary.providerVersion, "7.43.0");
-    assert.equal(run.summary.actions.create, 31);
+    assert.equal(run.summary.actions.create, 26);
     assert.equal(run.summary.cleanupSucceeded, true);
     assert.equal(run.summary.artifactsRemaining, 0);
     assert.equal(run.summary.tfDataDirRestored, true);

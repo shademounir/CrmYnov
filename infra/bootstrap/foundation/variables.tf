@@ -10,6 +10,17 @@ variable "folder_display_name" {
   default     = "CRM Ynov"
 }
 
+variable "bootstrap_project_id" {
+  description = "Existing bootstrap project owned exclusively by the Phase 0 Terraform state."
+  type        = string
+  default     = "crmynov-bst-n7x4q2"
+
+  validation {
+    condition     = var.bootstrap_project_id == "crmynov-bst-n7x4q2"
+    error_message = "bootstrap_project_id must match the Product Owner-approved project."
+  }
+}
+
 variable "region" {
   description = "Primary Google Cloud region."
   type        = string
