@@ -7,7 +7,14 @@
     "node": ">=22"
   },
   "scripts": {
+    "lint": "node scripts/ci/repository-quality.mjs lint",
+    "type-check": "node scripts/ci/repository-quality.mjs type-check",
+    "build": "node scripts/ci/repository-quality.mjs build",
     "test": "node --test",
+    "test:unit": "node --test scripts/ci/tests/*.test.mjs scripts/jira-sync/tests/domain.test.mjs scripts/pr-policy/tests/policy.test.mjs",
+    "test:integration": "node --test scripts/jira-sync/tests/jira-client.test.mjs scripts/jira-sync/tests/runner.test.mjs scripts/terraform-plan/tests/wrapper.test.mjs scripts/bootstrap-phase0/tests/wrapper.test.mjs",
+    "test:e2e": "node --test scripts/pr-policy/tests/workflow.test.mjs scripts/release-manifest/tests/workflow-contract.test.mjs",
+    "ci:container-readiness": "node scripts/ci/container-readiness.mjs",
     "test:jira-sync": "node --test scripts/jira-sync/tests/*.test.mjs",
     "test:pr-policy": "node --test scripts/pr-policy/tests/*.test.mjs",
     "test:release-manifest": "node --test scripts/release-manifest/tests/*.test.mjs",

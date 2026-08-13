@@ -1,0 +1,338 @@
+name: Application quality gate
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: application-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-source:
+    name: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse forks and actors outside the repository owner allowlist
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          EXPECTED_OWNER: ${{ github.repository_owner }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "${HEAD_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          test "${ACTOR}" = "${EXPECTED_OWNER}"
+
+  lint:
+    name: lint
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Run lint
+        run: npm run lint
+
+  type-check:
+    name: type-check
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Run type check
+        run: npm run type-check
+
+  unit-tests:
+    name: unit-tests
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Run unit tests
+        run: npm run test:unit
+
+  integration-tests:
+    name: integration-tests
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Run integration tests
+        run: npm run test:integration
+      - name: Run targeted end-to-end contracts
+        run: npm run test:e2e
+
+  build:
+    name: build
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Build repository artifacts
+        run: npm run build
+
+  dependency-review:
+    name: dependency-review
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Refuse vulnerable dependency changes
+        uses: actions/dependency-review-action@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.8.2
+        with:
+          fail-on-severity: high
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Audit production dependency tree
+        run: npm audit --omit=dev --audit-level=high
+
+  sbom:
+    name: sbom
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Generate a CycloneDX SBOM
+        run: npm sbom --sbom-format cyclonedx > crm-ynov.cdx.json
+      - name: Upload SBOM without repository write permission
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: crm-ynov-sbom-${{ github.event.pull_request.number }}
+          path: crm-ynov.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  secret-scan:
+    name: secret-scan
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out complete history without persistent credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Scan repository and complete Git history
+        run: |
+          npm run security:scan
+          npm run security:history
+
+  container-scan:
+    name: container-scan
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify container scan readiness
+        run: node scripts/ci/container-readiness.mjs
+
+  trivy-iac:
+    name: trivy-iac
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Scan IaC for high and critical findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          version: v0.70.0
+          cache: false
+          format: table
+          hide-progress: true
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+  codeql:
+    name: CodeQL
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e # v3.30.5
+        with:
+          languages: javascript-typescript
+      - name: Analyze source
+        uses: github/codeql-action/analyze@c3400c2f38909e0dcf3c3a41f2030a8217be5d3e # v3.30.5
+        with:
+          category: /language:javascript-typescript
+
+  sonarcloud:
+    name: SonarQube Quality Gate
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Refuse incomplete SonarCloud configuration
+        shell: bash
+        env:
+          SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+          SONAR_TOKEN_PRESENT: ${{ secrets.SONAR_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SONAR_ORGANIZATION}" || -z "${SONAR_PROJECT_KEY}" || "${SONAR_TOKEN_PRESENT}" != "true" ]]; then
+            echo "SonarCloud configuration is incomplete: configure SONAR_ORGANIZATION, SONAR_PROJECT_KEY and SONAR_TOKEN."
+            exit 1
+          fi
+      - name: Check out reviewed code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run SonarCloud analysis and wait for the quality gate
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >-
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.qualitygate.wait=true
+
+  quality-gate:
+    name: quality-gate
+    if: always()
+    needs:
+      - trusted-source
+      - lint
+      - type-check
+      - unit-tests
+      - integration-tests
+      - build
+      - dependency-review
+      - sbom
+      - secret-scan
+      - container-scan
+      - trivy-iac
+      - codeql
+      - sonarcloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate all quality and security results fail-closed
+        shell: bash
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const results = JSON.parse(process.env.RESULTS);
+            const failed = Object.entries(results)
+              .filter(([, value]) => value.result !== "success")
+              .map(([name, value]) => `${name}:${value.result}`);
+            if (failed.length) {
+              console.error(`Quality gate refused: ${failed.join(", ")}`);
+              process.exit(1);
+            }
+            console.log("Quality gate passed: every required job succeeded.");
+          '

@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const workflowUrl = new URL("../../../.github/workflows/application-quality.yml", import.meta.url);
+const packageUrl = new URL("../../../package.json", import.meta.url);
+
+test("application quality workflow is least-privileged and aggregates every gate", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  for (const job of [
+    "lint", "type-check", "unit-tests", "integration-tests", "build", "dependency-review",
+    "sbom", "secret-scan", "container-scan", "trivy-iac", "codeql", "sonarcloud",
+  ]) assert.match(workflow, new RegExp(`\\b${job}:`));
+  assert.match(workflow, /quality-gate:/);
+  assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /contents: read/);
+  assert.doesNotMatch(workflow, /pull_request_target/);
+  assert.doesNotMatch(workflow, /persist-credentials:\s*true/);
+  assert.doesNotMatch(workflow, /terraform\s+(?:plan|apply|destroy|import)/i);
+  assert.doesNotMatch(workflow, /gcloud\s/i);
+});
+
+test("Sonar gate fails closed and consumes only named repository configuration", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  assert.match(workflow, /vars\.SONAR_ORGANIZATION/);
+  assert.match(workflow, /vars\.SONAR_PROJECT_KEY/);
+  assert.match(workflow, /secrets\.SONAR_TOKEN/);
+  assert.match(workflow, /SonarCloud configuration is incomplete/);
+  assert.doesNotMatch(workflow, /sonar\.organization\s*=\s*[^$\s]/);
+  assert.doesNotMatch(workflow, /sonar\.projectKey\s*=\s*[^$\s]/);
+});
+
+test("CodeQL uses the only justified write permission and rejects forks before checkout", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const codeqlJob = workflow.match(/\n  codeql:[\s\S]+?(?=\n  sonarcloud:)/)?.[0] ?? "";
+  assert.match(workflow, /security-events: write/);
+  assert.match(workflow, /trusted-source:[\s\S]+Refuse forks[\s\S]+codeql:[\s\S]+needs: trusted-source/);
+  assert.match(codeqlJob, /persist-credentials: false/);
+  assert.doesNotMatch(codeqlJob, /secrets\./);
+  assert.doesNotMatch(workflow, /pull_request_target/);
+});
+
+test("root package exposes every executable quality command", async () => {
+  const pkg = JSON.parse(await readFile(packageUrl, "utf8"));
+  for (const name of ["lint", "type-check", "test:unit", "test:integration", "test:e2e", "build"]) {
+    assert.equal(typeof pkg.scripts[name], "string", `${name} is required`);
+  }
+});
