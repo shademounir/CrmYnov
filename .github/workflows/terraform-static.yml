@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for root in foundation state wif; do
+          for root in foundation phase0 state wif; do
             terraform -chdir="infra/bootstrap/$root" init \
               -backend=false \
               -input=false \

@@ -13,6 +13,7 @@
     "test:release-manifest": "node --test scripts/release-manifest/tests/*.test.mjs",
     "test:terraform": "node --test infra/tests/*.test.mjs",
     "test:terraform-plan": "node --test scripts/terraform-plan/tests/*.test.mjs",
+    "test:bootstrap-phase0": "node --test scripts/bootstrap-phase0/tests/*.test.mjs",
     "security:scan": "node --test scripts/jira-sync/tests/security.test.mjs",
     "security:history": "node scripts/jira-sync/history-scan.mjs"
   }

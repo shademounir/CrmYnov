@@ -1,9 +1,5 @@
 locals {
   projects = {
-    bootstrap = {
-      id   = "crmynov-bst-n7x4q2"
-      name = "CRM Ynov Bootstrap"
-    }
     dev = {
       id   = "crmynov-dev-n7x4q2"
       name = "CRM Ynov Development"
@@ -21,11 +17,8 @@ locals {
   required_services = {
     bootstrap = toset([
       "billingbudgets.googleapis.com",
-      "cloudbilling.googleapis.com",
-      "cloudresourcemanager.googleapis.com",
       "iam.googleapis.com",
       "iamcredentials.googleapis.com",
-      "serviceusage.googleapis.com",
       "storage.googleapis.com",
       "sts.googleapis.com",
     ])
@@ -56,11 +49,16 @@ locals {
     ]
   ])
 
+  project_ids = merge(
+    { bootstrap = data.google_project.bootstrap.project_id },
+    { for environment, project in module.projects : environment => project.id }
+  )
+
   budget_specs = {
     bootstrap = {
       display_name    = "CRM Ynov Bootstrap monthly budget"
       amount_cents    = var.budget_amount_cents.bootstrap
-      project_numbers = toset([module.projects["bootstrap"].number])
+      project_numbers = toset([data.google_project.bootstrap.number])
     }
     dev = {
       display_name    = "CRM Ynov Development monthly budget"
@@ -78,11 +76,18 @@ locals {
       project_numbers = toset([module.projects["prod"].number])
     }
     folder = {
-      display_name    = "CRM Ynov four-project monthly budget"
-      amount_cents    = var.budget_amount_cents.folder
-      project_numbers = toset([for project in module.projects : project.number])
+      display_name = "CRM Ynov four-project monthly budget"
+      amount_cents = var.budget_amount_cents.folder
+      project_numbers = toset(concat(
+        [data.google_project.bootstrap.number],
+        [for project in module.projects : project.number]
+      ))
     }
   }
+}
+
+data "google_project" "bootstrap" {
+  project_id = var.bootstrap_project_id
 }
 
 module "folder" {
@@ -115,7 +120,7 @@ module "billing" {
 resource "google_project_service" "required" {
   for_each = { for pair in local.service_pairs : pair.key => pair }
 
-  project            = module.projects[each.value.environment].id
+  project            = local.project_ids[each.value.environment]
   service            = each.value.service
   disable_on_destroy = false
 

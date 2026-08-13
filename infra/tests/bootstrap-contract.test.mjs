@@ -29,6 +29,9 @@ const wifMain = readFileSync(path.join(wifRoot, "main.tf"), "utf8");
 const foundationRoot = path.join(infra, "bootstrap", "foundation");
 const foundationVariables = readFileSync(path.join(foundationRoot, "variables.tf"), "utf8");
 const foundationExample = readFileSync(path.join(foundationRoot, "terraform.tfvars.example"), "utf8");
+const phase0Root = path.join(infra, "bootstrap", "phase0");
+const phase0Main = readFileSync(path.join(phase0Root, "main.tf"), "utf8");
+const foundationMain = readFileSync(path.join(foundationRoot, "main.tf"), "utf8");
 const budgetModuleMain = readFileSync(path.join(infra, "modules", "budget", "main.tf"), "utf8");
 const budgetModuleVariables = readFileSync(path.join(infra, "modules", "budget", "variables.tf"), "utf8");
 
@@ -39,6 +42,39 @@ test("approved project IDs are exact", () => {
     "crmynov-stg-n7x4q2",
     "crmynov-prod-n7x4q2",
   ]) assert.match(terraform, new RegExp(projectId, "g"));
+});
+
+test("Phase 0 exclusively owns the bootstrap project resource", () => {
+  assert.match(phase0Main, /resource\s+"google_project"\s+"bootstrap"/);
+  assert.match(phase0Main, /deletion_policy\s*=\s*"PREVENT"/);
+  assert.match(phase0Main, /auto_create_network\s*=\s*false/);
+  assert.doesNotMatch(foundationMain, /module\.projects\["bootstrap"\]/);
+  assert.match(foundationMain, /data\s+"google_project"\s+"bootstrap"/);
+});
+
+test("Phase 0 documentation forbids plan before explicit import", () => {
+  const phase0Readme = readFileSync(path.join(phase0Root, "README.md"), "utf8");
+  assert.match(phase0Readme, /plan before project and service[\s\S]*imports is forbidden/i);
+  assert.match(phase0Readme, /explicitly[\s\S]*authorized import/i);
+});
+
+test("Foundation can only read and cannot create or import the bootstrap project", () => {
+  assert.match(foundationMain, /data\s+"google_project"\s+"bootstrap"/);
+  assert.doesNotMatch(foundationMain, /resource\s+"google_project"\s+"bootstrap"/);
+  assert.doesNotMatch(foundationMain, /import\s*\{[\s\S]*bootstrap/);
+  assert.doesNotMatch(foundationMain, /crmynov-bst-n7x4q2[\s\S]*module\s+"projects"/);
+});
+
+test("Phase 0 and Phase 1 API ownership sets are disjoint", () => {
+  const phase0Services = [...phase0Main.matchAll(/"([a-z]+(?:[a-z0-9]*\.)*googleapis\.com)"/g)].map((match) => match[1]);
+  const foundationBootstrapBlock = foundationMain.match(/bootstrap\s*=\s*toset\(\[([\s\S]*?)\]\)/)?.[1] ?? "";
+  const foundationServices = [...foundationBootstrapBlock.matchAll(/"([a-z]+(?:[a-z0-9]*\.)*googleapis\.com)"/g)].map((match) => match[1]);
+  assert.deepEqual(phase0Services.sort(), [
+    "cloudbilling.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "serviceusage.googleapis.com",
+  ]);
+  assert.deepEqual(phase0Services.filter((service) => foundationServices.includes(service)), []);
 });
 
 test("Terraform cannot assign basic Owner or Editor roles", () => {

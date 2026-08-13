@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $roots = @(
   (Resolve-Path "$PSScriptRoot\..\bootstrap\foundation"),
+  (Resolve-Path "$PSScriptRoot\..\bootstrap\phase0"),
   (Resolve-Path "$PSScriptRoot\..\bootstrap\state"),
   (Resolve-Path "$PSScriptRoot\..\bootstrap\wif")
 )

@@ -1,0 +1,2 @@
+# Code-only placeholder. Never commit a real billing account identifier.
+billing_account_id = "INJECT_SECURELY_AT_EXECUTION"
