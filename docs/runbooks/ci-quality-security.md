@@ -7,6 +7,11 @@ targeted E2E, build, dependency review, SBOM, secret, container-readiness,
 SonarCloud, CodeQL, and Terraform IaC checks. `quality-gate` aggregates all the
 application jobs with `if: always()` and fails unless every dependency succeeds.
 
+The `dependency-review` job runs the locked npm production audit and fails on
+high or critical advisories. GitHub Dependency Review can be added as a second
+signal after Repository Dependency Graph is enabled; the pipeline does not
+assume or alter that repository setting.
+
 The current repository contains JavaScript automation only. The root lint and
 type-check commands validate every versioned `.mjs` module with the Node parser;
 CRMY-32 must replace or extend those commands with the locked TypeScript and
