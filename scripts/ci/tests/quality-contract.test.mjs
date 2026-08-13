@@ -4,6 +4,7 @@ import test from "node:test";
 
 const workflowUrl = new URL("../../../.github/workflows/application-quality.yml", import.meta.url);
 const packageUrl = new URL("../../../package.json", import.meta.url);
+const sonarUrl = new URL("../../../sonar-project.properties", import.meta.url);
 
 test("application quality workflow is least-privileged and aggregates every gate", async () => {
   const workflow = await readFile(workflowUrl, "utf8");
@@ -26,8 +27,19 @@ test("Sonar gate fails closed and consumes only named repository configuration",
   assert.match(workflow, /vars\.SONAR_PROJECT_KEY/);
   assert.match(workflow, /secrets\.SONAR_TOKEN/);
   assert.match(workflow, /SonarCloud configuration is incomplete/);
+  assert.match(workflow, /npm run test:coverage[\s\S]+test -s coverage\/lcov\.info[\s\S]+Run SonarCloud analysis/);
+  assert.doesNotMatch(workflow, /continue-on-error/);
   assert.doesNotMatch(workflow, /sonar\.organization\s*=\s*[^$\s]/);
   assert.doesNotMatch(workflow, /sonar\.projectKey\s*=\s*[^$\s]/);
+});
+
+test("coverage is reproducible, fail-closed, and imported by Sonar", async () => {
+  const pkg = JSON.parse(await readFile(packageUrl, "utf8"));
+  const sonar = await readFile(sonarUrl, "utf8");
+  assert.match(pkg.scripts["test:coverage"], /^c8 .*--reporter=lcov npm test$/);
+  assert.equal(pkg.devDependencies.c8, "10.1.3");
+  assert.match(sonar, /^sonar\.javascript\.lcov\.reportPaths=coverage\/lcov\.info$/m);
+  assert.doesNotMatch(sonar, /container-readiness/);
 });
 
 test("CodeQL uses the only justified write permission and rejects forks before checkout", async () => {
