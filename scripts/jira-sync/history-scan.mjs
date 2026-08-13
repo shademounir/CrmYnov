@@ -59,7 +59,7 @@ const forbiddenNames = objectNames
   .filter((name) =>
     /(^|\/)(?:\.env(?:\..+)?|[^/]*service-account\.json|[^/]*\.(?:pem|p12|pfx))$/i.test(
       name,
-    ),
+    ) && !/(^|\/)\.env\.example$/i.test(name),
   );
 
 if (findings.length > 0 || forbiddenNames.length > 0) {
