@@ -30,7 +30,4 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - shell: powershell
-        run: >-
-          ./scripts/terraform-plan/run-foundation-plan.ps1
-          -SyntheticFixture
-          -FixturePath ./scripts/terraform-plan/fixtures/foundation-positive.synthetic.json
+        run: node --test scripts/terraform-plan/tests/wrapper.test.mjs
