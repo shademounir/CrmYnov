@@ -17,6 +17,7 @@ export class RbacGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
+    if (request.principal.mustChangeSecret) throw new ForbiddenException({ code: "secret_change_required" });
     const required = this.reflector.getAllAndOverride<Role[]>(ROLES, [context.getHandler(), context.getClass()]) ?? [];
     if (required.length > 0 && !required.some((role) => request.principal?.roles.includes(role))) {
       throw new ForbiddenException({ code: "role_forbidden" });

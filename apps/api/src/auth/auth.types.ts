@@ -9,6 +9,7 @@ export interface Principal {
   roles: Role[];
   scopes: Scope[];
   sessionId: string;
+  mustChangeSecret?: boolean | undefined;
 }
 
 export interface AuthenticatedRequest extends Request {

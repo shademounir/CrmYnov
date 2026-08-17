@@ -12,17 +12,17 @@ interface SessionRecord extends Principal {
 export class SessionService {
   private readonly sessions = new Map<string, SessionRecord>();
 
-  create(userId: string, roles: Role[], scopes: Scope[], lifetimeMs = 3_600_000): { token: string; sessionId: string } {
+  create(userId: string, roles: Role[], scopes: Scope[], lifetimeMs = 3_600_000, mustChangeSecret = false): { token: string; sessionId: string } {
     const sessionId = randomUUID();
     const token = randomUUID();
-    this.sessions.set(token, { userId, roles: [...roles], scopes: [...scopes], sessionId, token, active: true, expiresAt: Date.now() + lifetimeMs });
+    this.sessions.set(token, { userId, roles: [...roles], scopes: [...scopes], sessionId, token, active: true, expiresAt: Date.now() + lifetimeMs, mustChangeSecret });
     return { token, sessionId };
   }
 
   authenticate(token: string): Principal | undefined {
     const session = this.sessions.get(token);
     if (!session?.active || session.expiresAt <= Date.now()) return undefined;
-    return { userId: session.userId, roles: [...session.roles], scopes: [...session.scopes], sessionId: session.sessionId };
+    return { userId: session.userId, roles: [...session.roles], scopes: [...session.scopes], sessionId: session.sessionId, mustChangeSecret: session.mustChangeSecret };
   }
 
   revoke(sessionId: string): boolean {
