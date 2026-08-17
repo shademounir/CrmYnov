@@ -1,3 +1,5 @@
+import { MIGRATION_SQL, ROLLBACK_DOC } from "./migration-policy.mjs";
+
 const AUTOMATED_POLICY_MODE = "automated-policy";
 const MANUAL_PO_MODE = "manual-po";
 const POLICY_LABEL = "policy-approved";
@@ -65,7 +67,25 @@ function branchPolicy(branch, base) {
   refuse("branch_name_not_allowed");
 }
 
-export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode }) {
+function migrationReasons(migrationAssessment) {
+  if (migrationAssessment?.applicable === true && migrationAssessment.approved === true) return [];
+  const failures = migrationAssessment?.reasons?.length
+    ? migrationAssessment.reasons
+    : ["migration_static_audit_missing"];
+  return failures.map((failure) => `prisma-${failure}`);
+}
+
+function reasonsForPath(path, manifestProfile, migrationAssessment) {
+  if (path === "release-manifest.json" && manifestProfile === "gate-1") return [];
+  if (MIGRATION_SQL.test(path) || ROLLBACK_DOC.test(path)) return migrationReasons(migrationAssessment);
+  const sensitive = SENSITIVE_RULES
+    .filter(([, pattern]) => pattern.test(path))
+    .map(([reason]) => reason);
+  if (sensitive.length) return sensitive;
+  return ORDINARY_RULES.some((pattern) => pattern.test(path)) ? [] : ["ambiguous-path"];
+}
+
+export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode, migrationAssessment }) {
   if (![AUTOMATED_POLICY_MODE, MANUAL_PO_MODE].includes(defaultMode)) {
     refuse("default_approval_mode_invalid");
   }
@@ -76,16 +96,12 @@ export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfil
   if (ticket?.scope === "prod" || ticket?.scope === MANUAL_PO_MODE) reasons.add("ticket-sensitive-scope");
   if (manifestProfile === "application") reasons.add("application-release");
   for (const file of changedFiles) {
-    const path = String(file ?? "");
-    if (path === "release-manifest.json" && manifestProfile === "gate-1") continue;
-    const matches = SENSITIVE_RULES.filter(([, pattern]) => pattern.test(path));
-    if (matches.length) for (const [reason] of matches) reasons.add(reason);
-    else if (!ORDINARY_RULES.some((pattern) => pattern.test(path))) reasons.add("ambiguous-path");
+    for (const reason of reasonsForPath(String(file ?? ""), manifestProfile, migrationAssessment)) reasons.add(reason);
   }
   if (reasons.size > 0 || defaultMode === MANUAL_PO_MODE) {
     return {
       effectiveApprovalMode: MANUAL_PO_MODE,
-      reasons: [...reasons].sort().length ? [...reasons].sort() : ["default-manual-po"],
+      reasons: reasons.size ? [...reasons].sort((left, right) => left.localeCompare(right)) : ["default-manual-po"],
     };
   }
   return { effectiveApprovalMode: AUTOMATED_POLICY_MODE, reasons: ["ordinary-scope"] };
@@ -159,6 +175,7 @@ export function validatePullRequestPolicy({
   approvalMode: defaultMode,
   repository, sourceRepository, actor, allowedActors, branch, base, draft, labels,
   ticket, changedFiles = [], manifestProfile, mergeable, branchUpToDate,
+  migrationAssessment,
   requiredChecks = [], checkRuns = [], checkSha, pullRequestNumber, pullRequestBody,
   manualPoDecision, autoMerge, autoMergeEvents = [], conversationsResolved,
   poLabelEvents = [], automationRequested = false,
@@ -168,7 +185,7 @@ export function validatePullRequestPolicy({
   if (!allowlist.includes(actor)) refuse("actor_not_allowed");
   const branchResult = branchPolicy(branch, base);
   validateTicket(ticket, branchResult);
-  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode });
+  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode, migrationAssessment });
   const names = labelNames(labels);
 
   if (classification.effectiveApprovalMode === AUTOMATED_POLICY_MODE) {

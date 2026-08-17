@@ -4,6 +4,7 @@ import {
   selectManualPoDecision,
   validatePullRequestPolicy,
 } from "./policy.mjs";
+import { assessChangedPrismaMigrations } from "./migration-policy.mjs";
 
 function required(name) {
   const value = process.env[name];
@@ -41,7 +42,7 @@ async function pages(path) {
 
 async function checkRuns() {
   const requiredChecks = pull.base.ref === "develop"
-    ? ["simulate", "terraform-static", "iac-security"]
+    ? ["simulate", "terraform-static", "iac-security", "prisma-migration-policy"]
     : ["unit-tests", "terraform-static", "iac-security", "secret-scan"];
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const response = await github(
@@ -83,6 +84,9 @@ const [files, comments, comparison, checks] = await Promise.all([
 const audit = selectAuditComment(comments, {
   headSha: pull.head.sha,
   allowedActors: required("PR_POLICY_ALLOWED_ACTORS"),
+});
+const migrationAssessment = await assessChangedPrismaMigrations({
+  changedFiles: files.map((file) => file.filename),
 });
 
 const [timeline, threadResponse] = await Promise.all([
@@ -137,6 +141,7 @@ const result = validatePullRequestPolicy({
   labels: pull.labels,
   ticket: audit.ticket,
   changedFiles: files.map((file) => file.filename),
+  migrationAssessment,
   manifestProfile,
   mergeable: pull.mergeable,
   branchUpToDate:
