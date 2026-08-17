@@ -46,6 +46,41 @@ Les checks obligatoires seront ajoutés après leur première exécution réussi
 - scans dépendances, IaC et image ;
 - génération SBOM.
 
+## Gouvernance des migrations Prisma
+
+Une migration Prisma peut relever de `automated-policy` seulement lorsque le
+validateur versionné conclut sans ambiguïté qu'elle est additive et code-only.
+Elle doit être accompagnée d'un `rollback.md`, porter les marqueurs
+`additive`, `ephemeral-only` et `rollback-documented`, puis être appliquée sur
+le service PostgreSQL éphémère de la CI. La base est vide, les identifiants sont
+synthétiques et l'URL cible exclusivement `127.0.0.1:5432/crm_policy`.
+
+Sont admissibles : création de table ou d'index, ajout de colonne nullable,
+ajout avec valeur par défaut sûre, clé étrangère sur une table créée dans la
+même migration et extension compatible d'enum. Un index unique exige le
+marqueur supplémentaire `uniqueness-validated`.
+
+Restent `manual-po` : `DROP`, `TRUNCATE`, mutations de données, renommages,
+suppressions, changements de type, `SET NOT NULL` non prouvé, SQL brut ambigu,
+chemin inconnu, URL ou credential persistant, Cloud SQL, GCP, STAGING, PROD et
+toute exécution manuelle exceptionnelle. Une migration additive mélangée à un
+fichier sensible reste `manual-po`. Tout échec ou preuve absente est
+fail-closed.
+
+Le rollback automatisé d'une migration additive consiste à revenir au code
+précédent et à laisser les nouveaux objets inutilisés. Leur suppression est une
+opération destructive distincte, toujours soumise à `manual-po`. La base CI
+éphémère est détruite avec le job ; aucun rollback n'est exécuté contre une
+base persistante.
+
+Après fusion manuelle de cette gouvernance, l'ordre applicatif recommandé est :
+
+1. CRMY-53 — socle d'audit append-only nécessaire aux opérations sensibles ;
+2. CRMY-38 — administration des utilisateurs et révocation des sessions ;
+3. CRMY-36 — changement obligatoire du secret initial avec audit disponible ;
+4. CRMY-39 — modification dynamique des rôles et périmètres après stabilisation
+   de l'administration des utilisateurs.
+
 ## Contrôles manuels restants
 
 - Vérifier que la liaison Jira affiche branches, commits et PR contenant une clé `CRMY`.

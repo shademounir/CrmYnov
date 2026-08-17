@@ -1,3 +1,5 @@
+import { MIGRATION_SQL, ROLLBACK_DOC } from "./migration-policy.mjs";
+
 const AUTOMATED_POLICY_MODE = "automated-policy";
 const MANUAL_PO_MODE = "manual-po";
 const POLICY_LABEL = "policy-approved";
@@ -65,7 +67,7 @@ function branchPolicy(branch, base) {
   refuse("branch_name_not_allowed");
 }
 
-export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode }) {
+export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode, migrationAssessment }) {
   if (![AUTOMATED_POLICY_MODE, MANUAL_PO_MODE].includes(defaultMode)) {
     refuse("default_approval_mode_invalid");
   }
@@ -78,6 +80,14 @@ export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfil
   for (const file of changedFiles) {
     const path = String(file ?? "");
     if (path === "release-manifest.json" && manifestProfile === "gate-1") continue;
+    if (MIGRATION_SQL.test(path) || ROLLBACK_DOC.test(path)) {
+      if (migrationAssessment?.applicable === true && migrationAssessment.approved === true) continue;
+      const failures = migrationAssessment?.reasons?.length
+        ? migrationAssessment.reasons
+        : ["migration_static_audit_missing"];
+      for (const failure of failures) reasons.add(`prisma-${failure}`);
+      continue;
+    }
     const matches = SENSITIVE_RULES.filter(([, pattern]) => pattern.test(path));
     if (matches.length) for (const [reason] of matches) reasons.add(reason);
     else if (!ORDINARY_RULES.some((pattern) => pattern.test(path))) reasons.add("ambiguous-path");
@@ -159,6 +169,7 @@ export function validatePullRequestPolicy({
   approvalMode: defaultMode,
   repository, sourceRepository, actor, allowedActors, branch, base, draft, labels,
   ticket, changedFiles = [], manifestProfile, mergeable, branchUpToDate,
+  migrationAssessment,
   requiredChecks = [], checkRuns = [], checkSha, pullRequestNumber, pullRequestBody,
   manualPoDecision, autoMerge, autoMergeEvents = [], conversationsResolved,
   poLabelEvents = [], automationRequested = false,
@@ -168,7 +179,7 @@ export function validatePullRequestPolicy({
   if (!allowlist.includes(actor)) refuse("actor_not_allowed");
   const branchResult = branchPolicy(branch, base);
   validateTicket(ticket, branchResult);
-  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode });
+  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode, migrationAssessment });
   const names = labelNames(labels);
 
   if (classification.effectiveApprovalMode === AUTOMATED_POLICY_MODE) {

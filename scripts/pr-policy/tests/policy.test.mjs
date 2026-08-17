@@ -155,6 +155,40 @@ test("sensitive file dominates an ordinary file", () => {
   assert.equal(result.effectiveApprovalMode, "manual-po");
 });
 
+test("audited additive Prisma migration can use automated-policy", () => {
+  const result = classifyApprovalMode({
+    changedFiles: [
+      "apps/api/prisma/schema.prisma",
+      "apps/api/prisma/migrations/20260817_add_teams/migration.sql",
+      "apps/api/prisma/migrations/20260817_add_teams/rollback.md",
+    ],
+    ticket: { scope: "application" },
+    defaultMode: "automated-policy",
+    migrationAssessment: { applicable: true, approved: true, reasons: [] },
+  });
+  assert.equal(result.effectiveApprovalMode, "automated-policy");
+});
+
+test("Prisma migration without conclusive audit fails closed", () => {
+  const result = classifyApprovalMode({
+    changedFiles: ["apps/api/prisma/migrations/unknown/migration.sql"],
+    defaultMode: "automated-policy",
+    migrationAssessment: { applicable: true, approved: false, reasons: ["migration_sql_ambiguous"] },
+  });
+  assert.equal(result.effectiveApprovalMode, "manual-po");
+  assert.ok(result.reasons.includes("prisma-migration_sql_ambiguous"));
+});
+
+test("additive migration mixed with sensitive infrastructure remains manual-po", () => {
+  const result = classifyApprovalMode({
+    changedFiles: ["apps/api/prisma/migrations/20260817_add_teams/migration.sql", "infra/bootstrap/main.tf"],
+    defaultMode: "automated-policy",
+    migrationAssessment: { applicable: true, approved: true, reasons: [] },
+  });
+  assert.equal(result.effectiveApprovalMode, "manual-po");
+  assert.ok(result.reasons.includes("terraform-bootstrap-state"));
+});
+
 test("empty diff fails closed to manual-po", () => {
   assert.equal(classifyApprovalMode({ changedFiles: [], defaultMode: "automated-policy" }).effectiveApprovalMode, "manual-po");
 });
