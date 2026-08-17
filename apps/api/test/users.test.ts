@@ -54,3 +54,26 @@ test("controller delegates protected creation, filtering and status changes", ()
   assert.equal(controller.setStatus(request, first.id, { active: false }).active, false);
   assert.equal(controller.list("false", undefined, undefined).users.length, 1);
 });
+
+test("updates multi-role authorization, scopes and immediately revokes sessions", () => {
+  const { users, sessions, audit } = createService();
+  users.create({ professionalEmail: "root@example.invalid", roles: ["SUPER_ADMIN"] }, "root", "corr-root");
+  const collaborator = users.create({ professionalEmail: "agent@example.invalid", roles: ["ADMIN", "ADMISSIONS"], campusId: "campus-a" }, "root", "corr-create");
+  const session = sessions.create(collaborator.id, ["ADMIN", "ADMISSIONS"], [{ kind: "CAMPUS", id: "campus-a" }]);
+  const updated = users.updateAuthorization(collaborator.id, { roles: ["ADMISSIONS", "AUDITOR"], teamId: "team-b", reason: "TEAM_CHANGE", confirmed: true }, "root", "corr-update");
+  assert.deepEqual(updated.roles, ["ADMISSIONS", "AUDITOR"]);
+  assert.equal(updated.campusId, undefined);
+  assert.equal(updated.teamId, "team-b");
+  assert.equal(sessions.authenticate(session.token), undefined);
+  const event = audit.list().find((candidate) => candidate.eventType === "COLLABORATOR_AUTHORIZATION_CHANGED");
+  assert.deepEqual(event?.before, { roles: ["ADMIN", "ADMISSIONS"], campusId: "campus-a", teamId: undefined });
+  assert.equal(event?.after?.reason, "TEAM_CHANGE");
+});
+
+test("authorization changes fail closed on missing confirmation, forged role and last admin", () => {
+  const { users } = createService();
+  const root = users.create({ professionalEmail: "root@example.invalid", roles: ["SUPER_ADMIN"] }, "root", "corr-root");
+  assert.throws(() => users.updateAuthorization(root.id, { roles: ["ADMIN"], reason: "ACCESS_REVIEW", confirmed: true }, "root", "corr-last"), hasResponseCode("last_super_admin_required"));
+  assert.throws(() => users.updateAuthorization(root.id, { roles: ["FORGED"], reason: "ACCESS_REVIEW", confirmed: true }, "root", "corr-role"), hasResponseCode("authorization_change_invalid"));
+  assert.throws(() => users.updateAuthorization(root.id, { roles: ["SUPER_ADMIN"], reason: "free text", confirmed: false }, "root", "corr-confirm"), hasResponseCode("authorization_change_invalid"));
+});
