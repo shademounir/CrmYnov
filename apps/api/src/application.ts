@@ -10,6 +10,7 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
   app.use(correlationMiddleware);
   app.use(authenticationMiddleware(app.get(SessionService)));
+  app.enableCors({ origin: "http://localhost:3000", methods: ["GET", "POST", "DELETE", "PATCH"] });
   app.enableShutdownHooks();
   const openApi = {
     openapi: "3.0.3",
@@ -25,6 +26,18 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/sessions/{sessionId}": { delete: { summary: "Revoke a session", responses: { "200": { description: "Revocation result" }, "403": { description: "Ownership required" } } } },
       "/sessions/users/{userId}/revoke": { post: { summary: "Revoke every active session for a user", responses: { "201": { description: "Sessions revoked" }, "403": { description: "SUPER_ADMIN required" } } } },
       "/resources/{resourceId}": { patch: { summary: "Update a resource within the caller ownership and scope", responses: { "200": { description: "Resource updated" }, "403": { description: "Resource unavailable" } } } },
+      "/access-recovery/requests": {
+        post: {
+          summary: "Request access recovery without account enumeration",
+          responses: { "202": { description: "Generic recovery acknowledgement" }, "429": { description: "Rate limit exceeded" } },
+        },
+      },
+      "/access-recovery/completions": {
+        post: {
+          summary: "Consume a single-use local recovery challenge",
+          responses: { "204": { description: "Challenge consumed" }, "400": { description: "Invalid input" }, "403": { description: "Invalid, expired or used challenge" } },
+        },
+      },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));

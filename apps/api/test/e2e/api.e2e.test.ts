@@ -72,3 +72,33 @@ test("enforces roles, ownership, scopes and immediate session revocation", async
   assert.equal(body.includes(auditor.token), false);
   assert.equal(body.includes("synthetic-auditor"), false);
 });
+
+test("keeps access recovery non-enumerating and correlation-safe", async (context) => {
+  const app = await createApplication();
+  await app.listen(0, "127.0.0.1");
+  context.after(() => app.close());
+  const address = app.getHttpServer().address() as AddressInfo | null;
+  assert.ok(address);
+  const endpoint = `http://127.0.0.1:${address.port}/access-recovery/requests`;
+
+  const requestRecovery = async (email: string, correlationId: string): Promise<{ response: Response; body: unknown }> => {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-correlation-id": correlationId },
+      body: JSON.stringify({ email, returnPath: "/access-recovery/complete" }),
+    });
+    return { response, body: await response.json() };
+  };
+
+  const known = await requestRecovery("known-user@example.invalid", "recovery-known");
+  const unknown = await requestRecovery("unknown-user@example.invalid", "recovery-unknown");
+  assert.equal(known.response.status, 202);
+  assert.equal(unknown.response.status, 202);
+  assert.deepEqual(known.body, unknown.body);
+  assert.equal(known.response.headers.get("x-correlation-id"), "recovery-known");
+  assert.equal(JSON.stringify(known.body).includes("known-user"), false);
+
+  const specification = await fetch(`http://127.0.0.1:${address.port}/docs-json`).then((response) => response.json()) as { paths: Record<string, unknown> };
+  assert.ok(specification.paths["/access-recovery/requests"]);
+  assert.ok(specification.paths["/access-recovery/completions"]);
+});
