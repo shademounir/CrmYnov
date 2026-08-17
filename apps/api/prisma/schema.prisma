@@ -41,8 +41,8 @@ model Collaborator {
   campusId          String?  @map("campus_id") @db.VarChar(64)
   teamId            String?  @map("team_id") @db.VarChar(64)
   active            Boolean  @default(true)
-  mustChangeSecret  Boolean  @default(true) @map("must_change_secret")
-  credentialVersion Int      @default(1) @map("credential_version")
+  firstLoginRequired   Boolean @default(true) @map("first_login_required")
+  authenticationVersion Int   @default(1) @map("authentication_version")
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
