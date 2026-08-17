@@ -1,7 +1,6 @@
 import { Controller, Get, Inject, Query, UseGuards } from "@nestjs/common";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
-import { AuditService } from "./audit.service.js";
-import type { AuditEvent } from "./audit.types.js";
+import { AuditService, type AuditEvent } from "./audit.service.js";
 
 @Controller("audit-events")
 @UseGuards(RbacGuard)
