@@ -12,9 +12,11 @@ import {
   LocalIdentityDirectory,
   LocalRecoveryChallengeStore,
 } from "./access-recovery/access-recovery.store.js";
+import { AuditController } from "./audit/audit.controller.js";
+import { AuditService } from "./audit/audit.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController],
   providers: [
     SessionService,
     RateLimitService,
@@ -23,6 +25,7 @@ import {
     LocalIdentityDirectory,
     LocalRecoveryChallengeStore,
     LocalCredentialAdapter,
+    AuditService,
   ],
 })
 export class AppModule {}

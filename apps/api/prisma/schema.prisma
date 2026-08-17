@@ -13,3 +13,22 @@ model SystemProbe {
 
   @@map("system_probes")
 }
+
+model AuditEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  eventType      String   @map("event_type") @db.VarChar(80)
+  actorId        String?  @map("actor_id") @db.VarChar(64)
+  actorRoles     String[] @map("actor_roles")
+  minimizedIp    String?  @map("minimized_ip") @db.VarChar(64)
+  sessionId      String?  @map("session_id") @db.Uuid
+  correlationId  String   @map("correlation_id") @db.VarChar(64)
+  before         Json?
+  after          Json?
+  result         String   @db.VarChar(32)
+  idempotencyKey String   @unique @map("idempotency_key") @db.VarChar(128)
+  occurredAt     DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([actorId, occurredAt(sort: Desc)])
+  @@map("audit_events")
+}
