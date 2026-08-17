@@ -38,7 +38,10 @@ function safeAddColumn(statement) {
   if (!upper.includes(" NOT NULL")) return true;
   const defaultAt = upper.indexOf(" DEFAULT ");
   if (defaultAt < 0) return false;
-  const candidate = statement.slice(defaultAt + 9).replace(/\s+NOT NULL$/i, "").trim();
+  const rawCandidate = statement.slice(defaultAt + 9).trim();
+  const candidate = rawCandidate.toUpperCase().endsWith(" NOT NULL")
+    ? rawCandidate.slice(0, -9).trim()
+    : rawCandidate;
   return SAFE_DEFAULT.test(candidate);
 }
 
@@ -80,13 +83,13 @@ export function analyzeMigrationSql(sql) {
   if (!source.trim()) reasons.push("migration_sql_empty");
   if (source.includes("/*") || source.includes("*/")) reasons.push("migration_sql_ambiguous");
   if (hasSensitiveText(` ${source} `)) reasons.push("migration_persistent_or_secret_reference");
-  const lines = source.toLowerCase().split(/\r?\n/).map((line) => line.trim());
+  const lines = new Set(source.toLowerCase().split(/\r?\n/).map((line) => line.trim()));
   for (const marker of ["additive", "ephemeral-only", "rollback-documented"]) {
-    if (!lines.includes(`-- prisma-policy: ${marker}`)) reasons.push(`migration_marker_${marker}_missing`);
+    if (!lines.has(`-- prisma-policy: ${marker}`)) reasons.push(`migration_marker_${marker}_missing`);
   }
   const items = statements(source);
   const newTables = createdTables(items);
-  const uniquenessValidated = lines.includes("-- prisma-policy: uniqueness-validated");
+  const uniquenessValidated = lines.has("-- prisma-policy: uniqueness-validated");
   reasons.push(...items.map((statement) => statementReason(statement, newTables, uniquenessValidated)).filter(Boolean));
   return result(reasons, { statementCount: items.length });
 }
