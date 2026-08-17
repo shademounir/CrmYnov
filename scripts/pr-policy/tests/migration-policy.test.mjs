@@ -98,8 +98,7 @@ test("fails closed when rollback, SQL or workflow evidence is missing", async ()
   assert.ok(assessment.reasons.includes("migration_workflow_unreadable"));
 });
 
-test("CI runner validates, deploys and checks status only on an ephemeral database", async () => {
-  const calls = [];
+test("CI runner accepts only an ephemeral database before Prisma execution", async () => {
   const result = await runMigrationCi({
     env: {
       DATABASE_URL: "postgresql://crm_policy:synthetic-only@127.0.0.1:5432/crm_policy",
@@ -107,16 +106,10 @@ test("CI runner validates, deploys and checks status only on an ephemeral databa
       MIGRATION_HEAD_SHA: "b".repeat(40),
     },
     readWorkflow: async () => ephemeralWorkflow,
-    listChangedFiles: () => [],
+    changedFiles: [],
     assess: async () => ({ approved: true, reasons: [], migrationFiles: [] }),
-    run: (command, arguments_) => calls.push([command, ...arguments_]),
   });
   assert.deepEqual(result, { approved: true, migrationCount: 0 });
-  assert.deepEqual(calls.map((call) => call.slice(1, 3)), [
-    ["prisma", "validate"],
-    ["prisma", "migrate"],
-    ["prisma", "migrate"],
-  ]);
   await assert.rejects(
     runMigrationCi({
       env: { DATABASE_URL: "postgresql://crm_policy:x@persistent.example:5432/crm_policy", MIGRATION_BASE_SHA: "a", MIGRATION_HEAD_SHA: "b" },

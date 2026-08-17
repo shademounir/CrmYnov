@@ -69,4 +69,11 @@ jobs:
           DATABASE_URL: postgresql://crm_policy:synthetic-policy-only@127.0.0.1:5432/crm_policy?schema=public
           MIGRATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           MIGRATION_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/pr-policy/migration-ci.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t CHANGED_FILES < <(git diff --name-only "${MIGRATION_BASE_SHA}" "${MIGRATION_HEAD_SHA}")
+          node scripts/pr-policy/migration-ci.mjs "${CHANGED_FILES[@]}"
+          npx prisma validate --schema apps/api/prisma/schema.prisma
+          npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
+          npx prisma migrate status --schema apps/api/prisma/schema.prisma
