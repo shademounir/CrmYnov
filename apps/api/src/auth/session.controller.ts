@@ -5,6 +5,7 @@ import { RateLimitService } from "./rate-limit.service.js";
 import { RbacGuard, RequireRoles } from "./rbac.guard.js";
 import { SessionService } from "./session.service.js";
 import { AuditService } from "../audit/audit.service.js";
+import { LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
 
 @Controller("sessions")
 export class SessionController {
@@ -12,6 +13,7 @@ export class SessionController {
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(RateLimitService) private readonly rateLimit: RateLimitService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(LocalCredentialAdapter) private readonly credentials: LocalCredentialAdapter,
   ) {}
 
   @Post()
@@ -22,7 +24,7 @@ export class SessionController {
     if (!/^[a-zA-Z0-9_-]{3,64}$/.test(userId) || requestedRoles.length === 0 || !requestedRoles.every(isRole)) {
       throw new ForbiddenException({ code: "identity_invalid" });
     }
-    const created = this.sessions.create(userId, requestedRoles, [{ kind: "GLOBAL" }]);
+    const created = this.sessions.create(userId, requestedRoles, [{ kind: "GLOBAL" }], 3_600_000, this.credentials.requiresChange(userId));
     this.audit.record({ eventType: "SESSION_CREATED", actorId: userId, actorRoles: requestedRoles, sessionId: created.sessionId, correlationId: request.header("x-correlation-id") ?? "generated", result: "SUCCESS", idempotencyKey: `session-created:${created.sessionId}`, ip: request.ip });
     return created;
   }

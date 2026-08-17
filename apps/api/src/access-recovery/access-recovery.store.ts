@@ -52,13 +52,28 @@ export class LocalIdentityDirectory {
 
 @Injectable()
 export class LocalCredentialAdapter {
-  private readonly credentialDigests = new Map<string, string>();
+  private readonly credentials = new Map<string, { digest: string; mustChange: boolean }>();
 
   replace(identityDigest: string, nextSecret: string): void {
-    this.credentialDigests.set(identityDigest, digestRecoveryValue(nextSecret));
+    this.credentials.set(identityDigest, { digest: digestRecoveryValue(nextSecret), mustChange: false });
+  }
+
+  provisionTemporary(identityDigest: string, temporarySecret: string): void {
+    this.credentials.set(identityDigest, { digest: digestRecoveryValue(temporarySecret), mustChange: true });
+  }
+
+  replaceRequired(identityDigest: string, currentSecret: string, nextSecret: string): boolean {
+    const current = this.credentials.get(identityDigest);
+    if (!current?.mustChange || current.digest !== digestRecoveryValue(currentSecret)) return false;
+    this.replace(identityDigest, nextSecret);
+    return true;
+  }
+
+  requiresChange(identityDigest: string): boolean {
+    return this.credentials.get(identityDigest)?.mustChange === true;
   }
 
   hasStoredRawSecret(rawSecret: string): boolean {
-    return JSON.stringify([...this.credentialDigests.values()]).includes(rawSecret);
+    return JSON.stringify([...this.credentials.values()]).includes(rawSecret);
   }
 }

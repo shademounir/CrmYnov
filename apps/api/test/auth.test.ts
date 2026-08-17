@@ -10,6 +10,7 @@ import { SessionController } from "../src/auth/session.controller.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import type { ExecutionContext } from "@nestjs/common";
 import type { NextFunction, Response } from "express";
+import { LocalCredentialAdapter } from "../src/access-recovery/access-recovery.store.js";
 
 function hasErrorCode(code: string): (error: unknown) => boolean {
   return (error: unknown): boolean => error instanceof Error && "getResponse" in error && JSON.stringify((error as { getResponse: () => unknown }).getResponse()).includes(code);
@@ -67,7 +68,7 @@ test("role and authentication parsing reject malformed input", () => {
 
 test("session controller enforces validation, ownership and admin revocation", () => {
   const sessions = new SessionService();
-  const controller = new SessionController(sessions, new RateLimitService(), new AuditService());
+  const controller = new SessionController(sessions, new RateLimitService(), new AuditService(), new LocalCredentialAdapter());
   const request = (value: Record<string, unknown>): AuthenticatedRequest => ({ header: () => "test-correlation", ...value }) as unknown as AuthenticatedRequest;
   assert.throws(() => controller.create({ ip: "client-a" } as AuthenticatedRequest, { userId: "x", roles: ["FORGED"] }), hasErrorCode("identity_invalid"));
   const user = controller.create(request({ ip: "client-a" }), { userId: "synthetic-user", roles: ["AUDITOR"] });

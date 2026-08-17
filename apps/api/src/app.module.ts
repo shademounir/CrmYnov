@@ -16,9 +16,11 @@ import { AuditController } from "./audit/audit.controller.js";
 import { AuditService } from "./audit/audit.service.js";
 import { UserController } from "./users/user.controller.js";
 import { UserService } from "./users/user.service.js";
+import { FirstLoginController } from "./first-login/first-login.controller.js";
+import { FirstLoginService } from "./first-login/first-login.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController],
   providers: [
     SessionService,
     RateLimitService,
@@ -29,6 +31,7 @@ import { UserService } from "./users/user.service.js";
     LocalCredentialAdapter,
     AuditService,
     UserService,
+    FirstLoginService,
   ],
 })
 export class AppModule {}
