@@ -7,6 +7,7 @@ import { SessionService } from "../auth/session.service.js";
 
 export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean }
 export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; roles: string[]; campusId?: string; teamId?: string }
+export interface UpdateAuthorization { roles: string[]; campusId?: string; teamId?: string; reason: string; confirmed: boolean }
 
 const IDENTIFIER = /^[a-zA-Z0-9_-]{2,64}$/;
 
@@ -44,6 +45,23 @@ export class UserService {
     user.active = active;
     const revokedSessions = active ? 0 : this.sessions.revokeUser(id);
     this.audit.record({ eventType: active ? "COLLABORATOR_ACTIVATED" : "COLLABORATOR_DEACTIVATED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, before, after: { subjectId: id, active, revokedSessions }, result: "SUCCESS", idempotencyKey: `collaborator-active:${id}:${active}:${correlationId}` });
+    return { ...user, roles: [...user.roles] };
+  }
+
+  updateAuthorization(id: string, input: UpdateAuthorization, actorId: string, correlationId: string): Collaborator {
+    const user = this.users.get(id);
+    if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
+    const reasons = ["RESPONSIBILITY_CHANGE", "TEAM_CHANGE", "CAMPUS_CHANGE", "ACCESS_REVIEW"];
+    if (!input.confirmed || !reasons.includes(input.reason) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "authorization_change_invalid" });
+    if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
+    const removesSuperAdmin = user.roles.includes("SUPER_ADMIN") && !input.roles.includes("SUPER_ADMIN");
+    if (user.active && removesSuperAdmin && this.list({ active: true }).filter((candidate) => candidate.roles.includes("SUPER_ADMIN")).length <= 1) throw new ConflictException({ code: "last_super_admin_required" });
+    const before = { roles: [...user.roles], campusId: user.campusId, teamId: user.teamId };
+    user.roles = [...input.roles] as Role[];
+    user.campusId = input.campusId;
+    user.teamId = input.teamId;
+    const revokedSessions = this.sessions.revokeUser(id);
+    this.audit.record({ eventType: "COLLABORATOR_AUTHORIZATION_CHANGED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, before, after: { subjectId: id, roles: user.roles, campusId: user.campusId, teamId: user.teamId, reason: input.reason, revokedSessions }, result: "SUCCESS", idempotencyKey: `collaborator-authorization:${id}:${correlationId}` });
     return { ...user, roles: [...user.roles] };
   }
 }
