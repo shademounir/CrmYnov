@@ -7,6 +7,7 @@ import { isRole, type AuthenticatedRequest, type Principal } from "../src/auth/a
 import { authenticationMiddleware } from "../src/auth/auth.middleware.js";
 import { ResourceController } from "../src/auth/resource.controller.js";
 import { SessionController } from "../src/auth/session.controller.js";
+import { AuditService } from "../src/audit/audit.service.js";
 import type { ExecutionContext } from "@nestjs/common";
 import type { NextFunction, Response } from "express";
 
@@ -66,21 +67,22 @@ test("role and authentication parsing reject malformed input", () => {
 
 test("session controller enforces validation, ownership and admin revocation", () => {
   const sessions = new SessionService();
-  const controller = new SessionController(sessions, new RateLimitService());
+  const controller = new SessionController(sessions, new RateLimitService(), new AuditService());
+  const request = (value: Record<string, unknown>): AuthenticatedRequest => ({ header: () => "test-correlation", ...value }) as unknown as AuthenticatedRequest;
   assert.throws(() => controller.create({ ip: "client-a" } as AuthenticatedRequest, { userId: "x", roles: ["FORGED"] }), hasErrorCode("identity_invalid"));
-  const user = controller.create({ ip: "client-a" } as AuthenticatedRequest, { userId: "synthetic-user", roles: ["AUDITOR"] });
+  const user = controller.create(request({ ip: "client-a" }), { userId: "synthetic-user", roles: ["AUDITOR"] });
   assert.throws(
     () => controller.revoke({ principal: { userId: "other", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: "other-session" } } as AuthenticatedRequest, user.sessionId),
     hasErrorCode("session_ownership_required"),
   );
-  assert.equal(controller.revoke({ principal: { userId: "synthetic-user", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: user.sessionId } } as AuthenticatedRequest, user.sessionId).revoked, true);
-  controller.create({ ip: "client-b" } as AuthenticatedRequest, { userId: "synthetic-user", roles: ["AUDITOR"] });
-  assert.equal(controller.revokeUser("synthetic-user").revokedSessions, 1);
+  assert.equal(controller.revoke(request({ principal: { userId: "synthetic-user", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: user.sessionId } }), user.sessionId).revoked, true);
+  controller.create(request({ ip: "client-b" }), { userId: "synthetic-user", roles: ["AUDITOR"] });
+  assert.equal(controller.revokeUser(request({ principal: { userId: "synthetic-admin", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "admin-session" } }), "synthetic-user").revokedSessions, 1);
 });
 
 test("resource controller fails closed for ownership and scope", () => {
-  const controller = new ResourceController();
-  const request = { principal: { userId: "synthetic-user", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-a" } } as AuthenticatedRequest;
+  const controller = new ResourceController(new AuditService());
+  const request = { header: () => "resource-correlation", principal: { userId: "synthetic-user", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-a" } } as unknown as AuthenticatedRequest;
   assert.deepEqual(controller.update(request, "resource-a", { ownerId: "synthetic-user", scope: { kind: "CAMPUS", id: "campus-a" } }), { resourceId: "resource-a", updated: true });
   assert.throws(() => controller.update(request, "resource-a", { ownerId: "other", scope: { kind: "CAMPUS", id: "campus-a" } }), hasErrorCode("resource_not_found"));
   assert.throws(() => controller.update(request, "resource-a", { ownerId: "synthetic-user", scope: { kind: "CAMPUS", id: "campus-b" } }), hasErrorCode("resource_not_found"));

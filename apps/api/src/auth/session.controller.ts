@@ -4,12 +4,14 @@ import { isRole } from "./auth.types.js";
 import { RateLimitService } from "./rate-limit.service.js";
 import { RbacGuard, RequireRoles } from "./rbac.guard.js";
 import { SessionService } from "./session.service.js";
+import { AuditService } from "../audit/audit.service.js";
 
 @Controller("sessions")
 export class SessionController {
   constructor(
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(RateLimitService) private readonly rateLimit: RateLimitService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   @Post()
@@ -20,7 +22,9 @@ export class SessionController {
     if (!/^[a-zA-Z0-9_-]{3,64}$/.test(userId) || requestedRoles.length === 0 || !requestedRoles.every(isRole)) {
       throw new ForbiddenException({ code: "identity_invalid" });
     }
-    return this.sessions.create(userId, requestedRoles, [{ kind: "GLOBAL" }]);
+    const created = this.sessions.create(userId, requestedRoles, [{ kind: "GLOBAL" }]);
+    this.audit.record({ eventType: "SESSION_CREATED", actorId: userId, actorRoles: requestedRoles, sessionId: created.sessionId, correlationId: request.header("x-correlation-id") ?? "generated", result: "SUCCESS", idempotencyKey: `session-created:${created.sessionId}`, ip: request.ip });
+    return created;
   }
 
   @Delete(":sessionId")
@@ -29,13 +33,17 @@ export class SessionController {
     if (request.principal?.sessionId !== sessionId && !request.principal?.roles.includes("SUPER_ADMIN")) {
       throw new ForbiddenException({ code: "session_ownership_required" });
     }
-    return { revoked: this.sessions.revoke(sessionId) };
+    const revoked = this.sessions.revoke(sessionId);
+    this.audit.record({ eventType: "SESSION_REVOKED", actorId: request.principal.userId, actorRoles: request.principal.roles, sessionId, correlationId: request.header("x-correlation-id") ?? "generated", result: revoked ? "SUCCESS" : "FAILED", idempotencyKey: `session-revoked:${sessionId}`, ip: request.ip });
+    return { revoked };
   }
 
   @Post("users/:userId/revoke")
   @UseGuards(RbacGuard)
   @RequireRoles("SUPER_ADMIN")
-  revokeUser(@Param("userId") userId: string): { revokedSessions: number } {
-    return { revokedSessions: this.sessions.revokeUser(userId) };
+  revokeUser(@Req() request: AuthenticatedRequest, @Param("userId") userId: string): { revokedSessions: number } {
+    const revokedSessions = this.sessions.revokeUser(userId);
+    this.audit.record({ eventType: "USER_SESSIONS_REVOKED", actorId: request.principal!.userId, actorRoles: request.principal!.roles, sessionId: request.principal!.sessionId, correlationId: request.header("x-correlation-id") ?? "generated", after: { subjectId: userId, revokedSessions }, result: "SUCCESS", idempotencyKey: `user-sessions-revoked:${request.principal!.sessionId}:${userId}:${request.header("x-correlation-id") ?? "generated"}`, ip: request.ip });
+    return { revokedSessions };
   }
 }
