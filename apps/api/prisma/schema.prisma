@@ -32,3 +32,18 @@ model AuditEvent {
   @@index([actorId, occurredAt(sort: Desc)])
   @@map("audit_events")
 }
+
+model Collaborator {
+  id                String   @id @default(uuid()) @db.Uuid
+  professionalEmail String   @unique @map("professional_email") @db.VarChar(254)
+  secondaryEmail    String?  @map("secondary_email") @db.VarChar(254)
+  roles             String[]
+  campusId          String?  @map("campus_id") @db.VarChar(64)
+  teamId            String?  @map("team_id") @db.VarChar(64)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([active, campusId, teamId])
+  @@map("collaborators")
+}
