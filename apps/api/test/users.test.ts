@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AuditService } from "../src/audit/audit.service.js";
 import { SessionService } from "../src/auth/session.service.js";
+import type { AuthenticatedRequest } from "../src/auth/auth.types.js";
+import { UserController } from "../src/users/user.controller.js";
 import { UserService } from "../src/users/user.service.js";
 
 function hasResponseCode(code: string): (error: unknown) => boolean {
@@ -37,4 +39,18 @@ test("fails closed on invalid identities and unknown users", () => {
   const { users } = createService();
   assert.throws(() => users.create({ professionalEmail: "invalid", roles: ["FORGED"] }, "actor", "corr"), hasResponseCode("collaborator_invalid"));
   assert.throws(() => users.setActive("missing", false, "actor", "corr"), hasResponseCode("collaborator_not_found"));
+});
+
+test("controller delegates protected creation, filtering and status changes", () => {
+  const { users } = createService();
+  const controller = new UserController(users);
+  const request = {
+    principal: { userId: "synthetic-admin", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-admin" },
+    header: (name: string) => name === "x-correlation-id" ? "corr-controller" : undefined,
+  } as AuthenticatedRequest;
+  const first = controller.create(request, { professionalEmail: "first@example.invalid", roles: ["SUPER_ADMIN"] });
+  controller.create(request, { professionalEmail: "second@example.invalid", roles: ["SUPER_ADMIN"] });
+  assert.equal(controller.list("true", undefined, undefined).users.length, 2);
+  assert.equal(controller.setStatus(request, first.id, { active: false }).active, false);
+  assert.equal(controller.list("false", undefined, undefined).users.length, 1);
 });

@@ -8,8 +8,13 @@ import { SessionService } from "../auth/session.service.js";
 export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean }
 export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; roles: string[]; campusId?: string; teamId?: string }
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const IDENTIFIER = /^[a-zA-Z0-9_-]{2,64}$/;
+
+function isEmail(value: string): boolean {
+  const at = value.indexOf("@");
+  const dot = value.indexOf(".", at + 2);
+  return at > 0 && at === value.lastIndexOf("@") && dot > at + 1 && dot < value.length - 1 && !/\s/.test(value);
+}
 
 @Injectable()
 export class UserService {
@@ -18,7 +23,7 @@ export class UserService {
 
   create(input: CreateCollaborator, actorId: string, correlationId: string): Collaborator {
     const email = input.professionalEmail.trim().toLowerCase();
-    if (!EMAIL.test(email) || (input.secondaryEmail && !EMAIL.test(input.secondaryEmail)) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "collaborator_invalid" });
+    if (!isEmail(email) || (input.secondaryEmail && !isEmail(input.secondaryEmail)) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "collaborator_invalid" });
     if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
     if ([...this.users.values()].some((user) => user.professionalEmail === email)) throw new ConflictException({ code: "professional_email_exists" });
     const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles, campusId: input.campusId, teamId: input.teamId, active: true };
