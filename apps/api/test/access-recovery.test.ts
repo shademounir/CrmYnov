@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AccessRecoveryController } from "../src/access-recovery/access-recovery.controller.js";
 import { AccessRecoveryService, RECOVERY_ACCEPTED } from "../src/access-recovery/access-recovery.service.js";
 import {
   digestRecoveryValue,
@@ -68,4 +69,49 @@ test("rate limits repeated requests without echoing the submitted identity", () 
     () => service.request("unknown-last@example.invalid", "/access-recovery/complete", "single-client", 5_010),
     hasCode("rate_limit_exceeded"),
   );
+});
+
+test("controller delegates recovery requests with the observed client address", () => {
+  const calls: unknown[][] = [];
+  const recovery = {
+    request: (...args: unknown[]) => {
+      calls.push(args);
+      return RECOVERY_ACCEPTED;
+    },
+    complete: () => undefined,
+  } as unknown as AccessRecoveryService;
+  const controller = new AccessRecoveryController(recovery);
+
+  const result = controller.request(
+    { ip: "127.0.0.1" } as never,
+    { email: "synthetic@example.invalid", returnPath: "/access-recovery/complete" },
+  );
+
+  assert.deepEqual(result, RECOVERY_ACCEPTED);
+  assert.deepEqual(calls, [["synthetic@example.invalid", "/access-recovery/complete", "127.0.0.1"]]);
+});
+
+test("controller falls back to an unknown client and delegates completion", () => {
+  const requests: unknown[][] = [];
+  const completions: unknown[][] = [];
+  const recovery = {
+    request: (...args: unknown[]) => {
+      requests.push(args);
+      return RECOVERY_ACCEPTED;
+    },
+    complete: (...args: unknown[]) => {
+      completions.push(args);
+    },
+  } as unknown as AccessRecoveryService;
+  const controller = new AccessRecoveryController(recovery);
+
+  controller.request({} as never, {});
+  controller.complete({
+    token: "synthetic-token",
+    returnPath: "/access-recovery/complete",
+    nextSecret: "synthetic-next-value-42",
+  });
+
+  assert.deepEqual(requests, [[undefined, undefined, "unknown"]]);
+  assert.deepEqual(completions, [["synthetic-token", "/access-recovery/complete", "synthetic-next-value-42"]]);
 });
