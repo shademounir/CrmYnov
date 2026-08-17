@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AuditController } from "../src/audit/audit.controller.js";
-import { AuditService, minimizeIp } from "../src/audit/audit.service.js";
-import type { AuditInput } from "../src/audit/audit.types.js";
+import { AuditService, minimizeIp, type AuditInput } from "../src/audit/audit.service.js";
 
 test("records immutable, sanitized and idempotent audit events", () => {
   const audit = new AuditService();
