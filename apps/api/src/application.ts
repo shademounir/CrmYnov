@@ -62,6 +62,9 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/assignment/simulate": { post: { summary: "Simulate an assignment without mutation", responses: { "201": { description: "Deterministic candidate selection with mutated=false" }, "409": { description: "Ambiguous rule or no eligible candidate" } } } },
       "/assignment/auto": { post: { summary: "Create one idempotent automatic assignment decision", responses: { "201": { description: "Assignment decision" }, "409": { description: "Ambiguous rule or no eligible candidate" } } } },
       "/assignment/history": { get: { summary: "Read immutable assignment configuration and decision evidence", responses: { "200": { description: "Sanitized history" }, "403": { description: "Manager role required" } } } },
+      "/leads/{leadId}/assignment": { post: { summary: "Assign one unassigned lead after explicit confirmation", responses: { "201": { description: "Lead assigned and timeline appended" }, "400": { description: "Confirmation required" }, "409": { description: "Lead already assigned; use reassignment workflow" } } } },
+      "/lead-assignments/preview": { post: { summary: "Preview a bounded assignment batch without mutation", responses: { "201": { description: "Per-lead preview with mutated=false" }, "400": { description: "Invalid or unbounded batch" } } } },
+      "/lead-assignments": { post: { summary: "Confirm an idempotent bounded assignment batch", responses: { "201": { description: "Assigned, skipped and refused results" }, "400": { description: "Confirmation or input invalid" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));

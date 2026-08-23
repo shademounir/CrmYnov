@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -134,6 +134,7 @@ export class LeadService {
     if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "assignment_role_forbidden" });
     const current = this.leads.get(leadId);
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
+    if (current.assignedToId) throw new ConflictException({ code: "lead_already_assigned", nextAction: "CRMY-94" });
     const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({
@@ -202,7 +203,7 @@ export class LeadService {
 
   timeline(leadId: string, principal: Principal): LeadActivityRecord[] {
     if (!this.leads.has(leadId)) throw new NotFoundException({ code: "lead_not_found" });
-    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
     return this.activities.filter((item) => item.leadId === leadId).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id)).map((item) => ({ ...item }));
   }
 }

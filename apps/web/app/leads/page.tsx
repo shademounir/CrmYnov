@@ -13,7 +13,12 @@ export default function LeadsPage(): React.JSX.Element {
       <input name="page" type="hidden" value="1" /><input name="pageSize" type="hidden" value="25" /><button type="submit">Appliquer</button>
     </form>
     <table><thead><tr><th>Identifiant</th><th>Lead</th><th>Statut</th><th>Formation</th></tr></thead>
-      <tbody>{leads.map((lead) => <tr key={lead.code}><td>{lead.code}</td><td>{lead.name}</td><td>{lead.status}</td><td>{lead.program}</td></tr>)}</tbody></table>
+      <tbody>{leads.map((lead) => <tr key={lead.code}><td><input type="checkbox" aria-label={`Sélectionner ${lead.code}`} /> {lead.code}</td><td>{lead.name}</td><td>{lead.status}</td><td>{lead.program}</td></tr>)}</tbody></table>
+    <section aria-label="Affectation manuelle Manager"><h2>Affecter la sélection</h2>
+      <label>Mode <select defaultValue="FIXED"><option value="FIXED">Conseiller fixe</option><option value="ROUND_ROBIN">Round-robin</option><option value="CONTROLLED_RANDOM">Aléatoire contrôlé</option></select></label>
+      <label>Conseiller cible <input placeholder="Identifiant synthétique" /></label>
+      <button type="button">Prévisualiser sans modifier</button><button type="button">Confirmer l’affectation</button>
+    </section>
     <nav aria-label="Pagination">Page 1 sur 1</nav>
   </main>;
 }
