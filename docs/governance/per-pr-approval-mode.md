@@ -15,6 +15,12 @@ is manual. The reason is emitted as a stable category without file contents or
 secrets.
 
 Only known application/test paths and non-sensitive documentation are ordinary.
+Next.js App Router paths under `apps/web/app` are also ordinary when every
+segment is a validated static segment, dynamic parameter (`[param]`), catch-all
+(`[...param]`), optional catch-all (`[[...param]]`), route
+group, or parallel route. The classifier normalizes Windows separators and
+fails closed for absolute paths, traversal, NUL characters, malformed brackets,
+empty parameters, unknown roots, and any mixture with sensitive files.
 The existing isolated `gate-1` release manifest remains automated. A global
 `manual-po` default can tighten an ordinary PR; the global automated default can
 never weaken a sensitive PR.
