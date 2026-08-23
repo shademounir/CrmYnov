@@ -65,6 +65,11 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/leads/{leadId}/assignment": { post: { summary: "Assign one unassigned lead after explicit confirmation", responses: { "201": { description: "Lead assigned and timeline appended" }, "400": { description: "Confirmation required" }, "409": { description: "Lead already assigned; use reassignment workflow" } } } },
       "/lead-assignments/preview": { post: { summary: "Preview a bounded assignment batch without mutation", responses: { "201": { description: "Per-lead preview with mutated=false" }, "400": { description: "Invalid or unbounded batch" } } } },
       "/lead-assignments": { post: { summary: "Confirm an idempotent bounded assignment batch", responses: { "201": { description: "Assigned, skipped and refused results" }, "400": { description: "Confirmation or input invalid" } } } },
+      "/leads/{leadId}/reassignment-requests": {
+        post: { summary: "Request a controlled lead reassignment", responses: { "201": { description: "Pending request, ownership unchanged" }, "403": { description: "Current owner required" }, "409": { description: "Pending request already exists" } } },
+        get: { summary: "List authorized reassignment history", responses: { "200": { description: "Append-only requests" }, "403": { description: "Ownership or Manager role required" } } },
+      },
+      "/reassignment-requests/{requestId}/decision": { patch: { summary: "Approve or reject a reassignment as Manager/Admin", responses: { "200": { description: "Decision recorded; ownership changes only on approval" }, "403": { description: "Role or separation of duties refused" }, "409": { description: "Owner changed or decision already recorded" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));
