@@ -25,6 +25,39 @@ const ORDINARY_RULES = Object.freeze([
   /^(?:test|tests)\/[A-Za-z0-9_.\/-]+$/,
 ]);
 
+const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:[\\/]/;
+const NEXT_APP_ROOT = "apps/web/app/";
+const NEXT_STATIC_SEGMENT = /^[A-Za-z0-9_.-]+$/;
+const NEXT_DYNAMIC_SEGMENT = /^\[[A-Za-z][A-Za-z0-9_-]*\]$/;
+const NEXT_CATCH_ALL_SEGMENT = /^\[\.\.\.[A-Za-z][A-Za-z0-9_-]*\]$/;
+const NEXT_OPTIONAL_CATCH_ALL_SEGMENT = /^\[\[\.\.\.[A-Za-z][A-Za-z0-9_-]*\]\]$/;
+const NEXT_ROUTE_GROUP_SEGMENT = /^\([A-Za-z][A-Za-z0-9_-]*\)$/;
+const NEXT_PARALLEL_ROUTE_SEGMENT = /^@[A-Za-z][A-Za-z0-9_-]*$/;
+
+function normalizeRepositoryPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) return undefined;
+  if (value.startsWith("/") || value.startsWith("\\") || WINDOWS_ABSOLUTE_PATH.test(value)) return undefined;
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.includes("//")) return undefined;
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return undefined;
+  return normalized;
+}
+
+function isAllowedNextAppPath(path) {
+  if (!path.startsWith(NEXT_APP_ROOT)) return false;
+  const segments = path.slice(NEXT_APP_ROOT.length).split("/");
+  if (segments.length === 0) return false;
+  return segments.every((segment) =>
+    NEXT_STATIC_SEGMENT.test(segment) ||
+    NEXT_DYNAMIC_SEGMENT.test(segment) ||
+    NEXT_CATCH_ALL_SEGMENT.test(segment) ||
+    NEXT_OPTIONAL_CATCH_ALL_SEGMENT.test(segment) ||
+    NEXT_ROUTE_GROUP_SEGMENT.test(segment) ||
+    NEXT_PARALLEL_ROUTE_SEGMENT.test(segment),
+  );
+}
+
 const PO_CHECKLIST = Object.freeze([
   "Revue manuelle effectuée par le Product Owner",
   "Label `po-approved` ajouté manuellement par le Product Owner",
@@ -82,6 +115,7 @@ function reasonsForPath(path, manifestProfile, migrationAssessment) {
     .filter(([, pattern]) => pattern.test(path))
     .map(([reason]) => reason);
   if (sensitive.length) return sensitive;
+  if (isAllowedNextAppPath(path)) return [];
   return ORDINARY_RULES.some((pattern) => pattern.test(path)) ? [] : ["ambiguous-path"];
 }
 
@@ -96,7 +130,12 @@ export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfil
   if (ticket?.scope === "prod" || ticket?.scope === MANUAL_PO_MODE) reasons.add("ticket-sensitive-scope");
   if (manifestProfile === "application") reasons.add("application-release");
   for (const file of changedFiles) {
-    for (const reason of reasonsForPath(String(file ?? ""), manifestProfile, migrationAssessment)) reasons.add(reason);
+    const normalizedPath = normalizeRepositoryPath(file);
+    if (!normalizedPath) {
+      reasons.add("ambiguous-path");
+      continue;
+    }
+    for (const reason of reasonsForPath(normalizedPath, manifestProfile, migrationAssessment)) reasons.add(reason);
   }
   if (reasons.size > 0 || defaultMode === MANUAL_PO_MODE) {
     return {

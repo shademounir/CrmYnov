@@ -155,6 +155,70 @@ test("sensitive file dominates an ordinary file", () => {
   assert.equal(result.effectiveApprovalMode, "manual-po");
 });
 
+for (const path of [
+  "apps/web/app/leads/[leadId]/timeline/page.tsx",
+  "apps/web/app/leads/[leadId]/page.tsx",
+  "apps/web/app/docs/[...slug]/page.tsx",
+  "apps/web/app/docs/[[...slug]]/page.tsx",
+  "apps/web/app/(admissions)/leads/page.tsx",
+  "apps/web/app/@details/leads/[leadId]/page.tsx",
+  "apps\\web\\app\\leads\\[leadId]\\timeline\\page.tsx",
+]) {
+  test(`valid Next.js application route is automated: ${path}`, () => {
+    const result = classifyApprovalMode({
+      changedFiles: [path],
+      ticket: { scope: "application" },
+      defaultMode: "automated-policy",
+    });
+    assert.deepEqual(result, { effectiveApprovalMode: "automated-policy", reasons: ["ordinary-scope"] });
+  });
+}
+
+test("multiple ordinary application files including a dynamic route stay automated", () => {
+  const result = classifyApprovalMode({
+    changedFiles: [
+      "apps/web/app/leads/[leadId]/timeline/page.tsx",
+      "apps/web/test/lead-timeline.test.ts",
+      "apps/api/src/leads/lead.controller.ts",
+    ],
+    ticket: { scope: "application" },
+    defaultMode: "automated-policy",
+  });
+  assert.equal(result.effectiveApprovalMode, "automated-policy");
+});
+
+for (const [name, path] of [
+  ["unclosed bracket", "apps/web/app/leads/[leadId/timeline/page.tsx"],
+  ["empty dynamic parameter", "apps/web/app/leads/[]/page.tsx"],
+  ["empty catch-all parameter", "apps/web/app/leads/[...]/page.tsx"],
+  ["embedded traversal", "apps/web/app/leads/[../secret]/page.tsx"],
+  ["parent traversal", "apps/web/app/leads/../secret/page.tsx"],
+  ["POSIX absolute path", "/apps/web/app/leads/[leadId]/page.tsx"],
+  ["Windows absolute path", "C:\\repo\\apps\\web\\app\\leads\\[leadId]\\page.tsx"],
+  ["NUL character", "apps/web/app/leads/[leadId]/page.tsx\0.env"],
+  ["dynamic route in workflow", ".github/workflows/[leadId]/build.yml"],
+  ["dynamic route under infra", "infra/apps/web/app/[leadId]/main.tf"],
+  ["dynamic route under secrets", "secrets/apps/web/app/[leadId]/value.txt"],
+  ["unknown path", "misc/[leadId]/page.tsx"],
+]) {
+  test(`unsafe or out-of-scope Next.js-like path is manual: ${name}`, () => {
+    const result = classifyApprovalMode({ changedFiles: [path], defaultMode: "automated-policy" });
+    assert.equal(result.effectiveApprovalMode, "manual-po");
+  });
+}
+
+test("a valid dynamic route mixed with GitHub governance remains manual-po", () => {
+  const result = classifyApprovalMode({
+    changedFiles: [
+      "apps/web/app/leads/[leadId]/page.tsx",
+      ".github/workflows/pr-policy.yml",
+    ],
+    defaultMode: "automated-policy",
+  });
+  assert.equal(result.effectiveApprovalMode, "manual-po");
+  assert.ok(result.reasons.includes("github-governance"));
+});
+
 test("audited additive Prisma migration can use automated-policy", () => {
   const result = classifyApprovalMode({
     changedFiles: [
