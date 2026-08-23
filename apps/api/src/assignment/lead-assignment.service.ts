@@ -73,6 +73,11 @@ export class LeadAssignmentService {
     return this.copy(result);
   }
 
+  completedHistory(principal: Principal): AssignmentBatchResult[] {
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new BadRequestException({ code: "assignment_manager_required" });
+    return [...this.completed.values()].map((result) => this.copy(result));
+  }
+
   private validate(input: BatchAssignmentInput, requireConfirmation: boolean): void {
     if (!IDEMPOTENCY_KEY.test(input.idempotencyKey) || input.items.length < 1 || input.items.length > 100 || new Set(input.items.map((item) => item.leadId)).size !== input.items.length) throw new BadRequestException({ code: "assignment_batch_invalid" });
     if (requireConfirmation && input.confirmed !== true) throw new BadRequestException({ code: "assignment_confirmation_required" });

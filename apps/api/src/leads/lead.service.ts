@@ -29,6 +29,10 @@ export interface LeadActivityRecord {
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
+export interface LeadAssignmentSnapshot {
+  total: number; assigned: number; unassigned: number; followUpDue: number;
+  byAdviser: Array<{ userId: string; leadCount: number }>;
+}
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
   page: number; pageSize: number; search?: string; assignedToId?: string; status?: string; source?: string;
@@ -128,6 +132,20 @@ export class LeadService {
   findLocalLead(leadId: string): LeadRecord | undefined {
     const lead = this.leads.get(leadId);
     return lead ? { ...lead } : undefined;
+  }
+
+  assignmentSnapshot(principal: Principal, now = new Date()): LeadAssignmentSnapshot {
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "assignment_manager_required" });
+    const leads = [...this.leads.values()];
+    const counts = new Map<string, number>();
+    for (const lead of leads) if (lead.assignedToId) counts.set(lead.assignedToId, (counts.get(lead.assignedToId) ?? 0) + 1);
+    return {
+      total: leads.length,
+      assigned: leads.filter((lead) => Boolean(lead.assignedToId)).length,
+      unassigned: leads.filter((lead) => !lead.assignedToId).length,
+      followUpDue: leads.filter((lead) => lead.nextActionAt && lead.nextActionAt <= now.toISOString()).length,
+      byAdviser: [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([userId, leadCount]) => ({ userId, leadCount })),
+    };
   }
 
   assignLocalLead(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string): LeadRecord {

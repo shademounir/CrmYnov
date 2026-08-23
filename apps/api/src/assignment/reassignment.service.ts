@@ -71,6 +71,11 @@ export class ReassignmentService {
     if (!manager && lead.assignedToId !== principal.userId) throw new ForbiddenException({ code: "reassignment_owner_required" });
     return [...this.requests.values()].filter((item) => item.leadId === leadId).sort((left, right) => right.requestedAt.localeCompare(left.requestedAt)).map((item) => this.copy(item));
   }
+  pendingForManager(principal: Principal): ReassignmentRequest[] {
+    this.assertApprover(principal);
+    return [...this.requests.values()].filter((item) => item.status === "PENDING")
+      .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt) || left.id.localeCompare(right.id)).map((item) => this.copy(item));
+  }
   private assertApprover(principal: Principal): void { if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "reassignment_approval_role_required" }); }
   private copy(request: Readonly<ReassignmentRequest>): ReassignmentRequest { return { ...request }; }
 }
