@@ -74,6 +74,11 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/lead-ingestion/batches": { post: { summary: "Run one confirmed, bounded and idempotent lead ingestion batch", responses: { "201": { description: "Sanitized created, attached, review and invalid counts" }, "400": { description: "Invalid batch or mapping" }, "403": { description: "Manager role required" } } } },
       "/lead-ingestion/leads/{leadId}/provenance": { get: { summary: "Read sanitized append-only provenance", responses: { "200": { description: "Provenance without external identifier value" }, "403": { description: "Manager role required" } } } },
       "/lead-import/profiles": { post: { summary: "Profile a bounded CSV or XLSX without persisting or importing its rows", responses: { "201": { description: "Sanitized structural profile with mutated=false" }, "400": { description: "File, encoding, formula, macro or mapping refused" }, "403": { description: "Manager role required" } } } },
+      "/lead-import/mappings": {
+        get: { summary: "List latest reusable import mapping versions without business data", responses: { "200": { description: "Built-in and custom mapping metadata" }, "403": { description: "Manager role required" } } },
+        post: { summary: "Create an immutable import mapping version with optimistic concurrency", responses: { "201": { description: "Versioned mapping metadata" }, "400": { description: "Invalid, ambiguous or incomplete mapping" }, "409": { description: "Version conflict or built-in mapping" } } },
+      },
+      "/lead-import/dry-runs": { post: { summary: "Normalize, deduplicate and preview assignment without business mutation", responses: { "201": { description: "Sanitized reconciled counts with mutated=false" }, "400": { description: "Columns, cells or mapping refused" }, "403": { description: "Manager role required" }, "404": { description: "Mapping version not found" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));

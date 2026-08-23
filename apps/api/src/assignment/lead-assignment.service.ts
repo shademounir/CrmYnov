@@ -38,6 +38,13 @@ export class LeadAssignmentService {
     });
   }
 
+  previewTarget(input: Omit<BatchAssignmentInput, "confirmed">, principal: Principal, roundRobinOffset = 0): string {
+    this.validate(input, false);
+    const item = input.items[0];
+    if (!item || input.items.length !== 1) throw new BadRequestException({ code: "assignment_preview_item_required" });
+    return input.strategy === "FIXED" ? this.fixedTarget(input) : this.simulatedTarget(input, item, 0, principal, roundRobinOffset);
+  }
+
   assignOne(leadId: string, targetUserId: string, confirmed: boolean, idempotencyKey: string, principal: Principal, correlationId: string): LeadRecord {
     const result = this.assignBatch({ idempotencyKey, confirmed, strategy: "FIXED", targetUserId,
       items: [{ leadId, source: this.leads.findLocalLead(leadId)?.source ?? "UNKNOWN", campaign: this.leads.findLocalLead(leadId)?.campaign ?? "UNKNOWN" }] }, principal, correlationId);
@@ -88,8 +95,8 @@ export class LeadAssignmentService {
   private fixedTarget(input: BatchAssignmentInput): string {
     const target = input.targetUserId!; this.engine.assertEligibleTarget(target); return target;
   }
-  private simulatedTarget(input: BatchAssignmentInput, item: AssignmentItemInput, index: number, principal: Principal): string {
-    const selection = this.engine.simulate({ ...item, eventKey: `${input.idempotencyKey}:${index}` }, principal);
+  private simulatedTarget(input: BatchAssignmentInput, item: AssignmentItemInput, index: number, principal: Principal, roundRobinOffset = 0): string {
+    const selection = this.engine.simulate({ ...item, eventKey: `${input.idempotencyKey}:${index}` }, principal, roundRobinOffset);
     if (selection.strategy !== input.strategy) throw new ConflictException({ code: "assignment_strategy_rule_mismatch" });
     return selection.selectedUserId;
   }
