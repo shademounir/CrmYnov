@@ -161,7 +161,7 @@ export class IngestionService {
     if (!Number.isInteger(record.lineNumber) || record.lineNumber < 1 || !record.firstName?.trim() || !record.lastName?.trim()) return { reason: "identity_required" };
     if (!ingestionSources.includes(record.source) || !record.technicalSystem?.trim() || !record.originalSource?.trim()) return { reason: "source_invalid" };
     const email = record.email?.trim().toLowerCase();
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { reason: "email_invalid" };
+    if (email && !this.validEmail(email)) return { reason: "email_invalid" };
     const phone = record.phone?.replace(/[^+\d]/g, "");
     if (phone && !/^\+?\d{8,15}$/.test(phone)) return { reason: "phone_invalid" };
     if (!email && !phone && !record.externalId?.trim()) return { reason: "stable_identity_missing" };
@@ -170,6 +170,15 @@ export class IngestionService {
       if (!activity.result?.trim() || Number.isNaN(new Date(activity.occurredAt).valueOf())) return { reason: "historical_activity_invalid" };
     }
     return { ...(email ? { email } : {}), ...(phone ? { phone } : {}) };
+  }
+
+  private validEmail(email: string): boolean {
+    if (email.length > 254 || email.includes(" ") || email.includes("\t") || email.includes("\r") || email.includes("\n")) return false;
+    const at = email.indexOf("@");
+    if (at < 1 || at !== email.lastIndexOf("@")) return false;
+    const domain = email.slice(at + 1);
+    const dot = domain.lastIndexOf(".");
+    return dot > 0 && dot < domain.length - 1 && !domain.startsWith(".") && !domain.endsWith(".");
   }
 
   private mapHistoricalStatus(raw: string | undefined, priorContact: boolean): { kind: "KNOWN"; status: LeadStatus } | { kind: "DUPLICATE" } | { kind: "UNKNOWN" } {

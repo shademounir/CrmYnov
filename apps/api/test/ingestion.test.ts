@@ -94,3 +94,13 @@ test("rejects malformed batches and exposes only sanitized provenance", () => {
   assert.equal(firstProvenance.hasExternalId, true); assert.equal("externalId" in firstProvenance, false);
   assert.equal(JSON.stringify(audit.list()).includes("lead-51@example.invalid"), false);
 });
+
+test("rejects adversarial email input with deterministic bounded validation", () => {
+  const { service } = setup();
+  const adversarial = `${"!.".repeat(20_000)}!@!.${"!.".repeat(20_000)}!`;
+  const startedAt = performance.now();
+  const result = service.ingest({ idempotencyKey: "email-batch-007", profile: "CUSTOM", confirmed: true,
+    assignment: { strategy: "UNASSIGNED" }, records: [record(70, { email: adversarial, phone: undefined })] }, manager, "corr-email");
+  assert.equal(result.lines[0]?.reason, "email_invalid");
+  assert.ok(performance.now() - startedAt < 100);
+});
