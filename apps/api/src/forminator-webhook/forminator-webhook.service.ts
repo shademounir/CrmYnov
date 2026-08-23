@@ -15,7 +15,11 @@ function canonical(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   const object = value as Record<string, unknown>;
-  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`).join(",")}}`;
+  const members = Object.keys(object)
+    .sort((left, right) => left.localeCompare(right, "en"))
+    .map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`)
+    .join(",");
+  return `{${members}}`;
 }
 
 @Injectable()
@@ -46,7 +50,7 @@ export class ForminatorWebhookService {
   }
 
   private validatePayload(payload: ForminatorLeadWebhook): void {
-    if (!payload || payload.schemaVersion !== "1" || !/^[A-Za-z0-9_-]{8,128}$/.test(payload.eventId) || Number.isNaN(Date.parse(payload.occurredAt)))
+    if (payload?.schemaVersion !== "1" || !/^[A-Za-z0-9_-]{8,128}$/.test(payload.eventId) || Number.isNaN(Date.parse(payload.occurredAt)))
       throw new BadRequestException({ code: "forminator_payload_invalid" });
     const lead = payload.lead;
     if (!lead || !this.text(lead.firstName, 100) || !this.text(lead.lastName, 100) || !this.text(lead.educationLevel, 100) || !this.text(lead.program, 160))
