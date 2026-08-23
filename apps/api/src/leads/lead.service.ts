@@ -46,12 +46,15 @@ export class LeadService {
     const required = [input.firstName, input.lastName, input.campus, input.campaign, input.educationLevel, input.program, input.source];
     if (required.some((value) => !value?.trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
     const email = input.email?.trim().toLowerCase();
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException({ code: "lead_email_invalid" });
+    const atIndex = email?.indexOf("@") ?? -1;
+    const lastAtIndex = email?.lastIndexOf("@") ?? -1;
+    const dotIndex = email?.lastIndexOf(".") ?? -1;
+    if (email && (email.includes(" ") || atIndex < 1 || atIndex !== lastAtIndex || dotIndex < atIndex + 2 || dotIndex === email.length - 1)) throw new BadRequestException({ code: "lead_email_invalid" });
     const phone = input.phone?.replace(/[^+\d]/g, "");
     if (phone && !/^\+?\d{8,15}$/.test(phone)) throw new BadRequestException({ code: "lead_phone_invalid" });
     const duplicateCandidates = [...this.leads.values()].filter((lead) =>
       Boolean((email && lead.email === email) || (phone && lead.phone === phone)),
-    ).map((lead) => lead.leadCode).sort();
+    ).map((lead) => lead.leadCode).sort((left, right) => left.localeCompare(right));
     const leadCode = `LD-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
     const lead = this.registerLocalLead({ ...input, leadCode, firstName: input.firstName.trim(), lastName: input.lastName.trim(),
       campus: input.campus.trim(), campaign: input.campaign.trim(), educationLevel: input.educationLevel.trim(),
