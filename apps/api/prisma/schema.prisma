@@ -74,6 +74,8 @@ model Lead {
   assignmentBatchItems AssignmentBatchItem[]
   reassignmentRequests ReassignmentRequest[]
   collaborators        LeadCollaborator[]
+  provenances          LeadProvenance[]
+  ingestionReviewItems IngestionReviewItem[]
 
   @@index([assignedToId, status])
   @@index([assignmentMode, importBatchId])
@@ -81,6 +83,63 @@ model Lead {
   @@index([lastName, firstName, leadCode])
   @@index([source, program, createdAt])
   @@map("leads")
+}
+
+model IngestionBatch {
+  id             String                @id @default(uuid()) @db.Uuid
+  idempotencyKey String                @unique @map("idempotency_key") @db.VarChar(128)
+  profile        String                @db.VarChar(40)
+  assignmentMode String                @map("assignment_mode") @db.VarChar(32)
+  actorId        String                @map("actor_id") @db.VarChar(64)
+  totalCount     Int                   @map("total_count")
+  createdCount   Int                   @map("created_count")
+  attachedCount  Int                   @map("attached_count")
+  reviewCount    Int                   @map("review_count")
+  invalidCount   Int                   @map("invalid_count")
+  importedAt     DateTime              @default(now()) @map("imported_at") @db.Timestamptz(6)
+  provenances    LeadProvenance[]
+  reviewItems    IngestionReviewItem[]
+
+  @@index([importedAt(sort: Desc)])
+  @@map("ingestion_batches")
+}
+
+model LeadProvenance {
+  id              String         @id @default(uuid()) @db.Uuid
+  leadId          String         @map("lead_id") @db.Uuid
+  batchId         String         @map("batch_id") @db.Uuid
+  sourceType      String         @map("source_type") @db.VarChar(40)
+  technicalSystem String         @map("technical_system") @db.VarChar(80)
+  originalSource  String         @map("original_source") @db.VarChar(120)
+  recentSource    String         @map("recent_source") @db.VarChar(120)
+  campaign        String?        @db.VarChar(120)
+  externalId      String?        @map("external_id") @db.VarChar(160)
+  rawStatus       String?        @map("raw_status") @db.VarChar(120)
+  occurredAt      DateTime?      @map("occurred_at") @db.Timestamptz(6)
+  importedAt      DateTime       @default(now()) @map("imported_at") @db.Timestamptz(6)
+  lead            Lead           @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  batch           IngestionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([technicalSystem, externalId])
+  @@index([leadId, importedAt(sort: Desc)])
+  @@index([batchId])
+  @@map("lead_provenances")
+}
+
+model IngestionReviewItem {
+  id         String         @id @default(uuid()) @db.Uuid
+  batchId    String         @map("batch_id") @db.Uuid
+  leadId     String?        @map("lead_id") @db.Uuid
+  lineNumber Int            @map("line_number")
+  reasonCode String         @map("reason_code") @db.VarChar(80)
+  status     String         @default("PENDING") @db.VarChar(24)
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  batch      IngestionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  lead       Lead?          @relation(fields: [leadId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, lineNumber])
+  @@index([status, createdAt])
+  @@map("ingestion_review_items")
 }
 
 model LeadCollaborator {

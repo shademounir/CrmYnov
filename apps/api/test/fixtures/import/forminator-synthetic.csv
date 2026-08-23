@@ -1,0 +1,12 @@
+Submission ID,Submission Time,Nom - Prénom,Nom - Nom,Adresse éléctronique,Numéro de téléphone,Niveau d'étude,Formation choisie,Webhook Info
+SYN-0001,2026-08-01 09:00:00,Amal,Exemple,amal@example.invalid,+212600000101,Bac,Programme Alpha,"{""synthetic"":true}"
+SYN-0002,2026-08-01 09:05:00,Yanis,Exemple,,0600000102,Bac+2,Programme Bêta,
+SYN-0003,2026-08-01 09:10:00,Lina,Exemple,email-invalide,+212600000103,Bac,Programme Alpha,
+SYN-0004,2026-08-01 09:15:00,Noé,Exemple,noe@example.invalid,06 00 00 01 04,Bac,Programme Alpha,
+SYN-0005,2026-08-01 09:20:00,Zoé,Exemple,amal@example.invalid,+212600000105,Bac,Programme Alpha,
+SYN-0006,2026-08-01 09:25:00,Ilyes,Exemple,ilyes@example.invalid,+212600000101,Bac,Programme Alpha,
+SYN-0001,2026-08-01 09:00:00,Amal,Exemple,amal@example.invalid,+212600000101,Bac,Programme Alpha,"{""synthetic"":true}"
+SYN-0007,date-invalide,Élodie,Exemple,elodie@example.invalid,+33600000107,Bac+3,Programme Gamma,
+SYN-0008,2026-08-01 09:35:00,李,Exemple,international@example.invalid,+8613800000108,Bac,Programme International,
+SYN-0009,2026-08-01 09:40:00,Formule,Exemple,formule@example.invalid,+212600000109,Bac,Programme Alpha,=1+1
+,,,,,,,,

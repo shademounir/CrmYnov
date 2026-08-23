@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED"] as const;
+export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number];
 export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
@@ -152,6 +152,29 @@ export class LeadService {
   findLocalLead(leadId: string): LeadRecord | undefined {
     const lead = this.leads.get(leadId);
     return lead ? { ...lead } : undefined;
+  }
+
+  findIdentityMatches(email?: string, phone?: string): { emailLeadId?: string; phoneLeadId?: string } {
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPhone = phone?.replace(/[^+\d]/g, "");
+    const emailLeadId = normalizedEmail ? [...this.leads.values()].find((lead) => lead.email === normalizedEmail)?.id : undefined;
+    const phoneLeadId = normalizedPhone ? [...this.leads.values()].find((lead) => lead.phone === normalizedPhone)?.id : undefined;
+    return { ...(emailLeadId ? { emailLeadId } : {}), ...(phoneLeadId ? { phoneLeadId } : {}) };
+  }
+
+  appendIngestionActivity(leadId: string, input: { type: "LEGACY_IMPORT" | "PROVENANCE_ATTACHED" | "CRM_CALL" | "EXTERNAL_CALL" | "MEETING"; result: string; occurredAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {
+    const lead = this.leads.get(leadId);
+    if (!lead) throw new NotFoundException({ code: "lead_not_found" });
+    const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
+    if (Number.isNaN(occurredAt.valueOf())) throw new BadRequestException({ code: "ingestion_activity_date_invalid" });
+    const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: input.type,
+      result: input.result, authorId: principal.userId, correlationId, occurredAt: occurredAt.toISOString() });
+    this.activities = [...this.activities, activity];
+    this.leads.set(leadId, Object.freeze({ ...lead, lastActivityAt: activity.occurredAt }));
+    this.audit.record({ eventType: input.type, actorId: principal.userId, actorRoles: principal.roles,
+      sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, historical: true, type: input.type },
+      result: "SUCCESS", idempotencyKey: `ingestion-activity:${activity.id}` });
+    return { ...activity };
   }
 
   assignmentSnapshot(principal: Principal, now = new Date()): LeadAssignmentSnapshot {
