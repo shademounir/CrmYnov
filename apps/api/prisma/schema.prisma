@@ -64,18 +64,36 @@ model Lead {
   source               String                @db.VarChar(80)
   status               String                @default("PROSPECT") @db.VarChar(24)
   assignedToId         String?               @map("assigned_to_id") @db.Uuid
+  assignmentMode       String?               @map("assignment_mode") @db.VarChar(32)
+  importBatchId        String?               @map("import_batch_id") @db.VarChar(64)
   nextActionAt         DateTime?             @map("next_action_at") @db.Timestamptz(6)
+  lastActivityAt       DateTime?             @map("last_activity_at") @db.Timestamptz(6)
   createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
   activities           LeadActivity[]
   assignmentBatchItems AssignmentBatchItem[]
   reassignmentRequests ReassignmentRequest[]
+  collaborators        LeadCollaborator[]
 
   @@index([assignedToId, status])
+  @@index([assignmentMode, importBatchId])
   @@index([status, nextActionAt])
   @@index([lastName, firstName, leadCode])
   @@index([source, program, createdAt])
   @@map("leads")
+}
+
+model LeadCollaborator {
+  id        String   @id @default(uuid()) @db.Uuid
+  leadId    String   @map("lead_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Restrict)
+
+  @@unique([leadId, userId])
+  @@index([userId, active])
+  @@map("lead_collaborators")
 }
 
 model ReassignmentRequest {

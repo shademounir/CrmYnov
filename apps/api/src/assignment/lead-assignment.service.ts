@@ -59,7 +59,7 @@ export class LeadAssignmentService {
         if (!lead) { refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: "lead_not_found" }); continue; }
         if (lead.assignedToId) { skipped.push({ leadId: item.leadId, outcome: "SKIPPED", reason: "lead_already_assigned" }); continue; }
         const target = input.strategy === "FIXED" ? this.fixedTarget(input) : this.engineTarget(input, item, index, principal, correlationId);
-        assigned.push(this.leads.assignLocalLead(item.leadId, target, principal, `${correlationId}:${index}`, `BATCH:${input.idempotencyKey}`));
+        assigned.push(this.leads.assignLocalLead(item.leadId, target, principal, `${correlationId}:${index}`, `BATCH:${input.idempotencyKey}`, input.strategy));
       } catch (error) { refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: this.reason(error) }); }
       finally { this.activeLeadLocks.delete(item.leadId); }
     }
