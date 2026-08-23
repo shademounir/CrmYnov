@@ -34,40 +34,40 @@ model AuditEvent {
 }
 
 model Collaborator {
-  id                String   @id @default(uuid()) @db.Uuid
-  professionalEmail String   @unique @map("professional_email") @db.VarChar(254)
-  secondaryEmail    String?  @map("secondary_email") @db.VarChar(254)
-  roles             String[]
-  campusId          String?  @map("campus_id") @db.VarChar(64)
-  teamId            String?  @map("team_id") @db.VarChar(64)
-  active            Boolean  @default(true)
-  firstLoginRequired   Boolean @default(true) @map("first_login_required")
-  authenticationVersion Int   @default(1) @map("authentication_version")
-  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                    String   @id @default(uuid()) @db.Uuid
+  professionalEmail     String   @unique @map("professional_email") @db.VarChar(254)
+  secondaryEmail        String?  @map("secondary_email") @db.VarChar(254)
+  roles                 String[]
+  campusId              String?  @map("campus_id") @db.VarChar(64)
+  teamId                String?  @map("team_id") @db.VarChar(64)
+  active                Boolean  @default(true)
+  firstLoginRequired    Boolean  @default(true) @map("first_login_required")
+  authenticationVersion Int      @default(1) @map("authentication_version")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([active, campusId, teamId])
   @@map("collaborators")
 }
 
 model Lead {
-  id                 String         @id @default(uuid()) @db.Uuid
-  leadCode           String         @unique @map("lead_code") @db.VarChar(32)
-  firstName          String         @map("first_name") @db.VarChar(100)
-  lastName           String         @map("last_name") @db.VarChar(100)
-  email              String?        @db.VarChar(254)
-  phone              String?        @db.VarChar(32)
-  campus             String         @db.VarChar(80)
-  campaign           String         @db.VarChar(120)
-  educationLevel     String         @map("education_level") @db.VarChar(80)
-  program            String         @db.VarChar(120)
-  source             String         @db.VarChar(80)
-  status             String         @default("PROSPECT") @db.VarChar(24)
-  assignedToId       String?        @map("assigned_to_id") @db.Uuid
-  nextActionAt       DateTime?      @map("next_action_at") @db.Timestamptz(6)
-  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  activities         LeadActivity[]
+  id             String         @id @default(uuid()) @db.Uuid
+  leadCode       String         @unique @map("lead_code") @db.VarChar(32)
+  firstName      String         @map("first_name") @db.VarChar(100)
+  lastName       String         @map("last_name") @db.VarChar(100)
+  email          String?        @db.VarChar(254)
+  phone          String?        @db.VarChar(32)
+  campus         String         @db.VarChar(80)
+  campaign       String         @db.VarChar(120)
+  educationLevel String         @map("education_level") @db.VarChar(80)
+  program        String         @db.VarChar(120)
+  source         String         @db.VarChar(80)
+  status         String         @default("PROSPECT") @db.VarChar(24)
+  assignedToId   String?        @map("assigned_to_id") @db.Uuid
+  nextActionAt   DateTime?      @map("next_action_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  activities     LeadActivity[]
 
   @@index([assignedToId, status])
   @@index([status, nextActionAt])
@@ -77,17 +77,69 @@ model Lead {
 }
 
 model LeadActivity {
-  id            String   @id @default(uuid()) @db.Uuid
-  leadId        String   @map("lead_id") @db.Uuid
-  type          String   @db.VarChar(32)
-  result        String   @db.VarChar(120)
-  note          String?  @db.VarChar(2000)
-  authorId      String   @map("author_id") @db.VarChar(64)
+  id            String    @id @default(uuid()) @db.Uuid
+  leadId        String    @map("lead_id") @db.Uuid
+  type          String    @db.VarChar(32)
+  result        String    @db.VarChar(120)
+  note          String?   @db.VarChar(2000)
+  authorId      String    @map("author_id") @db.VarChar(64)
   nextActionAt  DateTime? @map("next_action_at") @db.Timestamptz(6)
-  correlationId String   @map("correlation_id") @db.VarChar(64)
-  occurredAt    DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  lead          Lead     @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  correlationId String    @map("correlation_id") @db.VarChar(64)
+  occurredAt    DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  lead          Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
 
   @@index([leadId, occurredAt(sort: Desc), id])
   @@map("lead_activities")
+}
+
+model AssignmentRule {
+  id         String                    @id @default(uuid()) @db.Uuid
+  scope      String                    @db.VarChar(16)
+  matchValue String?                   @map("match_value") @db.VarChar(120)
+  strategy   String                    @db.VarChar(32)
+  enabled    Boolean                   @default(true)
+  version    Int                       @default(1)
+  cursor     Int                       @default(0)
+  updatedBy  String                    @map("updated_by") @db.VarChar(64)
+  createdAt  DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  candidates AssignmentRuleCandidate[]
+  decisions  AssignmentDecision[]
+
+  @@unique([scope, matchValue])
+  @@index([enabled, scope])
+  @@map("assignment_rules")
+}
+
+model AssignmentRuleCandidate {
+  id              String         @id @default(uuid()) @db.Uuid
+  ruleId          String         @map("rule_id") @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  active          Boolean        @default(true)
+  suspended       Boolean        @default(false)
+  excluded        Boolean        @default(false)
+  capacity        Int
+  activeLeadCount Int            @default(0) @map("active_lead_count")
+  rule            AssignmentRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+
+  @@unique([ruleId, userId])
+  @@index([ruleId, active, suspended, excluded])
+  @@map("assignment_rule_candidates")
+}
+
+model AssignmentDecision {
+  id                   String         @id @default(uuid()) @db.Uuid
+  eventKey             String         @unique @map("event_key") @db.VarChar(128)
+  leadId               String         @map("lead_id") @db.Uuid
+  ruleId               String         @map("rule_id") @db.Uuid
+  strategy             String         @db.VarChar(32)
+  selectedUserId       String         @map("selected_user_id") @db.Uuid
+  candidateFingerprint String         @map("candidate_fingerprint") @db.VarChar(64)
+  algorithmVersion     String         @map("algorithm_version") @db.VarChar(32)
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  rule                 AssignmentRule @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+
+  @@index([leadId, createdAt(sort: Desc)])
+  @@index([selectedUserId, createdAt(sort: Desc)])
+  @@map("assignment_decisions")
 }

@@ -55,6 +55,13 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
         get: { summary: "Search, filter, sort and paginate globally visible leads", responses: { "200": { description: "Filtered leads with deterministic pagination and role-based masking" }, "400": { description: "Invalid filter, sort or pagination" }, "403": { description: "Role refused" } } },
       },
       "/leads/{leadId}": { get: { summary: "Read one authorized lead", responses: { "200": { description: "Lead detail with role-based masking" }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } } },
+      "/assignment/config": {
+        get: { summary: "Read assignment rules", responses: { "200": { description: "Versioned rules" }, "403": { description: "Manager role required" } } },
+        put: { summary: "Replace assignment rules with an audited configuration", responses: { "200": { description: "Configuration accepted" }, "400": { description: "Invalid configuration" }, "403": { description: "Manager role required" } } },
+      },
+      "/assignment/simulate": { post: { summary: "Simulate an assignment without mutation", responses: { "201": { description: "Deterministic candidate selection with mutated=false" }, "409": { description: "Ambiguous rule or no eligible candidate" } } } },
+      "/assignment/auto": { post: { summary: "Create one idempotent automatic assignment decision", responses: { "201": { description: "Assignment decision" }, "409": { description: "Ambiguous rule or no eligible candidate" } } } },
+      "/assignment/history": { get: { summary: "Read immutable assignment configuration and decision evidence", responses: { "200": { description: "Sanitized history" }, "403": { description: "Manager role required" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));

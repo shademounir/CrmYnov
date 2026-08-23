@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED"] as const;
+export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED"] as const;
 export type ActivityType = (typeof activityTypes)[number];
 export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
@@ -125,8 +125,30 @@ export class LeadService {
     return this.visibleLead(lead, principal);
   }
 
+  findLocalLead(leadId: string): LeadRecord | undefined {
+    const lead = this.leads.get(leadId);
+    return lead ? { ...lead } : undefined;
+  }
+
+  assignLocalLead(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string): LeadRecord {
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "assignment_role_forbidden" });
+    const current = this.leads.get(leadId);
+    if (!current) throw new NotFoundException({ code: "lead_not_found" });
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId });
+    this.leads.set(leadId, updated);
+    const activity: Readonly<LeadActivityRecord> = Object.freeze({
+      id: randomUUID(), leadId, type: "ASSIGNMENT_CHANGED", result: assignedToId,
+      note: reason, authorId: principal.userId, correlationId, occurredAt: new Date().toISOString(),
+    });
+    this.activities = [...this.activities, activity];
+    this.audit.record({ eventType: "LEAD_ASSIGNED", actorId: principal.userId, actorRoles: principal.roles,
+      sessionId: principal.sessionId, correlationId, before: { leadId, assignedToId: current.assignedToId },
+      after: { leadId, assignedToId, reason }, result: "SUCCESS", idempotencyKey: `lead-assigned:${leadId}:${correlationId}` });
+    return { ...updated };
+  }
+
   private assertReadRole(principal: Principal): void {
-    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
   }
 
   private visibleLead(lead: Readonly<LeadRecord>, principal: Principal): LeadRecord {

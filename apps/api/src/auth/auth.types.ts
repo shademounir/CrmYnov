@@ -1,6 +1,6 @@
 import type { Request } from "express";
 
-export const roles = ["SUPER_ADMIN", "ADMIN", "ADMISSIONS", "AUDITOR"] as const;
+export const roles = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"] as const;
 export type Role = (typeof roles)[number];
 export type Scope = { kind: "GLOBAL" } | { kind: "CAMPUS" | "TEAM"; id: string };
 
