@@ -3,9 +3,17 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT"] as const;
+export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED"] as const;
 export type ActivityType = (typeof activityTypes)[number];
 export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
+export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
+const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = {
+  PROSPECT: ["CONTACTED"],
+  CONTACTED: ["QUALIFIED", "CLOSED_LOST"],
+  QUALIFIED: ["ENROLLED", "CLOSED_LOST"],
+  ENROLLED: [],
+  CLOSED_LOST: [],
+};
 
 export interface LeadRecord {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
@@ -48,6 +56,30 @@ export class LeadService {
       sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, type: activity.type }, result: "SUCCESS",
       idempotencyKey: `lead-activity:${activity.id}` });
     return { ...activity };
+  }
+
+  changeStatus(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): LeadRecord {
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
+    const current = this.leads.get(leadId);
+    if (!current) throw new NotFoundException({ code: "lead_not_found" });
+    if (!leadStatuses.includes(input.status as LeadStatus)) throw new BadRequestException({ code: "lead_status_invalid" });
+    const status = input.status as LeadStatus;
+    if (!allowedTransitions[current.status].includes(status)) throw new BadRequestException({ code: "lead_status_transition_forbidden" });
+    const terminal = status === "ENROLLED" || status === "CLOSED_LOST";
+    if (terminal && !principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_closure_approval_required" });
+    const reason = input.reason?.trim();
+    if (terminal && !reason) throw new BadRequestException({ code: "lead_closure_reason_required" });
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, status });
+    this.leads.set(leadId, updated);
+    const activity: Readonly<LeadActivityRecord> = Object.freeze({
+      id: randomUUID(), leadId, type: "STATUS_CHANGED", result: `${current.status}->${status}`,
+      ...(reason ? { note: reason } : {}), authorId: principal.userId, correlationId, occurredAt: new Date().toISOString(),
+    });
+    this.activities = [...this.activities, activity];
+    this.audit.record({ eventType: "LEAD_STATUS_CHANGED", actorId: principal.userId, actorRoles: principal.roles,
+      sessionId: principal.sessionId, correlationId, before: { leadId, status: current.status }, after: { leadId, status },
+      result: "SUCCESS", idempotencyKey: `lead-status:${activity.id}` });
+    return { ...updated };
   }
 
   timeline(leadId: string, principal: Principal): LeadActivityRecord[] {
