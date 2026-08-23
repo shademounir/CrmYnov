@@ -1,7 +1,7 @@
-import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
-import { LeadService, type CreateLeadInput, type CreateLeadResult, type LeadActivityRecord, type LeadRecord } from "./lead.service.js";
+import { LeadService, type CreateLeadInput, type CreateLeadResult, type LeadActivityRecord, type LeadPage, type LeadRecord } from "./lead.service.js";
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
@@ -46,5 +46,19 @@ export class LeadController {
   create(@Body() body: CreateLeadInput, @Req() request: AuthenticatedRequest): CreateLeadResult {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.leads.createLead(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+
+  @Get()
+  @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
+  list(@Query("page") pageValue: string | undefined, @Query("pageSize") pageSizeValue: string | undefined, @Req() request: AuthenticatedRequest): LeadPage {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.leads.listLeads(Number(pageValue ?? 1), Number(pageSizeValue ?? 25), request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+
+  @Get(":leadId")
+  @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
+  detail(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): LeadRecord {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.leads.getLead(leadId, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }
