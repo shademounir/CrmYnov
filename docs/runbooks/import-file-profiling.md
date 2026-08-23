@@ -17,6 +17,12 @@
 
 La réponse expose seulement les noms de feuilles et colonnes, les types probables, les compteurs de lignes/cellules vides et les motifs stables. Elle n'expose aucune valeur de cellule et le journal d'audit ne contient que des compteurs.
 
+## Rapport de qualité historique
+
+Pour le profil `LEGACY_CRM`, l'API expose uniquement des compteurs agrégés sur la feuille canonique `LEADS YNOV.MA` : cellules vides, doublons email/téléphone, statuts inconnus, dates invalides, responsables renseignés/distincts et lignes commentées. Aucune valeur source ni aucun échantillon n'est retourné, journalisé ou persisté.
+
+Le cutover reste fail-closed si le fichier contient une formule, une colonne manquante/inconnue, un statut historique non arbitré ou une date structurée invalide. Le profilage ne vaut jamais autorisation de migration : une répétition et un cutover restent des opérations séparées. La matrice opposable est `docs/imports/source-mapping.md`; toute colonne absente de cette matrice bloque le profil.
+
 ## Séquence opérateur
 
 1. Choisir le profil attendu et déposer le fichier dans `/imports/profile`.
