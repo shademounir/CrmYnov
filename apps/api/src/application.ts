@@ -82,6 +82,14 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/lead-import/reports": { post: { summary: "Create an immutable reconciliation report for an ingestion job", responses: { "201": { description: "Sanitized and reconciled report" }, "400": { description: "Invalid hash or identity" }, "404": { description: "Batch or mapping not found" }, "409": { description: "Conflicting report replay" } } } },
       "/lead-import/reports/{jobId}": { get: { summary: "Read one authorized import reconciliation report", responses: { "200": { description: "Sanitized report without lead identity" }, "404": { description: "Report not found" } } } },
       "/lead-import/reports/{jobId}/rejections": { get: { summary: "Export rejected line numbers and stable reason codes as CSV", responses: { "200": { description: "PII-free CSV export" }, "404": { description: "Report not found" } } } },
+      "/integrations/forminator/v1/leads": { post: { summary: "Validate a versioned HMAC-signed Forminator/Zapier lead event without activating ingestion", parameters: [
+        { name: "x-forminator-timestamp", in: "header", required: true, schema: { type: "string", example: "1787500000" } },
+        { name: "x-forminator-signature", in: "header", required: true, schema: { type: "string", example: "sha256=0000000000000000000000000000000000000000000000000000000000000000" } },
+        { name: "x-idempotency-key", in: "header", required: true, schema: { type: "string", example: "synthetic-event-0001" } }],
+        requestBody: { required: true, content: { "application/json": { example: { schemaVersion: "1", eventId: "synthetic-event-0001", occurredAt: "2026-08-23T12:00:00Z",
+          lead: { firstName: "Prénom synthétique", lastName: "Nom synthétique", email: "lead@example.invalid", educationLevel: "BAC", program: "Programme synthétique" } } } } },
+        responses: { "201": { description: "Signature accepted; mutated=false until CRMY-65" }, "400": { description: "Headers, schema or allowlist refused" },
+          "401": { description: "Signature or timestamp refused" }, "409": { description: "Idempotency conflict" }, "429": { description: "Rate limit exceeded" }, "503": { description: "Adapter disabled or secret absent" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));

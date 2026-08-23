@@ -36,9 +36,11 @@ import { ImportMappingController } from "./import-mapping/import-mapping.control
 import { ImportMappingService } from "./import-mapping/import-mapping.service.js";
 import { ImportReportController } from "./import-report/import-report.controller.js";
 import { ImportReportService } from "./import-report/import-report.service.js";
+import { ForminatorWebhookController } from "./forminator-webhook/forminator-webhook.controller.js";
+import { ForminatorWebhookService } from "./forminator-webhook/forminator-webhook.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ForminatorWebhookController],
   providers: [
     SessionService,
     RateLimitService,
@@ -59,6 +61,7 @@ import { ImportReportService } from "./import-report/import-report.service.js";
     ImportProfileService,
     ImportMappingService,
     ImportReportService,
+    ForminatorWebhookService,
   ],
 })
 export class AppModule {}
