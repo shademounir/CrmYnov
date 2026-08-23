@@ -30,9 +30,11 @@ import { AssignmentDashboardController } from "./assignment/assignment-dashboard
 import { AssignmentDashboardService } from "./assignment/assignment-dashboard.service.js";
 import { IngestionController } from "./ingestion/ingestion.controller.js";
 import { IngestionService } from "./ingestion/ingestion.service.js";
+import { ImportProfileController } from "./import-profile/import-profile.controller.js";
+import { ImportProfileService } from "./import-profile/import-profile.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController],
   providers: [
     SessionService,
     RateLimitService,
@@ -50,6 +52,7 @@ import { IngestionService } from "./ingestion/ingestion.service.js";
     ReassignmentService,
     AssignmentDashboardService,
     IngestionService,
+    ImportProfileService,
   ],
 })
 export class AppModule {}

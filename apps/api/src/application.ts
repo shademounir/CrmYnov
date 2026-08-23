@@ -73,6 +73,7 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/reassignment-requests/{requestId}/decision": { patch: { summary: "Approve or reject a reassignment as Manager/Admin", responses: { "200": { description: "Decision recorded; ownership changes only on approval" }, "403": { description: "Role or separation of duties refused" }, "409": { description: "Owner changed or decision already recorded" } } } },
       "/lead-ingestion/batches": { post: { summary: "Run one confirmed, bounded and idempotent lead ingestion batch", responses: { "201": { description: "Sanitized created, attached, review and invalid counts" }, "400": { description: "Invalid batch or mapping" }, "403": { description: "Manager role required" } } } },
       "/lead-ingestion/leads/{leadId}/provenance": { get: { summary: "Read sanitized append-only provenance", responses: { "200": { description: "Provenance without external identifier value" }, "403": { description: "Manager role required" } } } },
+      "/lead-import/profiles": { post: { summary: "Profile a bounded CSV or XLSX without persisting or importing its rows", responses: { "201": { description: "Sanitized structural profile with mutated=false" }, "400": { description: "File, encoding, formula, macro or mapping refused" }, "403": { description: "Manager role required" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));
