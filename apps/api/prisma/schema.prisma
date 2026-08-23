@@ -107,11 +107,11 @@ model IngestionBatch {
 
 model ImportReport {
   id               String            @id @default(uuid()) @db.Uuid
-  jobId            String            @unique @map("job_id") @db.VarChar(128)
+  jobId            String            @unique @map("job_id")
   batchId          String            @unique @map("batch_id") @db.Uuid
-  mappingId        String            @map("mapping_id") @db.VarChar(80)
+  mappingId        String            @map("mapping_id")
   mappingVersion   Int               @map("mapping_version")
-  sourceFileSha256 String            @map("source_file_sha256") @db.Char(64)
+  sourceFileSha256 String            @map("source_file_sha256")
   totalCount       Int               @map("total_count")
   createdCount     Int               @map("created_count")
   updatedCount     Int               @map("updated_count")
@@ -130,8 +130,8 @@ model ImportRejection {
   id         String       @id @default(uuid()) @db.Uuid
   reportId   String       @map("report_id") @db.Uuid
   lineNumber Int          @map("line_number")
-  category   String       @db.VarChar(32)
-  reasonCode String       @map("reason_code") @db.VarChar(80)
+  category   String
+  reasonCode String       @map("reason_code")
   report     ImportReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
 
   @@unique([reportId, lineNumber])

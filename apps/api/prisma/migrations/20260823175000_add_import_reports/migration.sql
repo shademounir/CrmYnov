@@ -5,11 +5,11 @@
 
 CREATE TABLE "import_reports" (
   "id" UUID NOT NULL,
-  "job_id" VARCHAR(128) NOT NULL,
+  "job_id" TEXT NOT NULL CHECK (char_length("job_id") BETWEEN 8 AND 128),
   "batch_id" UUID NOT NULL,
-  "mapping_id" VARCHAR(80) NOT NULL,
+  "mapping_id" TEXT NOT NULL CHECK (char_length("mapping_id") <= 80),
   "mapping_version" INTEGER NOT NULL,
-  "source_file_sha256" CHAR(64) NOT NULL,
+  "source_file_sha256" TEXT NOT NULL CHECK (char_length("source_file_sha256") = 64),
   "total_count" INTEGER NOT NULL,
   "created_count" INTEGER NOT NULL,
   "updated_count" INTEGER NOT NULL,
@@ -29,8 +29,8 @@ CREATE TABLE "import_rejections" (
   "id" UUID NOT NULL,
   "report_id" UUID NOT NULL,
   "line_number" INTEGER NOT NULL,
-  "category" VARCHAR(32) NOT NULL,
-  "reason_code" VARCHAR(80) NOT NULL,
+  "category" TEXT NOT NULL CHECK (char_length("category") <= 32),
+  "reason_code" TEXT NOT NULL CHECK (char_length("reason_code") <= 80),
   CONSTRAINT "import_rejections_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "import_rejections_report_id_fkey" FOREIGN KEY ("report_id") REFERENCES "import_reports"("id")
 );

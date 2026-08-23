@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 interface Report { jobId: string; mappingId: string; mappingVersion: number; total: number; created: number; updated: number; ignored: number; duplicates: number; errors: number; reconciled: true; rejectionCount: number }
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
-export default function ImportReportPage({ params }: { params: { jobId: string } }): React.JSX.Element {
+export default function ImportReportPage({ params }: Readonly<{ params: { jobId: string } }>): React.JSX.Element {
   const [report, setReport] = useState<Report | null>(null); const [error, setError] = useState("");
   useEffect(() => { void fetch(`${API}/lead-import/reports/${encodeURIComponent(params.jobId)}`, { credentials: "include" })
     .then(async (response) => response.ok ? response.json() as Promise<Report> : Promise.reject(new Error("report_load_failed")))
