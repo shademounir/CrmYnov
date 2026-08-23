@@ -28,6 +28,7 @@ export interface LeadActivityRecord {
 
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
+export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
 
 @Injectable()
 export class LeadService {
@@ -66,6 +67,34 @@ export class LeadService {
       correlationId, after: { leadId: lead.id, leadCode, duplicateCandidateCount: duplicateCandidates.length }, result: "SUCCESS",
       idempotencyKey: `lead-created:${lead.id}` });
     return { lead, duplicateCandidates };
+  }
+
+  listLeads(page: number, pageSize: number, principal: Principal, correlationId: string): LeadPage {
+    this.assertReadRole(principal);
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "lead_pagination_invalid" });
+    const ordered = [...this.leads.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.leadCode.localeCompare(right.leadCode));
+    const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
+    this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
+      correlationId, after: { page, pageSize, resultCount: items.length }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
+    return { items, page, pageSize, total: ordered.length };
+  }
+
+  getLead(leadId: string, principal: Principal, correlationId: string): LeadRecord {
+    this.assertReadRole(principal);
+    const lead = this.leads.get(leadId);
+    if (!lead) throw new NotFoundException({ code: "lead_not_found" });
+    this.audit.record({ eventType: "LEAD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
+      correlationId, after: { leadId }, result: "SUCCESS", idempotencyKey: `lead-viewed:${randomUUID()}` });
+    return this.visibleLead(lead, principal);
+  }
+
+  private assertReadRole(principal: Principal): void {
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
+  }
+
+  private visibleLead(lead: Readonly<LeadRecord>, principal: Principal): LeadRecord {
+    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS")) return { ...lead };
+    return { ...lead, email: "***", phone: "***" };
   }
 
   addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {
