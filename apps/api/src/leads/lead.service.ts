@@ -29,6 +29,12 @@ export interface LeadActivityRecord {
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
+export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
+export interface LeadListQuery {
+  page: number; pageSize: number; search?: string; assignedToId?: string; status?: string; source?: string;
+  program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
+  sortBy?: string; sortDirection?: string;
+}
 
 @Injectable()
 export class LeadService {
@@ -69,14 +75,45 @@ export class LeadService {
     return { lead, duplicateCandidates };
   }
 
-  listLeads(page: number, pageSize: number, principal: Principal, correlationId: string): LeadPage {
+  listLeads(query: LeadListQuery, principal: Principal, correlationId: string): LeadPage {
     this.assertReadRole(principal);
+    const { page, pageSize } = query;
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "lead_pagination_invalid" });
-    const ordered = [...this.leads.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.leadCode.localeCompare(right.leadCode));
+    const status = query.status?.toUpperCase();
+    if (status && !leadStatuses.includes(status as LeadStatus)) throw new BadRequestException({ code: "lead_status_filter_invalid" });
+    const sortBy = (query.sortBy ?? "createdAt") as LeadSortField;
+    if (!["createdAt", "leadCode", "lastName", "status"].includes(sortBy)) throw new BadRequestException({ code: "lead_sort_invalid" });
+    const sortDirection = query.sortDirection ?? "desc";
+    if (sortDirection !== "asc" && sortDirection !== "desc") throw new BadRequestException({ code: "lead_sort_direction_invalid" });
+    const createdFrom = this.parseBoundary(query.createdFrom, "lead_created_from_invalid");
+    const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
+    if (createdFrom && createdTo && createdFrom > createdTo) throw new BadRequestException({ code: "lead_date_range_invalid" });
+    const search = query.search?.trim().toLocaleLowerCase("fr");
+    const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
+    const filtered = [...this.leads.values()].filter((lead) => {
+      const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
+        .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
+      return (!search || searchable.some((value) => value.includes(search)))
+        && (!query.assignedToId || lead.assignedToId === query.assignedToId)
+        && (!status || lead.status === status)
+        && matches(lead.source, query.source) && matches(lead.program, query.program)
+        && matches(lead.campaign, query.campaign) && matches(lead.campus, query.campus)
+        && (!createdFrom || lead.createdAt >= createdFrom) && (!createdTo || lead.createdAt <= createdTo);
+    });
+    const direction = sortDirection === "asc" ? 1 : -1;
+    const ordered = filtered.sort((left, right) => direction * left[sortBy].localeCompare(right[sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr"));
     const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
     this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
-      correlationId, after: { page, pageSize, resultCount: items.length }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
+      correlationId, after: { page, pageSize, resultCount: items.length, filterCount: Object.values(query).filter((value) => value !== undefined).length - 2,
+        sortBy, sortDirection }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
     return { items, page, pageSize, total: ordered.length };
+  }
+
+  private parseBoundary(value: string | undefined, errorCode: string): string | undefined {
+    if (!value) return undefined;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.valueOf())) throw new BadRequestException({ code: errorCode });
+    return parsed.toISOString();
   }
 
   getLead(leadId: string, principal: Principal, correlationId: string): LeadRecord {

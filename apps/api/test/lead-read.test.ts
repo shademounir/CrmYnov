@@ -11,9 +11,9 @@ const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify((e
 
 test("lists every authorized lead with deterministic bounded pagination", () => {
   const service = new LeadService(new AuditService()); service.registerLocalLead(input); service.registerLocalLead({ ...input, leadCode: "LD-READ-002", email: "second@example.invalid" });
-  const page = service.listLeads(1, 1, admissions, "corr-list");
+  const page = service.listLeads({ page: 1, pageSize: 1 }, admissions, "corr-list");
   assert.equal(page.total, 2); assert.equal(page.items.length, 1); assert.equal(page.pageSize, 1);
-  assert.throws(() => service.listLeads(0, 101, admissions, "corr"), hasCode("lead_pagination_invalid"));
+  assert.throws(() => service.listLeads({ page: 0, pageSize: 101 }, admissions, "corr"), hasCode("lead_pagination_invalid"));
 });
 
 test("returns authorized detail, masks auditor contacts and fails closed", () => {
@@ -26,7 +26,7 @@ test("returns authorized detail, masks auditor contacts and fails closed", () =>
 test("controller exposes list and detail without trusting forged identifiers", () => {
   const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(input); const controller = new LeadController(service);
   const request = { principal: admissions, header: () => "corr-controller" } as never;
-  assert.equal(controller.list("1", "25", request).items[0]?.id, lead.id);
+  assert.equal(controller.list({ page: "1", pageSize: "25" }, request).items[0]?.id, lead.id);
   assert.equal(controller.detail(lead.id, request).leadCode, input.leadCode);
   assert.throws(() => controller.detail(lead.id, { header: () => undefined } as never), hasCode("principal_missing"));
 });

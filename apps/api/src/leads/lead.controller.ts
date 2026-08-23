@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
-import { LeadService, type CreateLeadInput, type CreateLeadResult, type LeadActivityRecord, type LeadPage, type LeadRecord } from "./lead.service.js";
+import { LeadService, type CreateLeadInput, type CreateLeadResult, type LeadActivityRecord, type LeadListQuery, type LeadPage, type LeadRecord } from "./lead.service.js";
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
@@ -50,9 +50,13 @@ export class LeadController {
 
   @Get()
   @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
-  list(@Query("page") pageValue: string | undefined, @Query("pageSize") pageSizeValue: string | undefined, @Req() request: AuthenticatedRequest): LeadPage {
+  list(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): LeadPage {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.listLeads(Number(pageValue ?? 1), Number(pageSizeValue ?? 25), request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    const normalized: LeadListQuery = { page: Number(query.page ?? 1), pageSize: Number(query.pageSize ?? 25) };
+    for (const key of ["search", "assignedToId", "status", "source", "program", "campaign", "campus", "createdFrom", "createdTo", "sortBy", "sortDirection"] as const) {
+      if (query[key] !== undefined) normalized[key] = query[key];
+    }
+    return this.leads.listLeads(normalized, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 
   @Get(":leadId")
