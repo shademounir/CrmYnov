@@ -99,9 +99,43 @@ model IngestionBatch {
   importedAt     DateTime              @default(now()) @map("imported_at") @db.Timestamptz(6)
   provenances    LeadProvenance[]
   reviewItems    IngestionReviewItem[]
+  report         ImportReport?
 
   @@index([importedAt(sort: Desc)])
   @@map("ingestion_batches")
+}
+
+model ImportReport {
+  id               String            @id @default(uuid()) @db.Uuid
+  jobId            String            @unique @map("job_id")
+  batchId          String            @unique @map("batch_id") @db.Uuid
+  mappingId        String            @map("mapping_id")
+  mappingVersion   Int               @map("mapping_version")
+  sourceFileSha256 String            @map("source_file_sha256")
+  totalCount       Int               @map("total_count")
+  createdCount     Int               @map("created_count")
+  updatedCount     Int               @map("updated_count")
+  ignoredCount     Int               @map("ignored_count")
+  duplicateCount   Int               @map("duplicate_count")
+  errorCount       Int               @map("error_count")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  batch            IngestionBatch    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  rejections       ImportRejection[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("import_reports")
+}
+
+model ImportRejection {
+  id         String       @id @default(uuid()) @db.Uuid
+  reportId   String       @map("report_id") @db.Uuid
+  lineNumber Int          @map("line_number")
+  category   String
+  reasonCode String       @map("reason_code")
+  report     ImportReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
+
+  @@unique([reportId, lineNumber])
+  @@map("import_rejections")
 }
 
 model LeadProvenance {

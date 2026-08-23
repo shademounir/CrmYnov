@@ -195,6 +195,11 @@ export class IngestionService {
       ...(item.rawStatus ? { rawStatus: item.rawStatus } : {}), hasExternalId: Boolean(item.externalId) }));
   }
 
+  getBatch(batchId: string): IngestionBatchResult | undefined {
+    const batch = [...this.batches.values()].find((item) => item.batchId === batchId);
+    return batch ? this.copy(batch) : undefined;
+  }
+
   private ingestOne(record: IngestionRecordInput, batch: IngestionBatchInput, batchId: string, principal: Principal, correlationId: string): IngestionLineResult {
     const normalized = this.normalize(record);
     if (normalized.reason) return { lineNumber: record.lineNumber, outcome: "INVALID", reason: normalized.reason };
