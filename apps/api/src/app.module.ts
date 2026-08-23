@@ -26,9 +26,11 @@ import { LeadAssignmentController } from "./assignment/lead-assignment.controlle
 import { LeadAssignmentService } from "./assignment/lead-assignment.service.js";
 import { ReassignmentController } from "./assignment/reassignment.controller.js";
 import { ReassignmentService } from "./assignment/reassignment.service.js";
+import { AssignmentDashboardController } from "./assignment/assignment-dashboard.controller.js";
+import { AssignmentDashboardService } from "./assignment/assignment-dashboard.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, AssignmentController, LeadAssignmentController, ReassignmentController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController],
   providers: [
     SessionService,
     RateLimitService,
@@ -44,6 +46,7 @@ import { ReassignmentService } from "./assignment/reassignment.service.js";
     AssignmentService,
     LeadAssignmentService,
     ReassignmentService,
+    AssignmentDashboardService,
   ],
 })
 export class AppModule {}
