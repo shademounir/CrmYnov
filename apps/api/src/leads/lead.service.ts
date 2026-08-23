@@ -1,0 +1,58 @@
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
+import type { Principal } from "../auth/auth.types.js";
+import { AuditService } from "../audit/audit.service.js";
+
+export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT"] as const;
+export type ActivityType = (typeof activityTypes)[number];
+export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
+
+export interface LeadRecord {
+  id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
+  campus: string; campaign: string; educationLevel: string; program: string; source: string;
+  status: LeadStatus; assignedToId?: string; nextActionAt?: string; createdAt: string;
+}
+
+export interface LeadActivityRecord {
+  id: string; leadId: string; type: ActivityType; result: string; note?: string; authorId: string;
+  nextActionAt?: string; correlationId: string; occurredAt: string;
+}
+
+@Injectable()
+export class LeadService {
+  private readonly leads = new Map<string, Readonly<LeadRecord>>();
+  private activities: Readonly<LeadActivityRecord>[] = [];
+  constructor(private readonly audit: AuditService) {}
+
+  registerLocalLead(input: Omit<LeadRecord, "id" | "createdAt" | "status"> & { id?: string; status?: LeadStatus }): LeadRecord {
+    const lead: LeadRecord = Object.freeze({ ...input, id: input.id ?? randomUUID(), status: input.status ?? "PROSPECT", createdAt: new Date().toISOString() });
+    this.leads.set(lead.id, lead);
+    return { ...lead };
+  }
+
+  addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
+    const lead = this.leads.get(leadId);
+    if (!lead) throw new NotFoundException({ code: "lead_not_found" });
+    if (!activityTypes.includes(input.type as ActivityType) || !input.result?.trim()) throw new BadRequestException({ code: "activity_invalid" });
+    const nextActionAt = input.nextActionAt ? new Date(input.nextActionAt) : undefined;
+    if (nextActionAt && Number.isNaN(nextActionAt.valueOf())) throw new BadRequestException({ code: "next_action_invalid" });
+    const activity: LeadActivityRecord = Object.freeze({
+      id: randomUUID(), leadId, type: input.type as ActivityType, result: input.result.trim(),
+      ...(input.note?.trim() ? { note: input.note.trim() } : {}), authorId: principal.userId,
+      ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: new Date().toISOString(),
+    });
+    this.activities = [...this.activities, activity];
+    if (activity.nextActionAt) this.leads.set(leadId, Object.freeze({ ...lead, nextActionAt: activity.nextActionAt }));
+    this.audit.record({ eventType: "LEAD_ACTIVITY_ADDED", actorId: principal.userId, actorRoles: principal.roles,
+      sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, type: activity.type }, result: "SUCCESS",
+      idempotencyKey: `lead-activity:${activity.id}` });
+    return { ...activity };
+  }
+
+  timeline(leadId: string, principal: Principal): LeadActivityRecord[] {
+    if (!this.leads.has(leadId)) throw new NotFoundException({ code: "lead_not_found" });
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
+    return this.activities.filter((item) => item.leadId === leadId).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id)).map((item) => ({ ...item }));
+  }
+}

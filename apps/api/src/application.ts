@@ -43,6 +43,10 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
           responses: { "204": { description: "Challenge consumed" }, "400": { description: "Invalid input" }, "403": { description: "Invalid, expired or used challenge" } },
         },
       },
+      "/leads/{leadId}/timeline": {
+        get: { summary: "List immutable lead activities", responses: { "200": { description: "Reverse chronological timeline" }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } },
+        post: { summary: "Append a lead activity", responses: { "201": { description: "Activity appended" }, "400": { description: "Invalid activity" }, "403": { description: "Role refused" } } },
+      },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));
