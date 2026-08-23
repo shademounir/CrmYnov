@@ -44,9 +44,9 @@ export class AssignmentDashboardService {
   }
 
   private latestUpdate(rules: AssignmentRule[]): { updatedAt?: string } {
-    const updatedAt = rules.map((rule) => rule.updatedAt).sort().at(-1);
+    const updatedAt = rules.map((rule) => rule.updatedAt).sort((left, right) => left.localeCompare(right)).at(-1);
     return updatedAt ? { updatedAt } : {};
   }
-  private unique(values: string[]): string[] { return [...new Set(values)].sort(); }
+  private unique(values: string[]): string[] { return [...new Set(values)].sort((left, right) => left.localeCompare(right)); }
   private uniqueNumbers(values: number[]): number[] { return [...new Set(values)].sort((left, right) => left - right); }
 }

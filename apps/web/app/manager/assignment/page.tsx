@@ -10,6 +10,6 @@ export default function ManagerAssignmentPage(): React.JSX.Element {
     <section><h2>Charge par conseiller</h2><table><thead><tr><th>Conseiller</th><th>Leads actifs</th></tr></thead><tbody>{advisers.map((item) => <tr key={item.id}><td>{item.id}</td><td>{item.leads}</td></tr>)}</tbody></table></section>
     <section><h2>Moteur</h2><p>Round-robin actif — configuration versionnée et historique expurgé.</p><a href="/admin/assignment">Configurer ou simuler</a></section>
     <section><h2>Actions</h2><a href="/leads">Affecter un lead ou un lot</a><p>Les réaffectations en attente nécessitent une décision Manager/Admin distincte.</p></section>
-    <section role="status"><h2>Alertes</h2><p>Les leads sans candidat éligible restent non affectés et sont signalés sans mutation silencieuse.</p></section>
+    <section><h2>Alertes</h2><output>Les leads sans candidat éligible restent non affectés et sont signalés sans mutation silencieuse.</output></section>
   </main>;
 }
