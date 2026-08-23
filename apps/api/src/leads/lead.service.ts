@@ -18,7 +18,8 @@ const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = 
 export interface LeadRecord {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
-  status: LeadStatus; assignedToId?: string; nextActionAt?: string; createdAt: string;
+  status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
+  nextActionAt?: string; lastActivityAt?: string; createdAt: string;
 }
 
 export interface LeadActivityRecord {
@@ -37,8 +38,9 @@ export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
   page: number; pageSize: number; search?: string; assignedToId?: string; status?: string; source?: string;
   program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
-  sortBy?: string; sortDirection?: string;
+  assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
 }
+export type LeadWorkView = "ALL" | "MINE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
 
 @Injectable()
 export class LeadService {
@@ -73,10 +75,12 @@ export class LeadService {
     const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId: lead.id, type: "LEAD_CREATED",
       result: "PROSPECT", authorId: principal.userId, correlationId, occurredAt: lead.createdAt });
     this.activities = [...this.activities, activity];
+    const createdLead: Readonly<LeadRecord> = Object.freeze({ ...lead, lastActivityAt: activity.occurredAt });
+    this.leads.set(lead.id, createdLead);
     this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { leadId: lead.id, leadCode, duplicateCandidateCount: duplicateCandidates.length }, result: "SUCCESS",
       idempotencyKey: `lead-created:${lead.id}` });
-    return { lead, duplicateCandidates };
+    return { lead: { ...createdLead }, duplicateCandidates };
   }
 
   listLeads(query: LeadListQuery, principal: Principal, correlationId: string): LeadPage {
@@ -93,24 +97,40 @@ export class LeadService {
     const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
     if (createdFrom && createdTo && createdFrom > createdTo) throw new BadRequestException({ code: "lead_date_range_invalid" });
     const search = query.search?.trim().toLocaleLowerCase("fr");
+    const view = (query.view ?? "ALL").toUpperCase() as LeadWorkView;
+    if (!["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"].includes(view)) throw new BadRequestException({ code: "lead_view_invalid" });
+    const now = new Date().toISOString();
     const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
     const filtered = [...this.leads.values()].filter((lead) => {
       const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
         .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
       return (!search || searchable.some((value) => value.includes(search)))
+        && this.matchesView(lead, view, principal, now)
         && (!query.assignedToId || lead.assignedToId === query.assignedToId)
         && (!status || lead.status === status)
         && matches(lead.source, query.source) && matches(lead.program, query.program)
         && matches(lead.campaign, query.campaign) && matches(lead.campus, query.campus)
+        && matches(lead.assignmentMode, query.assignmentMode) && matches(lead.importBatchId, query.importBatchId)
         && (!createdFrom || lead.createdAt >= createdFrom) && (!createdTo || lead.createdAt <= createdTo);
     });
     const direction = sortDirection === "asc" ? 1 : -1;
-    const ordered = filtered.sort((left, right) => direction * left[sortBy].localeCompare(right[sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr"));
+    const ordered = filtered.sort((left, right) => view === "FOLLOW_UP"
+      ? (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr")
+      : direction * left[sortBy].localeCompare(right[sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr"));
     const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
     this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { page, pageSize, resultCount: items.length, filterCount: Object.values(query).filter((value) => value !== undefined).length - 2,
         sortBy, sortDirection }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
     return { items, page, pageSize, total: ordered.length };
+  }
+
+  private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
+    if (view === "MINE") return lead.assignedToId === principal.userId || Boolean(lead.collaboratorIds?.includes(principal.userId));
+    if (view === "FOLLOW_UP") return Boolean(lead.nextActionAt && lead.nextActionAt <= now && lead.status !== "ENROLLED" && lead.status !== "CLOSED_LOST");
+    if (view === "UNASSIGNED") return !lead.assignedToId;
+    if (view === "NO_ACTIVITY") return !lead.lastActivityAt;
+    if (view === "CLOSED") return lead.status === "ENROLLED" || lead.status === "CLOSED_LOST";
+    return true;
   }
 
   private parseBoundary(value: string | undefined, errorCode: string): string | undefined {
@@ -148,16 +168,17 @@ export class LeadService {
     };
   }
 
-  assignLocalLead(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string): LeadRecord {
+  assignLocalLead(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED"): LeadRecord {
     if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "assignment_role_forbidden" });
     const current = this.leads.get(leadId);
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (current.assignedToId) throw new ConflictException({ code: "lead_already_assigned", nextAction: "CRMY-94" });
-    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId });
+    const occurredAt = new Date().toISOString();
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId, assignmentMode, lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({
       id: randomUUID(), leadId, type: "ASSIGNMENT_CHANGED", result: assignedToId,
-      note: reason, authorId: principal.userId, correlationId, occurredAt: new Date().toISOString(),
+      note: reason, authorId: principal.userId, correlationId, occurredAt,
     });
     this.activities = [...this.activities, activity];
     this.audit.record({ eventType: "LEAD_ASSIGNED", actorId: principal.userId, actorRoles: principal.roles,
@@ -172,10 +193,11 @@ export class LeadService {
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (current.assignedToId !== expectedOwnerId) throw new ConflictException({ code: "reassignment_owner_changed" });
     if (targetUserId === expectedOwnerId) throw new BadRequestException({ code: "reassignment_target_unchanged" });
-    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId: targetUserId });
+    const occurredAt = new Date().toISOString();
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId: targetUserId, assignmentMode: "REASSIGNMENT", lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: "ASSIGNMENT_CHANGED",
-      result: `${expectedOwnerId}->${targetUserId}`, note: reason, authorId: principal.userId, correlationId, occurredAt: new Date().toISOString() });
+      result: `${expectedOwnerId}->${targetUserId}`, note: reason, authorId: principal.userId, correlationId, occurredAt });
     this.activities = [...this.activities, activity];
     this.audit.record({ eventType: "LEAD_REASSIGNED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, before: { leadId, assignedToId: expectedOwnerId }, after: { leadId, assignedToId: targetUserId, reason },
@@ -205,7 +227,7 @@ export class LeadService {
       ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: new Date().toISOString(),
     });
     this.activities = [...this.activities, activity];
-    if (activity.nextActionAt) this.leads.set(leadId, Object.freeze({ ...lead, nextActionAt: activity.nextActionAt }));
+    this.leads.set(leadId, Object.freeze({ ...lead, lastActivityAt: activity.occurredAt, ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) }));
     this.audit.record({ eventType: "LEAD_ACTIVITY_ADDED", actorId: principal.userId, actorRoles: principal.roles,
       sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, type: activity.type }, result: "SUCCESS",
       idempotencyKey: `lead-activity:${activity.id}` });
@@ -223,11 +245,12 @@ export class LeadService {
     if (terminal && !principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_closure_approval_required" });
     const reason = input.reason?.trim();
     if (terminal && !reason) throw new BadRequestException({ code: "lead_closure_reason_required" });
-    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, status });
+    const occurredAt = new Date().toISOString();
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, status, lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({
       id: randomUUID(), leadId, type: "STATUS_CHANGED", result: `${current.status}->${status}`,
-      ...(reason ? { note: reason } : {}), authorId: principal.userId, correlationId, occurredAt: new Date().toISOString(),
+      ...(reason ? { note: reason } : {}), authorId: principal.userId, correlationId, occurredAt,
     });
     this.activities = [...this.activities, activity];
     this.audit.record({ eventType: "LEAD_STATUS_CHANGED", actorId: principal.userId, actorRoles: principal.roles,

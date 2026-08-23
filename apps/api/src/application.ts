@@ -52,7 +52,7 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       },
       "/leads": {
         post: { summary: "Create a normalized lead with an immutable identifier", responses: { "201": { description: "Lead created with probable duplicate warnings" }, "400": { description: "Invalid or incomplete input" }, "403": { description: "Role refused" } } },
-        get: { summary: "Search, filter, sort and paginate globally visible leads", responses: { "200": { description: "Filtered leads with deterministic pagination and role-based masking" }, "400": { description: "Invalid filter, sort or pagination" }, "403": { description: "Role refused" } } },
+        get: { summary: "Search, filter, sort and paginate ALL, MINE, FOLLOW_UP, UNASSIGNED, NO_ACTIVITY or CLOSED lead views", responses: { "200": { description: "Filtered leads with deterministic pagination, due-date ordering and role-based masking" }, "400": { description: "Invalid view, filter, sort or pagination" }, "403": { description: "Role refused" } } },
       },
       "/leads/{leadId}": { get: { summary: "Read one authorized lead", responses: { "200": { description: "Lead detail with role-based masking" }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } } },
       "/assignment/config": {
