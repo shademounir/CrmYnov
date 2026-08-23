@@ -83,9 +83,10 @@ export class AssignmentService {
     return this.history.map((rule) => this.copyRule(rule));
   }
 
-  simulate(context: AssignmentContext, principal: Principal): AssignmentSimulation {
+  simulate(context: AssignmentContext, principal: Principal, roundRobinOffset = 0): AssignmentSimulation {
     this.assertManager(principal);
-    const selection = this.select(context, false);
+    if (!Number.isInteger(roundRobinOffset) || roundRobinOffset < 0) throw new BadRequestException({ code: "assignment_simulation_offset_invalid" });
+    const selection = this.select(context, false, roundRobinOffset);
     return { ...selection, mutated: false };
   }
 
@@ -115,7 +116,7 @@ export class AssignmentService {
     if (!candidate) throw new ConflictException({ code: "assignment_target_ineligible" });
   }
 
-  private select(context: AssignmentContext, mutateCursor: boolean): Omit<AssignmentDecision, "id" | "eventKey" | "leadId" | "algorithmVersion" | "createdAt"> {
+  private select(context: AssignmentContext, mutateCursor: boolean, roundRobinOffset = 0): Omit<AssignmentDecision, "id" | "eventKey" | "leadId" | "algorithmVersion" | "createdAt"> {
     if (!context.leadId || !context.eventKey || !context.source?.trim() || !context.campaign?.trim()) throw new BadRequestException({ code: "assignment_context_invalid" });
     const specific = [...this.rules.values()].filter((rule) => rule.enabled && ((rule.scope === "SOURCE" && rule.matchValue === context.source.trim()) || (rule.scope === "CAMPAIGN" && rule.matchValue === context.campaign.trim())));
     if (specific.length > 1) throw new ConflictException({ code: "assignment_rule_ambiguous" });
@@ -126,7 +127,7 @@ export class AssignmentService {
     if (!eligible.length) throw new ConflictException({ code: "assignment_candidate_unavailable" });
     let selected: AssignmentCandidate;
     if (rule.strategy === "ROUND_ROBIN") {
-      selected = eligible[rule.cursor % eligible.length]!;
+      selected = eligible[(rule.cursor + roundRobinOffset) % eligible.length]!;
       if (mutateCursor) this.rules.set(rule.id, Object.freeze({ ...rule, cursor: rule.cursor + 1 }));
     } else {
       const digest = createHash("sha256").update(`assignment-v1:${rule.id}:${context.eventKey}`).digest();

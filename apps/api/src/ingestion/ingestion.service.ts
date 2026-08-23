@@ -9,6 +9,7 @@ export const ingestionSources = ["WEB_FORM", "PHONE_CALL", "PHYSICAL_VISIT", "WE
 export type IngestionSource = (typeof ingestionSources)[number];
 export type IngestionProfile = "LEGACY_CRM" | "FORMINATOR_ZAPIER" | "YNOV_COM" | "JOBINTECH" | "LEGACY_RELAUNCH" | "OTHER_CAMPAIGN" | "CUSTOM";
 export type IngestionOutcome = "CREATED" | "PROVENANCE_ATTACHED" | "MANUAL_REVIEW" | "INVALID";
+export type IngestionDryRunOutcome = "VALID" | "DUPLICATE" | "MANUAL_REVIEW" | "INVALID" | "IGNORED";
 
 export interface IngestionRecordInput {
   lineNumber: number;
@@ -53,6 +54,29 @@ export interface IngestionBatchResult {
   lines: IngestionLineResult[];
 }
 
+export interface IngestionDryRunLineResult {
+  lineNumber: number;
+  outcome: IngestionDryRunOutcome;
+  reason?: string;
+  matchedLeadId?: string;
+  proposedAssigneeId?: string;
+}
+
+export interface IngestionDryRunResult {
+  idempotencyKey: string;
+  total: number;
+  valid: number;
+  duplicates: number;
+  manualReview: number;
+  invalid: number;
+  ignored: number;
+  assigned: number;
+  unassigned: number;
+  assignmentDistribution: Array<{ userId: string; count: number }>;
+  lines: IngestionDryRunLineResult[];
+  mutated: false;
+}
+
 interface ProvenanceRecord { leadId: string; source: IngestionSource; technicalSystem: string; originalSource: string; recentSource: string; campaign?: string; externalId?: string; rawStatus?: string; batchId: string; importedAt: string }
 const IDEMPOTENCY_KEY = /^[a-zA-Z0-9:_-]{8,128}$/;
 
@@ -95,6 +119,74 @@ export class IngestionService {
     return this.copy(result);
   }
 
+  dryRun(input: Omit<IngestionBatchInput, "confirmed">, principal: Principal, correlationId: string): IngestionDryRunResult {
+    this.assertRole(principal);
+    this.validateBatch({ ...input, confirmed: true });
+    const externalIds = new Map<string, number>();
+    const emails = new Map<string, number>();
+    const phones = new Map<string, number>();
+    const distribution = new Map<string, number>();
+    const lines: IngestionDryRunLineResult[] = [];
+    let assignmentOrdinal = 0;
+
+    for (const record of input.records) {
+      const result = this.previewOne(record, input, externalIds, emails, phones, principal);
+      if (result.outcome === "VALID") {
+        const proposedAssigneeId = this.previewAssignment(record, input, principal, assignmentOrdinal);
+        assignmentOrdinal += 1;
+        if (proposedAssigneeId) {
+          distribution.set(proposedAssigneeId, (distribution.get(proposedAssigneeId) ?? 0) + 1);
+          lines.push({ ...result, proposedAssigneeId });
+        } else {
+          lines.push(result);
+        }
+        this.rememberIdentity(record, externalIds, emails, phones);
+      } else {
+        lines.push(result);
+      }
+    }
+
+    const valid = lines.filter((line) => line.outcome === "VALID").length;
+    const assigned = lines.filter((line) => line.outcome === "VALID" && Boolean(line.proposedAssigneeId)).length;
+    const result: IngestionDryRunResult = {
+      idempotencyKey: input.idempotencyKey,
+      total: lines.length,
+      valid,
+      duplicates: lines.filter((line) => line.outcome === "DUPLICATE").length,
+      manualReview: lines.filter((line) => line.outcome === "MANUAL_REVIEW").length,
+      invalid: lines.filter((line) => line.outcome === "INVALID").length,
+      ignored: lines.filter((line) => line.outcome === "IGNORED").length,
+      assigned,
+      unassigned: valid - assigned,
+      assignmentDistribution: [...distribution.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([userId, count]) => ({ userId, count })),
+      lines,
+      mutated: false,
+    };
+    this.audit.record({
+      eventType: "LEAD_IMPORT_DRY_RUN_COMPLETED",
+      actorId: principal.userId,
+      actorRoles: principal.roles,
+      sessionId: principal.sessionId,
+      correlationId,
+      after: {
+        profile: input.profile,
+        total: result.total,
+        valid: result.valid,
+        duplicates: result.duplicates,
+        manualReview: result.manualReview,
+        invalid: result.invalid,
+        ignored: result.ignored,
+        assigned: result.assigned,
+        mutated: false,
+      },
+      result: result.invalid || result.manualReview ? "FAILED" : "SUCCESS",
+      idempotencyKey: `lead-import-dry-run:${input.idempotencyKey}`,
+    });
+    return this.copyDryRun(result);
+  }
+
   listProvenance(leadId: string, principal: Principal): Array<Omit<ProvenanceRecord, "externalId"> & { hasExternalId: boolean }> {
     this.assertRole(principal);
     return this.provenances.filter((item) => item.leadId === leadId).map((item) => ({ leadId: item.leadId, source: item.source,
@@ -129,6 +221,91 @@ export class IngestionService {
       importBatchId: batchId, status: status.kind === "KNOWN" ? status.status : "PROSPECT" });
     this.attachProvenance(lead.id, record, batchId, externalKey, principal, correlationId);
     return { lineNumber: record.lineNumber, outcome: "CREATED", leadId: lead.id };
+  }
+
+  private previewOne(
+    record: IngestionRecordInput,
+    batch: Omit<IngestionBatchInput, "confirmed">,
+    externalIds: ReadonlyMap<string, number>,
+    emails: ReadonlyMap<string, number>,
+    phones: ReadonlyMap<string, number>,
+    principal: Principal,
+  ): IngestionDryRunLineResult {
+    const normalized = this.normalize(record);
+    if (normalized.reason) return { lineNumber: record.lineNumber, outcome: "INVALID", reason: normalized.reason };
+    const status = this.mapHistoricalStatus(record.historicalStatus, record.structuredPriorContact === true);
+    if (status.kind === "UNKNOWN") return { lineNumber: record.lineNumber, outcome: "MANUAL_REVIEW", reason: "historical_status_unknown" };
+    const externalKey = record.externalId?.trim() ? `${record.technicalSystem.trim()}:${record.externalId.trim()}` : undefined;
+    const externalMatch = externalKey ? this.provenanceByExternalId.get(externalKey)?.leadId : undefined;
+    const identity = this.leads.findIdentityMatches(normalized.email, normalized.phone);
+    const matches = new Set([externalMatch, identity.emailLeadId, identity.phoneLeadId].filter((value): value is string => Boolean(value)));
+    if (matches.size > 1) return { lineNumber: record.lineNumber, outcome: "MANUAL_REVIEW", reason: "identity_collision" };
+
+    const internalRows = new Set([
+      externalKey ? externalIds.get(externalKey) : undefined,
+      normalized.email ? emails.get(normalized.email) : undefined,
+      normalized.phone ? phones.get(normalized.phone) : undefined,
+    ].filter((value): value is number => value !== undefined));
+    if (internalRows.size > 1) return { lineNumber: record.lineNumber, outcome: "MANUAL_REVIEW", reason: "file_identity_collision" };
+
+    const matchedLeadId = [...matches][0];
+    if (status.kind === "DUPLICATE") {
+      if (matchedLeadId) return { lineNumber: record.lineNumber, outcome: "DUPLICATE", reason: "historical_duplicate", matchedLeadId };
+      if (internalRows.size === 1) return { lineNumber: record.lineNumber, outcome: "IGNORED", reason: "historical_duplicate_in_file" };
+      return { lineNumber: record.lineNumber, outcome: "MANUAL_REVIEW", reason: "duplicate_without_reliable_match" };
+    }
+    if (matchedLeadId) return { lineNumber: record.lineNumber, outcome: "DUPLICATE", reason: "existing_lead_match", matchedLeadId };
+    if (internalRows.size === 1) return { lineNumber: record.lineNumber, outcome: "DUPLICATE", reason: "file_duplicate" };
+    if (!record.campus?.trim() || !record.campaign?.trim() || !record.educationLevel?.trim() || !record.program?.trim()) {
+      return { lineNumber: record.lineNumber, outcome: "MANUAL_REVIEW", reason: "required_mapping_missing" };
+    }
+    if (!batch.profile || !principal.userId) return { lineNumber: record.lineNumber, outcome: "INVALID", reason: "dry_run_context_invalid" };
+    return { lineNumber: record.lineNumber, outcome: "VALID" };
+  }
+
+  private rememberIdentity(
+    record: IngestionRecordInput,
+    externalIds: Map<string, number>,
+    emails: Map<string, number>,
+    phones: Map<string, number>,
+  ): void {
+    const externalId = record.externalId?.trim();
+    if (externalId) externalIds.set(`${record.technicalSystem.trim()}:${externalId}`, record.lineNumber);
+    const email = record.email?.trim().toLowerCase();
+    if (email) emails.set(email, record.lineNumber);
+    const phone = record.phone?.replace(/[^+\d]/g, "");
+    if (phone) phones.set(phone, record.lineNumber);
+  }
+
+  private previewAssignment(
+    record: IngestionRecordInput,
+    input: Omit<IngestionBatchInput, "confirmed">,
+    principal: Principal,
+    roundRobinOffset: number,
+  ): string | undefined {
+    if (input.assignment.strategy === "UNASSIGNED") return undefined;
+    if (input.assignment.strategy === "FIXED") {
+      if (!input.assignment.targetUserId) return undefined;
+      try {
+        return this.assignments.previewTarget({
+          idempotencyKey: `${input.idempotencyKey}:${record.lineNumber}`,
+          strategy: "FIXED",
+          targetUserId: input.assignment.targetUserId,
+          items: [{ leadId: `dry-run-${record.lineNumber}`, source: record.source, campaign: record.campaign ?? "UNMAPPED" }],
+        }, principal, roundRobinOffset);
+      } catch {
+        return undefined;
+      }
+    }
+    try {
+      return this.assignments.previewTarget({
+        idempotencyKey: `${input.idempotencyKey}:${record.lineNumber}`,
+        strategy: input.assignment.strategy,
+        items: [{ leadId: `dry-run-${record.lineNumber}`, source: record.source, campaign: record.campaign ?? "UNMAPPED" }],
+      }, principal, roundRobinOffset);
+    } catch {
+      return undefined;
+    }
   }
 
   private attachProvenance(leadId: string, record: IngestionRecordInput, batchId: string, externalKey: string | undefined, principal: Principal, correlationId: string): void {
@@ -203,4 +380,7 @@ export class IngestionService {
     if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "ingestion_role_forbidden" });
   }
   private copy(result: Readonly<IngestionBatchResult>): IngestionBatchResult { return { ...result, lines: result.lines.map((line) => ({ ...line })) }; }
+  private copyDryRun(result: Readonly<IngestionDryRunResult>): IngestionDryRunResult {
+    return { ...result, assignmentDistribution: result.assignmentDistribution.map((item) => ({ ...item })), lines: result.lines.map((line) => ({ ...line })) };
+  }
 }
