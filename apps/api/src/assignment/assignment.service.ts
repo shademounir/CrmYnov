@@ -109,6 +109,12 @@ export class AssignmentService {
     return [...this.decisions.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id)).map((item) => this.copyDecision(item));
   }
 
+  assertEligibleTarget(userId: string): void {
+    const candidate = [...this.rules.values()].flatMap((rule) => rule.enabled ? rule.candidates : [])
+      .find((item) => item.userId === userId && item.active && !item.suspended && !item.excluded && item.activeLeadCount < item.capacity);
+    if (!candidate) throw new ConflictException({ code: "assignment_target_ineligible" });
+  }
+
   private select(context: AssignmentContext, mutateCursor: boolean): Omit<AssignmentDecision, "id" | "eventKey" | "leadId" | "algorithmVersion" | "createdAt"> {
     if (!context.leadId || !context.eventKey || !context.source?.trim() || !context.campaign?.trim()) throw new BadRequestException({ code: "assignment_context_invalid" });
     const specific = [...this.rules.values()].filter((rule) => rule.enabled && ((rule.scope === "SOURCE" && rule.matchValue === context.source.trim()) || (rule.scope === "CAMPAIGN" && rule.matchValue === context.campaign.trim())));
