@@ -76,7 +76,7 @@ export class ImportProfileService {
       missingColumns: mapping.missing,
       accepted: reasons.length === 0,
       requiresMapping: input.expectedProfile === "CUSTOM" || mapping.unknown.length > 0 || mapping.missing.length > 0,
-      reasons: [...new Set(reasons)].sort(),
+      reasons: [...new Set(reasons)].sort((left, right) => left.localeCompare(right)),
       mutated: false,
     };
   }
@@ -96,7 +96,7 @@ export class ImportProfileService {
   private decodeBase64(value: string): Buffer {
     if (value.length === 0 || value.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 + 4 || value.length % 4 !== 0) this.refuse("base64_invalid");
     for (let index = 0; index < value.length; index += 1) {
-      const code = value.charCodeAt(index);
+      const code = value.codePointAt(index) ?? -1;
       const base64Character = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 43 || code === 47 || code === 61;
       if (!base64Character) this.refuse("base64_invalid");
     }
@@ -155,11 +155,7 @@ export class ImportProfileService {
   }
 
   private inspectZip(bytes: Buffer): { macroDetected: boolean; entries: ZipEntry[] } {
-    let eocd = -1;
-    for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65_557); offset -= 1) {
-      if (bytes.readUInt32LE(offset) === 0x06054b50) { eocd = offset; break; }
-    }
-    if (eocd < 0 || eocd + 22 > bytes.length) this.refuse("xlsx_zip_invalid");
+    const eocd = this.findEndOfCentralDirectory(bytes);
     const entries = bytes.readUInt16LE(eocd + 10);
     let offset = bytes.readUInt32LE(eocd + 16);
     if (entries < 1 || entries > MAX_ZIP_ENTRIES) this.refuse("xlsx_entry_limit_exceeded");
@@ -167,24 +163,37 @@ export class ImportProfileService {
     let macroDetected = false;
     const zipEntries: ZipEntry[] = [];
     for (let index = 0; index < entries; index += 1) {
-      if (offset + 46 > bytes.length || bytes.readUInt32LE(offset) !== 0x02014b50) this.refuse("xlsx_zip_invalid");
-      if ((bytes.readUInt16LE(offset + 8) & 1) !== 0) this.refuse("encrypted_workbook_refused");
-      const compression = bytes.readUInt16LE(offset + 10); const compressedSize = bytes.readUInt32LE(offset + 20);
-      const uncompressedSize = bytes.readUInt32LE(offset + 24); const localOffset = bytes.readUInt32LE(offset + 42);
-      if (compression !== 0 && compression !== 8) this.refuse("xlsx_compression_refused");
-      uncompressed += uncompressedSize;
+      const parsed = this.readCentralEntry(bytes, offset);
+      uncompressed += parsed.entry.uncompressedSize;
       if (uncompressed > MAX_UNCOMPRESSED_BYTES) this.refuse("xlsx_uncompressed_limit_exceeded");
-      const nameLength = bytes.readUInt16LE(offset + 28); const extraLength = bytes.readUInt16LE(offset + 30); const commentLength = bytes.readUInt16LE(offset + 32);
-      if (offset + 46 + nameLength + extraLength + commentLength > bytes.length) this.refuse("xlsx_zip_invalid");
-      const entryName = bytes.subarray(offset + 46, offset + 46 + nameLength).toString("utf8").replaceAll("\\", "/");
-      if (entryName.includes("\0") || entryName.startsWith("/") || entryName.split("/").includes("..")) this.refuse("xlsx_entry_path_invalid");
-      const normalized = entryName.toLocaleLowerCase("en-US");
-      if (normalized.endsWith("vbaproject.bin") || normalized.includes("/activex/")) macroDetected = true;
-      if (normalized.startsWith("xl/externallinks/")) this.refuse("external_link_refused");
-      zipEntries.push({ name: normalized, compression, compressedSize, uncompressedSize, localOffset });
-      offset += 46 + nameLength + extraLength + commentLength;
+      if (parsed.macroDetected) macroDetected = true;
+      zipEntries.push(parsed.entry); offset = parsed.nextOffset;
     }
     return { macroDetected, entries: zipEntries };
+  }
+
+  private findEndOfCentralDirectory(bytes: Buffer): number {
+    for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65_557); offset -= 1) {
+      if (bytes.readUInt32LE(offset) === 0x06054b50) return offset;
+    }
+    this.refuse("xlsx_zip_invalid");
+  }
+
+  private readCentralEntry(bytes: Buffer, offset: number): { entry: ZipEntry; nextOffset: number; macroDetected: boolean } {
+    if (offset + 46 > bytes.length || bytes.readUInt32LE(offset) !== 0x02014b50) this.refuse("xlsx_zip_invalid");
+    if ((bytes.readUInt16LE(offset + 8) & 1) !== 0) this.refuse("encrypted_workbook_refused");
+    const compression = bytes.readUInt16LE(offset + 10); const compressedSize = bytes.readUInt32LE(offset + 20);
+    const uncompressedSize = bytes.readUInt32LE(offset + 24); const localOffset = bytes.readUInt32LE(offset + 42);
+    if (compression !== 0 && compression !== 8) this.refuse("xlsx_compression_refused");
+    const nameLength = bytes.readUInt16LE(offset + 28); const extraLength = bytes.readUInt16LE(offset + 30); const commentLength = bytes.readUInt16LE(offset + 32);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    if (nextOffset > bytes.length) this.refuse("xlsx_zip_invalid");
+    const entryName = bytes.subarray(offset + 46, offset + 46 + nameLength).toString("utf8").replaceAll("\\", "/");
+    if (entryName.includes("\0") || entryName.startsWith("/") || entryName.split("/").includes("..")) this.refuse("xlsx_entry_path_invalid");
+    const name = entryName.toLocaleLowerCase("en-US");
+    if (name.startsWith("xl/externallinks/")) this.refuse("external_link_refused");
+    return { entry: { name, compression, compressedSize, uncompressedSize, localOffset }, nextOffset,
+      macroDetected: name.endsWith("vbaproject.bin") || name.includes("/activex/") };
   }
 
   private extractZipEntry(archive: Buffer, entry: ZipEntry): Buffer {
@@ -233,20 +242,28 @@ export class ImportProfileService {
     for (const body of this.elementBodies(xml, "row")) {
       const row: unknown[] = [];
       for (const cell of this.elements(body, "c")) {
-        const reference = this.attribute(cell.opening, "r"); const index = this.columnIndex(reference);
-        const type = this.attribute(cell.opening, "t"); const style = Number(this.attribute(cell.opening, "s"));
         if (this.hasOpeningTag(cell.body, "f")) formulaCount += 1;
-        const raw = this.elementBodies(cell.body, type === "inlineStr" ? "t" : "v")[0] ?? "";
-        const decoded = this.decodeXml(raw);
-        if (type === "s") { const shared = sharedStrings[Number(decoded)]; if (shared === undefined) this.refuse("xlsx_shared_string_invalid"); row[index] = shared; }
-        else if (type === "b") row[index] = decoded === "1";
-        else if (type === "str" || type === "inlineStr") row[index] = decoded;
-        else if (decoded.length === 0) row[index] = "";
-        else { const numeric = Number(decoded); if (!Number.isFinite(numeric)) this.refuse("xlsx_cell_invalid"); row[index] = dateStyles.has(style) ? this.excelDate(numeric) : numeric; }
+        const index = this.columnIndex(this.attribute(cell.opening, "r"));
+        row[index] = this.readCellValue(cell, sharedStrings, dateStyles);
       }
       rows.push(row);
     }
     return { rows, formulaCount };
+  }
+
+  private readCellValue(cell: { opening: string; body: string }, sharedStrings: string[], dateStyles: Set<number>): unknown {
+    const type = this.attribute(cell.opening, "t"); const style = Number(this.attribute(cell.opening, "s"));
+    const raw = this.elementBodies(cell.body, type === "inlineStr" ? "t" : "v")[0] ?? ""; const decoded = this.decodeXml(raw);
+    if (type === "s") {
+      const shared = sharedStrings[Number(decoded)];
+      if (shared === undefined) this.refuse("xlsx_shared_string_invalid");
+      return shared;
+    }
+    if (type === "b") return decoded === "1";
+    if (type === "str" || type === "inlineStr" || decoded.length === 0) return decoded;
+    const numeric = Number(decoded);
+    if (!Number.isFinite(numeric)) this.refuse("xlsx_cell_invalid");
+    return dateStyles.has(style) ? this.excelDate(numeric) : numeric;
   }
 
   private resolveWorkbookTarget(target: string): string {
@@ -291,7 +308,7 @@ export class ImportProfileService {
       else if (entity.startsWith("#x")) result += this.codePoint(entity.slice(2), 16);
       else if (entity.startsWith("#")) result += this.codePoint(entity.slice(1), 10);
       else this.refuse("xlsx_xml_entity_invalid");
-      index = end;
+      index += end - index;
     }
     return result;
   }
@@ -305,7 +322,7 @@ export class ImportProfileService {
   private columnIndex(reference: string): number {
     let index = 0; let letters = 0;
     for (const character of reference) {
-      const code = character.toUpperCase().charCodeAt(0); if (code < 65 || code > 90) break;
+      const code = character.toUpperCase().codePointAt(0) ?? -1; if (code < 65 || code > 90) break;
       index = index * 26 + code - 64; letters += 1; if (letters > 3) this.refuse("xlsx_column_limit_exceeded");
     }
     if (letters === 0 || index > 16_384) this.refuse("xlsx_cell_reference_invalid");
@@ -320,7 +337,9 @@ export class ImportProfileService {
   }
 
   private excelDate(value: number): Date {
-    const date = new Date(Date.UTC(1899, 11, 30) + value * 86_400_000); if (Number.isNaN(date.valueOf())) this.refuse("xlsx_date_invalid"); return date;
+    const date = new Date(Date.UTC(1899, 11, 30) + value * 86_400_000);
+    if (Number.isNaN(date.valueOf())) this.refuse("xlsx_date_invalid");
+    return date;
   }
 
   private parseCsv(text: string): string[][] {
@@ -328,15 +347,19 @@ export class ImportProfileService {
     const firstLine = firstBreak === Infinity ? text : text.slice(0, firstBreak);
     const delimiter = this.countOutsideQuotes(firstLine, ";") > this.countOutsideQuotes(firstLine, ",") ? ";" : ",";
     const rows: string[][] = []; let row: string[] = []; let value = ""; let quoted = false;
-    for (let index = 0; index < text.length; index += 1) {
+    let index = 0;
+    while (index < text.length) {
       const character = text[index]!;
       if (character === '"') {
-        if (quoted && text[index + 1] === '"') { value += '"'; index += 1; } else quoted = !quoted;
-      } else if (character === delimiter && !quoted) { row.push(value); value = ""; }
-      else if ((character === "\n" || character === "\r") && !quoted) {
-        if (character === "\r" && text[index + 1] === "\n") index += 1;
-        row.push(value); rows.push(row); row = []; value = "";
-      } else value += character;
+        if (quoted && text[index + 1] === '"') { value += '"'; index += 2; continue; }
+        quoted = !quoted; index += 1; continue;
+      }
+      if (character === delimiter && !quoted) { row.push(value); value = ""; index += 1; continue; }
+      if ((character === "\n" || character === "\r") && !quoted) {
+        const width = character === "\r" && text[index + 1] === "\n" ? 2 : 1;
+        row.push(value); rows.push(row); row = []; value = ""; index += width; continue;
+      }
+      value += character; index += 1;
     }
     if (quoted) this.refuse("csv_quotes_invalid");
     if (value.length > 0 || row.length > 0) { row.push(value); rows.push(row); }
@@ -356,7 +379,7 @@ export class ImportProfileService {
     const trimmed = value.trimStart(); const first = trimmed[0];
     if (first === "=" || first === "@") return true;
     if (first !== "+" && first !== "-") return false;
-    const second = trimmed.charCodeAt(1);
+    const second = trimmed.codePointAt(1) ?? -1;
     return !(second >= 48 && second <= 57);
   }
 
@@ -368,7 +391,9 @@ export class ImportProfileService {
       if (raw instanceof Date || this.isIsoLikeDate(text)) types.add("DATE");
       else if (typeof raw === "number") types.add("NUMBER"); else if (typeof raw === "boolean") types.add("BOOLEAN"); else types.add("TEXT");
     }
-    const inferredType = types.size === 0 ? "EMPTY" : types.size === 1 ? [...types][0]! : "MIXED";
+    let inferredType: ProfileColumn["inferredType"] = "MIXED";
+    if (types.size === 0) inferredType = "EMPTY";
+    else if (types.size === 1) inferredType = [...types][0]!;
     return { index, name, inferredType, emptyCount };
   }
 
@@ -388,8 +413,13 @@ export class ImportProfileService {
 
   private compareHeaders(profile: ImportProfile, sheets: ProfileSheet[]): { unknown: string[]; missing: string[]; reasons: string[] } {
     if (profile === "CUSTOM") return { unknown: sheets.flatMap((sheet) => sheet.columns.map((column) => column.name)), missing: [], reasons: ["mapping_required"] };
-    const selected = profile === "LEGACY_CRM" ? sheets.find((sheet) => sheet.name === "LEADS YNOV.MA") ?? (sheets.length === 1 ? sheets[0] : undefined) : sheets.length === 1 ? sheets[0] : undefined;
-    if (!selected) return { unknown: [], missing: [], reasons: [profile === "LEGACY_CRM" ? "canonical_sheet_missing" : "single_sheet_required"] };
+    let selected: ProfileSheet | undefined;
+    if (profile === "LEGACY_CRM") selected = sheets.find((sheet) => sheet.name === "LEADS YNOV.MA") ?? (sheets.length === 1 ? sheets[0] : undefined);
+    else if (sheets.length === 1) selected = sheets[0];
+    if (!selected) {
+      const reason = profile === "LEGACY_CRM" ? "canonical_sheet_missing" : "single_sheet_required";
+      return { unknown: [], missing: [], reasons: [reason] };
+    }
     const headers = selected.columns.map((column) => column.name);
     const expected = profile === "LEGACY_CRM" ? LEGACY_HEADERS : FORMINATOR_HEADERS;
     const expectedSet = new Set<string>(expected);

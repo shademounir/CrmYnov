@@ -16,7 +16,7 @@ function readBase64(file: File): Promise<string> {
 
 export default function ImportProfilePage(): React.JSX.Element {
   const [profile, setProfile] = useState<ProfileSummary | null>(null); const [error, setError] = useState("");
-  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  async function submit(event: React.SyntheticEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); setError(""); setProfile(null);
     const data = new FormData(event.currentTarget); const file = data.get("file"); const profileEntry = data.get("expectedProfile");
     const expectedProfile = typeof profileEntry === "string" ? profileEntry : "CUSTOM";
