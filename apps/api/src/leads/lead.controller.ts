@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
-import { LeadService, type LeadActivityRecord, type LeadRecord } from "./lead.service.js";
+import { LeadService, type CreateLeadInput, type CreateLeadResult, type LeadActivityRecord, type LeadRecord } from "./lead.service.js";
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
@@ -33,5 +33,18 @@ export class LeadStatusController {
   update(@Param("leadId") leadId: string, @Body() body: { status: string; reason?: string }, @Req() request: AuthenticatedRequest): LeadRecord {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.leads.changeStatus(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+}
+
+@Controller("leads")
+@UseGuards(RbacGuard)
+@RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN")
+export class LeadController {
+  constructor(@Inject(LeadService) private readonly leads: LeadService) {}
+
+  @Post()
+  create(@Body() body: CreateLeadInput, @Req() request: AuthenticatedRequest): CreateLeadResult {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.leads.createLead(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }
