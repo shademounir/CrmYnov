@@ -50,6 +50,9 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/leads/{leadId}/status": {
         patch: { summary: "Apply a controlled lead status transition", responses: { "200": { description: "Status changed and timeline event appended" }, "400": { description: "Transition or closure reason refused" }, "403": { description: "Role or closure approval refused" }, "404": { description: "Lead not found" } } },
       },
+      "/leads": {
+        post: { summary: "Create a normalized lead with an immutable identifier", responses: { "201": { description: "Lead created with probable duplicate warnings" }, "400": { description: "Invalid or incomplete input" }, "403": { description: "Role refused" } } },
+      },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));

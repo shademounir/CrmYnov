@@ -18,11 +18,11 @@ import { UserController } from "./users/user.controller.js";
 import { UserService } from "./users/user.service.js";
 import { FirstLoginController } from "./first-login/first-login.controller.js";
 import { FirstLoginService } from "./first-login/first-login.service.js";
-import { LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
+import { LeadController, LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
 import { LeadService } from "./leads/lead.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController],
   providers: [
     SessionService,
     RateLimitService,
