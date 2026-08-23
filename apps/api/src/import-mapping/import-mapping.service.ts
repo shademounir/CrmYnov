@@ -165,6 +165,11 @@ export class ImportMappingService {
     return { ...result, mappingId: mapping.id, mappingVersion: mapping.version };
   }
 
+  describeVersion(mappingId: string, version: number): Pick<ImportMappingTemplate, "id" | "mappingKey" | "version" | "profile"> | undefined {
+    const mapping = [...this.mappings.values()].flat().find((item) => item.id === mappingId && item.version === version);
+    return mapping ? { id: mapping.id, mappingKey: mapping.mappingKey, version: mapping.version, profile: mapping.profile } : undefined;
+  }
+
   private validateMapping(input: SaveImportMappingInput): void {
     if (!MAPPING_KEY.test(input.mappingKey) || !input.name?.trim() || input.name.trim().length > 100) throw new BadRequestException({ code: "mapping_identity_invalid" });
     if (!"LEGACY_CRM FORMINATOR_ZAPIER YNOV_COM JOBINTECH LEGACY_RELAUNCH OTHER_CAMPAIGN CUSTOM".split(" ").includes(input.profile)) throw new BadRequestException({ code: "mapping_profile_invalid" });

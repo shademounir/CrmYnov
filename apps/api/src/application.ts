@@ -79,6 +79,9 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
         post: { summary: "Create an immutable import mapping version with optimistic concurrency", responses: { "201": { description: "Versioned mapping metadata" }, "400": { description: "Invalid, ambiguous or incomplete mapping" }, "409": { description: "Version conflict or built-in mapping" } } },
       },
       "/lead-import/dry-runs": { post: { summary: "Normalize, deduplicate and preview assignment without business mutation", responses: { "201": { description: "Sanitized reconciled counts with mutated=false" }, "400": { description: "Columns, cells or mapping refused" }, "403": { description: "Manager role required" }, "404": { description: "Mapping version not found" } } } },
+      "/lead-import/reports": { post: { summary: "Create an immutable reconciliation report for an ingestion job", responses: { "201": { description: "Sanitized and reconciled report" }, "400": { description: "Invalid hash or identity" }, "404": { description: "Batch or mapping not found" }, "409": { description: "Conflicting report replay" } } } },
+      "/lead-import/reports/{jobId}": { get: { summary: "Read one authorized import reconciliation report", responses: { "200": { description: "Sanitized report without lead identity" }, "404": { description: "Report not found" } } } },
+      "/lead-import/reports/{jobId}/rejections": { get: { summary: "Export rejected line numbers and stable reason codes as CSV", responses: { "200": { description: "PII-free CSV export" }, "404": { description: "Report not found" } } } },
     },
   } as const;
   app.use("/docs", serve, setup(openApi));
