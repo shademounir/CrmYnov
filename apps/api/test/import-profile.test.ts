@@ -91,6 +91,24 @@ test("selects the canonical legacy sheet without treating reporting sheets as le
   assert.equal(result.accepted, true); assert.equal(result.sheets.length, 2); assert.equal(result.unknownColumns.length, 0);
 });
 
+test("quantifies legacy quality without returning historical values and blocks unresolved cutover", () => {
+  const legacyHeaders = ["NOM", "PRÉNOM", "TÉLÉPHONE", "EMAIL", "NIVEAU", "SPÉCIALITÉ", "FORMATION SOUHAITÉE", "DATE RÉCEPTION", "DATE TRAITEMENT", "DÉLAI (jours)", "SOURCE", "STATUT", "COMMENTAIRE 1", "QUALIFICATION", "COMMENTAIRE 2", "rdv", "PROCHAINE ACTION", "RESPONSABLE", "PAYS", "Part 1er (%)", "Lien WhatsApp", "VILLE"];
+  const row = (phone: string, email: string, received: string, status: string, owner: string, comment = ""): string[] =>
+    ["Nom synthétique", "Prénom synthétique", phone, email, "BAC", "Option", "Programme", received, "2026-08-20", "1", "Source synthétique", status,
+      comment, "", "", "", "2026-08-30", owner, "Maroc", "", "", "Casablanca"];
+  const bytes = workbookBytes([{ name: "LEADS YNOV.MA", rows: [legacyHeaders,
+    row("+212600000100", "quality-one@example.invalid", "2026-08-20", "À contacter", "Conseiller alpha", "Commentaire synthétique"),
+    row("+212600000100", "quality-one@example.invalid", "2026-14-40", "Statut à arbitrer", "Conseiller alpha"),
+    row("+212600000200", "quality-two@example.invalid", "23/08/2026", "Contacté", "Conseiller bêta")] }]);
+  const result = new ImportProfileService().profile({ fileName: "synthetic-quality.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    sizeBytes: bytes.length, contentBase64: bytes.toString("base64"), expectedProfile: "LEGACY_CRM" });
+  assert.deepEqual(result.legacyQuality, { rowCount: 3, emptyCellCount: 17, duplicateEmailRows: 1, duplicatePhoneRows: 1, unknownStatusRows: 1,
+    invalidDateRows: 1, populatedOwnerRows: 3, distinctOwnerCount: 2, commentedRows: 1, cutoverBlocked: true,
+    blockerReasons: ["historical_date_invalid", "historical_status_unknown"] });
+  const serialized = JSON.stringify(result);
+  for (const forbidden of ["quality-one", "Conseiller alpha", "Nom synthétique", "Commentaire synthétique"]) assert.equal(serialized.includes(forbidden), false);
+});
+
 test("fails closed for formula cells, unknown columns and custom mappings", () => {
   const service = new ImportProfileService();
   const formula = service.profile(csvInput([headers, ["SYN-003", "2026-08-23", "=HYPERLINK(1)", "Synthétique", "", "+212600000003", "BAC", "Programme", ""]]));

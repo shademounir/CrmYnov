@@ -18,7 +18,8 @@ export class ImportProfileController {
       sessionId: request.principal.sessionId, correlationId: request.header("x-correlation-id") ?? "missing-correlation",
       after: { profileId: result.profileId, fileType: result.fileType, expectedProfile: result.expectedProfile,
         sheetCount: result.sheets.length, rowCount: result.sheets.reduce((total, sheet) => total + sheet.rowCount, 0),
-        formulaCount: result.formulaCount, macroDetected: result.macroDetected, accepted: result.accepted, mutated: false },
+        formulaCount: result.formulaCount, macroDetected: result.macroDetected, accepted: result.accepted,
+        cutoverBlocked: result.legacyQuality?.cutoverBlocked ?? null, blockerCount: result.legacyQuality?.blockerReasons.length ?? 0, mutated: false },
       result: result.accepted ? "SUCCESS" : "FAILED", idempotencyKey: `lead-import-profile:${result.profileId}` });
     return result;
   }

@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 
-interface ProfileSummary { profileId: string; fileType: string; accepted: boolean; mutated: false; reasons: string[]; sheets: Array<{ name: string; rowCount: number; columns: Array<{ name: string; inferredType: string }> }> }
+export interface LegacyQuality { rowCount: number; emptyCellCount: number; duplicateEmailRows: number; duplicatePhoneRows: number; unknownStatusRows: number;
+  invalidDateRows: number; populatedOwnerRows: number; distinctOwnerCount: number; commentedRows: number; cutoverBlocked: boolean; blockerReasons: string[] }
+interface ProfileSummary { profileId: string; fileType: string; accepted: boolean; mutated: false; reasons: string[];
+  legacyQuality?: LegacyQuality;
+  sheets: Array<{ name: string; rowCount: number; columns: Array<{ name: string; inferredType: string }> }> }
 
 function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -37,6 +41,16 @@ export default function ImportProfilePage(): React.JSX.Element {
       <button type="submit">Analyser sans importer</button></form>
     {error ? <p role="alert">{error}</p> : null}{profile ? <section aria-live="polite"><h2>Profil expurgé</h2><p>{profile.accepted ? "Structure acceptée" : `Revue requise : ${profile.reasons.join(", ")}`}</p>
       <p>Identifiant : {profile.profileId} — Type : {profile.fileType} — Mutation : non</p>{profile.sheets.map((sheet) => <article key={sheet.name}><h3>{sheet.name}</h3><p>{sheet.rowCount} lignes</p>
-        <ul>{sheet.columns.map((column) => <li key={`${sheet.name}-${column.name}`}>{column.name} — {column.inferredType}</li>)}</ul></article>)}</section> : null}
+        <ul>{sheet.columns.map((column) => <li key={`${sheet.name}-${column.name}`}>{column.name} — {column.inferredType}</li>)}</ul></article>)}
+      {profile.legacyQuality ? <LegacyQualityPanel quality={profile.legacyQuality} /> : null}</section> : null}
   </main>;
+}
+
+export function LegacyQualityPanel({ quality }: Readonly<{ quality: LegacyQuality }>): React.JSX.Element {
+  return <article><h3>Qualité historique agrégée</h3><p>Cutover : {quality.cutoverBlocked ? "bloqué" : "éligible à une répétition séparée"}</p>
+    <ul><li>Cellules vides : {quality.emptyCellCount}</li><li>Doublons email : {quality.duplicateEmailRows}</li>
+      <li>Doublons téléphone : {quality.duplicatePhoneRows}</li><li>Statuts inconnus : {quality.unknownStatusRows}</li>
+      <li>Dates invalides : {quality.invalidDateRows}</li><li>Responsables renseignés / distincts : {quality.populatedOwnerRows} / {quality.distinctOwnerCount}</li>
+      <li>Lignes commentées : {quality.commentedRows}</li></ul>
+    {quality.blockerReasons.length ? <p>Motifs : {quality.blockerReasons.join(", ")}</p> : null}</article>;
 }

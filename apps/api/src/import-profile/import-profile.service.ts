@@ -26,6 +26,20 @@ export interface ProfileSheet {
   columns: ProfileColumn[];
 }
 
+export interface LegacyQualitySummary {
+  rowCount: number;
+  emptyCellCount: number;
+  duplicateEmailRows: number;
+  duplicatePhoneRows: number;
+  unknownStatusRows: number;
+  invalidDateRows: number;
+  populatedOwnerRows: number;
+  distinctOwnerCount: number;
+  commentedRows: number;
+  cutoverBlocked: boolean;
+  blockerReasons: string[];
+}
+
 export interface ImportProfileResult {
   profileId: string;
   fileType: ProfileFileType;
@@ -38,6 +52,7 @@ export interface ImportProfileResult {
   accepted: boolean;
   requiresMapping: boolean;
   reasons: string[];
+  legacyQuality?: LegacyQualitySummary;
   mutated: false;
 }
 
@@ -60,10 +75,11 @@ export class ImportProfileService {
     const fileType = this.validateEnvelope(input);
     const bytes = this.decodeBase64(input.contentBase64);
     if (bytes.length !== input.sizeBytes || bytes.length > MAX_FILE_BYTES) this.refuse("file_size_invalid");
-    const sheets = fileType === "CSV" ? this.profileCsv(bytes) : this.profileWorkbook(bytes);
+    const sheets = fileType === "CSV" ? this.profileCsv(bytes, input.expectedProfile) : this.profileWorkbook(bytes, input.expectedProfile);
     const formulaCount = sheets.formulaCount;
     const mapping = this.compareHeaders(input.expectedProfile, sheets.items);
     const reasons = [...sheets.reasons, ...mapping.reasons];
+    const qualityBlockers = [...new Set([...(sheets.legacyQuality?.blockerReasons ?? []), ...reasons])].sort((left, right) => left.localeCompare(right));
     const profileId = `profile-${createHash("sha256").update(bytes).digest("hex").slice(0, 24)}`;
     return {
       profileId,
@@ -77,6 +93,7 @@ export class ImportProfileService {
       accepted: reasons.length === 0,
       requiresMapping: input.expectedProfile === "CUSTOM" || mapping.unknown.length > 0 || mapping.missing.length > 0,
       reasons: [...new Set(reasons)].sort((left, right) => left.localeCompare(right)),
+      ...(sheets.legacyQuality ? { legacyQuality: { ...sheets.legacyQuality, cutoverBlocked: qualityBlockers.length > 0, blockerReasons: qualityBlockers } } : {}),
       mutated: false,
     };
   }
@@ -105,7 +122,7 @@ export class ImportProfileService {
     return bytes;
   }
 
-  private profileCsv(bytes: Buffer): { items: ProfileSheet[]; formulaCount: number; macroDetected: boolean; reasons: string[] } {
+  private profileCsv(bytes: Buffer, expectedProfile: ImportProfile): { items: ProfileSheet[]; formulaCount: number; macroDetected: boolean; reasons: string[]; legacyQuality?: LegacyQualitySummary } {
     if (bytes[0] === 0x50 && bytes[1] === 0x4b) this.refuse("mime_type_mismatch");
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { this.refuse("encoding_invalid"); }
@@ -117,10 +134,11 @@ export class ImportProfileService {
     let formulaCount = 0;
     for (const row of data) for (const value of row) if (this.looksLikeFormula(value)) formulaCount += 1;
     const columns = headers.map((name, index) => this.describeColumn(name, index, data.map((row) => row[index] ?? "")));
-    return { items: [{ name: "CSV", rowCount: data.length, columns }], formulaCount, macroDetected: false, reasons: formulaCount ? ["formula_detected"] : [] };
+    return { items: [{ name: "CSV", rowCount: data.length, columns }], formulaCount, macroDetected: false, reasons: formulaCount ? ["formula_detected"] : [],
+      ...(expectedProfile === "LEGACY_CRM" ? { legacyQuality: this.describeLegacyQuality(headers, data) } : {}) };
   }
 
-  private profileWorkbook(bytes: Buffer): { items: ProfileSheet[]; formulaCount: number; macroDetected: boolean; reasons: string[] } {
+  private profileWorkbook(bytes: Buffer, expectedProfile: ImportProfile): { items: ProfileSheet[]; formulaCount: number; macroDetected: boolean; reasons: string[]; legacyQuality?: LegacyQualitySummary } {
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) this.refuse("xlsx_signature_invalid");
     const zip = this.inspectZip(bytes);
     const archive = new Map(zip.entries.map((entry) => [entry.name.toLocaleLowerCase("en-US"), this.extractZipEntry(bytes, entry)]));
@@ -134,6 +152,7 @@ export class ImportProfileService {
     const macroDetected = zip.macroDetected;
     let formulaCount = 0;
     const items: ProfileSheet[] = [];
+    let legacyQuality: LegacyQualitySummary | undefined;
     for (const workbookSheet of workbookSheets) {
       const target = relationTargets.get(workbookSheet.relationId);
       if (!target) this.refuse("xlsx_relationship_invalid");
@@ -149,9 +168,10 @@ export class ImportProfileService {
       if (headers.some((value) => value.length === 0) || new Set(headers).size !== headers.length) this.refuse("headers_invalid");
       const data = rows.slice(headerIndex + 1).filter((row) => row.some((value) => this.cellText(value).trim().length > 0));
       items.push({ name: workbookSheet.name, rowCount: data.length, columns: headers.map((column, index) => this.describeColumn(column, index, data.map((row) => row[index] ?? ""))) });
+      if (expectedProfile === "LEGACY_CRM" && (workbookSheet.name === "LEADS YNOV.MA" || workbookSheets.length === 1)) legacyQuality = this.describeLegacyQuality(headers, data);
     }
     const reasons = [...(macroDetected ? ["macro_detected"] : []), ...(formulaCount ? ["formula_detected"] : []), ...(items.length === 0 ? ["empty_file"] : [])];
-    return { items, formulaCount, macroDetected, reasons };
+    return { items, formulaCount, macroDetected, reasons, ...(legacyQuality ? { legacyQuality } : {}) };
   }
 
   private inspectZip(bytes: Buffer): { macroDetected: boolean; entries: ZipEntry[] } {
@@ -395,6 +415,59 @@ export class ImportProfileService {
     if (types.size === 0) inferredType = "EMPTY";
     else if (types.size === 1) inferredType = [...types][0]!;
     return { index, name, inferredType, emptyCount };
+  }
+
+  private describeLegacyQuality(headers: string[], rows: unknown[][]): LegacyQualitySummary {
+    const index = new Map(headers.map((header, position) => [header, position]));
+    const values = (header: string): unknown[] => {
+      const position = index.get(header);
+      return position === undefined ? [] : rows.map((row) => row[position] ?? "");
+    };
+    const nonEmpty = (value: unknown): boolean => this.cellText(value).trim().length > 0;
+    const normalized = (value: unknown): string => this.cellText(value).normalize("NFD").replace(/\p{Diacritic}/gu, "")
+      .trim().toLocaleLowerCase("fr-FR").replaceAll(/\s+/g, " ");
+    const duplicateRows = (items: unknown[], normalize: (value: unknown) => string): number => {
+      const counts = new Map<string, number>();
+      for (const item of items) {
+        const key = normalize(item);
+        if (key.length > 0) counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      return [...counts.values()].reduce((total, count) => total + Math.max(0, count - 1), 0);
+    };
+    const knownStatuses = new Set(["a contacter", "a qualifier", "contacte", "rdv planifie", "rdv effectue", "dossier ouvert", "inscrit", "sans suite",
+      "injoignable", "injoignable / a relancer", "a relancer", "doublon"]);
+    const statuses = values("STATUT");
+    const dateValues = ["DATE RÉCEPTION", "DATE TRAITEMENT", "PROCHAINE ACTION"].flatMap((header) => values(header));
+    const invalidDateRows = dateValues.filter((value) => nonEmpty(value) && !this.isStructuredDate(value)).length;
+    const owners = values("RESPONSABLE").filter(nonEmpty);
+    const commentsOne = values("COMMENTAIRE 1"); const commentsTwo = values("COMMENTAIRE 2");
+    const blockerReasons = [...(statuses.some((value) => nonEmpty(value) && !knownStatuses.has(normalized(value))) ? ["historical_status_unknown"] : []),
+      ...(invalidDateRows > 0 ? ["historical_date_invalid"] : [])];
+    return {
+      rowCount: rows.length,
+      emptyCellCount: rows.reduce((total, row) => total + headers.filter((_header, position) => !nonEmpty(row[position] ?? "")).length, 0),
+      duplicateEmailRows: duplicateRows(values("EMAIL"), normalized),
+      duplicatePhoneRows: duplicateRows(values("TÉLÉPHONE"), (value) => this.cellText(value).replaceAll(/\D/g, "")),
+      unknownStatusRows: statuses.filter((value) => nonEmpty(value) && !knownStatuses.has(normalized(value))).length,
+      invalidDateRows,
+      populatedOwnerRows: owners.length,
+      distinctOwnerCount: new Set(owners.map(normalized)).size,
+      commentedRows: rows.filter((_row, position) => nonEmpty(commentsOne[position] ?? "") || nonEmpty(commentsTwo[position] ?? "")).length,
+      cutoverBlocked: blockerReasons.length > 0,
+      blockerReasons,
+    };
+  }
+
+  private isStructuredDate(value: unknown): boolean {
+    if (value instanceof Date) return !Number.isNaN(value.valueOf());
+    const text = this.cellText(value).trim();
+    const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(text);
+    const local = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(text);
+    const match = iso ?? local;
+    if (!match) return false;
+    const year = Number(iso ? match[1] : match[3]); const month = Number(match[2]); const day = Number(iso ? match[3] : match[1]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
   }
 
   private isIsoLikeDate(value: string): boolean {
