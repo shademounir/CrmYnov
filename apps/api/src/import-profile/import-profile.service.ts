@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
-import * as XLSX from "@e965/xlsx";
+import { inflateRawSync } from "node:zlib";
 
 export type ImportProfile = "LEGACY_CRM" | "FORMINATOR_ZAPIER" | "CUSTOM";
 export type ProfileFileType = "CSV" | "XLSX";
@@ -40,6 +40,8 @@ export interface ImportProfileResult {
   reasons: string[];
   mutated: false;
 }
+
+interface ZipEntry { name: string; compression: number; compressedSize: number; uncompressedSize: number; localOffset: number }
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 25 * 1024 * 1024;
@@ -121,32 +123,38 @@ export class ImportProfileService {
   private profileWorkbook(bytes: Buffer): { items: ProfileSheet[]; formulaCount: number; macroDetected: boolean; reasons: string[] } {
     if (bytes[0] !== 0x50 || bytes[1] !== 0x4b) this.refuse("xlsx_signature_invalid");
     const zip = this.inspectZip(bytes);
-    let workbook: XLSX.WorkBook;
-    try { workbook = XLSX.read(bytes, { type: "buffer", cellDates: true, cellFormula: true, bookVBA: true }); } catch { this.refuse("xlsx_parse_failed"); }
-    const macroDetected = zip.macroDetected || Boolean(workbook.vbaraw);
+    const archive = new Map(zip.entries.map((entry) => [entry.name.toLocaleLowerCase("en-US"), this.extractZipEntry(bytes, entry)]));
+    const workbookXml = this.requiredXml(archive, "xl/workbook.xml");
+    const relationsXml = this.requiredXml(archive, "xl/_rels/workbook.xml.rels");
+    const sharedStrings = this.readSharedStrings(archive.get("xl/sharedstrings.xml"));
+    const dateStyles = this.readDateStyles(archive.get("xl/styles.xml"));
+    const relationTargets = new Map(this.openingTags(relationsXml, "Relationship").map((tag) => [this.attribute(tag, "Id"), this.attribute(tag, "Target")]));
+    const workbookSheets = this.openingTags(workbookXml, "sheet").map((tag) => ({ name: this.decodeXml(this.attribute(tag, "name")), relationId: this.attribute(tag, "r:id") }));
+    if (workbookSheets.length === 0) this.refuse("xlsx_parse_failed");
+    const macroDetected = zip.macroDetected;
     let formulaCount = 0;
     const items: ProfileSheet[] = [];
-    for (const name of workbook.SheetNames) {
-      const sheet = workbook.Sheets[name];
-      if (!sheet) continue;
-      for (const rawCell of Object.values(sheet) as unknown[]) {
-        const cell = rawCell as Partial<XLSX.CellObject>;
-        if (cell && typeof cell === "object" && typeof cell.f === "string") formulaCount += 1;
-      }
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: "", blankrows: false });
+    for (const workbookSheet of workbookSheets) {
+      const target = relationTargets.get(workbookSheet.relationId);
+      if (!target) this.refuse("xlsx_relationship_invalid");
+      const path = this.resolveWorkbookTarget(target);
+      const sheetXml = this.requiredXml(archive, path);
+      const parsed = this.readWorksheet(sheetXml, sharedStrings, dateStyles);
+      formulaCount += parsed.formulaCount;
+      const rows = parsed.rows;
       if (rows.length > MAX_ROWS + 1) this.refuse("row_limit_exceeded");
       const headerIndex = rows.findIndex((row) => Array.isArray(row) && row.some((value) => this.cellText(value).trim().length > 0));
-      if (headerIndex < 0) { items.push({ name, rowCount: 0, columns: [] }); continue; }
+      if (headerIndex < 0) { items.push({ name: workbookSheet.name, rowCount: 0, columns: [] }); continue; }
       const headers = rows[headerIndex]!.map((value) => this.cellText(value).trim());
       if (headers.some((value) => value.length === 0) || new Set(headers).size !== headers.length) this.refuse("headers_invalid");
       const data = rows.slice(headerIndex + 1).filter((row) => row.some((value) => this.cellText(value).trim().length > 0));
-      items.push({ name, rowCount: data.length, columns: headers.map((column, index) => this.describeColumn(column, index, data.map((row) => row[index] ?? ""))) });
+      items.push({ name: workbookSheet.name, rowCount: data.length, columns: headers.map((column, index) => this.describeColumn(column, index, data.map((row) => row[index] ?? ""))) });
     }
     const reasons = [...(macroDetected ? ["macro_detected"] : []), ...(formulaCount ? ["formula_detected"] : []), ...(items.length === 0 ? ["empty_file"] : [])];
     return { items, formulaCount, macroDetected, reasons };
   }
 
-  private inspectZip(bytes: Buffer): { macroDetected: boolean } {
+  private inspectZip(bytes: Buffer): { macroDetected: boolean; entries: ZipEntry[] } {
     let eocd = -1;
     for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65_557); offset -= 1) {
       if (bytes.readUInt32LE(offset) === 0x06054b50) { eocd = offset; break; }
@@ -157,10 +165,14 @@ export class ImportProfileService {
     if (entries < 1 || entries > MAX_ZIP_ENTRIES) this.refuse("xlsx_entry_limit_exceeded");
     let uncompressed = 0;
     let macroDetected = false;
+    const zipEntries: ZipEntry[] = [];
     for (let index = 0; index < entries; index += 1) {
       if (offset + 46 > bytes.length || bytes.readUInt32LE(offset) !== 0x02014b50) this.refuse("xlsx_zip_invalid");
       if ((bytes.readUInt16LE(offset + 8) & 1) !== 0) this.refuse("encrypted_workbook_refused");
-      uncompressed += bytes.readUInt32LE(offset + 24);
+      const compression = bytes.readUInt16LE(offset + 10); const compressedSize = bytes.readUInt32LE(offset + 20);
+      const uncompressedSize = bytes.readUInt32LE(offset + 24); const localOffset = bytes.readUInt32LE(offset + 42);
+      if (compression !== 0 && compression !== 8) this.refuse("xlsx_compression_refused");
+      uncompressed += uncompressedSize;
       if (uncompressed > MAX_UNCOMPRESSED_BYTES) this.refuse("xlsx_uncompressed_limit_exceeded");
       const nameLength = bytes.readUInt16LE(offset + 28); const extraLength = bytes.readUInt16LE(offset + 30); const commentLength = bytes.readUInt16LE(offset + 32);
       if (offset + 46 + nameLength + extraLength + commentLength > bytes.length) this.refuse("xlsx_zip_invalid");
@@ -169,9 +181,146 @@ export class ImportProfileService {
       const normalized = entryName.toLocaleLowerCase("en-US");
       if (normalized.endsWith("vbaproject.bin") || normalized.includes("/activex/")) macroDetected = true;
       if (normalized.startsWith("xl/externallinks/")) this.refuse("external_link_refused");
+      zipEntries.push({ name: normalized, compression, compressedSize, uncompressedSize, localOffset });
       offset += 46 + nameLength + extraLength + commentLength;
     }
-    return { macroDetected };
+    return { macroDetected, entries: zipEntries };
+  }
+
+  private extractZipEntry(archive: Buffer, entry: ZipEntry): Buffer {
+    const offset = entry.localOffset;
+    if (offset + 30 > archive.length || archive.readUInt32LE(offset) !== 0x04034b50) this.refuse("xlsx_zip_invalid");
+    const nameLength = archive.readUInt16LE(offset + 26); const extraLength = archive.readUInt16LE(offset + 28);
+    const start = offset + 30 + nameLength + extraLength; const end = start + entry.compressedSize;
+    if (end > archive.length) this.refuse("xlsx_zip_invalid");
+    let output: Buffer;
+    try { output = entry.compression === 0 ? Buffer.from(archive.subarray(start, end)) : inflateRawSync(archive.subarray(start, end), { maxOutputLength: MAX_UNCOMPRESSED_BYTES }); }
+    catch { this.refuse("xlsx_decompression_failed"); }
+    if (output!.length !== entry.uncompressedSize) this.refuse("xlsx_uncompressed_size_mismatch");
+    return output!;
+  }
+
+  private requiredXml(archive: Map<string, Buffer>, path: string): string {
+    const bytes = archive.get(path.toLocaleLowerCase("en-US"));
+    if (!bytes) this.refuse("xlsx_part_missing");
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { this.refuse("xlsx_xml_encoding_invalid"); }
+  }
+
+  private readSharedStrings(bytes: Buffer | undefined): string[] {
+    if (!bytes) return [];
+    let xml: string; try { xml = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { this.refuse("xlsx_xml_encoding_invalid"); }
+    return this.elementBodies(xml, "si").map((body) => this.elementBodies(body, "t").map((value) => this.decodeXml(value)).join(""));
+  }
+
+  private readDateStyles(bytes: Buffer | undefined): Set<number> {
+    const result = new Set<number>(); if (!bytes) return result;
+    let xml: string; try { xml = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { this.refuse("xlsx_xml_encoding_invalid"); }
+    const customFormats = new Map<number, string>();
+    for (const tag of this.openingTags(xml, "numFmt")) {
+      const id = Number(this.attribute(tag, "numFmtId")); const format = this.attribute(tag, "formatCode").toLocaleLowerCase("en-US");
+      if (Number.isSafeInteger(id)) customFormats.set(id, format);
+    }
+    const cellXfs = this.elementBodies(xml, "cellXfs")[0] ?? "";
+    for (const [index, tag] of this.openingTags(cellXfs, "xf").entries()) {
+      const id = Number(this.attribute(tag, "numFmtId"));
+      if (this.isDateFormatId(id) || this.isDateFormat(customFormats.get(id) ?? "")) result.add(index);
+    }
+    return result;
+  }
+
+  private readWorksheet(xml: string, sharedStrings: string[], dateStyles: Set<number>): { rows: unknown[][]; formulaCount: number } {
+    const rows: unknown[][] = []; let formulaCount = 0;
+    for (const body of this.elementBodies(xml, "row")) {
+      const row: unknown[] = [];
+      for (const cell of this.elements(body, "c")) {
+        const reference = this.attribute(cell.opening, "r"); const index = this.columnIndex(reference);
+        const type = this.attribute(cell.opening, "t"); const style = Number(this.attribute(cell.opening, "s"));
+        if (this.hasOpeningTag(cell.body, "f")) formulaCount += 1;
+        const raw = this.elementBodies(cell.body, type === "inlineStr" ? "t" : "v")[0] ?? "";
+        const decoded = this.decodeXml(raw);
+        if (type === "s") { const shared = sharedStrings[Number(decoded)]; if (shared === undefined) this.refuse("xlsx_shared_string_invalid"); row[index] = shared; }
+        else if (type === "b") row[index] = decoded === "1";
+        else if (type === "str" || type === "inlineStr") row[index] = decoded;
+        else if (decoded.length === 0) row[index] = "";
+        else { const numeric = Number(decoded); if (!Number.isFinite(numeric)) this.refuse("xlsx_cell_invalid"); row[index] = dateStyles.has(style) ? this.excelDate(numeric) : numeric; }
+      }
+      rows.push(row);
+    }
+    return { rows, formulaCount };
+  }
+
+  private resolveWorkbookTarget(target: string): string {
+    const normalized = target.replaceAll("\\", "/");
+    if (normalized.includes("\0") || normalized.startsWith("/") || normalized.split("/").includes("..")) this.refuse("xlsx_relationship_invalid");
+    return normalized.startsWith("xl/") ? normalized.toLocaleLowerCase("en-US") : `xl/${normalized}`.toLocaleLowerCase("en-US");
+  }
+
+  private openingTags(xml: string, name: string): string[] { return this.elements(xml, name).map((element) => element.opening); }
+
+  private elements(xml: string, name: string): Array<{ opening: string; body: string }> {
+    const result: Array<{ opening: string; body: string }> = []; const marker = `<${name}`; let cursor = 0;
+    while (cursor < xml.length) {
+      const start = xml.indexOf(marker, cursor); if (start < 0) break;
+      const boundary = xml[start + marker.length]; if (boundary !== " " && boundary !== "\t" && boundary !== "\r" && boundary !== "\n" && boundary !== ">" && boundary !== "/") { cursor = start + marker.length; continue; }
+      const openingEnd = xml.indexOf(">", start + marker.length); if (openingEnd < 0) this.refuse("xlsx_xml_invalid");
+      const opening = xml.slice(start, openingEnd + 1); if (opening.endsWith("/>")) { result.push({ opening, body: "" }); cursor = openingEnd + 1; continue; }
+      const closing = `</${name}>`; const close = xml.indexOf(closing, openingEnd + 1); if (close < 0) this.refuse("xlsx_xml_invalid");
+      result.push({ opening, body: xml.slice(openingEnd + 1, close) }); cursor = close + closing.length;
+    }
+    return result;
+  }
+
+  private elementBodies(xml: string, name: string): string[] { return this.elements(xml, name).map((element) => element.body); }
+
+  private hasOpeningTag(xml: string, name: string): boolean { return this.elements(xml, name).length > 0; }
+
+  private attribute(tag: string, name: string): string {
+    const marker = `${name}="`; const start = tag.indexOf(marker); if (start < 0) return "";
+    const valueStart = start + marker.length; const end = tag.indexOf('"', valueStart); if (end < 0) this.refuse("xlsx_xml_invalid");
+    return tag.slice(valueStart, end);
+  }
+
+  private decodeXml(value: string): string {
+    let result = "";
+    for (let index = 0; index < value.length; index += 1) {
+      if (value[index] !== "&") { result += value[index]; continue; }
+      const end = value.indexOf(";", index + 1); if (end < 0 || end - index > 12) this.refuse("xlsx_xml_entity_invalid");
+      const entity = value.slice(index + 1, end);
+      if (entity === "amp") result += "&"; else if (entity === "lt") result += "<"; else if (entity === "gt") result += ">";
+      else if (entity === "quot") result += '"'; else if (entity === "apos") result += "'";
+      else if (entity.startsWith("#x")) result += this.codePoint(entity.slice(2), 16);
+      else if (entity.startsWith("#")) result += this.codePoint(entity.slice(1), 10);
+      else this.refuse("xlsx_xml_entity_invalid");
+      index = end;
+    }
+    return result;
+  }
+
+  private codePoint(value: string, radix: number): string {
+    if (value.length === 0 || value.length > 6) this.refuse("xlsx_xml_entity_invalid");
+    const point = Number.parseInt(value, radix); if (!Number.isSafeInteger(point) || point < 0 || point > 0x10ffff) this.refuse("xlsx_xml_entity_invalid");
+    return String.fromCodePoint(point);
+  }
+
+  private columnIndex(reference: string): number {
+    let index = 0; let letters = 0;
+    for (const character of reference) {
+      const code = character.toUpperCase().charCodeAt(0); if (code < 65 || code > 90) break;
+      index = index * 26 + code - 64; letters += 1; if (letters > 3) this.refuse("xlsx_column_limit_exceeded");
+    }
+    if (letters === 0 || index > 16_384) this.refuse("xlsx_cell_reference_invalid");
+    return index - 1;
+  }
+
+  private isDateFormatId(id: number): boolean { return (id >= 14 && id <= 22) || (id >= 27 && id <= 36) || (id >= 45 && id <= 47) || (id >= 50 && id <= 58); }
+
+  private isDateFormat(format: string): boolean {
+    const clean = format.replaceAll("\\", "").replaceAll('"', "");
+    return clean.includes("yy") || clean.includes("dd") || (clean.includes("mm") && (clean.includes("/") || clean.includes("-"))) || clean.includes("hh:");
+  }
+
+  private excelDate(value: number): Date {
+    const date = new Date(Date.UTC(1899, 11, 30) + value * 86_400_000); if (Number.isNaN(date.valueOf())) this.refuse("xlsx_date_invalid"); return date;
   }
 
   private parseCsv(text: string): string[][] {

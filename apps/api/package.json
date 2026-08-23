@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@crm/shared": "0.0.0",
-    "@e965/xlsx": "0.20.3",
     "@nestjs/common": "11.1.29",
     "@nestjs/core": "11.1.29",
     "@nestjs/platform-express": "11.1.29",
