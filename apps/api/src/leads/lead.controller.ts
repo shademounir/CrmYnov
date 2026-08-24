@@ -25,7 +25,7 @@ export class LeadTimelineController {
 
 @Controller("leads/:leadId/status")
 @UseGuards(RbacGuard)
-@RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN")
+@RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
 export class LeadStatusController {
   constructor(@Inject(LeadService) private readonly leads: LeadService) {}
 
