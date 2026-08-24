@@ -50,6 +50,77 @@ model Collaborator {
   @@map("collaborators")
 }
 
+model ChatConversation {
+  id             String            @id @default(uuid()) @db.Uuid
+  type           String            @db.VarChar(24)
+  title          String?           @db.VarChar(120)
+  createdById    String            @map("created_by_id") @db.VarChar(64)
+  retentionUntil DateTime          @map("retention_until") @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  participants   ChatParticipant[]
+  messages       ChatMessage[]
+  readReceipts   ChatReadReceipt[]
+
+  @@index([updatedAt(sort: Desc), id])
+  @@map("chat_conversations")
+}
+
+model ChatParticipant {
+  conversationId String           @map("conversation_id") @db.Uuid
+  userId         String           @map("user_id") @db.VarChar(64)
+  joinedAt       DateTime         @default(now()) @map("joined_at") @db.Timestamptz(6)
+  leftAt         DateTime?        @map("left_at") @db.Timestamptz(6)
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id])
+
+  @@id([conversationId, userId])
+  @@index([userId, leftAt])
+  @@map("chat_participants")
+}
+
+model ChatMessage {
+  id             String               @id @default(uuid()) @db.Uuid
+  conversationId String               @map("conversation_id") @db.Uuid
+  authorId       String               @map("author_id") @db.VarChar(64)
+  content        String?              @db.VarChar(2000)
+  version        Int                  @default(1)
+  editedAt       DateTime?            @map("edited_at") @db.Timestamptz(6)
+  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation   ChatConversation     @relation(fields: [conversationId], references: [id])
+  versions       ChatMessageVersion[]
+
+  @@index([conversationId, createdAt, id])
+  @@map("chat_messages")
+}
+
+model ChatMessageVersion {
+  id        String      @id @default(uuid()) @db.Uuid
+  messageId String      @map("message_id") @db.Uuid
+  version   Int
+  content   String?     @db.VarChar(2000)
+  changedBy String      @map("changed_by") @db.VarChar(64)
+  change    String      @db.VarChar(16)
+  reason    String?     @db.VarChar(240)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  message   ChatMessage @relation(fields: [messageId], references: [id])
+
+  @@unique([messageId, version])
+  @@map("chat_message_versions")
+}
+
+model ChatReadReceipt {
+  conversationId    String           @map("conversation_id") @db.Uuid
+  userId            String           @map("user_id") @db.VarChar(64)
+  lastReadMessageId String?          @map("last_read_message_id") @db.Uuid
+  readAt            DateTime         @map("read_at") @db.Timestamptz(6)
+  conversation      ChatConversation @relation(fields: [conversationId], references: [id])
+
+  @@id([conversationId, userId])
+  @@index([userId, readAt(sort: Desc)])
+  @@map("chat_read_receipts")
+}
+
 model Lead {
   id                   String                @id @default(uuid()) @db.Uuid
   leadCode             String                @unique @map("lead_code") @db.VarChar(32)
