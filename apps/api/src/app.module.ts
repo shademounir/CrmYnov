@@ -46,9 +46,11 @@ import { ImportReviewController } from "./import-review/import-review.controller
 import { ImportReviewService } from "./import-review/import-review.service.js";
 import { NotificationController } from "./notifications/notification.controller.js";
 import { NotificationService } from "./notifications/notification.service.js";
+import { FollowUpController } from "./follow-up/follow-up.controller.js";
+import { FollowUpService } from "./follow-up/follow-up.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController],
   providers: [
     SessionService,
     RateLimitService,
@@ -74,6 +76,7 @@ import { NotificationService } from "./notifications/notification.service.js";
     ImportWizardService,
     ImportReviewService,
     NotificationService,
+    FollowUpService,
   ],
 })
 export class AppModule {}
