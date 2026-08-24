@@ -34,3 +34,11 @@ test("controller exposes the complete authenticated wizard contract", () => {
   assert.equal(controller.confirm(session.id, { confirmationToken: ready.confirmationToken! }, request).currentStep, "REPORT");
   assert.throws(() => controller.get(session.id, {} as AuthenticatedRequest), (error: unknown) => JSON.stringify(error).includes("principal_missing"));
 });
+
+test("fails closed for unknown sessions and malformed reconciliation evidence", () => {
+  const service = new ImportWizardService();
+  assert.throws(() => service.get("missing", manager), (error: unknown) => JSON.stringify(error).includes("import_wizard_not_found"));
+  const session = service.start(start, manager);
+  assert.throws(() => service.reconcile(session.id, { ...evidence, mappingVersion: 0 }, manager),
+    (error: unknown) => JSON.stringify(error).includes("import_wizard_evidence_invalid"));
+});
