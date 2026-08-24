@@ -30,3 +30,13 @@ test("controller exposes list and detail without trusting forged identifiers", (
   assert.equal(controller.detail(lead.id, request).leadCode, input.leadCode);
   assert.throws(() => controller.detail(lead.id, { header: () => undefined } as never), hasCode("principal_missing"));
 });
+
+test("filters deterministic saved provenance and incomplete views", () => {
+  const service = new LeadService(new AuditService());
+  service.registerLocalLead({ ...input, source: "FORMINATOR_ZAPIER" });
+  service.registerLocalLead({ ...input, leadCode: "LD-READ-003", email: "incomplete@example.invalid", source: "PHONE_CALL", campus: "À compléter" });
+  assert.equal(service.listLeads({ page: 1, pageSize: 25, savedView: "FORMINATOR_ZAPIER" }, admissions, "corr-saved").total, 1);
+  assert.equal(service.listLeads({ page: 1, pageSize: 25, savedView: "INCOMPLETE" }, admissions, "corr-incomplete").items[0]?.leadCode, "LD-READ-003");
+  assert.equal(service.listLeads({ page: 1, pageSize: 25, savedView: "IMPORT_ERRORS" }, admissions, "corr-errors").total, 0);
+  assert.throws(() => service.listLeads({ page: 1, pageSize: 25, savedView: "UNSAFE" }, admissions, "corr-invalid"), hasCode("lead_saved_view_invalid"));
+});

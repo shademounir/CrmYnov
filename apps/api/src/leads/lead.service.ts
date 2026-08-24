@@ -39,8 +39,11 @@ export interface LeadListQuery {
   page: number; pageSize: number; search?: string; assignedToId?: string; status?: string; source?: string;
   program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
   assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
+  savedView?: string;
 }
 export type LeadWorkView = "ALL" | "MINE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
+export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
+export type LeadSavedView = typeof leadSavedViews[number];
 
 @Injectable()
 export class LeadService {
@@ -99,6 +102,8 @@ export class LeadService {
     const search = query.search?.trim().toLocaleLowerCase("fr");
     const view = (query.view ?? "ALL").toUpperCase() as LeadWorkView;
     if (!["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"].includes(view)) throw new BadRequestException({ code: "lead_view_invalid" });
+    const savedView = query.savedView?.toUpperCase() as LeadSavedView | undefined;
+    if (savedView && !leadSavedViews.includes(savedView)) throw new BadRequestException({ code: "lead_saved_view_invalid" });
     const now = new Date().toISOString();
     const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
     const filtered = [...this.leads.values()].filter((lead) => {
@@ -106,6 +111,7 @@ export class LeadService {
         .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
       return (!search || searchable.some((value) => value.includes(search)))
         && this.matchesView(lead, view, principal, now)
+        && this.matchesSavedView(lead, savedView)
         && (!query.assignedToId || lead.assignedToId === query.assignedToId)
         && (!status || lead.status === status)
         && matches(lead.source, query.source) && matches(lead.program, query.program)
@@ -131,6 +137,19 @@ export class LeadService {
     if (view === "NO_ACTIVITY") return !lead.lastActivityAt;
     if (view === "CLOSED") return lead.status === "ENROLLED" || lead.status === "CLOSED_LOST";
     return true;
+  }
+
+  private matchesSavedView(lead: Readonly<LeadRecord>, savedView: LeadSavedView | undefined): boolean {
+    if (!savedView) return true;
+    if (savedView === "IMPORT_ERRORS") return false;
+    if (savedView === "INCOMPLETE") return [lead.campus, lead.campaign, lead.educationLevel, lead.program]
+      .some((value) => value.toLocaleLowerCase("fr").includes("compléter"));
+    if (savedView === "UNCLASSIFIED_SOURCES") return lead.source.trim().length === 0 || lead.source === "UNKNOWN";
+    const sources: Readonly<Record<Exclude<LeadSavedView, "IMPORT_ERRORS" | "INCOMPLETE" | "UNCLASSIFIED_SOURCES">, string>> = {
+      FORMINATOR_ZAPIER: "FORMINATOR_ZAPIER", YNOV_MA_LEGACY: "LEGACY_IMPORT", YNOV_COM: "YNOV_COM",
+      PHONE_CALLS: "PHONE_CALL", PHYSICAL_VISITS: "PHYSICAL_VISIT", JOBINTECH: "JOBINTECH", LEGACY_RELAUNCH: "LEGACY_RELAUNCH",
+    };
+    return lead.source === sources[savedView];
   }
 
   private parseBoundary(value: string | undefined, errorCode: string): string | undefined {
