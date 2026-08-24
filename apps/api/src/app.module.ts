@@ -56,11 +56,13 @@ import { CommercialFunnelController } from "./reporting/commercial-funnel.contro
 import { CommercialFunnelService } from "./reporting/commercial-funnel.service.js";
 import { CommercialPerformanceController } from "./reporting/commercial-performance.controller.js";
 import { CommercialPerformanceService } from "./reporting/commercial-performance.service.js";
+import { OperationalRiskController } from "./reporting/operational-risk.controller.js";
+import { OperationalRiskService } from "./reporting/operational-risk.service.js";
 import { SourceEffectivenessController } from "./reporting/source-effectiveness.controller.js";
 import { SourceEffectivenessService } from "./reporting/source-effectiveness.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController],
   providers: [
     SessionService,
     RateLimitService,
@@ -92,6 +94,7 @@ import { SourceEffectivenessService } from "./reporting/source-effectiveness.ser
     CommercialFunnelService,
     CommercialPerformanceService,
     SourceEffectivenessService,
+    OperationalRiskService,
   ],
 })
 export class AppModule {}
