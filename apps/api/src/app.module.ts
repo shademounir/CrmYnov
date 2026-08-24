@@ -52,9 +52,11 @@ import { ClosureController } from "./closure/closure.controller.js";
 import { ClosureService } from "./closure/closure.service.js";
 import { LeadCollaborationController } from "./collaboration/lead-collaboration.controller.js";
 import { LeadCollaborationService } from "./collaboration/lead-collaboration.service.js";
+import { CommercialFunnelController } from "./reporting/commercial-funnel.controller.js";
+import { CommercialFunnelService } from "./reporting/commercial-funnel.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController],
   providers: [
     SessionService,
     RateLimitService,
@@ -83,6 +85,7 @@ import { LeadCollaborationService } from "./collaboration/lead-collaboration.ser
     FollowUpService,
     ClosureService,
     LeadCollaborationService,
+    CommercialFunnelService,
   ],
 })
 export class AppModule {}
