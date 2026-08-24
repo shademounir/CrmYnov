@@ -45,6 +45,9 @@ export interface LeadAssignmentSnapshot {
   total: number; assigned: number; unassigned: number; followUpDue: number;
   byAdviser: Array<{ userId: string; leadCount: number }>;
 }
+export interface LeadReportingRow {
+  id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
+}
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
   page: number; pageSize: number; search?: string; assignedToId?: string; status?: string; source?: string;
@@ -231,6 +234,17 @@ export class LeadService {
       followUpDue: leads.filter((lead) => lead.nextActionAt && lead.nextActionAt <= now.toISOString()).length,
       byAdviser: [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([userId, leadCount]) => ({ userId, leadCount })),
     };
+  }
+
+  reportingSnapshot(principal: Principal): LeadReportingRow[] {
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
+      throw new ForbiddenException({ code: "reporting_manager_required" });
+    }
+    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
+    const campuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
+    return [...this.leads.values()]
+      .filter((lead) => global || campuses.has(lead.campus))
+      .map(({ id, status, campus, campaign, program, source, createdAt }) => ({ id, status, campus, campaign, program, source, createdAt }));
   }
 
   assignLocalLead(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED"): LeadRecord {
