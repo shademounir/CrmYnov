@@ -50,9 +50,11 @@ import { FollowUpController } from "./follow-up/follow-up.controller.js";
 import { FollowUpService } from "./follow-up/follow-up.service.js";
 import { ClosureController } from "./closure/closure.controller.js";
 import { ClosureService } from "./closure/closure.service.js";
+import { LeadCollaborationController } from "./collaboration/lead-collaboration.controller.js";
+import { LeadCollaborationService } from "./collaboration/lead-collaboration.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController],
   providers: [
     SessionService,
     RateLimitService,
@@ -80,6 +82,7 @@ import { ClosureService } from "./closure/closure.service.js";
     NotificationService,
     FollowUpService,
     ClosureService,
+    LeadCollaborationService,
   ],
 })
 export class AppModule {}

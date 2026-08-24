@@ -320,6 +320,18 @@ export class LeadService {
     return { ...updated };
   }
 
+  applyCollaborator(leadId: string, targetUserId: string, action: "ADD" | "REMOVE", role: string, principal: Principal, correlationId: string): LeadRecord {
+    if (!principal.roles.some((item) => item === "MANAGER" || item === "ADMIN" || item === "SUPER_ADMIN")) { throw new ForbiddenException({ code: "collaboration_approval_forbidden" }); }
+    const current = this.leads.get(leadId); if (!current) { throw new NotFoundException({ code: "lead_not_found" }); }
+    if (current.assignedToId === targetUserId) { throw new BadRequestException({ code: "primary_assignee_protected" }); }
+    const collaborators = new Set(current.collaboratorIds ?? []); const present = collaborators.has(targetUserId);
+    if ((action === "ADD" && present) || (action === "REMOVE" && !present)) { throw new ConflictException({ code: "collaboration_state_conflict" }); }
+    if (action === "ADD") collaborators.add(targetUserId); else collaborators.delete(targetUserId);
+    const occurredAt = new Date().toISOString(); const updated: Readonly<LeadRecord> = Object.freeze({ ...current, collaboratorIds: [...collaborators].sort((a, b) => a.localeCompare(b)), lastActivityAt: occurredAt }); this.leads.set(leadId, updated);
+    const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: "COMMENT", result: `COLLABORATOR_${action}:${role}`, authorId: principal.userId, correlationId, occurredAt }); this.activities = [...this.activities, activity];
+    return { ...updated, collaboratorIds: [...(updated.collaboratorIds ?? [])] };
+  }
+
   timeline(leadId: string, principal: Principal): LeadActivityRecord[] {
     if (!this.leads.has(leadId)) throw new NotFoundException({ code: "lead_not_found" });
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
