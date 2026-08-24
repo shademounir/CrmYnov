@@ -26,7 +26,9 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   await page.context().addCookies([{ name: "crm_session", value: "synthetic-manager-session", domain: "localhost", path: "/" }]);
   await mockReporting(page); await page.goto("/manager/reports/dashboard");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "crm_session")).toBe(true);
-  await page.locator('select[name="period"]').selectOption("7d"); await page.getByLabel("Campus").fill("campus-a"); await page.getByLabel("Source").fill("SYNTHETIC");
+  await page.locator('select[name="period"]').selectOption("7d");
+  await page.locator('input[name="campus"]').fill("campus-a");
+  await page.locator('input[name="source"]').fill("SYNTHETIC");
   await page.getByRole("button", { name: "Appliquer" }).click(); await expect(page).toHaveURL(/period=7d.*campus=campus-a.*source=SYNTHETIC/u);
   await expect(page.getByRole("heading", { name: "Indicateurs clés" })).toBeVisible(); await expect(page.getByRole("link", { name: /Leads uniques.*3/u })).toBeVisible();
   const funnel = page.getByRole("button", { name: /Funnel commercial/u }); await funnel.focus(); await expect(funnel).toBeFocused();
