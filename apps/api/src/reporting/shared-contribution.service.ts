@@ -21,12 +21,17 @@ export class SharedContributionService {
   constructor(private readonly leads: LeadService, private readonly audit: AuditService) {}
   read(query: SharedContributionQuery, principal: Principal, correlationId: string, now = new Date()): SharedContributionReport {
     const from = this.boundary(query.from, "contribution_from_invalid"); const to = this.boundary(query.to, "contribution_to_invalid");
-    if (from && to && from >= to) throw new BadRequestException({ code: "contribution_period_invalid" });
+    if (from && to && from >= to) {
+      throw new BadRequestException({ code: "contribution_period_invalid" });
+    }
     const campus = query.campus?.trim();
     const rows = this.leads.reportingSnapshot(principal).filter((lead) => (!from || lead.createdAt >= from) && (!to || lead.createdAt < to) && (!campus || lead.campus === campus));
     const adviserOnly = principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
     const ids = new Set(rows.flatMap((lead) => [lead.assignedToId, ...lead.collaboratorIds]).filter((value): value is string => Boolean(value)));
-    if (adviserOnly) { ids.clear(); ids.add(principal.userId); }
+    if (adviserOnly) {
+      ids.clear();
+      ids.add(principal.userId);
+    }
     const contributors = [...ids].sort((a, b) => a.localeCompare(b, "en")).map((contributorId) => {
       const primary = rows.filter((lead) => lead.assignedToId === contributorId);
       const collaborative = rows.filter((lead) => lead.assignedToId !== contributorId && lead.collaboratorIds.includes(contributorId));
@@ -43,8 +48,15 @@ export class SharedContributionService {
       safeguards: { conversionsAttributedToPrimaryOnly: true, compensationCalculated: false, disciplinaryRanking: false } };
     this.audit.record({ eventType: "SHARED_CONTRIBUTION_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { definitionVersion: SHARED_CONTRIBUTION_VERSION, contributorCount: contributors.length, uniqueLeadCount: report.uniqueLeadCount,
-        activeFilterNames: Object.entries(query).filter(([, value]) => Boolean(value)).map(([key]) => key).sort() }, result: "SUCCESS", idempotencyKey: `shared-contribution:${randomUUID()}` });
+        activeFilterNames: Object.entries(query).filter(([, value]) => Boolean(value)).map(([key]) => key).sort((a, b) => a.localeCompare(b, "en")) }, result: "SUCCESS", idempotencyKey: `shared-contribution:${randomUUID()}` });
     return report;
   }
-  private boundary(value: string | undefined, code: string): string | undefined { if (!value) return undefined; const parsed = new Date(value); if (Number.isNaN(parsed.valueOf())) throw new BadRequestException({ code }); return parsed.toISOString(); }
+  private boundary(value: string | undefined, code: string): string | undefined {
+    if (!value) return undefined;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.valueOf())) {
+      throw new BadRequestException({ code });
+    }
+    return parsed.toISOString();
+  }
 }
