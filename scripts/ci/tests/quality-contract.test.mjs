@@ -26,7 +26,10 @@ test("Playwright uses locked synthetic dependencies and read-only failure eviden
   const job = workflow.match(/\n  playwright:[\s\S]+?(?=\n  build:)/)?.[0] ?? "";
   assert.match(job, /needs: trusted-source/);
   assert.match(job, /npm ci --ignore-scripts/);
-  assert.match(job, /npx playwright install --with-deps chromium/);
+  assert.match(
+    job,
+    /npm exec --workspace=@crm\/web -- playwright install --with-deps chromium/,
+  );
   assert.match(job, /npm run test:e2e:browser --workspace=@crm\/web/);
   assert.match(job, /if: failure\(\)[\s\S]+retention-days: 3/);
   assert.match(workflow, /quality-gate:[\s\S]+needs:[\s\S]+- playwright/);

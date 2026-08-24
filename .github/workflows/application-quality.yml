@@ -135,7 +135,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
       - name: Install the locked Playwright Chromium runtime
-        run: npx playwright install --with-deps chromium
+        run: npm exec --workspace=@crm/web -- playwright install --with-deps chromium
       - name: Run synthetic browser journeys
         run: npm run test:e2e:browser --workspace=@crm/web
       - name: Upload failure traces without repository write permission
