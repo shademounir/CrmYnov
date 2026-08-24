@@ -1,0 +1,2 @@
+import assert from "node:assert/strict"; import test from "node:test"; import NotificationsPage from "../app/notifications/page.js";
+test("renders the synthetic internal notification center", () => { const rendered = JSON.stringify(NotificationsPage()); for (const value of ["Centre de notifications", "0 non lue", "Tout marquer comme lu", "Priorité haute", "Ouvrir si autorisé"]) assert.match(rendered, new RegExp(value)); });
