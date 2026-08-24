@@ -54,6 +54,8 @@ model ChatConversation {
   id             String            @id @default(uuid()) @db.Uuid
   type           String            @db.VarChar(24)
   title          String?           @db.VarChar(120)
+  leadId         String?           @map("lead_id") @db.Uuid
+  leadCode       String?           @map("lead_code") @db.VarChar(32)
   createdById    String            @map("created_by_id") @db.VarChar(64)
   retentionUntil DateTime          @map("retention_until") @db.Timestamptz(6)
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -63,6 +65,7 @@ model ChatConversation {
   readReceipts   ChatReadReceipt[]
 
   @@index([updatedAt(sort: Desc), id])
+  @@index([leadId, updatedAt(sort: Desc)])
   @@map("chat_conversations")
 }
 
@@ -89,9 +92,35 @@ model ChatMessage {
   createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   conversation   ChatConversation     @relation(fields: [conversationId], references: [id])
   versions       ChatMessageVersion[]
+  mentions       ChatMention[]
+  activityConversion ChatActivityConversion?
 
   @@index([conversationId, createdAt, id])
   @@map("chat_messages")
+}
+
+model ChatMention {
+  messageId String      @map("message_id") @db.Uuid
+  userId    String      @map("user_id") @db.VarChar(64)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  message   ChatMessage @relation(fields: [messageId], references: [id])
+
+  @@id([messageId, userId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("chat_mentions")
+}
+
+model ChatActivityConversion {
+  id         String      @id @default(uuid()) @db.Uuid
+  messageId  String      @unique @map("message_id") @db.Uuid
+  leadId     String      @map("lead_id") @db.Uuid
+  activityId String      @unique @map("activity_id") @db.Uuid
+  convertedBy String     @map("converted_by") @db.VarChar(64)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  message    ChatMessage @relation(fields: [messageId], references: [id])
+
+  @@index([leadId, createdAt(sort: Desc)])
+  @@map("chat_activity_conversions")
 }
 
 model ChatMessageVersion {

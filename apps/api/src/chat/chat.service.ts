@@ -9,6 +9,8 @@ import {
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
+import { LeadService, type ActivityType, type LeadActivityRecord } from "../leads/lead.service.js";
+import { NotificationService } from "../notifications/notification.service.js";
 import { UserService } from "../users/user.service.js";
 
 export const CHAT_EDIT_WINDOW_MS = 60 * 60 * 1000;
@@ -19,6 +21,8 @@ export interface ChatConversation {
   id: string;
   type: ChatConversationType;
   title?: string | undefined;
+  leadId?: string | undefined;
+  leadCode?: string | undefined;
   participantIds: string[];
   createdById: string;
   createdAt: string;
@@ -36,6 +40,7 @@ export interface ChatMessage {
   createdAt: string;
   editedAt?: string | undefined;
   deletedAt?: string | undefined;
+  mentionUserIds: string[];
 }
 
 interface StoredConversation extends ChatConversation {
@@ -72,15 +77,18 @@ export class ChatService {
   private readonly messageVersions = new Map<string, MessageVersion[]>();
   private readonly messageIdempotency = new Map<string, string>();
   private readonly readReceipts = new Map<string, { messageId: string; readAt: string }>();
+  private readonly convertedMessages = new Map<string, string>();
 
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(UserService) private readonly users: UserService,
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(NotificationService) private readonly notifications: NotificationService,
   ) {}
 
   createConversation(
     principal: Principal,
-    input: { type?: string; title?: string; participantIds?: string[]; attachments?: unknown[] },
+    input: { type?: string; title?: string; participantIds?: string[]; leadCode?: string; attachments?: unknown[] },
     correlationId: string,
   ): ChatConversation {
     this.assertActiveCollaborator(principal.userId);
@@ -93,8 +101,9 @@ export class ChatService {
     const title = input.title?.trim();
     if (input.type === "DIRECT" && participantIds.length !== 2) throw new BadRequestException({ code: "chat_direct_participants_invalid" });
     if (input.type === "TEAM" && (!title || title.length < 2 || title.length > 120)) throw new BadRequestException({ code: "chat_title_invalid" });
+    const linkedLead = input.leadCode ? this.resolveLead(input.leadCode, principal, correlationId) : undefined;
 
-    const directKey = input.type === "DIRECT" ? participantIds.join(":") : undefined;
+    const directKey = input.type === "DIRECT" ? `${participantIds.join(":")}:${linkedLead?.id ?? "unlinked"}` : undefined;
     const existingId = directKey ? this.directConversations.get(directKey) : undefined;
     if (existingId) return sanitizedConversation(this.conversations.get(existingId)!);
 
@@ -105,6 +114,8 @@ export class ChatService {
       id: randomUUID(),
       type: input.type,
       title: input.type === "TEAM" ? title : undefined,
+      leadId: linkedLead?.id,
+      leadCode: linkedLead?.leadCode,
       participantIds,
       createdById: principal.userId,
       createdAt: now.toISOString(),
@@ -120,7 +131,7 @@ export class ChatService {
       actorRoles: principal.roles,
       sessionId: principal.sessionId,
       correlationId,
-      after: { conversationId: record.id, type: record.type, participantCount: participantIds.length },
+      after: { conversationId: record.id, type: record.type, participantCount: participantIds.length, leadId: record.leadId },
       result: "SUCCESS",
       idempotencyKey: `chat-conversation-created:${record.id}`,
     });
@@ -144,7 +155,7 @@ export class ChatService {
   postMessage(
     conversationId: string,
     principal: Principal,
-    input: { content?: string; clientMessageId?: string; attachments?: unknown[] },
+    input: { content?: string; clientMessageId?: string; mentionUserIds?: string[]; attachments?: unknown[] },
     correlationId: string,
   ): ChatMessage {
     const conversation = this.assertMember(conversationId, principal);
@@ -156,6 +167,12 @@ export class ChatService {
     const existing = this.messageIdempotency.get(idempotencyKey);
     if (existing) return sanitizedMessage(this.messages.get(existing)!);
 
+    const mentionUserIds = [...new Set(input.mentionUserIds ?? [])].sort(lexicalCompare);
+    for (const userId of mentionUserIds) {
+      if (userId === principal.userId || !conversation.participantIds.includes(userId)) throw new BadRequestException({ code: "chat_mention_invalid" });
+      this.assertActiveCollaborator(userId);
+    }
+
     const now = new Date(Date.now()).toISOString();
     const message: Readonly<ChatMessage> = Object.freeze({
       id: randomUUID(),
@@ -165,11 +182,22 @@ export class ChatService {
       version: 1,
       state: "ACTIVE",
       createdAt: now,
+      mentionUserIds,
     });
     this.messages.set(message.id, message);
     this.conversationMessages.get(conversationId)!.push(message.id);
     this.messageIdempotency.set(idempotencyKey, message.id);
     conversation.updatedAt = now;
+    for (const userId of mentionUserIds) {
+      this.notifications.create({
+        recipientId: userId,
+        type: "CHAT_MENTION",
+        priority: "NORMAL",
+        resourceType: "CHAT",
+        resourceId: conversationId,
+        href: `/chat/${conversationId}`,
+      }, `chat-mention:${message.id}:${userId}`);
+    }
     this.recordMessageAudit("CHAT_MESSAGE_CREATED", message, principal, correlationId);
     return sanitizedMessage(message);
   }
@@ -258,6 +286,41 @@ export class ChatService {
     return { ...receipt };
   }
 
+  convertMessageToActivity(
+    messageId: string,
+    principal: Principal,
+    input: { type?: string; result?: string; includeMessageAsNote?: boolean },
+    correlationId: string,
+  ): LeadActivityRecord {
+    const message = this.assertMessageMember(messageId, principal);
+    const conversation = this.conversations.get(message.conversationId)!;
+    if (!conversation.leadId) throw new ConflictException({ code: "chat_lead_context_required" });
+    const lead = this.leads.getLead(conversation.leadId, principal, correlationId);
+    const canMutate = lead.assignedToId === principal.userId || Boolean(lead.collaboratorIds?.includes(principal.userId)) ||
+      principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+    if (!canMutate) throw new ForbiddenException({ code: "chat_lead_mutation_forbidden" });
+    if (message.state === "DELETED") throw new ConflictException({ code: "chat_message_deleted" });
+    const knownActivityId = this.convertedMessages.get(messageId);
+    if (knownActivityId) throw new ConflictException({ code: "chat_message_already_converted", activityId: knownActivityId });
+    const activity = this.leads.addActivity(conversation.leadId, {
+      type: input.type as ActivityType,
+      result: input.result ?? "",
+      ...(input.includeMessageAsNote === true && message.content ? { note: message.content } : {}),
+    }, principal, correlationId);
+    this.convertedMessages.set(messageId, activity.id);
+    this.audit.record({
+      eventType: "CHAT_MESSAGE_CONVERTED_TO_ACTIVITY",
+      actorId: principal.userId,
+      actorRoles: principal.roles,
+      sessionId: principal.sessionId,
+      correlationId,
+      after: { conversationId: conversation.id, messageId, leadId: conversation.leadId, activityId: activity.id, type: activity.type },
+      result: "SUCCESS",
+      idempotencyKey: `chat-message-converted:${messageId}`,
+    });
+    return activity;
+  }
+
   getVersionsForAudit(messageId: string): ReadonlyArray<MessageVersion> {
     return (this.messageVersions.get(messageId) ?? []).map((version) => ({ ...version }));
   }
@@ -265,6 +328,14 @@ export class ChatService {
   private assertActiveCollaborator(userId: string): void {
     const user = this.users.list({ active: true }).find((candidate) => candidate.id === userId);
     if (!user) throw new ForbiddenException({ code: "chat_collaborator_required" });
+  }
+
+  private resolveLead(leadCode: string, principal: Principal, correlationId: string): { id: string; leadCode: string } {
+    if (!/^LD-\d{4}-[A-Z0-9]{4,32}$/.test(leadCode.trim().toUpperCase())) throw new BadRequestException({ code: "chat_lead_code_invalid" });
+    const candidate = this.leads.findLocalLeadByCode(leadCode);
+    if (!candidate) throw new NotFoundException({ code: "lead_not_found" });
+    const visible = this.leads.getLead(candidate.id, principal, correlationId);
+    return { id: visible.id, leadCode: visible.leadCode };
   }
 
   private assertMember(conversationId: string, principal: Principal): StoredConversation {

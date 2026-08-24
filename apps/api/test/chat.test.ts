@@ -5,6 +5,8 @@ import { SessionService } from "../src/auth/session.service.js";
 import type { Principal, Role } from "../src/auth/auth.types.js";
 import { ChatController } from "../src/chat/chat.controller.js";
 import { CHAT_EDIT_WINDOW_MS, ChatService } from "../src/chat/chat.service.js";
+import { LeadService } from "../src/leads/lead.service.js";
+import { NotificationService } from "../src/notifications/notification.service.js";
 import { UserService } from "../src/users/user.service.js";
 
 function responseCode(code: string): (error: unknown) => boolean {
@@ -14,6 +16,8 @@ function responseCode(code: string): (error: unknown) => boolean {
 interface ChatFixture {
   audit: AuditService;
   users: UserService;
+  leads: LeadService;
+  notifications: NotificationService;
   service: ChatService;
   create: (suffix: string, roles?: Role[]) => Principal;
 }
@@ -21,11 +25,13 @@ interface ChatFixture {
 function fixture(): ChatFixture {
   const audit = new AuditService();
   const users = new UserService(new SessionService(), audit);
+  const leads = new LeadService(audit);
+  const notifications = new NotificationService(audit);
   const create = (suffix: string, roles: Role[] = ["ADMISSIONS"]): Principal => {
     const user = users.create({ professionalEmail: `${suffix}@example.invalid`, roles }, "bootstrap-synthetic", `create-${suffix}`);
     return { userId: user.id, roles, scopes: [{ kind: "GLOBAL" }], sessionId: `session-${suffix}` };
   };
-  return { audit, users, service: new ChatService(audit, users), create };
+  return { audit, users, leads, notifications, service: new ChatService(audit, users, leads, notifications), create };
 }
 
 test("creates collaborator-only direct and team conversations without duplicates", () => {
@@ -86,4 +92,30 @@ test("controller fails closed without an authenticated principal", () => {
   const { service } = fixture();
   const controller = new ChatController(service);
   assert.throws(() => controller.listConversations({} as never), responseCode("principal_missing"));
+});
+
+test("notifies mentioned members and requires explicit lead mutation rights for conversion", () => {
+  const { service, create, leads, notifications } = fixture();
+  const owner = create("owner");
+  const colleague = create("colleague");
+  const outsider = create("outsider");
+  const lead = leads.registerLocalLead({
+    leadCode: "LD-2026-CHAT0001",
+    firstName: "Prénom synthétique",
+    lastName: "Nom synthétique",
+    campus: "Campus synthétique",
+    campaign: "Campagne synthétique",
+    educationLevel: "Niveau synthétique",
+    program: "Programme synthétique",
+    source: "SYNTHETIC",
+    assignedToId: owner.userId,
+  });
+  const conversation = service.createConversation(owner, { type: "TEAM", title: "Décision synthétique", participantIds: [colleague.userId, outsider.userId], leadCode: lead.leadCode }, "linked");
+  const message = service.postMessage(conversation.id, owner, { content: "Décision commerciale synthétique", clientMessageId: "client-mention-01", mentionUserIds: [colleague.userId] }, "mention");
+  assert.equal(notifications.list(colleague, 1, 25).items[0]?.type, "CHAT_MENTION");
+  assert.throws(() => service.postMessage(conversation.id, owner, { content: "Mention interdite", clientMessageId: "client-mention-02", mentionUserIds: ["unknown-user"] }, "bad-mention"), responseCode("chat_mention_invalid"));
+  assert.throws(() => service.convertMessageToActivity(message.id, outsider, { type: "COMMENT", result: "DECISION_RECORDED" }, "forbidden"), responseCode("chat_lead_mutation_forbidden"));
+  const activity = service.convertMessageToActivity(message.id, owner, { type: "COMMENT", result: "DECISION_RECORDED", includeMessageAsNote: true }, "convert");
+  assert.equal(activity.leadId, lead.id);
+  assert.throws(() => service.convertMessageToActivity(message.id, owner, { type: "COMMENT", result: "DECISION_RECORDED" }, "replay"), responseCode("chat_message_already_converted"));
 });
