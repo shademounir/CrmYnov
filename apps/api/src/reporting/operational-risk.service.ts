@@ -8,11 +8,11 @@ import { ClosureService } from "../closure/closure.service.js";
 import { FollowUpService } from "../follow-up/follow-up.service.js";
 import { IngestionService } from "../ingestion/ingestion.service.js";
 import { LeadService } from "../leads/lead.service.js";
+import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
 
 export const OPERATIONAL_RISK_VERSION = "operational-risk-v1";
 const interactionTypes = new Set(["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING"]);
-export interface OperationalRiskQuery {
-  from?: string; to?: string; campus?: string;
+export interface OperationalRiskQuery extends InteractiveReportingQuery {
   noInteractionHours?: string; capacityWarningPercent?: string; loadGap?: string; sourceRiskPercent?: string; minSourceVolume?: string;
 }
 export interface OperationalAlert {
@@ -40,7 +40,6 @@ export class OperationalRiskService {
     const from = this.boundary(query.from, "operational_from_invalid");
     const to = this.boundary(query.to, "operational_to_invalid");
     if (from && to && from >= to) throw new BadRequestException({ code: "operational_period_invalid" });
-    const campus = query.campus?.trim();
     const thresholds = {
       noInteractionHours: this.integer(query.noInteractionHours, 24, 1, 720, "operational_no_interaction_threshold_invalid"),
       capacityWarningPercent: this.integer(query.capacityWarningPercent, 90, 50, 100, "operational_capacity_threshold_invalid"),
@@ -48,8 +47,8 @@ export class OperationalRiskService {
       sourceRiskPercent: this.integer(query.sourceRiskPercent, 30, 1, 100, "operational_source_threshold_invalid"),
       minSourceVolume: this.integer(query.minSourceVolume, 3, 1, 1000, "operational_source_volume_invalid"),
     };
-    const rows = this.leads.reportingSnapshot(principal).filter((lead) => (!from || lead.createdAt >= from) && (!to || lead.createdAt < to)
-      && (!campus || lead.campus.localeCompare(campus, "fr", { sensitivity: "accent" }) === 0));
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const leadIds = new Set(rows.map((row) => row.id));
     const active = rows.filter((row) => row.status !== "ENROLLED" && row.status !== "CLOSED_LOST");
     const cutoff = now.valueOf() - thresholds.noInteractionHours * 3_600_000;
@@ -70,8 +69,10 @@ export class OperationalRiskService {
       return { adviserId, activeLeads, capacity: configured, utilizationPercent: configured ? Number((activeLeads / configured * 100).toFixed(2)) : 100 };
     });
     const occurrences = this.ingestion.reportingSnapshot(principal).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
-      && (!campus || (item.campus ?? "UNSPECIFIED").localeCompare(campus, "fr", { sensitivity: "accent" }) === 0)
-      && (!item.leadId || leadIds.has(item.leadId)));
+      && (!query.campus || (item.campus ?? "UNSPECIFIED").localeCompare(query.campus, "fr", { sensitivity: "accent" }) === 0)
+      && (!query.campaign || (item.campaign ?? "UNSPECIFIED") === query.campaign) && (!query.program || (item.program ?? "UNSPECIFIED") === query.program)
+      && (!query.source || item.source === query.source) && (!query.channel || sourceChannel(item.source) === query.channel)
+      && (!item.leadId ? !query.adviserId && !query.status : leadIds.has(item.leadId)));
     const sourceRisks = [...new Set(occurrences.map((item) => item.source))].sort((a, b) => a.localeCompare(b, "en")).flatMap((source) => {
       const group = occurrences.filter((item) => item.source === source); const rejectedOrReview = group.filter((item) => item.outcome === "INVALID" || item.outcome === "MANUAL_REVIEW").length;
       const rate = Number((rejectedOrReview / group.length * 100).toFixed(2));

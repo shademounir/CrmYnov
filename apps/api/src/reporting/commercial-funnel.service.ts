@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService, leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
+import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 
 export const FUNNEL_DEFINITION_VERSION = "commercial-funnel-v1";
 export const FUNNEL_TIMEZONE = "Africa/Casablanca";
-export interface CommercialFunnelQuery { from?: string; to?: string; campus?: string; campaign?: string; program?: string; source?: string }
+export type CommercialFunnelQuery = InteractiveReportingQuery;
 export interface CommercialFunnel {
   definitionVersion: string; timezone: string; generatedAt: string;
   cohort: { from?: string; to?: string; totalUniqueLeads: number };
@@ -28,11 +29,9 @@ export class CommercialFunnelService {
     const from = this.boundary(query.from, "funnel_from_invalid");
     const to = this.boundary(query.to, "funnel_to_invalid");
     if (from && to && from >= to) throw new BadRequestException({ code: "funnel_period_invalid" });
-    const exact = (value: string, expected?: string): boolean => !expected || value.localeCompare(expected.trim(), "fr", { sensitivity: "accent" }) === 0;
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
     const unique = new Map(this.leads.reportingSnapshot(principal)
-      .filter((lead) => (!from || lead.createdAt >= from) && (!to || lead.createdAt < to)
-        && exact(lead.campus, query.campus) && exact(lead.campaign, query.campaign)
-        && exact(lead.program, query.program) && exact(lead.source, query.source))
+      .filter((lead) => matchesInteractiveFilters(lead, normalized))
       .map((lead) => [lead.id, lead]));
     const rows = [...unique.values()];
     const currentState = Object.fromEntries(leadStatuses.map((status) => [status, rows.filter((lead) => lead.status === status).length])) as Record<LeadStatus, number>;

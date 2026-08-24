@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService } from "../leads/lead.service.js";
+import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 
 export const SHARED_CONTRIBUTION_VERSION = "shared-contribution-v1";
-export interface SharedContributionQuery { from?: string; to?: string; campus?: string }
+export type SharedContributionQuery = InteractiveReportingQuery;
 export interface ContributorRow {
   contributorId: string; primaryLeadCount: number; collaborativeLeadCount: number; primaryActionCount: number; secondaryActionCount: number;
   primaryEnrollmentCount: number; secondaryEnrollmentCount: 0; actionTypes: Array<{ type: string; primary: number; secondary: number }>;
@@ -24,8 +25,8 @@ export class SharedContributionService {
     if (from && to && from >= to) {
       throw new BadRequestException({ code: "contribution_period_invalid" });
     }
-    const campus = query.campus?.trim();
-    const rows = this.leads.reportingSnapshot(principal).filter((lead) => (!from || lead.createdAt >= from) && (!to || lead.createdAt < to) && (!campus || lead.campus === campus));
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const adviserOnly = principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
     const ids = new Set(rows.flatMap((lead) => [lead.assignedToId, ...lead.collaboratorIds]).filter((value): value is string => Boolean(value)));
     if (adviserOnly) {

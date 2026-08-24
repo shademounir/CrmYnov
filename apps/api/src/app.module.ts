@@ -62,11 +62,11 @@ import { SourceEffectivenessController } from "./reporting/source-effectiveness.
 import { SourceEffectivenessService } from "./reporting/source-effectiveness.service.js";
 import { SharedContributionController } from "./reporting/shared-contribution.controller.js";
 import { SharedContributionService } from "./reporting/shared-contribution.service.js";
-import { ManagerDashboardController } from "./reporting/manager-dashboard.controller.js";
+import { ManagerDashboardController, PersonalDashboardController } from "./reporting/manager-dashboard.controller.js";
 import { ManagerDashboardService } from "./reporting/manager-dashboard.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SessionService,
     RateLimitService,

@@ -7,3 +7,17 @@ Les cartes, tendances journalières, répartitions et tableaux utilisent des com
 Les conversions ne sont attribuées qu’au responsable principal. Les contributions secondaires restent séparées. Aucun scoring disciplinaire, calcul financier, commission ou décision automatisée n’est produit.
 
 Le rollback applicatif consiste à retirer le contrôleur, le service et la page consolidés. Les rapports unitaires restent indépendants ; aucune migration ni donnée persistante n’est concernée.
+
+## Intégration interactive
+
+Les filtres `period`, `from`, `to`, `campus`, `campaign`, `program`, `source`, `channel`, `adviserId`, `status` et `view` sont portés par l’URL. L’API refuse les clés inconnues, les valeurs mal formées, un campus hors périmètre et toute tentative d’un Conseiller de consulter une vue globale ou l’identité d’un autre conseiller. Les périodes prédéfinies sont calculées côté serveur ; la période personnalisée exige deux bornes valides. Le fuseau métier reste `Africa/Casablanca`.
+
+Les graphiques utilisent des éléments HTML locaux, sans télémétrie ni service tiers. Chaque visualisation est focalisable au clavier, possède un libellé complet pour lecteur d’écran et un tableau alternatif. La couleur n’est jamais le seul porteur d’information.
+
+Les liens de drill-down traduisent les filtres reporting vers les filtres de la liste Leads et ajoutent un `returnTo` strictement limité au dashboard. Une liste fermée de racines internes autorise uniquement la liste Leads et l’export agrégé ; les schémas, domaines externes, traversées et chemins inconnus sont remplacés par une destination inerte. Les libellés restent des nœuds texte React et ne sont jamais réinterprétés comme HTML. La liste applique le périmètre campus côté serveur, ainsi que les filtres canal, responsable et collaborateur.
+
+L’export `manager-dashboard-export-v1` reprend le même rapport et les mêmes filtres. Il ne contient que des agrégats, indique le fuseau et la période, utilise un nom déterministe et neutralise les cellules commençant par `=`, `+`, `-`, `@`, tabulation ou retour chariot.
+
+Les préférences locales sont limitées à l’affichage compact, la visibilité des tableaux alternatifs, une période préférée et un seuil de présentation borné entre 1 et 100, dans la clé `crm-reporting-preferences-v1`. Elles ne modifient aucune formule KPI. Aucun identifiant de lead, PII ou secret n’est conservé.
+
+Le scénario Playwright `apps/web/e2e/reporting.spec.ts` utilise des réponses intégralement synthétiques et vérifie filtres, rafraîchissement, cartes, graphiques accessibles, drill-down, retour, export, vue personnelle, refus anti-IDOR, contenus HTML inertes et états vide/erreur. Il s’exécute avec `npm run test:e2e:browser`. Le job distant `playwright` installe Chromium par la commande officielle depuis les dépendances verrouillées, n’utilise aucun secret et ne conserve les traces d’échec que trois jours ; son résultat est agrégé fail-closed dans `quality-gate`.

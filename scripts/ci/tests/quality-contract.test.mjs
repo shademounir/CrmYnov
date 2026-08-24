@@ -9,7 +9,7 @@ const sonarUrl = new URL("../../../sonar-project.properties", import.meta.url);
 test("application quality workflow is least-privileged and aggregates every gate", async () => {
   const workflow = await readFile(workflowUrl, "utf8");
   for (const job of [
-    "lint", "type-check", "unit-tests", "integration-tests", "build", "dependency-review",
+    "lint", "type-check", "unit-tests", "integration-tests", "playwright", "build", "dependency-review",
     "sbom", "secret-scan", "container-scan", "trivy-iac", "codeql", "sonarcloud",
   ]) assert.match(workflow, new RegExp(`\\b${job}:`));
   assert.match(workflow, /quality-gate:/);
@@ -19,6 +19,21 @@ test("application quality workflow is least-privileged and aggregates every gate
   assert.doesNotMatch(workflow, /persist-credentials:\s*true/);
   assert.doesNotMatch(workflow, /terraform\s+(?:plan|apply|destroy|import)/i);
   assert.doesNotMatch(workflow, /gcloud\s/i);
+});
+
+test("Playwright uses locked synthetic dependencies and read-only failure evidence", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const job = workflow.match(/\n  playwright:[\s\S]+?(?=\n  build:)/)?.[0] ?? "";
+  assert.match(job, /needs: trusted-source/);
+  assert.match(job, /npm ci --ignore-scripts/);
+  assert.match(
+    job,
+    /npm exec --workspace=@crm\/web -- playwright install --with-deps chromium/,
+  );
+  assert.match(job, /npm run test:e2e:browser --workspace=@crm\/web/);
+  assert.match(job, /if: failure\(\)[\s\S]+retention-days: 3/);
+  assert.match(workflow, /quality-gate:[\s\S]+needs:[\s\S]+- playwright/);
+  assert.doesNotMatch(job, /secrets\.|pull_request_target|contents: write|persist-credentials:\s*true/);
 });
 
 test("Sonar gate fails closed and consumes only named repository configuration", async () => {

@@ -5,13 +5,12 @@ import { AuditService } from "../audit/audit.service.js";
 import { ReassignmentService } from "../assignment/reassignment.service.js";
 import { FollowUpService } from "../follow-up/follow-up.service.js";
 import { LeadService, type LeadReportingRow } from "../leads/lead.service.js";
+import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 
 export const COMMERCIAL_PERFORMANCE_VERSION = "commercial-performance-v1";
 export const COMMERCIAL_PERFORMANCE_TIMEZONE = "Africa/Casablanca";
 
-export interface CommercialPerformanceQuery {
-  from?: string; to?: string; campus?: string; inactivityHours?: string;
-}
+export interface CommercialPerformanceQuery extends InteractiveReportingQuery { inactivityHours?: string }
 
 export interface AdviserPerformance {
   adviserId: string;
@@ -53,10 +52,8 @@ export class CommercialPerformanceService {
     if (!Number.isInteger(inactivityHours) || inactivityHours < 1 || inactivityHours > 2160) {
       throw new BadRequestException({ code: "performance_inactivity_threshold_invalid" });
     }
-    const campus = query.campus?.trim();
-    const rows = this.leads.reportingSnapshot(principal).filter((lead) =>
-      (!from || lead.createdAt >= from) && (!to || lead.createdAt < to)
-      && (!campus || lead.campus.localeCompare(campus, "fr", { sensitivity: "accent" }) === 0));
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const unique = new Map(rows.map((row) => [row.id, row]));
     const cohort = [...unique.values()];
     const adviserOnly = principal.roles.includes("ADMISSIONS")

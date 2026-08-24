@@ -56,11 +56,11 @@ export class LeadController {
   }
 
   @Get()
-  @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
+  @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
   list(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): LeadPage {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     const normalized: LeadListQuery = { page: Number(query.page ?? 1), pageSize: Number(query.pageSize ?? 25) };
-    for (const key of ["search", "assignedToId", "status", "source", "program", "campaign", "campus", "createdFrom", "createdTo", "assignmentMode", "importBatchId", "view", "savedView", "sortBy", "sortDirection"] as const) {
+    for (const key of ["search", "assignedToId", "collaboratorId", "status", "source", "channel", "program", "campaign", "campus", "createdFrom", "createdTo", "assignmentMode", "importBatchId", "view", "savedView", "sortBy", "sortDirection"] as const) {
       if (query[key] !== undefined) normalized[key] = query[key];
     }
     return this.leads.listLeads(normalized, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
