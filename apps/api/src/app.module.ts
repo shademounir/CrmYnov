@@ -64,9 +64,11 @@ import { SharedContributionController } from "./reporting/shared-contribution.co
 import { SharedContributionService } from "./reporting/shared-contribution.service.js";
 import { ManagerDashboardController, PersonalDashboardController } from "./reporting/manager-dashboard.controller.js";
 import { ManagerDashboardService } from "./reporting/manager-dashboard.service.js";
+import { ChatController } from "./chat/chat.controller.js";
+import { ChatService } from "./chat/chat.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SessionService,
     RateLimitService,
@@ -92,6 +94,7 @@ import { ManagerDashboardService } from "./reporting/manager-dashboard.service.j
     ImportWizardService,
     ImportReviewService,
     NotificationService,
+    ChatService,
     FollowUpService,
     ClosureService,
     LeadCollaborationService,

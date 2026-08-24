@@ -30,6 +30,17 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/notifications": { get: { summary: "List the caller internal notifications with unread count", responses: { "200": { description: "Deterministic paginated notifications" }, "400": { description: "Invalid pagination" } } } },
       "/notifications/{id}/read": { patch: { summary: "Idempotently mark one owned notification as read", responses: { "200": { description: "Notification read" }, "404": { description: "Notification unavailable" } } } },
       "/notifications/read-all": { patch: { summary: "Idempotently mark all caller notifications as read", responses: { "200": { description: "Updated count" } } } },
+      "/chat/conversations": {
+        get: { summary: "List only the caller internal conversations", responses: { "200": { description: "Deterministic member-scoped conversations" }, "403": { description: "Active collaborator required" } } },
+        post: { summary: "Create an internal direct or team conversation", responses: { "201": { description: "Collaborator-only conversation" }, "400": { description: "Invalid participants, title or deferred attachment" }, "403": { description: "Active collaborator required" } } },
+      },
+      "/chat/conversations/{conversationId}/messages": {
+        get: { summary: "List the authorized conversation history", responses: { "200": { description: "Versioned messages with logical deletion state" }, "404": { description: "Conversation unavailable" } } },
+        post: { summary: "Send one idempotent internal message", responses: { "201": { description: "Message accepted without external delivery" }, "400": { description: "Content or idempotency key invalid" }, "404": { description: "Conversation unavailable" } } },
+      },
+      "/chat/messages/{messageId}": { patch: { summary: "Edit an owned message during the 60-minute window", responses: { "200": { description: "New version recorded" }, "404": { description: "Message unavailable" }, "409": { description: "Version conflict or edit window expired" } } } },
+      "/chat/messages/{messageId}/delete": { post: { summary: "Logically delete an authorized message with a reason", responses: { "201": { description: "Content hidden and original version retained" }, "400": { description: "Reason invalid" }, "404": { description: "Message unavailable" } } } },
+      "/chat/conversations/{conversationId}/read-receipts": { post: { summary: "Idempotently acknowledge one authorized message", responses: { "201": { description: "Read cursor updated" }, "404": { description: "Message or conversation unavailable" } } } },
       "/leads/{leadId}/follow-ups": { post: { summary: "Schedule one controlled lead follow-up", responses: { "201": { description: "Follow-up scheduled" }, "403": { description: "Owner or Manager required" }, "409": { description: "Active follow-up already exists" } } } },
       "/follow-ups": { get: { summary: "List authorized follow-ups in deterministic due order", responses: { "200": { description: "Authorized follow-ups" } } } },
       "/follow-ups/{id}": { patch: { summary: "Postpone, complete or cancel with optimistic concurrency", responses: { "200": { description: "Follow-up updated" }, "409": { description: "Concurrent or final decision" } } } },

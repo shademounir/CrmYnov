@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Role } from "../auth/auth.types.js";
 import { isRole } from "../auth/auth.types.js";
@@ -20,7 +20,10 @@ function isEmail(value: string): boolean {
 @Injectable()
 export class UserService {
   private readonly users = new Map<string, Collaborator>();
-  constructor(private readonly sessions: SessionService, private readonly audit: AuditService) {}
+  constructor(
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(AuditService) private readonly audit: AuditService
+  ) {}
 
   create(input: CreateCollaborator, actorId: string, correlationId: string): Collaborator {
     const email = input.professionalEmail.trim().toLowerCase();
