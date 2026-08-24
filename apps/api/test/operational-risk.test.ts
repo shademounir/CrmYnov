@@ -58,3 +58,13 @@ test("controller refuses a missing principal", () => {
   const { service } = setup(); const controller = new OperationalRiskController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
 });
+
+test("applies the consolidated period and campus scope and rejects invalid boundaries", () => {
+  const { leads, service } = setup();
+  leads.registerLocalLead({ id: "lead-campus-a", leadCode: "LD-A", firstName: "Lead", lastName: "Synthétique", campus: "Campus A", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM" });
+  leads.registerLocalLead({ id: "lead-campus-b", leadCode: "LD-B", firstName: "Lead", lastName: "Synthétique", campus: "Campus B", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM" });
+  const report = service.read({ campus: "Campus A" }, manager, "corr-scope", new Date("2026-08-25T18:00:00.000Z"));
+  assert.equal(report.queues.unassigned, 1);
+  assert.throws(() => service.read({ from: "invalid" }, manager, "corr-invalid"), hasCode("operational_from_invalid"));
+  assert.throws(() => service.read({ from: "2026-09-01", to: "2026-08-01" }, manager, "corr-order"), hasCode("operational_period_invalid"));
+});
