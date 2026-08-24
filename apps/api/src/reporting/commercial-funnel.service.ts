@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -22,6 +22,9 @@ export class CommercialFunnelService {
   constructor(private readonly leads: LeadService, private readonly audit: AuditService) {}
 
   read(query: CommercialFunnelQuery, principal: Principal, correlationId: string): CommercialFunnel {
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
+      throw new ForbiddenException({ code: "reporting_manager_required" });
+    }
     const from = this.boundary(query.from, "funnel_from_invalid");
     const to = this.boundary(query.to, "funnel_to_invalid");
     if (from && to && from >= to) throw new BadRequestException({ code: "funnel_period_invalid" });

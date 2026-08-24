@@ -47,6 +47,8 @@ export interface LeadAssignmentSnapshot {
 }
 export interface LeadReportingRow {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
+  assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string;
+  activities: Array<{ type: ActivityType; result: string; authorId: string; occurredAt: string }>;
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
@@ -237,14 +239,23 @@ export class LeadService {
   }
 
   reportingSnapshot(principal: Principal): LeadReportingRow[] {
-    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
       throw new ForbiddenException({ code: "reporting_manager_required" });
     }
+    const adviserOnly = principal.roles.includes("ADMISSIONS")
+      && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
     const campuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
     return [...this.leads.values()]
-      .filter((lead) => global || campuses.has(lead.campus))
-      .map(({ id, status, campus, campaign, program, source, createdAt }) => ({ id, status, campus, campaign, program, source, createdAt }));
+      .filter((lead) => (global || campuses.has(lead.campus))
+        && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt }) => ({
+        id, status, campus, campaign, program, source, createdAt,
+        ...(assignedToId ? { assignedToId } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
+        ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
+        activities: this.activities.filter((activity) => activity.leadId === id)
+          .map(({ type, result, authorId, occurredAt }) => ({ type, result, authorId, occurredAt })),
+      }));
   }
 
   assignLocalLead(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED"): LeadRecord {

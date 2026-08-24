@@ -48,5 +48,11 @@ export class FollowUpService {
   }
 
   list(principal: Principal): FollowUpRecord[] { return [...this.items.values()].filter((item) => item.ownerId === principal.userId || principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")).sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)).map((item) => ({ ...item })); }
+  reportingSnapshot(principal: Principal): FollowUpRecord[] {
+    const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
+    if (!manager && !principal.roles.includes("ADMISSIONS")) throw new ForbiddenException({ code: "reporting_role_required" });
+    return [...this.items.values()].filter((item) => manager || item.ownerId === principal.userId)
+      .map((item) => ({ ...item }));
+  }
   private recordAudit(item: Readonly<FollowUpRecord>, principal: Principal, correlationId: string, eventType: string): void { this.audit.record({ eventType, actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, after: { followUpId: item.id, leadId: item.leadId, state: item.state, dueAt: item.dueAt, version: item.version }, result: "SUCCESS", idempotencyKey: `${eventType}:${item.id}:${item.version}` }); }
 }

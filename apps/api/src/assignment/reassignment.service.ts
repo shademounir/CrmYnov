@@ -76,6 +76,12 @@ export class ReassignmentService {
     return [...this.requests.values()].filter((item) => item.status === "PENDING")
       .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt) || left.id.localeCompare(right.id)).map((item) => this.copy(item));
   }
+  reportingSnapshot(principal: Principal): ReassignmentRequest[] {
+    const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
+    if (!manager && !principal.roles.includes("ADMISSIONS")) throw new ForbiddenException({ code: "reporting_role_required" });
+    return [...this.requests.values()].filter((item) => manager || item.requestedBy === principal.userId)
+      .map((item) => this.copy(item));
+  }
   private assertApprover(principal: Principal): void { if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "reassignment_approval_role_required" }); }
   private copy(request: Readonly<ReassignmentRequest>): ReassignmentRequest { return { ...request }; }
 }
