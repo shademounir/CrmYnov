@@ -1,6 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
-import type { AuthenticatedRequest } from "../auth/auth.types.js";
-import type { Principal } from "../auth/auth.types.js";
+import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { ImportWizardService, type ImportWizardSession, type ReconcileImportWizardInput, type StartImportWizardInput } from "./import-wizard.service.js";
 
@@ -19,5 +18,10 @@ export class ImportWizardController {
     return this.wizards.confirm(id, body.confirmationToken, this.principal(request));
   }
   @Get(":id") get(@Param("id") id: string, @Req() request: AuthenticatedRequest): ImportWizardSession { return this.wizards.get(id, this.principal(request)); }
-  private principal(request: AuthenticatedRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }
+  private principal(request: AuthenticatedRequest): Principal {
+    if (!request.principal) {
+      throw new BadRequestException({ code: "principal_missing" });
+    }
+    return request.principal;
+  }
 }

@@ -17,9 +17,9 @@ export interface ImportWizardSession {
   confirmationToken?: string; confirmed: boolean; mutated: false; rawFileRetained: false;
 }
 
-const SAFE_FILE = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,119}\.(csv|xlsx)$/i;
+const SAFE_FILE = /^[a-z0-9][a-z0-9._ -]{0,119}\.(csv|xlsx)$/i;
 const SHA256 = /^[a-f0-9]{64}$/;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{2,79}$/;
+const SAFE_ID = /^[a-z0-9][a-z0-9_-]{2,79}$/i;
 
 @Injectable()
 export class ImportWizardService {
@@ -55,7 +55,13 @@ export class ImportWizardService {
   }
 
   get(id: string, principal: Principal): ImportWizardSession { this.assertOperator(principal); return { ...this.required(id) }; }
-  private required(id: string): ImportWizardSession { const session = this.sessions.get(id); if (!session) throw new NotFoundException({ code: "import_wizard_not_found" }); return session; }
+  private required(id: string): ImportWizardSession {
+    const session = this.sessions.get(id);
+    if (!session) {
+      throw new NotFoundException({ code: "import_wizard_not_found" });
+    }
+    return session;
+  }
   private assertOperator(principal: Principal): void {
     if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "import_wizard_forbidden" });
   }
