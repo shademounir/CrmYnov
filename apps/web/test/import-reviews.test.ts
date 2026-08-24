@@ -1,0 +1,2 @@
+import assert from "node:assert/strict"; import test from "node:test"; import { createElement } from "react"; import { renderToStaticMarkup } from "react-dom/server"; import ImportReviewsPage from "../app/imports/reviews/page.js";
+test("renders the sanitized controlled import review queue",()=>{const html=renderToStaticMarkup(createElement(ImportReviewsPage)); for(const value of ["À vérifier","IDENTITY_COLLISION","Créer","Rattacher","Ignorer","Aucune fusion incertaine"]) assert.match(html,new RegExp(value));});
