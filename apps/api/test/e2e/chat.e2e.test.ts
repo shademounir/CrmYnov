@@ -3,13 +3,16 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { createApplication } from "../../src/application.js";
 import { UserService } from "../../src/users/user.service.js";
+import { LeadService } from "../../src/leads/lead.service.js";
 
 test("runs the internal chat journey with member-only history and synthetic data", async (context) => {
   const app = await createApplication();
   const users = app.get(UserService);
+  const leads = app.get(LeadService);
   const author = users.create({ professionalEmail: "chat-author@example.invalid", roles: ["ADMISSIONS"] }, "bootstrap", "chat-author");
   const colleague = users.create({ professionalEmail: "chat-colleague@example.invalid", roles: ["ADMISSIONS"] }, "bootstrap", "chat-colleague");
   const outsider = users.create({ professionalEmail: "chat-outsider@example.invalid", roles: ["ADMISSIONS"] }, "bootstrap", "chat-outsider");
+  const lead = leads.registerLocalLead({ leadCode: "LD-2026-CHAT0002", firstName: "Prénom synthétique", lastName: "Nom synthétique", campus: "Campus synthétique", campaign: "Campagne synthétique", educationLevel: "Niveau synthétique", program: "Programme synthétique", source: "SYNTHETIC", assignedToId: author.id });
   await app.listen(0, "127.0.0.1");
   context.after(() => app.close());
   const address = app.getHttpServer().address() as AddressInfo | null;
@@ -26,10 +29,10 @@ test("runs the internal chat journey with member-only history and synthetic data
   const outsiderToken = await session(outsider.id);
   const jsonHeaders = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}`, "content-type": "application/json", "x-correlation-id": "chat-e2e" });
 
-  const create = await fetch(`${base}/chat/conversations`, { method: "POST", headers: jsonHeaders(authorToken), body: JSON.stringify({ type: "DIRECT", participantIds: [colleague.id] }) });
+  const create = await fetch(`${base}/chat/conversations`, { method: "POST", headers: jsonHeaders(authorToken), body: JSON.stringify({ type: "DIRECT", participantIds: [colleague.id], leadCode: lead.leadCode }) });
   assert.equal(create.status, 201);
   const conversation = await create.json() as { id: string };
-  const send = await fetch(`${base}/chat/conversations/${conversation.id}/messages`, { method: "POST", headers: jsonHeaders(authorToken), body: JSON.stringify({ content: "Message E2E synthétique", clientMessageId: "chat-e2e-0001" }) });
+  const send = await fetch(`${base}/chat/conversations/${conversation.id}/messages`, { method: "POST", headers: jsonHeaders(authorToken), body: JSON.stringify({ content: "Message E2E synthétique", clientMessageId: "chat-e2e-0001", mentionUserIds: [colleague.id] }) });
   assert.equal(send.status, 201);
   const message = await send.json() as { id: string };
 
@@ -41,7 +44,15 @@ test("runs the internal chat journey with member-only history and synthetic data
 
   const receipt = await fetch(`${base}/chat/conversations/${conversation.id}/read-receipts`, { method: "POST", headers: jsonHeaders(colleagueToken), body: JSON.stringify({ messageId: message.id }) });
   assert.equal(receipt.status, 201);
+  const notifications = await fetch(`${base}/notifications`, { headers: { authorization: `Bearer ${colleagueToken}` } });
+  assert.equal(notifications.status, 200);
+  assert.equal((await notifications.json() as { items: Array<{ type: string }> }).items[0]?.type, "CHAT_MENTION");
+  const forbiddenConversion = await fetch(`${base}/chat/messages/${message.id}/convert-to-activity`, { method: "POST", headers: jsonHeaders(colleagueToken), body: JSON.stringify({ type: "COMMENT", result: "DECISION_RECORDED" }) });
+  assert.equal(forbiddenConversion.status, 403);
+  const conversion = await fetch(`${base}/chat/messages/${message.id}/convert-to-activity`, { method: "POST", headers: jsonHeaders(authorToken), body: JSON.stringify({ type: "COMMENT", result: "DECISION_RECORDED", includeMessageAsNote: true }) });
+  assert.equal(conversion.status, 201);
   const specification = await fetch(`${base}/docs-json`).then((response) => response.json()) as { paths: Record<string, unknown> };
   assert.ok(specification.paths["/chat/conversations"]);
   assert.ok(specification.paths["/chat/conversations/{conversationId}/messages"]);
+  assert.ok(specification.paths["/chat/messages/{messageId}/convert-to-activity"]);
 });

@@ -4,7 +4,9 @@ CRMY-85 livre les conversations directes et d’équipe entre collaborateurs act
 
 Les messages sont limités à 2 000 caractères, créés avec une clé d’idempotence client et ordonnés de manière déterministe. L’auteur peut modifier ou supprimer logiquement son message pendant 60 minutes. Une modération après cette fenêtre est réservée à Manager, Admin ou Super Admin et exige un motif. Chaque changement conserve la version antérieure ; l’audit ne contient jamais le texte du message.
 
-Les conversations sans lead portent une échéance initiale de conservation de 12 mois. La purge reste une opération sensible future, hors de cette tranche. Le rattachement à un lead, les mentions, les réponses et la conversion en activité officielle appartiennent à CRMY-86. Les pièces jointes collaboratives sont une option P2 : elles sont refusées explicitement tant que stockage privé, antivirus, quotas et rétention ne sont pas livrés.
+Les conversations sans lead portent une échéance initiale de conservation de 12 mois. La purge reste une opération sensible future, hors de cette tranche. CRMY-86 permet de rattacher un fil à un lead visible sans conférer de droit de mutation. Une mention cible uniquement un membre actif du fil et génère une notification interne idempotente. La conversion d’un message en activité officielle est explicite, unique et réservée au responsable, à un collaborateur validé ou aux rôles Manager/Admin ; le lien contextuel seul ne suffit jamais.
+
+Les pièces jointes collaboratives sont une option P2 : elles sont refusées explicitement tant que stockage privé, antivirus, quotas et rétention ne sont pas livrés. Les notifications restent locales et synthétiques ; la diffusion temps réel appartient à CRMY-87.
 
 ## Validation locale
 

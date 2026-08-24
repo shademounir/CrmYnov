@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
+import type { LeadActivityRecord } from "../leads/lead.service.js";
 import { ChatService, type ChatConversation, type ChatMessage } from "./chat.service.js";
 
 type ChatRequest = AuthenticatedRequest & { header(name: string): string | undefined };
@@ -12,7 +13,7 @@ export class ChatController {
   constructor(@Inject(ChatService) private readonly chat: ChatService) {}
 
   @Post("conversations")
-  createConversation(@Req() request: ChatRequest, @Body() body: { type?: string; title?: string; participantIds?: string[]; attachments?: unknown[] }): ChatConversation {
+  createConversation(@Req() request: ChatRequest, @Body() body: { type?: string; title?: string; participantIds?: string[]; leadCode?: string; attachments?: unknown[] }): ChatConversation {
     return this.chat.createConversation(this.principal(request), body, this.correlationId(request));
   }
 
@@ -25,7 +26,7 @@ export class ChatController {
   postMessage(
     @Param("conversationId") conversationId: string,
     @Req() request: ChatRequest,
-    @Body() body: { content?: string; clientMessageId?: string; attachments?: unknown[] },
+    @Body() body: { content?: string; clientMessageId?: string; mentionUserIds?: string[]; attachments?: unknown[] },
   ): ChatMessage {
     return this.chat.postMessage(conversationId, this.principal(request), body, this.correlationId(request));
   }
@@ -66,6 +67,15 @@ export class ChatController {
   ): { messageId: string; readAt: string } {
     if (!body.messageId) throw new BadRequestException({ code: "chat_message_required" });
     return this.chat.markRead(conversationId, body.messageId, this.principal(request), this.correlationId(request));
+  }
+
+  @Post("messages/:messageId/convert-to-activity")
+  convertToActivity(
+    @Param("messageId") messageId: string,
+    @Req() request: ChatRequest,
+    @Body() body: { type?: string; result?: string; includeMessageAsNote?: boolean },
+  ): LeadActivityRecord {
+    return this.chat.convertMessageToActivity(messageId, this.principal(request), body, this.correlationId(request));
   }
 
   private principal(request: ChatRequest): Principal {

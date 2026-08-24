@@ -13,7 +13,7 @@ export default function InternalChatPage(): React.JSX.Element {
 
       <section aria-labelledby="conversation-heading">
         <h2 id="conversation-heading">Conversation d’équipe synthétique</h2>
-        <p>2 membres actifs · conservation 12 mois · pièces jointes différées</p>
+        <p>2 membres actifs · contexte #LD-SYNTHETIQUE · conservation alignée sur le lead · pièces jointes différées</p>
         <ol aria-label="Historique paginé des messages">
           {syntheticMessages.map((message) => (
             <li key={message.id}>
@@ -31,8 +31,19 @@ export default function InternalChatPage(): React.JSX.Element {
         <label htmlFor="chat-message">Message</label>
         <textarea id="chat-message" name="content" maxLength={2000} required />
         <p>Le contenu est limité à 2 000 caractères et ne remplace pas une note ou activité officielle du lead.</p>
+        <label htmlFor="chat-mention">Mentionner un membre</label>
+        <select id="chat-mention" name="mentionUserId" defaultValue="">
+          <option value="">Aucune mention</option>
+          <option value="collaborator-synthetic">@Collaborateur synthétique</option>
+        </select>
         <button type="submit">Envoyer</button>
       </form>
+
+      <section aria-labelledby="conversion-heading">
+        <h2 id="conversion-heading">Décision officielle</h2>
+        <p>Le lien au lead fournit uniquement du contexte. Une conversion explicite et un droit de mutation sont toujours requis.</p>
+        <button type="button">Convertir en activité</button>
+      </section>
 
       <aside aria-label="Règles de confidentialité">
         <h2>Contrôles appliqués</h2>

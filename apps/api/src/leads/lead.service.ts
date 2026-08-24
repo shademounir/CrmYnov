@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -66,7 +66,7 @@ export class LeadService {
   private readonly leads = new Map<string, Readonly<LeadRecord>>();
   private activities: Readonly<LeadActivityRecord>[] = [];
   private readonly correctionReceipts = new Map<string, Readonly<LeadActivityRecord>>();
-  constructor(private readonly audit: AuditService) {}
+  constructor(@Inject(AuditService) private readonly audit: AuditService) {}
 
   registerLocalLead(input: Omit<LeadRecord, "id" | "createdAt" | "status"> & { id?: string; status?: LeadStatus }): LeadRecord {
     const lead: LeadRecord = Object.freeze({ ...input, id: input.id ?? randomUUID(), status: input.status ?? "PROSPECT", createdAt: new Date().toISOString() });
@@ -201,6 +201,12 @@ export class LeadService {
 
   findLocalLead(leadId: string): LeadRecord | undefined {
     const lead = this.leads.get(leadId);
+    return lead ? { ...lead } : undefined;
+  }
+
+  findLocalLeadByCode(leadCode: string): LeadRecord | undefined {
+    const normalized = leadCode.trim().toUpperCase();
+    const lead = [...this.leads.values()].find((candidate) => candidate.leadCode.toUpperCase() === normalized);
     return lead ? { ...lead } : undefined;
   }
 
