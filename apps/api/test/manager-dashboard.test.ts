@@ -7,7 +7,7 @@ import type { CommercialFunnelService } from "../src/reporting/commercial-funnel
 import type { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
 import { ManagerDashboardController, PersonalDashboardController } from "../src/reporting/manager-dashboard.controller.js";
 import { ManagerDashboardService } from "../src/reporting/manager-dashboard.service.js";
-import { normalizeReportingQuery } from "../src/reporting/reporting-filter.js";
+import { normalizeReportingQuery, reportingSearchParams, sourceChannel } from "../src/reporting/reporting-filter.js";
 import type { OperationalRiskService } from "../src/reporting/operational-risk.service.js";
 import type { SharedContributionService } from "../src/reporting/shared-contribution.service.js";
 import type { SourceEffectivenessService } from "../src/reporting/source-effectiveness.service.js";
@@ -64,6 +64,26 @@ test("normalizes presets, rejects unknown filters and enforces adviser and campu
   const adviser: Principal = { userId: "adviser-synthetic", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-adviser" };
   assert.throws(() => normalizeReportingQuery({ view: "global" }, adviser, now), hasCode("reporting_global_view_forbidden"));
   assert.throws(() => normalizeReportingQuery({ view: "personal", adviserId: "another-adviser" }, adviser, now), hasCode("reporting_adviser_scope_forbidden"));
+});
+
+test("normalizes custom boundaries and refuses malformed or unsupported filters", () => {
+  const now = new Date("2026-08-24T12:00:00.000Z");
+  const globalManager = { ...manager, scopes: [{ kind: "GLOBAL" as const }] };
+  assert.deepEqual(normalizeReportingQuery({ period: "custom", from: "2026-08-01", to: "2026-08-24", status: "contacted", channel: "PHONE" }, globalManager, now), {
+    period: "custom", from: "2026-08-01T00:00:00.000Z", to: "2026-08-24T00:00:00.000Z", view: "global", channel: "PHONE", status: "CONTACTED",
+  });
+  for (const query of [
+    { period: "1d" }, { period: "custom", from: "2026-08-01" }, { period: "custom", from: "invalid", to: "2026-08-24" },
+    { period: "custom", from: "2026-08-24", to: "2026-08-01" }, { channel: "SMTP" }, { status: "UNKNOWN" },
+    { source: "<script>alert(1)</script>" }, { campaign: "javascript:alert(1)" },
+  ]) assert.throws(() => normalizeReportingQuery(query, globalManager, now));
+});
+
+test("serializes reporting filters and channels deterministically without mutating input", () => {
+  const query = { source: "WEB_FORM", period: "30d", campus: "campus-a", adviserId: "adviser-synthetic" };
+  assert.equal(reportingSearchParams(query).toString(), "adviserId=adviser-synthetic&campus=campus-a&period=30d&source=WEB_FORM");
+  assert.deepEqual(query, { source: "WEB_FORM", period: "30d", campus: "campus-a", adviserId: "adviser-synthetic" });
+  assert.deepEqual(["PHONE_CALL", "PHYSICAL_VISIT", "WEB_FORM", "PARTNER", "UNKNOWN"].map(sourceChannel), ["PHONE", "IN_PERSON", "DIGITAL", "PARTNER", "OTHER"]);
 });
 
 test("personal dashboard exposes only authenticated adviser aggregates", () => {

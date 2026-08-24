@@ -94,7 +94,7 @@ export class ManagerDashboardService {
       contributions: this.contributions.read(query, principal, `${correlationId}:contributions`, now),
       safeguards: { personalScopeOnly: true, aggregatedOnly: true, financialDecision: false, disciplinaryScore: false } };
     this.audit.record({ eventType: "PERSONAL_DASHBOARD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
-      correlationId, after: { definitionVersion: report.definitionVersion, activeFilterNames: Object.keys(query).sort() }, result: "SUCCESS",
+      correlationId, after: { definitionVersion: report.definitionVersion, activeFilterNames: this.sortedKeys(query) }, result: "SUCCESS",
       idempotencyKey: `personal-dashboard:${randomUUID()}` });
     return report;
   }
@@ -118,6 +118,7 @@ export class ManagerDashboardService {
     return [...values].sort(([left], [right]) => left.localeCompare(right, "en")).map(([date, counts]) => ({ date, leadsCreated: counts.leadsCreated.size, leadsEnrolled: counts.leadsEnrolled.size }));
   }
   private localDate(value: string): string { const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(value)); const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find((item) => item.type === type)?.value ?? ""; return `${part("year")}-${part("month")}-${part("day")}`; }
+  private sortedKeys(value: object): string[] { const keys = Object.keys(value); keys.sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" })); return keys; }
   private leadHref(query: ManagerDashboardQuery, overrides: Record<string, string> = {}): string {
     const params = new URLSearchParams();
     const mapping: Array<[keyof ManagerDashboardQuery, string]> = [["from", "createdFrom"], ["to", "createdTo"], ["campus", "campus"], ["campaign", "campaign"], ["program", "program"], ["source", "source"], ["channel", "channel"], ["adviserId", "assignedToId"], ["status", "status"]];

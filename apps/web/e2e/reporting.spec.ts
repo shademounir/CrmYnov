@@ -29,7 +29,7 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   await page.locator('select[name="period"]').selectOption("7d"); await page.getByLabel("Campus").fill("campus-a"); await page.getByLabel("Source").fill("SYNTHETIC");
   await page.getByRole("button", { name: "Appliquer" }).click(); await expect(page).toHaveURL(/period=7d.*campus=campus-a.*source=SYNTHETIC/u);
   await expect(page.getByRole("heading", { name: "Indicateurs clés" })).toBeVisible(); await expect(page.getByRole("link", { name: /Leads uniques.*3/u })).toBeVisible();
-  const funnel = page.getByRole("img", { name: /Funnel commercial/u }); await funnel.focus(); await expect(funnel).toBeFocused();
+  const funnel = page.getByRole("button", { name: /Funnel commercial/u }); await funnel.focus(); await expect(funnel).toBeFocused();
   await expect(page.getByRole("table", { name: /Données alternatives — Funnel commercial/u })).toBeVisible();
   await page.getByRole("link", { name: /Leads uniques.*3/u }).click(); await expect(page).toHaveURL(/\/leads\?campus=campus-a.*returnTo=/u);
   await page.getByRole("link", { name: "Retour au dashboard avec les filtres conservés" }).click(); await expect(page).toHaveURL(/period=7d.*campus=campus-a/u);
@@ -45,4 +45,21 @@ test("personal scope, empty and error states fail closed", async ({ page }) => {
   await page.goto("/manager/reports/dashboard?period=7d"); await expect(page.getByRole("heading", { name: "Aucun résultat" })).toBeVisible();
   await page.unroute("**/api/reports/manager-dashboard?*"); await page.route("**/api/reports/manager-dashboard?*", (route) => route.fulfill({ status: 403, contentType: "application/json", body: "{}" }));
   await page.goto("/manager/reports/dashboard?period=7d&adviserId=outside-scope"); await expect(page.locator("main section[role=alert]")).toContainText("Erreur de chargement");
+});
+
+test("hostile labels remain inert and external destinations are refused", async ({ page }) => {
+  const hostile = `<img src=x onerror=alert(1)><script>window.__unsafe = true</script>`;
+  const hostileReport = {
+    ...managerReport,
+    distributions: { ...managerReport.distributions, source: [{ value: hostile, count: 1 }] },
+    drillDowns: [{ key: "uniqueLeads", count: 1, href: "javascript:alert(1)" }],
+    export: { ...managerReport.export, href: "https://external.invalid/export" },
+  };
+  await page.route("**/api/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(hostileReport) }));
+  await page.goto("/manager/reports/dashboard?period=7d");
+  await expect(page.getByText(hostile, { exact: true }).first()).toBeVisible();
+  expect((await page.locator("script").allTextContents()).every((content) => !content.includes("window.__unsafe"))).toBe(true);
+  expect(await page.evaluate(() => (window as typeof window & { __unsafe?: boolean }).__unsafe)).toBeUndefined();
+  await expect(page.getByRole("link", { name: /Leads uniques/u })).toHaveAttribute("href", "#");
+  await expect(page.getByRole("link", { name: "Exporter les agrégats CSV" })).toHaveAttribute("href", "#");
 });

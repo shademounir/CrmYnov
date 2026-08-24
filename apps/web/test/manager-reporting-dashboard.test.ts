@@ -3,7 +3,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ManagerReportsDashboardPage from "../app/manager/reports/dashboard/page.js";
-import InteractiveReportingDashboard, { type DashboardReport, type PersonalDashboardReport } from "../app/manager/reports/dashboard/reporting-ui.js";
+import InteractiveReportingDashboard, { preserveFilters, safeInternalHref, type DashboardReport, type PersonalDashboardReport } from "../app/manager/reports/dashboard/reporting-ui.js";
 
 const report: DashboardReport = {
   definitionVersion: "manager-dashboard-v1", timezone: "Africa/Casablanca", filters: { period: "30d", campus: "campus-a" },
@@ -30,7 +30,7 @@ test("renders URL-backed filters and the non-sensitive loading state", async () 
 test("renders keyboard-focusable charts and an alternative data table for every visualization", () => {
   const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { period: "30d", campus: "campus-a" }, initialReport: report }));
   for (const text of ["Indicateurs clés", "Funnel commercial", "Évolution temporelle", "Répartition par source", "Charge commerciale", "Contributions principales et secondaires", "Données alternatives", "Exporter les agrégats CSV"]) assert.equal(html.includes(text), true);
-  assert.equal((html.match(/role="img"/gu) ?? []).length, 8); assert.equal((html.match(/tabindex="0"/gu) ?? []).length, 8);
+  assert.equal((html.match(/class="reporting-chart"/gu) ?? []).length, 8); assert.equal((html.match(/type="button"/gu) ?? []).length, 8);
   assert.equal(html.includes("Alex"), false); assert.equal(html.includes("@example"), false); assert.equal(html.includes("returnTo="), true);
 });
 
@@ -40,4 +40,31 @@ test("renders the adviser-only personal view without global cards", () => {
     contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
   const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { view: "personal" }, initialReport: personal }));
   assert.equal(html.includes("Mes indicateurs autorisés"), true); assert.equal(html.includes("Mes contributions"), true); assert.equal(html.includes("Alertes actives"), false);
+});
+
+test("keeps hostile aggregate labels as inert text and refuses unsafe destinations", () => {
+  const hostile = `<img src=x onerror=alert(1)><script>alert(1)</script>`;
+  const hostileReport: DashboardReport = {
+    ...report,
+    distributions: { ...report.distributions, source: [{ value: hostile, count: 1 }] },
+    drillDowns: [{ key: "uniqueLeads", count: 1, href: "javascript:alert(1)" }],
+    export: { ...report.export, href: "https://external.invalid/export" },
+  };
+  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: hostileReport }));
+  assert.equal(html.includes("<script>alert(1)</script>"), false);
+  assert.equal(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), true);
+  assert.equal(html.includes("onerror="), true);
+  assert.equal((html.match(/href="#"/gu) ?? []).length >= 2, true);
+  assert.equal(html.includes("javascript:"), false);
+  assert.equal(html.includes("external.invalid"), false);
+});
+
+test("allows only explicit internal reporting destinations", () => {
+  for (const href of ["/leads?campus=campus-a", "/reports/manager-dashboard/export?period=7d"]) assert.equal(safeInternalHref(href), href);
+  for (const href of ["javascript:alert(1)", "jAvAsCrIpT%3Aalert(1)", "https://external.invalid", "//external.invalid", "/../secret", "/admin", "/leads\\..\\secret", "/leads\0unsafe"]) assert.equal(safeInternalHref(href), "#");
+  const preserved = preserveFilters("/leads?view=FOLLOW_UP", new URLSearchParams({ from: "2026-08-01", to: "2026-08-24", adviserId: "adviser-synthetic", campus: "campus-a" }));
+  assert.equal(preserved.startsWith("/leads?"), true);
+  assert.equal(preserved.includes("createdFrom=2026-08-01"), true);
+  assert.equal(preserved.includes("assignedToId=adviser-synthetic"), true);
+  assert.equal(preserveFilters("javascript:alert(1)", new URLSearchParams()), "#");
 });
