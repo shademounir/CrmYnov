@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -198,6 +198,20 @@ export class IngestionService {
   getBatch(batchId: string): IngestionBatchResult | undefined {
     const batch = [...this.batches.values()].find((item) => item.batchId === batchId);
     return batch ? this.copy(batch) : undefined;
+  }
+
+  attachOperationalProvenance(leadId: string, input: { source: "PHONE_CALL" | "PHYSICAL_VISIT"; idempotencyKey: string; campaign?: string }, principal: Principal, correlationId: string): { replayed: boolean; batchId: string } {
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "operational_provenance_role_forbidden" });
+    if (!IDEMPOTENCY_KEY.test(input.idempotencyKey)) throw new BadRequestException({ code: "operational_provenance_idempotency_invalid" });
+    const externalKey = `MANUAL_ENTRY:${input.idempotencyKey}`;
+    const existing = this.provenanceByExternalId.get(externalKey);
+    if (existing?.leadId && existing.leadId !== leadId) throw new ConflictException({ code: "operational_provenance_conflict" });
+    if (existing) return { replayed: true, batchId: existing.batchId };
+    const batchId = `manual-${randomUUID()}`;
+    this.attachProvenance(leadId, { lineNumber: 1, firstName: "not-stored", lastName: "not-stored", source: input.source,
+      technicalSystem: "MANUAL_ENTRY", originalSource: input.source, recentSource: input.source, externalId: input.idempotencyKey,
+      ...(input.campaign?.trim() ? { campaign: input.campaign.trim() } : {}) }, batchId, externalKey, principal, correlationId);
+    return { replayed: false, batchId };
   }
 
   private ingestOne(record: IngestionRecordInput, batch: IngestionBatchInput, batchId: string, principal: Principal, correlationId: string): IngestionLineResult {
