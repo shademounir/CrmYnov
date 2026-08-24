@@ -54,9 +54,11 @@ import { LeadCollaborationController } from "./collaboration/lead-collaboration.
 import { LeadCollaborationService } from "./collaboration/lead-collaboration.service.js";
 import { CommercialFunnelController } from "./reporting/commercial-funnel.controller.js";
 import { CommercialFunnelService } from "./reporting/commercial-funnel.service.js";
+import { CommercialPerformanceController } from "./reporting/commercial-performance.controller.js";
+import { CommercialPerformanceService } from "./reporting/commercial-performance.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController],
   providers: [
     SessionService,
     RateLimitService,
@@ -86,6 +88,7 @@ import { CommercialFunnelService } from "./reporting/commercial-funnel.service.j
     ClosureService,
     LeadCollaborationService,
     CommercialFunnelService,
+    CommercialPerformanceService,
   ],
 })
 export class AppModule {}
