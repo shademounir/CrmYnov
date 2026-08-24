@@ -312,6 +312,14 @@ export class LeadService {
     return { ...updated };
   }
 
+  recordFollowUp(leadId: string, nextActionAt: string | undefined, principal: Principal, correlationId: string, result: string): LeadRecord {
+    const current = this.leads.get(leadId); if (!current) throw new NotFoundException({ code: "lead_not_found" });
+    const withoutNextAction: LeadRecord = { ...current }; delete withoutNextAction.nextActionAt; const occurredAt = new Date().toISOString();
+    const updated: Readonly<LeadRecord> = Object.freeze(nextActionAt ? { ...current, nextActionAt, lastActivityAt: occurredAt } : { ...withoutNextAction, lastActivityAt: occurredAt }); this.leads.set(leadId, updated);
+    const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: "COMMENT", result, authorId: principal.userId, correlationId, occurredAt, ...(nextActionAt ? { nextActionAt } : {}) }); this.activities = [...this.activities, activity];
+    return { ...updated };
+  }
+
   timeline(leadId: string, principal: Principal): LeadActivityRecord[] {
     if (!this.leads.has(leadId)) throw new NotFoundException({ code: "lead_not_found" });
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
