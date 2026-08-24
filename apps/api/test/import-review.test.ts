@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"; import test from "node:test";
-import type { Principal } from "../src/auth/auth.types.js"; import { ImportReviewService } from "../src/import-review/import-review.service.js";
+import type { AuthenticatedRequest, Principal } from "../src/auth/auth.types.js"; import { ImportReviewService } from "../src/import-review/import-review.service.js"; import { ImportReviewController } from "../src/import-review/import-review.controller.js";
 const manager: Principal = { userId: "10000000-0000-4000-8000-000000000061", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "20000000-0000-4000-8000-000000000061" };
 test("queues sanitized collisions and records an idempotent controlled decision", () => {
  const service = new ImportReviewService(); const leadId="30000000-0000-4000-8000-000000000061";
@@ -14,3 +14,7 @@ test("refuses malformed, stale and unauthorized review operations",()=>{ const s
  const item=service.enqueue({batchId:"batch-synthetic",lineNumber:1,reasons:["SOURCE_UNKNOWN"]},manager);
  assert.throws(()=>service.decide(item.id,{decision:"CREATE",expectedVersion:0,idempotencyKey:"decision-002"},manager));
  assert.throws(()=>service.decide(item.id,{decision:"IGNORE",expectedVersion:1,idempotencyKey:"decision-003",targetLeadId:"30000000-0000-4000-8000-000000000061"},manager)); });
+test("controller exposes authenticated queue and decision contracts",()=>{const service=new ImportReviewService(); const controller=new ImportReviewController(service); const request={principal:manager} as AuthenticatedRequest;
+ const item=controller.enqueue({batchId:"batch-synthetic",lineNumber:3,reasons:["PROGRAM_UNKNOWN"]},request); assert.equal(controller.list(request).length,1);
+ assert.equal(controller.decide(item.id,{decision:"IGNORE",expectedVersion:1,idempotencyKey:"decision-004"},request).status,"RESOLVED");
+ assert.throws(()=>controller.list({} as AuthenticatedRequest));});

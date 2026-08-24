@@ -9,5 +9,10 @@ export class ImportReviewController {
   @Post() enqueue(@Body() body: EnqueueReviewInput, @Req() request: AuthenticatedRequest): ReviewItem { return this.reviews.enqueue(body, this.principal(request)); }
   @Get() list(@Req() request: AuthenticatedRequest): ReviewItem[] { return this.reviews.list(this.principal(request)); }
   @Post(":id/decisions") decide(@Param("id") id: string, @Body() body: DecideReviewInput, @Req() request: AuthenticatedRequest): ReviewItem { return this.reviews.decide(id, body, this.principal(request)); }
-  private principal(request: AuthenticatedRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }
+  private principal(request: AuthenticatedRequest): Principal {
+    if (!request.principal) {
+      throw new BadRequestException({ code: "principal_missing" });
+    }
+    return request.principal;
+  }
 }

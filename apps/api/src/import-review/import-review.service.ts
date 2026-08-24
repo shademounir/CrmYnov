@@ -20,7 +20,9 @@ export class ImportReviewService {
       || input.reasons.some((reason) => !REVIEW_REASONS.includes(reason)) || new Set(input.reasons).size !== input.reasons.length
       || candidates.some((id) => !UUID.test(id)) || new Set(candidates).size !== candidates.length)
       throw new BadRequestException({ code: "import_review_item_invalid" });
-    const item: ReviewItem = { id: randomUUID(), batchId: input.batchId, lineNumber: input.lineNumber, reasons: [...input.reasons].sort(), candidateLeadIds: [...candidates].sort(), status: "PENDING", version: 1 };
+    const item: ReviewItem = { id: randomUUID(), batchId: input.batchId, lineNumber: input.lineNumber,
+      reasons: [...input.reasons].sort((left, right) => left.localeCompare(right)),
+      candidateLeadIds: [...candidates].sort((left, right) => left.localeCompare(right)), status: "PENDING", version: 1 };
     this.items.set(item.id, item); return structuredClone(item);
   }
   list(principal: Principal): ReviewItem[] { this.assertManager(principal); return [...this.items.values()].map((item) => structuredClone(item)).sort((a, b) => a.lineNumber - b.lineNumber); }
