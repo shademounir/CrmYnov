@@ -288,14 +288,14 @@ export class LeadService {
   }
 
   changeStatus(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): LeadRecord {
-    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const current = this.leads.get(leadId);
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (!leadStatuses.includes(input.status as LeadStatus)) throw new BadRequestException({ code: "lead_status_invalid" });
     const status = input.status as LeadStatus;
     if (!allowedTransitions[current.status].includes(status)) throw new BadRequestException({ code: "lead_status_transition_forbidden" });
     const terminal = status === "ENROLLED" || status === "CLOSED_LOST";
-    if (terminal && !principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_closure_approval_required" });
+    if (terminal && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_closure_approval_required" });
     const reason = input.reason?.trim();
     if (terminal && !reason) throw new BadRequestException({ code: "lead_closure_reason_required" });
     const occurredAt = new Date().toISOString();
