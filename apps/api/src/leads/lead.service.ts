@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
+export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number];
 export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
@@ -55,7 +55,7 @@ export class LeadService {
   }
 
   createLead(input: CreateLeadInput, principal: Principal, correlationId: string): CreateLeadResult {
-    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
+    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const required = [input.firstName, input.lastName, input.campus, input.campaign, input.educationLevel, input.program, input.source];
     if (required.some((value) => !value?.trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
     const email = input.email?.trim().toLowerCase();
@@ -160,6 +160,17 @@ export class LeadService {
     const emailLeadId = normalizedEmail ? [...this.leads.values()].find((lead) => lead.email === normalizedEmail)?.id : undefined;
     const phoneLeadId = normalizedPhone ? [...this.leads.values()].find((lead) => lead.phone === normalizedPhone)?.id : undefined;
     return { ...(emailLeadId ? { emailLeadId } : {}), ...(phoneLeadId ? { phoneLeadId } : {}) };
+  }
+
+  findIdentityCandidates(email?: string, phone?: string): Array<{ leadId: string; leadCode: string; matchedBy: Array<"EMAIL" | "PHONE"> }> {
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPhone = phone?.replace(/[^+\d]/g, "");
+    return [...this.leads.values()].flatMap((lead) => {
+      const matchedBy: Array<"EMAIL" | "PHONE"> = [];
+      if (normalizedEmail && lead.email === normalizedEmail) matchedBy.push("EMAIL");
+      if (normalizedPhone && lead.phone === normalizedPhone) matchedBy.push("PHONE");
+      return matchedBy.length ? [{ leadId: lead.id, leadCode: lead.leadCode, matchedBy }] : [];
+    }).sort((left, right) => left.leadCode.localeCompare(right.leadCode, "fr"));
   }
 
   appendIngestionActivity(leadId: string, input: { type: "LEGACY_IMPORT" | "PROVENANCE_ATTACHED" | "CRM_CALL" | "EXTERNAL_CALL" | "MEETING"; result: string; occurredAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {
