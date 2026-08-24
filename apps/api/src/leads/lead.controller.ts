@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
-import { LeadService, type CreateLeadInput, type CreateLeadResult, type LeadActivityRecord, type LeadListQuery, type LeadPage, type LeadRecord } from "./lead.service.js";
+import { LeadService, type CreateLeadInput, type CreateLeadResult, type InteractionCorrectionInput, type LeadActivityRecord, type LeadListQuery, type LeadPage, type LeadRecord } from "./lead.service.js";
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
@@ -20,6 +20,13 @@ export class LeadTimelineController {
   create(@Param("leadId") leadId: string, @Body() body: { type: string; result: string; note?: string; nextActionAt?: string }, @Req() request: AuthenticatedRequest): LeadActivityRecord {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.leads.addActivity(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+
+  @Post(":eventId/corrections")
+  @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
+  correct(@Param("leadId") leadId: string, @Param("eventId") eventId: string, @Body() body: InteractionCorrectionInput, @Req() request: AuthenticatedRequest): LeadActivityRecord {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.leads.correctActivity(leadId, eventId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }
 

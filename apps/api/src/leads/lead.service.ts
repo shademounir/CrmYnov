@@ -3,8 +3,19 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
+export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number];
+export const correctionReasonCodes = ["WRONG_CHANNEL", "WRONG_RESULT", "WRONG_NEXT_ACTION", "DUPLICATE_ENTRY", "OTHER_CONTROLLED"] as const;
+export type CorrectionReasonCode = (typeof correctionReasonCodes)[number];
+export interface ExpurgatedActivitySnapshot { type: ActivityType; result: string; noteState: "ABSENT" | "REDACTED"; nextActionAt?: string }
+export interface ActivityCorrection {
+  originalEventId: string; operation: "CORRECT" | "CANCEL"; reasonCode: CorrectionReasonCode;
+  previous: ExpurgatedActivitySnapshot; replacement?: ExpurgatedActivitySnapshot;
+}
+export interface InteractionCorrectionInput {
+  idempotencyKey: string; expectedCorrectionCount: number; operation: "CORRECT" | "CANCEL"; reasonCode: string;
+  replacement?: { type: string; result: string; nextActionAt?: string };
+}
 export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
 const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = {
@@ -24,7 +35,7 @@ export interface LeadRecord {
 
 export interface LeadActivityRecord {
   id: string; leadId: string; type: ActivityType; result: string; note?: string; authorId: string;
-  nextActionAt?: string; correlationId: string; occurredAt: string;
+  nextActionAt?: string; correlationId: string; occurredAt: string; correction?: ActivityCorrection;
 }
 
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
@@ -49,6 +60,7 @@ export type LeadSavedView = typeof leadSavedViews[number];
 export class LeadService {
   private readonly leads = new Map<string, Readonly<LeadRecord>>();
   private activities: Readonly<LeadActivityRecord>[] = [];
+  private readonly correctionReceipts = new Map<string, Readonly<LeadActivityRecord>>();
   constructor(private readonly audit: AuditService) {}
 
   registerLocalLead(input: Omit<LeadRecord, "id" | "createdAt" | "status"> & { id?: string; status?: LeadStatus }): LeadRecord {
@@ -287,6 +299,55 @@ export class LeadService {
     return { ...activity };
   }
 
+  correctActivity(leadId: string, originalEventId: string, input: InteractionCorrectionInput, principal: Principal, correlationId: string): LeadActivityRecord {
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "interaction_correction_forbidden" });
+    const lead = this.leads.get(leadId);
+    if (!lead || !principal.scopes.some((scope) => scope.kind === "GLOBAL" || (scope.kind === "CAMPUS" && scope.id === lead.campus))) throw new NotFoundException({ code: "lead_not_found" });
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(input.idempotencyKey)) throw new BadRequestException({ code: "interaction_correction_idempotency_invalid" });
+    const receipt = this.correctionReceipts.get(input.idempotencyKey);
+    if (receipt) {
+      if (receipt.correction?.originalEventId !== originalEventId || receipt.leadId !== leadId) throw new ConflictException({ code: "interaction_correction_idempotency_conflict" });
+      return structuredClone(receipt);
+    }
+    const original = this.activities.find((activity) => activity.id === originalEventId && activity.leadId === leadId);
+    if (!original || original.type === "CORRECTION") throw new NotFoundException({ code: "interaction_not_found" });
+    const existing = this.activities.filter((activity) => activity.correction?.originalEventId === originalEventId);
+    if (input.expectedCorrectionCount !== existing.length || existing.some((activity) => activity.correction?.operation === "CANCEL")) throw new ConflictException({ code: "interaction_correction_concurrent" });
+    if (existing.length > 0) throw new ConflictException({ code: "interaction_already_corrected" });
+    if (!correctionReasonCodes.includes(input.reasonCode as CorrectionReasonCode)) throw new BadRequestException({ code: "interaction_correction_reason_invalid" });
+    if (input.operation !== "CORRECT" && input.operation !== "CANCEL") throw new BadRequestException({ code: "interaction_correction_operation_invalid" });
+    if ((input.operation === "CORRECT") !== Boolean(input.replacement)) throw new BadRequestException({ code: "interaction_correction_replacement_invalid" });
+
+    const previous = this.expurgatedSnapshot(original);
+    const replacement = input.replacement ? this.validateCorrectionReplacement(input.replacement) : undefined;
+    const occurredAt = new Date().toISOString();
+    const correction: ActivityCorrection = Object.freeze({
+      originalEventId, operation: input.operation, reasonCode: input.reasonCode as CorrectionReasonCode,
+      previous, ...(replacement ? { replacement } : {}),
+    });
+    const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: "CORRECTION",
+      result: input.operation, authorId: principal.userId, correlationId, occurredAt, correction });
+    this.activities = [...this.activities, activity];
+    this.correctionReceipts.set(input.idempotencyKey, activity);
+    this.audit.record({ eventType: "LEAD_ACTIVITY_COMPENSATED", actorId: principal.userId, actorRoles: principal.roles,
+      sessionId: principal.sessionId, correlationId, before: { leadId, activityId: originalEventId, type: previous.type },
+      after: { leadId, correctionId: activity.id, operation: input.operation, reasonCode: input.reasonCode, replacementType: replacement?.type },
+      result: "SUCCESS", idempotencyKey: `lead-activity-correction:${input.idempotencyKey}` });
+    return structuredClone(activity);
+  }
+
+  private expurgatedSnapshot(activity: Readonly<LeadActivityRecord>): ExpurgatedActivitySnapshot {
+    const result = /^[A-Z][A-Z0-9_]{1,63}$/.test(activity.result) ? activity.result : "[redacted]";
+    return Object.freeze({ type: activity.type, result, noteState: activity.note ? "REDACTED" : "ABSENT", ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) });
+  }
+
+  private validateCorrectionReplacement(input: { type: string; result: string; nextActionAt?: string }): ExpurgatedActivitySnapshot {
+    if (!activityTypes.includes(input.type as ActivityType) || input.type === "CORRECTION" || !/^[A-Z][A-Z0-9_]{1,63}$/.test(input.result)) throw new BadRequestException({ code: "interaction_correction_value_invalid" });
+    const nextActionAt = input.nextActionAt ? new Date(input.nextActionAt) : undefined;
+    if (nextActionAt && Number.isNaN(nextActionAt.valueOf())) throw new BadRequestException({ code: "interaction_correction_next_action_invalid" });
+    return Object.freeze({ type: input.type as ActivityType, result: input.result, noteState: "ABSENT", ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}) });
+  }
+
   changeStatus(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): LeadRecord {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const current = this.leads.get(leadId);
@@ -335,6 +396,6 @@ export class LeadService {
   timeline(leadId: string, principal: Principal): LeadActivityRecord[] {
     if (!this.leads.has(leadId)) throw new NotFoundException({ code: "lead_not_found" });
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN" || role === "AUDITOR")) throw new ForbiddenException({ code: "role_forbidden" });
-    return this.activities.filter((item) => item.leadId === leadId).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id)).map((item) => ({ ...item }));
+    return this.activities.filter((item) => item.leadId === leadId).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || b.id.localeCompare(a.id)).map((item) => structuredClone(item));
   }
 }
