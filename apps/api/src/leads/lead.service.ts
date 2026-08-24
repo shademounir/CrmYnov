@@ -52,7 +52,7 @@ export interface LeadReportingRow {
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
-  page: number; pageSize: number; search?: string; assignedToId?: string; status?: string; source?: string;
+  page: number; pageSize: number; search?: string; assignedToId?: string; collaboratorId?: string; status?: string; source?: string; channel?: string;
   program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
   assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
   savedView?: string;
@@ -122,16 +122,22 @@ export class LeadService {
     const savedView = query.savedView?.toUpperCase() as LeadSavedView | undefined;
     if (savedView && !leadSavedViews.includes(savedView)) throw new BadRequestException({ code: "lead_saved_view_invalid" });
     const now = new Date().toISOString();
+    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
+    const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
+    const channel = query.channel?.toUpperCase();
+    if (channel && !["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"].includes(channel)) throw new BadRequestException({ code: "lead_channel_filter_invalid" });
     const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
     const filtered = [...this.leads.values()].filter((lead) => {
       const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
         .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
-      return (!search || searchable.some((value) => value.includes(search)))
+      return (global || allowedCampuses.has(lead.campus))
+        && (!search || searchable.some((value) => value.includes(search)))
         && this.matchesView(lead, view, principal, now)
         && this.matchesSavedView(lead, savedView)
         && (!query.assignedToId || lead.assignedToId === query.assignedToId)
+        && (!query.collaboratorId || lead.collaboratorIds?.includes(query.collaboratorId))
         && (!status || lead.status === status)
-        && matches(lead.source, query.source) && matches(lead.program, query.program)
+        && matches(lead.source, query.source) && (!channel || this.sourceChannel(lead.source) === channel) && matches(lead.program, query.program)
         && matches(lead.campaign, query.campaign) && matches(lead.campus, query.campus)
         && matches(lead.assignmentMode, query.assignmentMode) && matches(lead.importBatchId, query.importBatchId)
         && (!createdFrom || lead.createdAt >= createdFrom) && (!createdTo || lead.createdAt <= createdTo);
@@ -167,6 +173,14 @@ export class LeadService {
       PHONE_CALLS: "PHONE_CALL", PHYSICAL_VISITS: "PHYSICAL_VISIT", JOBINTECH: "JOBINTECH", LEGACY_RELAUNCH: "LEGACY_RELAUNCH",
     };
     return lead.source === sources[savedView];
+  }
+
+  private sourceChannel(source: string): string {
+    if (source === "PHONE_CALL") return "PHONE";
+    if (source === "PHYSICAL_VISIT" || source === "EVENT") return "IN_PERSON";
+    if (["WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL";
+    if (source === "PARTNER" || source === "JOBINTECH") return "PARTNER";
+    return "OTHER";
   }
 
   private parseBoundary(value: string | undefined, errorCode: string): string | undefined {

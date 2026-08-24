@@ -4,11 +4,12 @@ import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { IngestionService, type IngestionReportingOccurrence } from "../ingestion/ingestion.service.js";
 import { LeadService, type LeadReportingRow } from "../leads/lead.service.js";
+import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
 
 export const SOURCE_EFFECTIVENESS_VERSION = "source-effectiveness-v1";
 export const SOURCE_EFFECTIVENESS_TIMEZONE = "Africa/Casablanca";
 type Dimension = "source" | "channel" | "campaign" | "program" | "campus" | "provenanceMode";
-export interface SourceEffectivenessQuery { from?: string; to?: string; source?: string; campaign?: string; program?: string; campus?: string }
+export type SourceEffectivenessQuery = InteractiveReportingQuery;
 export interface EffectivenessGroup {
   value: string; evidence: "ingestion-occurrences" | "lead-cohort"; volumeReceived: number; uniqueLeadCount: number;
   rates: { duplicate: number | null; incomplete: number | null; contact: number | null; qualification: number | null; enrollment: number | null; closedLost: number | null };
@@ -32,14 +33,14 @@ export class SourceEffectivenessService {
     const from = this.boundary(query.from, "source_report_from_invalid"); const to = this.boundary(query.to, "source_report_to_invalid");
     if (from && to && from >= to) throw new BadRequestException({ code: "source_report_period_invalid" });
     const exact = (value: string, expected?: string): boolean => !expected || value.localeCompare(expected.trim(), "fr", { sensitivity: "accent" }) === 0;
-    const leads = [...new Map(this.leads.reportingSnapshot(principal).filter((lead) => (!from || lead.createdAt >= from) && (!to || lead.createdAt < to)
-      && exact(lead.source, query.source) && exact(lead.campaign, query.campaign) && exact(lead.program, query.program) && exact(lead.campus, query.campus))
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const leads = [...new Map(this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized))
       .map((lead) => [lead.id, lead])).values()];
     const leadIds = new Set(leads.map((lead) => lead.id));
     const occurrences = this.ingestion.reportingSnapshot(principal).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
-      && exact(item.source, query.source) && exact(item.campaign ?? "UNSPECIFIED", query.campaign)
+      && exact(item.source, query.source) && (!query.channel || sourceChannel(item.source) === query.channel) && exact(item.campaign ?? "UNSPECIFIED", query.campaign)
       && exact(item.program ?? "UNSPECIFIED", query.program) && exact(item.campus ?? "UNSPECIFIED", query.campus)
-      && (!item.leadId || leadIds.has(item.leadId)));
+      && (!item.leadId ? !query.adviserId && !query.status : leadIds.has(item.leadId)));
     const breakdowns = Object.fromEntries(dimensions.map((dimension) => [dimension, this.groups(dimension, leads, occurrences)])) as Record<Dimension, EffectivenessGroup[]>;
     const report: SourceEffectivenessReport = {
       definitionVersion: SOURCE_EFFECTIVENESS_VERSION, timezone: SOURCE_EFFECTIVENESS_TIMEZONE, generatedAt: now.toISOString(),

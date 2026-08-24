@@ -1,7 +1,10 @@
+import DashboardReturnLink from "./dashboard-return-link";
+
 const leads = [{ code: "LD-SYNTH-001", name: "Alex Synthétique", status: "Prospect", program: "Programme test" }];
 
 export default function LeadsPage(): React.JSX.Element {
   return <main><h1>Files de travail Leads</h1><p>Recherche et filtres combinables, conservés dans une URL partageable.</p>
+    <DashboardReturnLink />
     <nav aria-label="Vues Leads"><a href="/leads?view=ALL">Tous les leads</a> <a href="/leads?view=MINE">Mes leads</a> <a href="/leads?view=FOLLOW_UP">À relancer</a> <a href="/leads?view=UNASSIGNED">Non affectés</a> <a href="/leads?view=NO_ACTIVITY">Sans activité</a> <a href="/leads?view=CLOSED">Clôturés</a></nav>
     <nav aria-label="Vues par provenance"><a href="/leads?savedView=FORMINATOR_ZAPIER">Forminator/Zapier</a> <a href="/leads?savedView=YNOV_MA_LEGACY">Ynov.ma historique</a> <a href="/leads?savedView=YNOV_COM">Ynov.com</a> <a href="/leads?savedView=PHONE_CALLS">Appels</a> <a href="/leads?savedView=PHYSICAL_VISITS">Visites</a> <a href="/leads?savedView=JOBINTECH">JobInTech</a> <a href="/leads?savedView=LEGACY_RELAUNCH">Relance historique</a> <a href="/leads?savedView=UNCLASSIFIED_SOURCES">Sources non classifiées</a> <a href="/leads?savedView=INCOMPLETE">À compléter</a> <a href="/leads?savedView=IMPORT_ERRORS">Imports en erreur</a></nav>
     <form action="/leads" method="get" aria-label="Recherche et filtres des leads">

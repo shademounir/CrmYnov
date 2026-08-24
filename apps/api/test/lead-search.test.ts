@@ -27,6 +27,16 @@ test("rejects invalid query values fail-closed", () => {
   assert.throws(() => service.listLeads({ page: 1, pageSize: 25, sortBy: "email" }, principal, "corr"), hasCode("lead_sort_invalid"));
   assert.throws(() => service.listLeads({ page: 1, pageSize: 25, createdFrom: "invalid" }, principal, "corr"), hasCode("lead_created_from_invalid"));
   assert.throws(() => service.listLeads({ page: 1, pageSize: 25, view: "FORGED" }, principal, "corr"), hasCode("lead_view_invalid"));
+  assert.throws(() => service.listLeads({ page: 1, pageSize: 25, channel: "FORGED" }, principal, "corr"), hasCode("lead_channel_filter_invalid"));
+});
+
+test("drill-down filters channel and collaborator while enforcing campus scope", () => {
+  const service = new LeadService(new AuditService());
+  const visible = service.registerLocalLead({ ...base, leadCode: "LD-DRILL-001", source: "FORMINATOR_ZAPIER", collaboratorIds: ["collaborator-synthetic"] });
+  service.registerLocalLead({ ...base, leadCode: "LD-DRILL-002", campus: "Campus B", source: "FORMINATOR_ZAPIER", collaboratorIds: ["collaborator-synthetic"] });
+  const campusPrincipal = { ...principal, scopes: [{ kind: "CAMPUS" as const, id: "Campus A" }] };
+  const page = service.listLeads({ page: 1, pageSize: 25, channel: "DIGITAL", collaboratorId: "collaborator-synthetic" }, campusPrincipal, "corr-drill");
+  assert.equal(page.total, 1); assert.equal(page.items[0]?.id, visible.id);
 });
 
 test("serves global, personal, due and unassigned views with deterministic filters", () => {
