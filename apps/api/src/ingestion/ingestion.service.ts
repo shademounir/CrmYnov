@@ -77,6 +77,11 @@ export interface IngestionDryRunResult {
   mutated: false;
 }
 
+export interface IngestionReportingOccurrence {
+  leadId?: string; source: IngestionSource; profile: IngestionProfile; campaign?: string; campus?: string; program?: string;
+  outcome: IngestionOutcome; reason?: string; receivedAt: string; assigned: boolean;
+}
+
 interface ProvenanceRecord { leadId: string; source: IngestionSource; technicalSystem: string; originalSource: string; recentSource: string; campaign?: string; externalId?: string; rawStatus?: string; batchId: string; importedAt: string }
 const IDEMPOTENCY_KEY = /^[a-zA-Z0-9:_-]{8,128}$/;
 
@@ -85,6 +90,7 @@ export class IngestionService {
   private readonly batches = new Map<string, Readonly<IngestionBatchResult>>();
   private readonly provenanceByExternalId = new Map<string, Readonly<ProvenanceRecord>>();
   private readonly provenances: ProvenanceRecord[] = [];
+  private reportingOccurrences: Readonly<IngestionReportingOccurrence>[] = [];
 
   constructor(private readonly leads: LeadService, private readonly assignments: LeadAssignmentService, private readonly audit: AuditService) {}
 
@@ -99,10 +105,19 @@ export class IngestionService {
     for (const record of input.records) {
       const result = this.ingestOne(record, input, batchId, principal, `${correlationId}:${record.lineNumber}`);
       lines.push(result);
+      let lineAssigned = false;
       if (result.outcome === "CREATED" && result.leadId && input.assignment.strategy !== "UNASSIGNED") {
         const assignment = this.assignCreated(result.leadId, record, input, principal, `${correlationId}:assignment:${record.lineNumber}`);
-        if (assignment) assigned += 1;
+        if (assignment) { assigned += 1; lineAssigned = true; }
       }
+      this.reportingOccurrences = [...this.reportingOccurrences, Object.freeze({
+        ...(result.leadId ? { leadId: result.leadId } : {}), source: record.source, profile: input.profile,
+        ...(record.campaign?.trim() ? { campaign: record.campaign.trim() } : {}),
+        ...(record.campus?.trim() ? { campus: record.campus.trim() } : {}),
+        ...(record.program?.trim() ? { program: record.program.trim() } : {}),
+        outcome: result.outcome, ...(result.reason ? { reason: result.reason } : {}),
+        receivedAt: new Date().toISOString(), assigned: lineAssigned,
+      })];
     }
     const created = lines.filter((line) => line.outcome === "CREATED").length;
     const result: Readonly<IngestionBatchResult> = Object.freeze({ batchId, idempotencyKey: input.idempotencyKey,
@@ -198,6 +213,14 @@ export class IngestionService {
   getBatch(batchId: string): IngestionBatchResult | undefined {
     const batch = [...this.batches.values()].find((item) => item.batchId === batchId);
     return batch ? this.copy(batch) : undefined;
+  }
+
+  reportingSnapshot(principal: Principal): IngestionReportingOccurrence[] {
+    this.assertRole(principal);
+    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
+    const campuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
+    return this.reportingOccurrences.filter((item) => global || Boolean(item.campus && campuses.has(item.campus)))
+      .map((item) => ({ ...item }));
   }
 
   attachOperationalProvenance(leadId: string, input: { source: "PHONE_CALL" | "PHYSICAL_VISIT"; idempotencyKey: string; campaign?: string }, principal: Principal, correlationId: string): { replayed: boolean; batchId: string } {

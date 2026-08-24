@@ -47,7 +47,7 @@ export interface LeadAssignmentSnapshot {
 }
 export interface LeadReportingRow {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
-  assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string;
+  assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
   activities: Array<{ type: ActivityType; result: string; authorId: string; occurredAt: string }>;
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
@@ -249,10 +249,11 @@ export class LeadService {
     return [...this.leads.values()]
       .filter((lead) => (global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt }) => ({
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId }) => ({
         id, status, campus, campaign, program, source, createdAt,
         ...(assignedToId ? { assignedToId } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
         ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
+        ...(importBatchId ? { importBatchId } : {}),
         activities: this.activities.filter((activity) => activity.leadId === id)
           .map(({ type, result, authorId, occurredAt }) => ({ type, result, authorId, occurredAt })),
       }));
