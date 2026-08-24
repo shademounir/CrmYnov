@@ -40,9 +40,11 @@ import { ForminatorWebhookController } from "./forminator-webhook/forminator-web
 import { ForminatorWebhookService } from "./forminator-webhook/forminator-webhook.service.js";
 import { QuickLeadController } from "./quick-lead/quick-lead.controller.js";
 import { QuickLeadService } from "./quick-lead/quick-lead.service.js";
+import { ImportWizardController } from "./import-wizard/import-wizard.controller.js";
+import { ImportWizardService } from "./import-wizard/import-wizard.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ForminatorWebhookController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ForminatorWebhookController],
   providers: [
     SessionService,
     RateLimitService,
@@ -65,6 +67,7 @@ import { QuickLeadService } from "./quick-lead/quick-lead.service.js";
     ImportReportService,
     ForminatorWebhookService,
     QuickLeadService,
+    ImportWizardService,
   ],
 })
 export class AppModule {}
