@@ -44,9 +44,11 @@ import { ImportWizardController } from "./import-wizard/import-wizard.controller
 import { ImportWizardService } from "./import-wizard/import-wizard.service.js";
 import { ImportReviewController } from "./import-review/import-review.controller.js";
 import { ImportReviewService } from "./import-review/import-review.service.js";
+import { NotificationController } from "./notifications/notification.controller.js";
+import { NotificationService } from "./notifications/notification.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController],
   providers: [
     SessionService,
     RateLimitService,
@@ -71,6 +73,7 @@ import { ImportReviewService } from "./import-review/import-review.service.js";
     QuickLeadService,
     ImportWizardService,
     ImportReviewService,
+    NotificationService,
   ],
 })
 export class AppModule {}
