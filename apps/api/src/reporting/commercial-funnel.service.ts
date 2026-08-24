@@ -54,7 +54,8 @@ export class CommercialFunnelService {
     };
     this.audit.record({ eventType: "COMMERCIAL_FUNNEL_VIEWED", actorId: principal.userId, actorRoles: principal.roles,
       sessionId: principal.sessionId, correlationId, after: { definitionVersion: FUNNEL_DEFINITION_VERSION, totalUniqueLeads: total,
-        activeFilterNames: Object.entries(query).filter(([, value]) => Boolean(value)).map(([key]) => key).sort() }, result: "SUCCESS",
+        activeFilterNames: Object.entries(query).filter(([, value]) => Boolean(value)).map(([key]) => key)
+          .sort((left, right) => left.localeCompare(right, "en")) }, result: "SUCCESS",
       idempotencyKey: `commercial-funnel:${randomUUID()}` });
     return result;
   }
