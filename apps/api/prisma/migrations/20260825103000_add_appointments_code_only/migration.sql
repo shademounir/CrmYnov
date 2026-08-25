@@ -3,26 +3,26 @@
 -- prisma-policy: rollback-documented
 -- prisma-policy: uniqueness-validated
 CREATE TABLE "appointments" (
-  "id" UUID NOT NULL, "lead_id" UUID NOT NULL, "type" VARCHAR(40) NOT NULL, "mode" VARCHAR(32) NOT NULL,
-  "state" VARCHAR(24) NOT NULL DEFAULT 'BROUILLON', "starts_at" TIMESTAMPTZ(6) NOT NULL, "duration_minutes" INTEGER NOT NULL,
-  "timezone" VARCHAR(40) NOT NULL DEFAULT 'Africa/Casablanca', "campus" VARCHAR(120), "adviser_id" VARCHAR(64) NOT NULL,
-  "organizer_id" VARCHAR(64) NOT NULL, "evaluator_id" VARCHAR(64), "version" INTEGER NOT NULL DEFAULT 1,
+  "id" UUID NOT NULL, "lead_id" UUID NOT NULL, "type" CHARACTER VARYING(40) NOT NULL, "mode" CHARACTER VARYING(32) NOT NULL,
+  "state" CHARACTER VARYING(24) NOT NULL DEFAULT 'BROUILLON', "starts_at" TIMESTAMPTZ(6) NOT NULL, "duration_minutes" INTEGER NOT NULL,
+  "timezone" CHARACTER VARYING(40) NOT NULL DEFAULT 'Africa/Casablanca', "campus" CHARACTER VARYING(120), "adviser_id" CHARACTER VARYING(64) NOT NULL,
+  "organizer_id" CHARACTER VARYING(64) NOT NULL, "evaluator_id" CHARACTER VARYING(64), "version" INTEGER NOT NULL DEFAULT 1,
   "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updated_at" TIMESTAMPTZ(6) NOT NULL,
   CONSTRAINT "appointments_pkey" PRIMARY KEY ("id")
 );
 CREATE TABLE "appointment_participants" (
-  "id" UUID NOT NULL, "appointment_id" UUID NOT NULL, "user_id" VARCHAR(64) NOT NULL, "role" VARCHAR(24) NOT NULL,
-  "response" VARCHAR(16) NOT NULL DEFAULT 'PENDING', "responded_at" TIMESTAMPTZ(6), CONSTRAINT "appointment_participants_pkey" PRIMARY KEY ("id")
+  "id" UUID NOT NULL, "appointment_id" UUID NOT NULL, "user_id" CHARACTER VARYING(64) NOT NULL, "role" CHARACTER VARYING(24) NOT NULL,
+  "response" CHARACTER VARYING(16) NOT NULL DEFAULT 'PENDING', "responded_at" TIMESTAMPTZ(6), CONSTRAINT "appointment_participants_pkey" PRIMARY KEY ("id")
 );
 CREATE TABLE "appointment_events" (
-  "id" UUID NOT NULL, "appointment_id" UUID NOT NULL, "idempotency_key" VARCHAR(128) NOT NULL, "event_type" VARCHAR(48) NOT NULL,
-  "from_state" VARCHAR(24), "to_state" VARCHAR(24), "actor_id" VARCHAR(64) NOT NULL, "reason_code" VARCHAR(120),
+  "id" UUID NOT NULL, "appointment_id" UUID NOT NULL, "idempotency_key" CHARACTER VARYING(128) NOT NULL, "event_type" CHARACTER VARYING(48) NOT NULL,
+  "from_state" CHARACTER VARYING(24), "to_state" CHARACTER VARYING(24), "actor_id" CHARACTER VARYING(64) NOT NULL, "reason_code" CHARACTER VARYING(120),
   "compensates_event_id" UUID, "occurred_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "appointment_events_pkey" PRIMARY KEY ("id")
 );
 CREATE TABLE "interview_reports" (
-  "id" UUID NOT NULL, "appointment_id" UUID NOT NULL, "result" VARCHAR(32) NOT NULL, "redacted_comment" VARCHAR(32) NOT NULL,
-  "redacted_missing_points" VARCHAR(32), "next_action" VARCHAR(120), "follow_up_at" TIMESTAMPTZ(6), "redacted_recommendation" VARCHAR(32) NOT NULL,
-  "validated_by" VARCHAR(64) NOT NULL, "validated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP, "compensates_report_id" UUID,
+  "id" UUID NOT NULL, "appointment_id" UUID NOT NULL, "result" CHARACTER VARYING(32) NOT NULL, "redacted_comment" CHARACTER VARYING(32) NOT NULL,
+  "redacted_missing_points" CHARACTER VARYING(32), "next_action" CHARACTER VARYING(120), "follow_up_at" TIMESTAMPTZ(6), "redacted_recommendation" CHARACTER VARYING(32) NOT NULL,
+  "validated_by" CHARACTER VARYING(64) NOT NULL, "validated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP, "compensates_report_id" UUID,
   CONSTRAINT "interview_reports_pkey" PRIMARY KEY ("id")
 );
 CREATE INDEX "appointments_lead_id_starts_at_idx" ON "appointments"("lead_id", "starts_at" DESC);

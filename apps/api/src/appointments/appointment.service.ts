@@ -11,7 +11,7 @@ export const appointmentStates = ["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE"
 export const interviewResults = ["FAVORABLE", "FAVORABLE_SOUS_CONDITION", "A_COMPLETER", "DEFAVORABLE", "NON_DECIDE"] as const;
 export type AppointmentType = typeof appointmentTypes[number]; export type AppointmentMode = typeof appointmentModes[number];
 export type AppointmentState = typeof appointmentStates[number]; export type InterviewResult = typeof interviewResults[number];
-const finalStates: readonly AppointmentState[] = ["ANNULE", "REALISE", "ABSENT", "REFUSE"];
+const finalStates = new Set<AppointmentState>(["ANNULE", "REALISE", "ABSENT", "REFUSE"]);
 const transitions: Readonly<Record<AppointmentState, readonly AppointmentState[]>> = {
   BROUILLON: ["PLANIFIE", "ANNULE"], PLANIFIE: ["CONFIRME", "REPORTE", "ANNULE", "REFUSE"],
   CONFIRME: ["REPORTE", "ANNULE", "REALISE", "ABSENT", "REFUSE"], REPORTE: ["CONFIRME", "ANNULE", "REFUSE"],
@@ -34,13 +34,24 @@ export class AppointmentService {
     const type = input.type as AppointmentType; const mode = input.mode as AppointmentMode; const state = (input.state ?? "PLANIFIE") as AppointmentState;
     const start = new Date(input.startsAt ?? ""); const duration = input.durationMinutes ?? 0; const key = input.idempotencyKey ?? "";
     if (!appointmentTypes.includes(type) || !appointmentModes.includes(mode) || !["BROUILLON", "PLANIFIE"].includes(state) || Number.isNaN(start.valueOf()) || !Number.isInteger(duration) || duration < 15 || duration > 480 || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new BadRequestException({ code: "appointment_invalid" });
-    const requestedCampus = input.campus?.trim(); if (mode === "SUR_SITE" && (!requestedCampus || requestedCampus !== lead.campus)) throw new BadRequestException({ code: "appointment_campus_required" }); const campus = requestedCampus ?? lead.campus;
-    const adviserId = input.adviserId ?? lead.assignedToId ?? principal.userId; const participantIds = [...new Set((input.participantIds ?? []).filter(Boolean))].sort();
+    const requestedCampus = input.campus?.trim();
+    if (mode === "SUR_SITE" && (!requestedCampus || requestedCampus !== lead.campus)) {
+      throw new BadRequestException({ code: "appointment_campus_required" });
+    }
+    const campus = requestedCampus ?? lead.campus;
+    const adviserId = input.adviserId ?? lead.assignedToId ?? principal.userId;
+    const participantIds = [...new Set((input.participantIds ?? []).filter(Boolean))].sort((left, right) => left.localeCompare(right, "en"));
     const signature = JSON.stringify({ leadId, type, mode, startsAt: start.toISOString(), duration, campus, adviserId, evaluatorId: input.evaluatorId, participantIds, state });
-    const receipt = this.receipts.get(key); if (receipt) { if (receipt.signature !== signature) throw new ConflictException({ code: "appointment_idempotency_conflict" }); return this.copy(this.items.get(receipt.id)!); }
+    const receipt = this.receipts.get(key);
+    if (receipt) {
+      if (receipt.signature !== signature) {
+        throw new ConflictException({ code: "appointment_idempotency_conflict" });
+      }
+      return this.copy(this.items.get(receipt.id)!);
+    }
     const involved = new Set([adviserId, ...participantIds, ...(input.evaluatorId ? [input.evaluatorId] : [])]); const end = start.valueOf() + duration * 60_000;
-    const conflictWarning = [...this.items.values()].some((item) => !finalStates.includes(item.state) && this.involved(item).some((id) => involved.has(id)) && this.overlaps(start.valueOf(), end, item));
-    const localDay = this.localDay(start); const overloadWarning = [...this.items.values()].filter((item) => item.adviserId === adviserId && this.localDay(new Date(item.startsAt)) === localDay && !finalStates.includes(item.state)).length >= 7;
+    const conflictWarning = [...this.items.values()].some((item) => !finalStates.has(item.state) && this.involved(item).some((id) => involved.has(id)) && this.overlaps(start.valueOf(), end, item));
+    const localDay = this.localDay(start); const overloadWarning = [...this.items.values()].filter((item) => item.adviserId === adviserId && this.localDay(new Date(item.startsAt)) === localDay && !finalStates.has(item.state)).length >= 7;
     const now = new Date().toISOString(); const record: Readonly<AppointmentRecord> = Object.freeze({ id: randomUUID(), leadId, type, mode, state, startsAt: start.toISOString(), durationMinutes: duration, ...(campus ? { campus } : {}), adviserId, organizerId: principal.userId, ...(input.evaluatorId ? { evaluatorId: input.evaluatorId } : {}), participantIds, version: 1, createdAt: now, updatedAt: now, conflictWarning, overloadWarning });
     this.items.set(record.id, record); this.receipts.set(key, { signature, id: record.id }); this.appendEvent(record, "APPOINTMENT_CREATED", principal, key, undefined, state);
     this.leads.addActivity(leadId, { type: "MEETING", result: `APPOINTMENT_${state}`, ...(state === "PLANIFIE" ? { nextActionAt: record.startsAt } : {}) }, principal, correlationId);
@@ -82,10 +93,24 @@ export class AppointmentService {
     return { items: values.slice((page - 1) * pageSize, page * pageSize).map((item) => this.copy(item)), page, pageSize, total: values.length, timezone: "Africa/Casablanca" };
   }
   detail(id: string, principal: Principal, correlationId: string): { appointment: AppointmentRecord; events: AppointmentEvent[]; report?: InterviewReport } { const appointment = this.authorized(id, principal, correlationId); const report = this.reports.get(id); return { appointment: this.copy(appointment), events: this.events.filter((event) => event.appointmentId === id).map((event) => ({ ...event })), ...(report ? { report: { ...report } } : {}) }; }
-  availability(userIds: readonly string[], from: string, to: string, principal: Principal): Array<{ userId: string; busyRanges: Array<{ startsAt: string; endsAt: string }> }> { this.assertOperationalRole(principal); const start = new Date(from); const end = new Date(to); if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf()) || start >= end || end.valueOf() - start.valueOf() > 7 * 86_400_000) throw new BadRequestException({ code: "availability_period_invalid" }); return [...new Set(userIds)].slice(0, 20).map((userId) => ({ userId, busyRanges: [...this.items.values()].filter((item) => this.canAccess(item, principal) && this.involved(item).includes(userId) && !finalStates.includes(item.state) && this.overlaps(start.valueOf(), end.valueOf(), item)).map((item) => ({ startsAt: item.startsAt, endsAt: new Date(new Date(item.startsAt).valueOf() + item.durationMinutes * 60_000).toISOString() })) })); }
+  availability(userIds: readonly string[], from: string, to: string, principal: Principal): Array<{ userId: string; busyRanges: Array<{ startsAt: string; endsAt: string }> }> {
+    this.assertOperationalRole(principal);
+    const start = new Date(from); const end = new Date(to);
+    if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf()) || start >= end || end.valueOf() - start.valueOf() > 7 * 86_400_000) {
+      throw new BadRequestException({ code: "availability_period_invalid" });
+    }
+    return [...new Set(userIds)].slice(0, 20).map((userId) => ({ userId, busyRanges: [...this.items.values()].filter((item) => this.canAccess(item, principal) && this.involved(item).includes(userId) && !finalStates.has(item.state) && this.overlaps(start.valueOf(), end.valueOf(), item)).map((item) => ({ startsAt: item.startsAt, endsAt: new Date(new Date(item.startsAt).valueOf() + item.durationMinutes * 60_000).toISOString() })) }));
+  }
   kpis(principal: Principal): AppointmentKpis { const values = [...this.items.values()].filter((item) => this.canAccess(item, principal)); const counts = Object.fromEntries(appointmentStates.map((state) => [state, values.filter((item) => item.state === state).length])) as Record<AppointmentState, number>; const attendanceDenominator = counts.REALISE + counts.ABSENT; const delayValues = values.map((item) => (new Date(item.startsAt).valueOf() - new Date(item.createdAt).valueOf()) / 3_600_000).filter((value) => value >= 0); const results = Object.fromEntries(interviewResults.map((result) => [result, [...this.reports.values()].filter((item) => item.result === result).length])) as Record<InterviewResult, number>; const workload = new Map<string, { adviserId: string; campus: string; count: number }>(); for (const item of values) { const key = `${item.adviserId}:${item.campus ?? "DISTANT"}`; const row = workload.get(key) ?? { adviserId: item.adviserId, campus: item.campus ?? "DISTANT", count: 0 }; row.count += 1; workload.set(key, row); } return { timezone: "Africa/Casablanca", counts, attendanceRate: { numerator: counts.REALISE, denominator: attendanceDenominator, exclusions: ["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE", "ANNULE", "REFUSE"], value: attendanceDenominator ? counts.REALISE / attendanceDenominator : 0 }, firstAppointmentDelayHours: { numerator: delayValues.reduce((sum, value) => sum + value, 0), denominator: delayValues.length, exclusions: ["negative_or_missing_dates"], value: delayValues.length ? delayValues.reduce((sum, value) => sum + value, 0) / delayValues.length : 0 }, results, workload: [...workload.values()].sort((a, b) => a.adviserId.localeCompare(b.adviserId) || a.campus.localeCompare(b.campus)), safeguards: { disciplinaryScore: false, automaticAdmission: false } }; }
 
-  private authorized(id: string, principal: Principal, correlationId: string): Readonly<AppointmentRecord> { const item = this.items.get(id); if (!item || !this.canAccess(item, principal)) throw new NotFoundException({ code: "appointment_not_found" }); this.leads.getLead(item.leadId, principal, correlationId); return item; }
+  private authorized(id: string, principal: Principal, correlationId: string): Readonly<AppointmentRecord> {
+    const item = this.items.get(id);
+    if (!item || !this.canAccess(item, principal)) {
+      throw new NotFoundException({ code: "appointment_not_found" });
+    }
+    this.leads.getLead(item.leadId, principal, correlationId);
+    return item;
+  }
   private canAccess(item: Readonly<AppointmentRecord>, principal: Principal): boolean { const scope = principal.scopes.some((value) => value.kind === "GLOBAL" || (value.kind === "CAMPUS" && value.id === item.campus)); return scope && (this.isManager(principal) || this.involved(item).includes(principal.userId)); }
   private assertCampus(campus: string, principal: Principal): void { if (!principal.scopes.some((scope) => scope.kind === "GLOBAL" || (scope.kind === "CAMPUS" && scope.id === campus))) throw new NotFoundException({ code: "lead_not_found" }); }
   private assertOperationalRole(principal: Principal): void { if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "appointment_role_forbidden" }); }
@@ -95,6 +120,6 @@ export class AppointmentService {
   private localDay(date: Date): string { return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).format(date); }
   private copy(item: Readonly<AppointmentRecord>): AppointmentRecord { return { ...item, participantIds: [...item.participantIds] }; }
   private appendEvent(item: Readonly<AppointmentRecord>, type: string, principal: Principal, idempotencyKey: string, fromState?: AppointmentState, toState?: AppointmentState, reasonCode?: string): void { this.events = [...this.events, Object.freeze({ id: randomUUID(), appointmentId: item.id, type, ...(fromState ? { fromState } : {}), ...(toState ? { toState } : {}), actorId: principal.userId, ...(reasonCode ? { reasonCode } : {}), occurredAt: new Date().toISOString(), idempotencyKey })]; }
-  private notify(item: Readonly<AppointmentRecord>, event: string, recipients: readonly string[], key: string): void { for (const recipientId of [...new Set(recipients)]) this.notifications.create({ recipientId, type: "APPOINTMENT", priority: event.includes("CANCEL") || event.includes("ABSENT") ? "HIGH" : "NORMAL", resourceType: "APPOINTMENT", resourceId: item.id, href: `/appointments/${item.id}` }, `appointment:${event}:${key}:${recipientId}`); }
+  private notify(item: Readonly<AppointmentRecord>, event: string, recipients: readonly string[], key: string): void { for (const recipientId of new Set(recipients)) this.notifications.create({ recipientId, type: "APPOINTMENT", priority: event.includes("CANCEL") || event.includes("ABSENT") ? "HIGH" : "NORMAL", resourceType: "APPOINTMENT", resourceId: item.id, href: `/appointments/${item.id}` }, `appointment:${event}:${key}:${recipientId}`); }
   private recordAudit(item: Readonly<AppointmentRecord>, principal: Principal, correlationId: string, eventType: string): void { this.audit.record({ eventType, actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, after: { appointmentId: item.id, leadId: item.leadId, type: item.type, mode: item.mode, state: item.state, startsAt: item.startsAt, durationMinutes: item.durationMinutes, campus: item.campus, version: item.version }, result: "SUCCESS", idempotencyKey: `${eventType}:${item.id}:${item.version}` }); }
 }
