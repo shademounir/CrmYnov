@@ -15,9 +15,9 @@ export interface ClosureRequest { id: string; leadId: string; target: ClosureTar
 export class ClosureService implements OnModuleInit {
   private readonly requests = new Map<string, Readonly<ClosureRequest>>();
   constructor(
-    private readonly leads: LeadService,
-    private readonly notifications: NotificationService,
-    private readonly audit: AuditService,
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(NotificationService) private readonly notifications: NotificationService,
+    @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(LeadWorkflowPersistenceRepository) private readonly persistence?: LeadWorkflowPersistenceRepository,
   ) {}
 

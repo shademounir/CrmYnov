@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import type { LeadClosureRequest as PrismaClosureRequest, LeadCollaborationRequest as PrismaCollaborationRequest, Prisma, ReassignmentRequest as PrismaReassignmentRequest } from "@prisma/client";
 import type { ReassignmentRequest } from "../assignment/reassignment.service.js";
 import type { ClosureRequest } from "../closure/closure.service.js";
@@ -13,7 +13,7 @@ type WorkflowSnapshot = Readonly<{
 
 @Injectable()
 export class LeadWorkflowPersistenceRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   get enabled(): boolean {
     return this.prisma.enabled && Boolean(this.prisma.client);

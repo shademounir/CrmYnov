@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { LeadActivity as PrismaLeadActivity, Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
@@ -9,7 +9,7 @@ type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivi
 
 @Injectable()
 export class LeadPersistenceRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   get enabled(): boolean {
     return this.prisma.enabled && Boolean(this.prisma.client);

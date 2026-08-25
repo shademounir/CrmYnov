@@ -21,9 +21,9 @@ export class ReassignmentService implements OnModuleInit {
   private readonly requests = new Map<string, Readonly<ReassignmentRequest>>();
   private readonly idempotency = new Map<string, string>();
   constructor(
-    private readonly leads: LeadService,
-    private readonly engine: AssignmentService,
-    private readonly audit: AuditService,
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(AssignmentService) private readonly engine: AssignmentService,
+    @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(LeadWorkflowPersistenceRepository) private readonly persistence?: LeadWorkflowPersistenceRepository,
   ) {}
 
