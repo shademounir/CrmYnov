@@ -187,7 +187,7 @@ function filterTarget(key: string): string {
 function safeInternalHref(href: string, allowedRoots: readonly string[] = dashboardDestinationRoots): string {
   if (!href || href.includes("\0") || href.includes("\\") || href.startsWith("//") || /^[a-z][a-z\d+.-]*:/iu.test(href)) return "#";
   const path = href.split("?")[0] ?? "";
-  if (!path.startsWith("/") || path.split("/").some((segment) => segment === "..")) return "#";
+  if (!path.startsWith("/") || path.split("/").includes("..")) return "#";
   if (!allowedRoots.some((root) => path === root || path.startsWith(`${root}/`))) return "#";
   return href;
 }
