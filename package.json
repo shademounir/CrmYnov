@@ -15,7 +15,7 @@
     "deepmerge-ts": "8.0.0"
   },
   "scripts": {
-    "lint": "node scripts/ci/repository-quality.mjs lint && npm run build --workspace=@crm/shared && eslint apps packages --max-warnings=0",
+    "lint": "npm run prisma:generate && node scripts/ci/repository-quality.mjs lint && npm run build --workspace=@crm/shared && eslint apps packages --max-warnings=0",
     "type-check": "node scripts/ci/repository-quality.mjs type-check && npm run build --workspace=@crm/shared && npm run type-check --workspace=@crm/api && npm run type-check --workspace=@crm/web",
     "build": "node scripts/ci/repository-quality.mjs build && npm run build --workspace=@crm/shared && npm run build --workspace=@crm/api && npm run build --workspace=@crm/web",
     "dev": "docker compose up --build",
