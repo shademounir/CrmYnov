@@ -19,7 +19,7 @@ export interface DocumentDashboardRow { leadId: string; campus: string; program:
 const transitionRules: Readonly<Record<DocumentState, readonly DocumentState[]>> = {
   MANQUANT: ["ATTENDU", "REÇU"], ATTENDU: ["REÇU"], REÇU: ["À_VÉRIFIER"], "À_VÉRIFIER": ["VALIDÉ", "REFUSÉ", "EXPIRÉ"], VALIDÉ: ["EXPIRÉ", "REMPLACÉ"], REFUSÉ: ["REMPLACÉ"], EXPIRÉ: ["REMPLACÉ"], REMPLACÉ: ["REÇU"],
 };
-const refusalReasons = ["ILLISIBLE", "INCOMPLET", "NON_CONFORME", "EXPIRÉ", "TYPE_INCORRECT"];
+const refusalReasons = new Set(["ILLISIBLE", "INCOMPLET", "NON_CONFORME", "EXPIRÉ", "TYPE_INCORRECT"]);
 
 @Injectable()
 export class CandidateDocumentService {
@@ -46,7 +46,10 @@ export class CandidateDocumentService {
     this.scopedLead(leadId, principal, correlationId); this.assertContributor(principal);
     if (!documentTypes.includes(input.documentType as DocumentType) || !input.originalName || !input.declaredMime || !input.contentBase64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(input.contentBase64)) throw new BadRequestException({ code: "document_upload_invalid" });
     const item = (this.checklists.get(leadId) ?? []).find((candidate) => candidate.id === input.checklistItemId && candidate.documentType === input.documentType); if (!item) throw new NotFoundException({ code: "document_checklist_item_not_found" });
-    const replaced = input.replacesDocumentId ? this.documents.get(input.replacesDocumentId) : undefined; if (input.replacesDocumentId && (!replaced || replaced.leadId !== leadId || replaced.documentType !== input.documentType)) throw new NotFoundException({ code: "document_not_found" });
+    const replaced = this.documents.get(input.replacesDocumentId ?? "");
+    if (input.replacesDocumentId && (!replaced || replaced.leadId !== leadId || replaced.documentType !== input.documentType)) {
+      throw new NotFoundException({ code: "document_not_found" });
+    }
     const stored = await this.storage.store({ originalName: input.originalName, declaredMime: input.declaredMime, content: Buffer.from(input.contentBase64, "base64") });
     const versions = [...this.documents.values()].filter((document) => document.leadId === leadId && document.documentType === input.documentType); const now = new Date().toISOString();
     const record: Readonly<DocumentMetadata> = Object.freeze({ id: randomUUID(), leadId, checklistItemId: item.id, documentType: input.documentType as DocumentType, ...stored, uploadedBy: principal.userId, receivedAt: now, verificationStatus: "À_VÉRIFIER", version: versions.length + 1, ...(replaced ? { replacedDocumentId: replaced.id } : {}) });
@@ -58,22 +61,51 @@ export class CandidateDocumentService {
   }
 
   verify(documentId: string, input: { decision?: string; reasonCode?: string }, principal: Principal, correlationId: string): DocumentMetadata {
-    if (!principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "document_verification_forbidden" });
-    const current = this.documents.get(documentId); if (!current) throw new NotFoundException({ code: "document_not_found" }); this.scopedLead(current.leadId, principal, correlationId);
-    if (current.verificationStatus !== "À_VÉRIFIER") throw new ConflictException({ code: "document_transition_invalid" }); const decision = input.decision === "VALIDER" ? "VALIDÉ" : input.decision === "REFUSER" ? "REFUSÉ" : undefined;
-    if (!decision || (decision === "REFUSÉ" && !refusalReasons.includes(input.reasonCode ?? "")) || (decision === "VALIDÉ" && input.reasonCode)) throw new BadRequestException({ code: "document_decision_invalid" });
+    if (!principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) {
+      throw new ForbiddenException({ code: "document_verification_forbidden" });
+    }
+    const current = this.documents.get(documentId);
+    if (!current) {
+      throw new NotFoundException({ code: "document_not_found" });
+    }
+    this.scopedLead(current.leadId, principal, correlationId);
+    if (current.verificationStatus !== "À_VÉRIFIER") {
+      throw new ConflictException({ code: "document_transition_invalid" });
+    }
+    let decision: "VALIDÉ" | "REFUSÉ" | undefined;
+    if (input.decision === "VALIDER") decision = "VALIDÉ";
+    if (input.decision === "REFUSER") decision = "REFUSÉ";
+    if (!decision || (decision === "REFUSÉ" && !refusalReasons.has(input.reasonCode ?? "")) || (decision === "VALIDÉ" && input.reasonCode)) {
+      throw new BadRequestException({ code: "document_decision_invalid" });
+    }
     const updated: Readonly<DocumentMetadata> = Object.freeze({ ...current, verificationStatus: decision, verifiedBy: principal.userId, verifiedAt: new Date().toISOString(), ...(decision === "REFUSÉ" ? { refusalReasonCode: input.reasonCode } : {}) }); this.documents.set(documentId, updated); this.updateChecklist(current.checklistItemId, current.leadId, decision); this.appendEvent(documentId, `DOCUMENT_${decision}`, principal, correlationId, input.reasonCode);
     this.notifications.create({ recipientId: current.uploadedBy, type: decision === "VALIDÉ" ? "DOCUMENT_VALIDATED" : "DOCUMENT_REFUSED", priority: decision === "REFUSÉ" ? "HIGH" : "NORMAL", resourceType: "DOCUMENT", resourceId: documentId, href: `/leads/${current.leadId}/documents/${documentId}` }, `document-${decision}:${documentId}:${current.uploadedBy}`);
     this.audit.record({ eventType: `DOCUMENT_${decision}`, actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, after: { documentId, leadId: current.leadId, reasonCode: input.reasonCode ?? "NONE" }, result: "SUCCESS", idempotencyKey: `document-${decision}:${documentId}` }); return { ...updated };
   }
 
-  detail(documentId: string, principal: Principal): { document: DocumentMetadata; events: DocumentEvent[] } { const document = this.documents.get(documentId); if (!document) throw new NotFoundException({ code: "document_not_found" }); this.scopedLead(document.leadId, principal, "document-read"); return { document: { ...document }, events: this.events.filter((event) => event.documentId === documentId).map((event) => ({ ...event })) }; }
+  detail(documentId: string, principal: Principal): { document: DocumentMetadata; events: DocumentEvent[] } {
+    const document = this.documents.get(documentId);
+    if (!document) {
+      throw new NotFoundException({ code: "document_not_found" });
+    }
+    this.scopedLead(document.leadId, principal, "document-read");
+    return { document: { ...document }, events: this.events.filter((event) => event.documentId === documentId).map((event) => ({ ...event })) };
+  }
 
   dashboard(query: DocumentDashboardQuery, principal: Principal): { items: DocumentDashboardRow[]; page: number; pageSize: number; total: number; counters: Record<string, number>; aggregateExport: { complete: number; incomplete: number; toVerify: number } } {
-    if (!Number.isInteger(query.page) || query.page < 1 || !Number.isInteger(query.pageSize) || query.pageSize < 1 || query.pageSize > 100) throw new BadRequestException({ code: "document_pagination_invalid" });
-    const global = principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role)); if (!global && query.view !== "MINE") throw new ForbiddenException({ code: "document_dashboard_forbidden" });
-    if (query.documentType && !documentTypes.includes(query.documentType as DocumentType)) throw new BadRequestException({ code: "document_type_filter_invalid" });
-    if (query.view && !["MINE", "GLOBAL"].includes(query.view)) throw new BadRequestException({ code: "document_view_invalid" });
+    if (!Number.isInteger(query.page) || query.page < 1 || !Number.isInteger(query.pageSize) || query.pageSize < 1 || query.pageSize > 100) {
+      throw new BadRequestException({ code: "document_pagination_invalid" });
+    }
+    const global = principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+    if (!global && query.view !== "MINE") {
+      throw new ForbiddenException({ code: "document_dashboard_forbidden" });
+    }
+    if (query.documentType && !documentTypes.includes(query.documentType as DocumentType)) {
+      throw new BadRequestException({ code: "document_type_filter_invalid" });
+    }
+    if (query.view && !["MINE", "GLOBAL"].includes(query.view)) {
+      throw new BadRequestException({ code: "document_view_invalid" });
+    }
     const rows = [...this.checklists.entries()].flatMap(([leadId, checklist]) => {
       let lead: LeadRecord;
       try { lead = this.scopedLead(leadId, principal, "document-dashboard"); } catch { return []; }
@@ -94,10 +126,36 @@ export class CandidateDocumentService {
   }
 
   async cleanup(): Promise<void> { await this.storage.cleanup(); }
-  private scopedLead(leadId: string, principal: Principal, correlationId: string): LeadRecord { const lead = this.leads.getLead(leadId, principal, correlationId); if (!principal.scopes.some((scope) => scope.kind === "GLOBAL") && !principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === lead.campus)) throw new NotFoundException({ code: "lead_not_found" }); return lead; }
+  private scopedLead(leadId: string, principal: Principal, correlationId: string): LeadRecord {
+    const lead = this.leads.getLead(leadId, principal, correlationId);
+    if (!principal.scopes.some((scope) => scope.kind === "GLOBAL") && !principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === lead.campus)) {
+      throw new NotFoundException({ code: "lead_not_found" });
+    }
+    return lead;
+  }
   private sameValue(actual: string | undefined, expected: string | undefined): boolean { return !expected || actual?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr"); }
-  private matchesDashboardState(row: DocumentDashboardRow, state: string | undefined): boolean { if (!state) return true; if (state === "COMPLET") return row.complete; if (state === "INCOMPLET") return !row.complete; if (state === "À_VÉRIFIER") return row.toVerify > 0; if (state === "REFUSÉ") return row.refused > 0; if (state === "EXPIRÉ") return row.expired > 0; throw new BadRequestException({ code: "document_state_filter_invalid" }); }
-  private assertContributor(principal: Principal): void { if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "document_role_forbidden" }); }
-  private updateChecklist(itemId: string, leadId: string, next: DocumentState): void { const items = this.checklists.get(leadId) ?? []; const current = items.find((item) => item.id === itemId); if (!current || !transitionRules[current.state].includes(next)) throw new ConflictException({ code: "document_transition_invalid" }); const now = new Date().toISOString(); this.checklists.set(leadId, items.map((item) => item.id === itemId ? Object.freeze({ ...item, state: next, version: item.version + 1, updatedAt: now }) : item)); }
+  private matchesDashboardState(row: DocumentDashboardRow, state: string | undefined): boolean {
+    if (!state) return true;
+    if (state === "COMPLET") return row.complete;
+    if (state === "INCOMPLET") return !row.complete;
+    if (state === "À_VÉRIFIER") return row.toVerify > 0;
+    if (state === "REFUSÉ") return row.refused > 0;
+    if (state === "EXPIRÉ") return row.expired > 0;
+    throw new BadRequestException({ code: "document_state_filter_invalid" });
+  }
+  private assertContributor(principal: Principal): void {
+    if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) {
+      throw new ForbiddenException({ code: "document_role_forbidden" });
+    }
+  }
+  private updateChecklist(itemId: string, leadId: string, next: DocumentState): void {
+    const items = this.checklists.get(leadId) ?? [];
+    const current = items.find((item) => item.id === itemId);
+    if (!current || !transitionRules[current.state].includes(next)) {
+      throw new ConflictException({ code: "document_transition_invalid" });
+    }
+    const now = new Date().toISOString();
+    this.checklists.set(leadId, items.map((item) => item.id === itemId ? Object.freeze({ ...item, state: next, version: item.version + 1, updatedAt: now }) : item));
+  }
   private appendEvent(documentId: string, eventType: string, principal: Principal, correlationId: string, reasonCode?: string): void { const event: Readonly<DocumentEvent> = Object.freeze({ id: randomUUID(), documentId, eventType, actorId: principal.userId, correlationId, occurredAt: new Date().toISOString(), ...(reasonCode ? { reasonCode } : {}) }); this.events = [...this.events, event]; }
 }

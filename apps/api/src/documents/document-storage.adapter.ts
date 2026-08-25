@@ -24,7 +24,7 @@ export class LocalTemporaryDocumentStorageAdapter implements DocumentStorageAdap
     if (input.originalName !== basename(input.originalName) || input.originalName.includes("\0") || input.originalName.includes("..")) throw new BadRequestException({ code: "document_path_invalid" });
     if (input.content.byteLength === 0 || input.content.byteLength > this.maxBytes) throw new BadRequestException({ code: "document_size_invalid" });
     const extension = extname(input.originalName).toLowerCase(); const format = formats.get(extension);
-    if (!format || format.mime !== input.declaredMime.toLowerCase() || !format.signature(input.content)) throw new BadRequestException({ code: "document_format_invalid" });
+    if (format?.mime !== input.declaredMime.toLowerCase() || !format.signature(input.content)) throw new BadRequestException({ code: "document_format_invalid" });
     if (Buffer.from(input.content).subarray(0, 2048).toString("latin1").includes("EICAR-STANDARD-ANTIVIRUS-TEST-FILE")) throw new BadRequestException({ code: "document_malware_suspected" });
     this.directory ??= await mkdtemp(join(tmpdir(), "crmynov-documents-"));
     const id = randomUUID(); const sanitizedFileName = `document-${id}${extension}`; const target = join(this.directory, sanitizedFileName);
@@ -33,5 +33,10 @@ export class LocalTemporaryDocumentStorageAdapter implements DocumentStorageAdap
     return { storageReference: `temporary://${id}`, sanitizedFileName, extension, declaredMime: input.declaredMime.toLowerCase(), detectedMime: format.mime, byteSize: input.content.byteLength, sha256: createHash("sha256").update(input.content).digest("hex") };
   }
 
-  async cleanup(): Promise<void> { if (this.directory) await rm(this.directory, { recursive: true, force: true }); this.directory = undefined; }
+  async cleanup(): Promise<void> {
+    if (this.directory) {
+      await rm(this.directory, { recursive: true, force: true });
+    }
+    this.directory = undefined;
+  }
 }

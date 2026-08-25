@@ -28,7 +28,7 @@ CREATE TABLE "candidate_documents" (
   "declared_mime" CHARACTER VARYING(100) NOT NULL,
   "detected_mime" CHARACTER VARYING(100) NOT NULL,
   "byte_size" INTEGER NOT NULL,
-  "sha256" CHAR(64) NOT NULL,
+  "sha256" CHARACTER VARYING(64) NOT NULL,
   "storage_reference" CHARACTER VARYING(180) NOT NULL,
   "uploaded_by" CHARACTER VARYING(64) NOT NULL,
   "received_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,

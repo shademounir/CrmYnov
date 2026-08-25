@@ -246,7 +246,7 @@ model CandidateDocument {
   declaredMime       String   @map("declared_mime") @db.VarChar(100)
   detectedMime       String   @map("detected_mime") @db.VarChar(100)
   byteSize           Int      @map("byte_size")
-  sha256             String   @db.Char(64)
+  sha256             String   @db.VarChar(64)
   storageReference   String   @map("storage_reference") @db.VarChar(180)
   uploadedBy         String   @map("uploaded_by") @db.VarChar(64)
   receivedAt         DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
