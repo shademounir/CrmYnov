@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AuditService } from "../src/audit/audit.service.js";
-import type { Principal } from "../src/auth/auth.types.js";
+import type { AuthenticatedRequest, Principal } from "../src/auth/auth.types.js";
+import { CandidateDocumentController, DocumentVerificationController } from "../src/documents/candidate-document.controller.js";
 import { CandidateDocumentService } from "../src/documents/candidate-document.service.js";
 import { LocalTemporaryDocumentStorageAdapter } from "../src/documents/document-storage.adapter.js";
 import { LeadService } from "../src/leads/lead.service.js";
@@ -34,4 +35,26 @@ test("fails closed for campus IDOR, unavailable scanner, unsafe inputs and unaut
   const { service, lead } = fixture(); context.after(() => service.cleanup()); const adviser = principal("adviser", ["ADMISSIONS"]); const outsider = principal("outsider", ["ADMISSIONS"], "campus-b"); const checklist = service.generateChecklist(lead.id, { admissionLevel: "BAC", program: "Programme", applicationType: "INITIAL", situation: "ÉTUDIANT" }, adviser, "checklist"); const item = checklist[0]!;
   assert.throws(() => service.checklist(lead.id, outsider), code("lead_not_found")); const received = await service.upload(lead.id, { checklistItemId: item.id, documentType: item.documentType, originalName: "synthetic.pdf", declaredMime: "application/pdf", contentBase64: pdf }, adviser, "upload"); assert.throws(() => service.verify(received.id, { decision: "VALIDER" }, adviser, "forbidden"), code("document_verification_forbidden")); assert.throws(() => service.detail(received.id, outsider), code("lead_not_found"));
   const unavailable = fixture(false); context.after(() => unavailable.service.cleanup()); const unavailableItem = unavailable.service.generateChecklist(unavailable.lead.id, { admissionLevel: "BAC", program: "Programme", applicationType: "INITIAL", situation: "ÉTUDIANT" }, adviser, "checklist")[0]!; await assert.rejects(unavailable.service.upload(unavailable.lead.id, { checklistItemId: unavailableItem.id, documentType: unavailableItem.documentType, originalName: "synthetic.pdf", declaredMime: "application/pdf", contentBase64: pdf }, adviser, "upload"), code("document_antivirus_unavailable"));
+});
+
+test("exposes the authenticated controller contracts and rejects a missing principal", async (context) => {
+  const { service, lead } = fixture();
+  context.after(() => service.cleanup());
+  const adviser = principal("controller-adviser", ["ADMISSIONS"]);
+  const manager = principal("controller-manager", ["MANAGER"]);
+  const request = (value?: Principal): AuthenticatedRequest => ({
+    principal: value,
+    header: (name: string): string | undefined => name === "x-correlation-id" ? "controller-correlation" : undefined,
+  }) as AuthenticatedRequest;
+  const candidateController = new CandidateDocumentController(service);
+  const verificationController = new DocumentVerificationController(service);
+
+  assert.throws(() => candidateController.checklist(lead.id, request()), code("principal_missing"));
+  assert.throws(() => verificationController.detail("missing", request()), code("principal_missing"));
+  const checklist = candidateController.generate(lead.id, { admissionLevel: "BAC", program: "Programme", applicationType: "INITIAL", situation: "ÉTUDIANT" }, request(adviser));
+  assert.equal(candidateController.checklist(lead.id, request(adviser)).items.length, checklist.length);
+  const document = await candidateController.upload(lead.id, { checklistItemId: checklist[0]!.id, documentType: checklist[0]!.documentType, originalName: "controller.pdf", declaredMime: "application/pdf", contentBase64: pdf }, request(adviser));
+  assert.equal(verificationController.detail(document.id, request(manager)).document.id, document.id);
+  assert.equal(verificationController.dashboard({ page: "1", pageSize: "25", state: "INCOMPLET", documentType: checklist[0]!.documentType, campus: "campus-a", program: "Program", educationLevel: "BAC", view: "GLOBAL" }, request(manager)).total, 1);
+  assert.equal(verificationController.verify(document.id, { decision: "VALIDER" }, request(manager)).verificationStatus, "VALIDÉ");
 });
