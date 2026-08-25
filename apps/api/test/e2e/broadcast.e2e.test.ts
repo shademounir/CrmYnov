@@ -1,0 +1,30 @@
+import assert from "node:assert/strict";
+import type { AddressInfo } from "node:net";
+import test from "node:test";
+import { createApplication } from "../../src/application.js";
+import { UserService } from "../../src/users/user.service.js";
+
+test("runs the 14-step synthetic internal broadcast journey", async (context) => {
+  const app = await createApplication(); const users = app.get(UserService);
+  const manager = users.create({ professionalEmail: "broadcast-manager@example.invalid", roles: ["MANAGER"], campusId: "campus-a", teamId: "team-a" }, "bootstrap", "manager");
+  const recipient = users.create({ professionalEmail: "broadcast-recipient@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-a", teamId: "team-a" }, "bootstrap", "recipient");
+  const outsider = users.create({ professionalEmail: "broadcast-outsider@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-b", teamId: "team-b" }, "bootstrap", "outsider");
+  await app.listen(0, "127.0.0.1"); context.after(() => app.close()); const address = app.getHttpServer().address() as AddressInfo | null; assert.ok(address); const base = `http://127.0.0.1:${address.port}`;
+  const session = async (userId: string, roles: string[]): Promise<string> => { const response = await fetch(`${base}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, roles }) }); assert.equal(response.status, 201); return (await response.json() as { token: string }).token; };
+  const managerToken = await session(manager.id, ["MANAGER"]); const recipientToken = await session(recipient.id, ["ADMISSIONS"]); const outsiderToken = await session(outsider.id, ["ADMISSIONS"]);
+  const headers = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}`, "content-type": "application/json", "x-correlation-id": "broadcast-e2e" });
+  assert.equal((await fetch(`${base}/broadcasts`, { method: "POST", headers: headers(recipientToken), body: JSON.stringify({}) })).status, 403);
+  const created = await fetch(`${base}/broadcasts`, { method: "POST", headers: headers(managerToken), body: JSON.stringify({ title: "Information synthétique", content: "Texte interne inerte <script>sans exécution</script>", audience: { campusIds: ["campus-a"], roles: ["ADMISSIONS"] }, clientRequestId: "broadcast-e2e-draft-01" }) }); assert.equal(created.status, 201); const draft = await created.json() as { id: string };
+  for (const body of [{ title: "Invalide", content: "Texte synthétique", audience: { roles: ["UNKNOWN"] }, clientRequestId: "broadcast-e2e-role-01" }, { title: "Hors périmètre", content: "Texte synthétique", audience: { roles: ["SUPER_ADMIN"] }, clientRequestId: "broadcast-e2e-scope-01" }, { title: "Vide", content: "Texte synthétique", audience: {}, clientRequestId: "broadcast-e2e-empty-01" }]) assert.equal((await fetch(`${base}/broadcasts`, { method: "POST", headers: headers(managerToken), body: JSON.stringify(body) })).status >= 400, true);
+  const previewResponse = await fetch(`${base}/broadcasts/${draft.id}/preview`, { method: "POST", headers: headers(managerToken) }); assert.equal(previewResponse.status, 201); const preview = await previewResponse.json() as { version: number; recipientCount: number; mutated: boolean }; assert.deepEqual(preview, { broadcastId: draft.id, version: 1, recipientCount: 1, mutated: false });
+  const confirmBody = { confirmed: true, expectedVersion: preview.version, expectedRecipientCount: preview.recipientCount, idempotencyKey: "broadcast-e2e-confirm-01" };
+  const confirmed = await fetch(`${base}/broadcasts/${draft.id}/confirm`, { method: "POST", headers: headers(managerToken), body: JSON.stringify(confirmBody) }); assert.equal(confirmed.status, 201);
+  const replay = await fetch(`${base}/broadcasts/${draft.id}/confirm`, { method: "POST", headers: headers(managerToken), body: JSON.stringify(confirmBody) }); assert.equal(replay.status, 201);
+  const center = await fetch(`${base}/notifications`, { headers: { authorization: `Bearer ${recipientToken}` } }); const notification = (await center.json() as { items: Array<{ id: string; type: string }> }).items[0]!; assert.equal(notification.type, "BROADCAST");
+  assert.equal((await fetch(`${base}/notifications/${notification.id}/read`, { method: "PATCH", headers: headers(recipientToken) })).status, 200);
+  assert.equal((await fetch(`${base}/notifications/${notification.id}/read`, { method: "PATCH", headers: headers(outsiderToken) })).status, 404);
+  assert.equal((await fetch(`${base}/broadcasts/${draft.id}/cancel`, { method: "PATCH", headers: headers(managerToken), body: JSON.stringify({ reason: "Trop tard", expectedVersion: 2 }) })).status, 409);
+  const correction = await fetch(`${base}/broadcasts/${draft.id}/corrections`, { method: "POST", headers: headers(managerToken), body: JSON.stringify({ title: "Correction synthétique", content: "Nouvelle information interne", reason: "Rectification synthétique", clientRequestId: "broadcast-e2e-correction-01" }) }); assert.equal(correction.status, 201);
+  const history = await fetch(`${base}/broadcasts?page=1&pageSize=25`, { headers: { authorization: `Bearer ${managerToken}` } }); const historyBody = await history.json() as { items: unknown[] }; assert.equal(historyBody.items.length, 2); assert.equal(JSON.stringify(historyBody).includes("recipientIds"), false);
+  const specification = await fetch(`${base}/docs-json`).then((response) => response.json()) as { paths: Record<string, unknown> }; for (const path of ["/broadcasts", "/broadcasts/{id}/preview", "/broadcasts/{id}/confirm", "/broadcasts/{id}/corrections"]) assert.ok(specification.paths[path]);
+});

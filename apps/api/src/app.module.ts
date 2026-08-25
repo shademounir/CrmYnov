@@ -66,9 +66,12 @@ import { ManagerDashboardController, PersonalDashboardController } from "./repor
 import { ManagerDashboardService } from "./reporting/manager-dashboard.service.js";
 import { ChatController } from "./chat/chat.controller.js";
 import { ChatService } from "./chat/chat.service.js";
+import { BroadcastController } from "./broadcast/broadcast.controller.js";
+import { LocalBroadcastPublisher } from "./broadcast/broadcast.publisher.js";
+import { BroadcastService } from "./broadcast/broadcast.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SessionService,
     RateLimitService,
@@ -95,6 +98,8 @@ import { ChatService } from "./chat/chat.service.js";
     ImportReviewService,
     NotificationService,
     ChatService,
+    LocalBroadcastPublisher,
+    BroadcastService,
     FollowUpService,
     ClosureService,
     LeadCollaborationService,
