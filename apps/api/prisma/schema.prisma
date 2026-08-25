@@ -209,6 +209,8 @@ model Lead {
   collaborators        LeadCollaborator[]
   provenances          LeadProvenance[]
   ingestionReviewItems IngestionReviewItem[]
+  documentChecklistItems CandidateDocumentChecklistItem[]
+  documents            CandidateDocument[]
 
   @@index([assignedToId, status])
   @@index([assignmentMode, importBatchId])
@@ -216,6 +218,66 @@ model Lead {
   @@index([lastName, firstName, leadCode])
   @@index([source, program, createdAt])
   @@map("leads")
+}
+
+model CandidateDocumentChecklistItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  leadId          String   @map("lead_id") @db.Uuid
+  documentType    String   @map("document_type") @db.VarChar(48)
+  state           String   @default("MANQUANT") @db.VarChar(24)
+  requirementCode String   @map("requirement_code") @db.VarChar(80)
+  version         Int      @default(1)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  lead            Lead     @relation(fields: [leadId], references: [id])
+
+  @@unique([leadId, documentType, requirementCode])
+  @@index([state, documentType])
+  @@map("candidate_document_checklist_items")
+}
+
+model CandidateDocument {
+  id                 String   @id @default(uuid()) @db.Uuid
+  leadId             String   @map("lead_id") @db.Uuid
+  checklistItemId    String?  @map("checklist_item_id") @db.Uuid
+  documentType       String   @map("document_type") @db.VarChar(48)
+  sanitizedFileName  String   @map("sanitized_file_name") @db.VarChar(160)
+  extension          String   @db.VarChar(12)
+  declaredMime       String   @map("declared_mime") @db.VarChar(100)
+  detectedMime       String   @map("detected_mime") @db.VarChar(100)
+  byteSize           Int      @map("byte_size")
+  sha256             String   @db.Char(64)
+  storageReference   String   @map("storage_reference") @db.VarChar(180)
+  uploadedBy         String   @map("uploaded_by") @db.VarChar(64)
+  receivedAt         DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  verificationStatus String   @default("A_VERIFIER") @map("verification_status") @db.VarChar(24)
+  verifiedBy         String?  @map("verified_by") @db.VarChar(64)
+  verifiedAt         DateTime? @map("verified_at") @db.Timestamptz(6)
+  refusalReasonCode  String?  @map("refusal_reason_code") @db.VarChar(64)
+  version            Int      @default(1)
+  replacedDocumentId String?  @map("replaced_document_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lead               Lead     @relation(fields: [leadId], references: [id])
+  events             CandidateDocumentEvent[]
+
+  @@unique([leadId, documentType, version])
+  @@index([leadId, verificationStatus, receivedAt(sort: Desc)])
+  @@index([storageReference])
+  @@map("candidate_documents")
+}
+
+model CandidateDocumentEvent {
+  id             String            @id @default(uuid()) @db.Uuid
+  documentId     String            @map("document_id") @db.Uuid
+  eventType      String            @map("event_type") @db.VarChar(48)
+  actorId        String            @map("actor_id") @db.VarChar(64)
+  reasonCode     String?           @map("reason_code") @db.VarChar(64)
+  correlationId  String            @map("correlation_id") @db.VarChar(64)
+  occurredAt     DateTime          @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  document       CandidateDocument @relation(fields: [documentId], references: [id])
+
+  @@index([documentId, occurredAt, id])
+  @@map("candidate_document_events")
 }
 
 model IngestionBatch {

@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const notificationTypes = ["ASSIGNMENT", "REASSIGNMENT_DECISION", "CLOSURE_REQUEST", "COLLABORATOR_REQUEST", "FOLLOW_UP_DUE", "IMPORT_REVIEW", "CHAT_MENTION", "BROADCAST", "BROADCAST_CORRECTION"] as const;
+export const notificationTypes = ["ASSIGNMENT", "REASSIGNMENT_DECISION", "CLOSURE_REQUEST", "COLLABORATOR_REQUEST", "FOLLOW_UP_DUE", "IMPORT_REVIEW", "CHAT_MENTION", "BROADCAST", "BROADCAST_CORRECTION", "DOCUMENT_RECEIVED", "DOCUMENT_VALIDATED", "DOCUMENT_REFUSED"] as const;
 export type NotificationType = typeof notificationTypes[number];
 export type NotificationPriority = "LOW" | "NORMAL" | "HIGH";
-export interface NotificationRecord { id: string; recipientId: string; type: NotificationType; priority: NotificationPriority; resourceType: "LEAD" | "IMPORT" | "CHAT" | "BROADCAST"; resourceId: string; href: string; createdAt: string; readAt?: string }
+export interface NotificationRecord { id: string; recipientId: string; type: NotificationType; priority: NotificationPriority; resourceType: "LEAD" | "IMPORT" | "CHAT" | "BROADCAST" | "DOCUMENT"; resourceId: string; href: string; createdAt: string; readAt?: string }
 export interface NotificationPage { items: NotificationRecord[]; page: number; pageSize: number; total: number; unread: number }
 
 @Injectable()

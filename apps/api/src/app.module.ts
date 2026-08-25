@@ -69,9 +69,12 @@ import { ChatService } from "./chat/chat.service.js";
 import { BroadcastController } from "./broadcast/broadcast.controller.js";
 import { LocalBroadcastPublisher } from "./broadcast/broadcast.publisher.js";
 import { BroadcastService } from "./broadcast/broadcast.service.js";
+import { CandidateDocumentController, DocumentVerificationController } from "./documents/candidate-document.controller.js";
+import { CandidateDocumentService } from "./documents/candidate-document.service.js";
+import { LocalTemporaryDocumentStorageAdapter } from "./documents/document-storage.adapter.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SessionService,
     RateLimitService,
@@ -100,6 +103,8 @@ import { BroadcastService } from "./broadcast/broadcast.service.js";
     ChatService,
     LocalBroadcastPublisher,
     BroadcastService,
+    LocalTemporaryDocumentStorageAdapter,
+    CandidateDocumentService,
     FollowUpService,
     ClosureService,
     LeadCollaborationService,
