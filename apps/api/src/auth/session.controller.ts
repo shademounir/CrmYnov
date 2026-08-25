@@ -1,6 +1,5 @@
 import { Body, Controller, Delete, ForbiddenException, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
-import type { AuthenticatedRequest } from "./auth.types.js";
-import type { Scope } from "./auth.types.js";
+import type { AuthenticatedRequest, Scope } from "./auth.types.js";
 import { RateLimitService } from "./rate-limit.service.js";
 import { RbacGuard, RequireRoles } from "./rbac.guard.js";
 import { SessionService } from "./session.service.js";
