@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ManagerReportsDashboardPage from "../app/manager/reports/dashboard/page.js";
 import InteractiveReportingDashboard, { preserveFilters, safeInternalHref, type DashboardReport, type PersonalDashboardReport } from "../app/manager/reports/dashboard/reporting-ui.js";
+import { containsControlCharacter } from "../app/leads/dashboard-return-link.js";
 
 const report: DashboardReport = {
   definitionVersion: "manager-dashboard-v1", timezone: "Africa/Casablanca", filters: { period: "30d", campus: "campus-a" },
@@ -67,4 +68,10 @@ test("allows only explicit internal reporting destinations", () => {
   assert.equal(preserved.includes("createdFrom=2026-08-01"), true);
   assert.equal(preserved.includes("assignedToId=adviser-synthetic"), true);
   assert.equal(preserveFilters("javascript:alert(1)", new URLSearchParams()), "#");
+});
+
+test("detects ASCII control characters without rejecting international code points", () => {
+  assert.equal(containsControlCharacter("/manager/reports/dashboard?campus=équipe-東京"), false);
+  assert.equal(containsControlCharacter("/manager/reports/dashboard?campus=unsafe\u0000"), true);
+  assert.equal(containsControlCharacter("/manager/reports/dashboard?campus=unsafe\u007f"), true);
 });
