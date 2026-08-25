@@ -115,17 +115,17 @@ model ChatParticipant {
 }
 
 model ChatMessage {
-  id             String               @id @default(uuid()) @db.Uuid
-  conversationId String               @map("conversation_id") @db.Uuid
-  authorId       String               @map("author_id") @db.VarChar(64)
-  content        String?              @db.VarChar(2000)
-  version        Int                  @default(1)
-  editedAt       DateTime?            @map("edited_at") @db.Timestamptz(6)
-  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(6)
-  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  conversation   ChatConversation     @relation(fields: [conversationId], references: [id])
-  versions       ChatMessageVersion[]
-  mentions       ChatMention[]
+  id                 String                  @id @default(uuid()) @db.Uuid
+  conversationId     String                  @map("conversation_id") @db.Uuid
+  authorId           String                  @map("author_id") @db.VarChar(64)
+  content            String?                 @db.VarChar(2000)
+  version            Int                     @default(1)
+  editedAt           DateTime?               @map("edited_at") @db.Timestamptz(6)
+  deletedAt          DateTime?               @map("deleted_at") @db.Timestamptz(6)
+  createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation       ChatConversation        @relation(fields: [conversationId], references: [id])
+  versions           ChatMessageVersion[]
+  mentions           ChatMention[]
   activityConversion ChatActivityConversion?
 
   @@index([conversationId, createdAt, id])
@@ -144,13 +144,13 @@ model ChatMention {
 }
 
 model ChatActivityConversion {
-  id         String      @id @default(uuid()) @db.Uuid
-  messageId  String      @unique @map("message_id") @db.Uuid
-  leadId     String      @map("lead_id") @db.Uuid
-  activityId String      @unique @map("activity_id") @db.Uuid
-  convertedBy String     @map("converted_by") @db.VarChar(64)
-  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  message    ChatMessage @relation(fields: [messageId], references: [id])
+  id          String      @id @default(uuid()) @db.Uuid
+  messageId   String      @unique @map("message_id") @db.Uuid
+  leadId      String      @map("lead_id") @db.Uuid
+  activityId  String      @unique @map("activity_id") @db.Uuid
+  convertedBy String      @map("converted_by") @db.VarChar(64)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  message     ChatMessage @relation(fields: [messageId], references: [id])
 
   @@index([leadId, createdAt(sort: Desc)])
   @@map("chat_activity_conversions")
@@ -184,33 +184,34 @@ model ChatReadReceipt {
 }
 
 model Lead {
-  id                   String                @id @default(uuid()) @db.Uuid
-  leadCode             String                @unique @map("lead_code") @db.VarChar(32)
-  firstName            String                @map("first_name") @db.VarChar(100)
-  lastName             String                @map("last_name") @db.VarChar(100)
-  email                String?               @db.VarChar(254)
-  phone                String?               @db.VarChar(32)
-  campus               String                @db.VarChar(80)
-  campaign             String                @db.VarChar(120)
-  educationLevel       String                @map("education_level") @db.VarChar(80)
-  program              String                @db.VarChar(120)
-  source               String                @db.VarChar(80)
-  status               String                @default("PROSPECT") @db.VarChar(24)
-  assignedToId         String?               @map("assigned_to_id") @db.Uuid
-  assignmentMode       String?               @map("assignment_mode") @db.VarChar(32)
-  importBatchId        String?               @map("import_batch_id") @db.VarChar(64)
-  nextActionAt         DateTime?             @map("next_action_at") @db.Timestamptz(6)
-  lastActivityAt       DateTime?             @map("last_activity_at") @db.Timestamptz(6)
-  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  activities           LeadActivity[]
-  assignmentBatchItems AssignmentBatchItem[]
-  reassignmentRequests ReassignmentRequest[]
-  collaborators        LeadCollaborator[]
-  provenances          LeadProvenance[]
-  ingestionReviewItems IngestionReviewItem[]
+  id                     String                           @id @default(uuid()) @db.Uuid
+  leadCode               String                           @unique @map("lead_code") @db.VarChar(32)
+  firstName              String                           @map("first_name") @db.VarChar(100)
+  lastName               String                           @map("last_name") @db.VarChar(100)
+  email                  String?                          @db.VarChar(254)
+  phone                  String?                          @db.VarChar(32)
+  campus                 String                           @db.VarChar(80)
+  campaign               String                           @db.VarChar(120)
+  educationLevel         String                           @map("education_level") @db.VarChar(80)
+  program                String                           @db.VarChar(120)
+  source                 String                           @db.VarChar(80)
+  status                 String                           @default("PROSPECT") @db.VarChar(24)
+  assignedToId           String?                          @map("assigned_to_id") @db.Uuid
+  assignmentMode         String?                          @map("assignment_mode") @db.VarChar(32)
+  importBatchId          String?                          @map("import_batch_id") @db.VarChar(64)
+  nextActionAt           DateTime?                        @map("next_action_at") @db.Timestamptz(6)
+  lastActivityAt         DateTime?                        @map("last_activity_at") @db.Timestamptz(6)
+  createdAt              DateTime                         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  activities             LeadActivity[]
+  assignmentBatchItems   AssignmentBatchItem[]
+  reassignmentRequests   ReassignmentRequest[]
+  collaborators          LeadCollaborator[]
+  provenances            LeadProvenance[]
+  ingestionReviewItems   IngestionReviewItem[]
   documentChecklistItems CandidateDocumentChecklistItem[]
-  documents            CandidateDocument[]
+  documents              CandidateDocument[]
+  telephonyCalls         TelephonyCall[]
 
   @@index([assignedToId, status])
   @@index([assignmentMode, importBatchId])
@@ -218,6 +219,90 @@ model Lead {
   @@index([lastName, firstName, leadCode])
   @@index([source, program, createdAt])
   @@map("leads")
+}
+
+model TelephonyConfiguration {
+  id                     String   @id @default(uuid()) @db.Uuid
+  mode                   String   @default("DISABLED") @db.VarChar(24)
+  clickToCallEnabled     Boolean  @default(false) @map("click_to_call_enabled")
+  inboundEnabled         Boolean  @default(false) @map("inbound_enabled")
+  outboundEnabled        Boolean  @default(false) @map("outbound_enabled")
+  recordingPolicy        String   @default("DISABLED") @map("recording_policy") @db.VarChar(24)
+  maxCallDurationSeconds Int      @default(7200) @map("max_call_duration_seconds")
+  providerConfigurationRef String? @map("provider_configuration_ref") @db.VarChar(160)
+  version                Int      @default(1)
+  updatedBy              String   @map("updated_by") @db.VarChar(64)
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("telephony_configurations")
+}
+
+model TelephonyCall {
+  id               String                      @id @default(uuid()) @db.Uuid
+  provider         String                      @db.VarChar(24)
+  externalId       String                      @map("external_id") @db.VarChar(128)
+  direction        String                      @db.VarChar(16)
+  state            String                      @db.VarChar(16)
+  leadId           String?                     @map("lead_id") @db.Uuid
+  phoneFingerprint String                      @map("phone_fingerprint") @db.VarChar(64)
+  matchState       String                      @default("UNMATCHED") @map("match_state") @db.VarChar(24)
+  requestedAt      DateTime                    @map("requested_at") @db.Timestamptz(6)
+  answeredAt       DateTime?                   @map("answered_at") @db.Timestamptz(6)
+  endedAt          DateTime?                   @map("ended_at") @db.Timestamptz(6)
+  durationSeconds  Int?                        @map("duration_seconds")
+  createdBy        String                      @map("created_by") @db.VarChar(64)
+  recordingId      String?                     @map("recording_id") @db.Uuid
+  lead             Lead?                       @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  events           TelephonyCallEvent[]
+  recording        TelephonyRecordingMetadata? @relation(fields: [recordingId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, externalId])
+  @@index([leadId, requestedAt(sort: Desc)])
+  @@index([matchState, requestedAt(sort: Desc)])
+  @@map("telephony_calls")
+}
+
+model TelephonyCallEvent {
+  id             String        @id @default(uuid()) @db.Uuid
+  callId         String        @map("call_id") @db.Uuid
+  idempotencyKey String        @unique @map("idempotency_key") @db.VarChar(160)
+  eventType      String        @map("event_type") @db.VarChar(32)
+  state          String        @db.VarChar(16)
+  reasonCode     String?       @map("reason_code") @db.VarChar(64)
+  actorId        String?       @map("actor_id") @db.VarChar(64)
+  occurredAt     DateTime      @map("occurred_at") @db.Timestamptz(6)
+  receivedAt     DateTime      @default(now()) @map("received_at") @db.Timestamptz(6)
+  call           TelephonyCall @relation(fields: [callId], references: [id], onDelete: Restrict)
+
+  @@index([callId, occurredAt, id])
+  @@map("telephony_call_events")
+}
+
+model TelephonyRecordingMetadata {
+  id               String                          @id @default(uuid()) @db.Uuid
+  provider         String                          @db.VarChar(24)
+  state            String                          @default("UNAVAILABLE") @db.VarChar(16)
+  durationSeconds  Int?
+  storageReference String?                         @map("storage_reference") @db.VarChar(160)
+  authorizedRoles  String[]                        @map("authorized_roles")
+  createdAt        DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  calls            TelephonyCall[]
+  accessEvents     TelephonyRecordingAccessEvent[]
+
+  @@map("telephony_recording_metadata")
+}
+
+model TelephonyRecordingAccessEvent {
+  id          String                     @id @default(uuid()) @db.Uuid
+  recordingId String                     @map("recording_id") @db.Uuid
+  actorId     String                     @map("actor_id") @db.VarChar(64)
+  outcome     String                     @db.VarChar(24)
+  occurredAt  DateTime                   @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  recording   TelephonyRecordingMetadata @relation(fields: [recordingId], references: [id], onDelete: Restrict)
+
+  @@index([recordingId, occurredAt(sort: Desc)])
+  @@map("telephony_recording_access_events")
 }
 
 model CandidateDocumentChecklistItem {
@@ -237,27 +322,27 @@ model CandidateDocumentChecklistItem {
 }
 
 model CandidateDocument {
-  id                 String   @id @default(uuid()) @db.Uuid
-  leadId             String   @map("lead_id") @db.Uuid
-  checklistItemId    String?  @map("checklist_item_id") @db.Uuid
-  documentType       String   @map("document_type") @db.VarChar(48)
-  sanitizedFileName  String   @map("sanitized_file_name") @db.VarChar(160)
-  extension          String   @db.VarChar(12)
-  declaredMime       String   @map("declared_mime") @db.VarChar(100)
-  detectedMime       String   @map("detected_mime") @db.VarChar(100)
-  byteSize           Int      @map("byte_size")
-  sha256             String   @db.VarChar(64)
-  storageReference   String   @map("storage_reference") @db.VarChar(180)
-  uploadedBy         String   @map("uploaded_by") @db.VarChar(64)
-  receivedAt         DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
-  verificationStatus String   @default("A_VERIFIER") @map("verification_status") @db.VarChar(24)
-  verifiedBy         String?  @map("verified_by") @db.VarChar(64)
-  verifiedAt         DateTime? @map("verified_at") @db.Timestamptz(6)
-  refusalReasonCode  String?  @map("refusal_reason_code") @db.VarChar(64)
-  version            Int      @default(1)
-  replacedDocumentId String?  @map("replaced_document_id") @db.Uuid
-  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  lead               Lead     @relation(fields: [leadId], references: [id])
+  id                 String                   @id @default(uuid()) @db.Uuid
+  leadId             String                   @map("lead_id") @db.Uuid
+  checklistItemId    String?                  @map("checklist_item_id") @db.Uuid
+  documentType       String                   @map("document_type") @db.VarChar(48)
+  sanitizedFileName  String                   @map("sanitized_file_name") @db.VarChar(160)
+  extension          String                   @db.VarChar(12)
+  declaredMime       String                   @map("declared_mime") @db.VarChar(100)
+  detectedMime       String                   @map("detected_mime") @db.VarChar(100)
+  byteSize           Int                      @map("byte_size")
+  sha256             String                   @db.VarChar(64)
+  storageReference   String                   @map("storage_reference") @db.VarChar(180)
+  uploadedBy         String                   @map("uploaded_by") @db.VarChar(64)
+  receivedAt         DateTime                 @default(now()) @map("received_at") @db.Timestamptz(6)
+  verificationStatus String                   @default("A_VERIFIER") @map("verification_status") @db.VarChar(24)
+  verifiedBy         String?                  @map("verified_by") @db.VarChar(64)
+  verifiedAt         DateTime?                @map("verified_at") @db.Timestamptz(6)
+  refusalReasonCode  String?                  @map("refusal_reason_code") @db.VarChar(64)
+  version            Int                      @default(1)
+  replacedDocumentId String?                  @map("replaced_document_id") @db.Uuid
+  createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  lead               Lead                     @relation(fields: [leadId], references: [id])
   events             CandidateDocumentEvent[]
 
   @@unique([leadId, documentType, version])
@@ -267,14 +352,14 @@ model CandidateDocument {
 }
 
 model CandidateDocumentEvent {
-  id             String            @id @default(uuid()) @db.Uuid
-  documentId     String            @map("document_id") @db.Uuid
-  eventType      String            @map("event_type") @db.VarChar(48)
-  actorId        String            @map("actor_id") @db.VarChar(64)
-  reasonCode     String?           @map("reason_code") @db.VarChar(64)
-  correlationId  String            @map("correlation_id") @db.VarChar(64)
-  occurredAt     DateTime          @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  document       CandidateDocument @relation(fields: [documentId], references: [id])
+  id            String            @id @default(uuid()) @db.Uuid
+  documentId    String            @map("document_id") @db.Uuid
+  eventType     String            @map("event_type") @db.VarChar(48)
+  actorId       String            @map("actor_id") @db.VarChar(64)
+  reasonCode    String?           @map("reason_code") @db.VarChar(64)
+  correlationId String            @map("correlation_id") @db.VarChar(64)
+  occurredAt    DateTime          @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  document      CandidateDocument @relation(fields: [documentId], references: [id])
 
   @@index([documentId, occurredAt, id])
   @@map("candidate_document_events")
