@@ -47,11 +47,11 @@ test("fails closed for IDOR, self approval, duplicate pending and owner races", 
   assert.throws(() => service.decide(request.id, { approved: true, reason: "Validation tardive" }, manager, "corr"), hasCode("reassignment_owner_changed"));
 });
 
-test("controller exposes request, list and decision contracts", () => {
+test("controller exposes request, list and decision contracts", async () => {
   const { leads, service } = setup(); const lead = leads.registerLocalLead({ leadCode: "LD-REASSIGN-004", firstName: "Lead", lastName: "Synthétique", campus: "Campus", campaign: "Campaign", educationLevel: "BAC", program: "Programme", source: "FORM", assignedToId: ownerId });
   const controller = new ReassignmentController(service); const adviserRequest = { principal: adviser, header: () => "corr-controller" } as never;
-  const created = controller.create(lead.id, { targetUserId: targetId, reason: "Demande contrôlée", moveOpenTasks: true, idempotencyKey: "reassign-controller" }, adviserRequest);
-  assert.equal(controller.list(lead.id, adviserRequest).requests[0]?.id, created.id);
-  assert.equal(controller.decide(created.id, { approved: true, reason: "Validation Manager" }, { principal: manager, header: () => "corr-manager" } as never).request.status, "APPROVED");
+  const created = await controller.create(lead.id, { targetUserId: targetId, reason: "Demande contrôlée", moveOpenTasks: true, idempotencyKey: "reassign-controller" }, adviserRequest);
+  assert.equal((await controller.list(lead.id, adviserRequest)).requests[0]?.id, created.id);
+  assert.equal((await controller.decide(created.id, { approved: true, reason: "Validation Manager" }, { principal: manager, header: () => "corr-manager" } as never)).request.status, "APPROVED");
   assert.throws(() => controller.list(lead.id, { header: () => undefined } as never), hasCode("principal_missing"));
 });

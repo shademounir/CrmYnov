@@ -20,6 +20,8 @@ import { FirstLoginController } from "./first-login/first-login.controller.js";
 import { FirstLoginService } from "./first-login/first-login.service.js";
 import { LeadController, LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
 import { LeadService } from "./leads/lead.service.js";
+import { LeadPersistenceRepository } from "./leads/lead-persistence.repository.js";
+import { LeadWorkflowPersistenceRepository } from "./leads/lead-workflow-persistence.repository.js";
 import { AssignmentController } from "./assignment/assignment.controller.js";
 import { AssignmentService } from "./assignment/assignment.service.js";
 import { LeadAssignmentController } from "./assignment/lead-assignment.controller.js";
@@ -93,6 +95,8 @@ import { PrismaService } from "./persistence/prisma.service.js";
     UserService,
     FirstLoginService,
     LeadService,
+    LeadPersistenceRepository,
+    LeadWorkflowPersistenceRepository,
     AssignmentService,
     LeadAssignmentService,
     ReassignmentService,

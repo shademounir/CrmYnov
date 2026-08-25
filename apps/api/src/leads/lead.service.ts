@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
+import { LeadPersistenceRepository } from "./lead-persistence.repository.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number];
@@ -30,7 +31,7 @@ export interface LeadRecord {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
-  nextActionAt?: string; lastActivityAt?: string; createdAt: string;
+  nextActionAt?: string; lastActivityAt?: string; createdAt: string; version?: number;
 }
 
 export interface LeadActivityRecord {
@@ -62,11 +63,154 @@ export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM"
 export type LeadSavedView = typeof leadSavedViews[number];
 
 @Injectable()
-export class LeadService {
+export class LeadService implements OnModuleInit {
   private readonly leads = new Map<string, Readonly<LeadRecord>>();
   private activities: Readonly<LeadActivityRecord>[] = [];
   private readonly correctionReceipts = new Map<string, Readonly<LeadActivityRecord>>();
-  constructor(@Inject(AuditService) private readonly audit: AuditService) {}
+  constructor(
+    @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(LeadPersistenceRepository) private readonly persistence?: LeadPersistenceRepository,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.refreshPersistentState();
+  }
+
+  persistenceEnabled(): boolean {
+    return this.persistence?.enabled === true;
+  }
+
+  async createLeadForApi(input: CreateLeadInput, principal: Principal, correlationId: string): Promise<CreateLeadResult> {
+    if (!this.persistence?.enabled) return this.createLead(input, principal, correlationId);
+    await this.refreshPersistentState();
+    const fingerprint = this.persistence.fingerprint({ input, actorId: principal.userId });
+    const activityIds = new Set(this.activities.map((item) => item.id));
+    const result = this.createLead(input, principal, correlationId);
+    const lead = { ...result.lead, version: 1 };
+    const activity = this.activities.find((item) => item.leadId === lead.id && !activityIds.has(item.id));
+    if (!activity) throw new Error("lead_create_activity_missing");
+    try {
+      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint);
+      await this.refreshPersistentState();
+      return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };
+    } catch (error) {
+      await this.refreshPersistentState();
+      throw error;
+    }
+  }
+
+  async listLeadsForApi(query: LeadListQuery, principal: Principal, correlationId: string): Promise<LeadPage> {
+    await this.refreshPersistentState();
+    return this.listLeads(query, principal, correlationId);
+  }
+
+  async getLeadForApi(leadId: string, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    await this.refreshPersistentState();
+    return this.getLead(leadId, principal, correlationId);
+  }
+
+  async findLocalLeadForApi(leadId: string): Promise<LeadRecord | undefined> {
+    await this.refreshPersistentState();
+    return this.findLocalLead(leadId);
+  }
+
+  async timelineForApi(leadId: string, principal: Principal): Promise<LeadActivityRecord[]> {
+    await this.refreshPersistentState();
+    return this.timeline(leadId, principal);
+  }
+
+  async addActivityForApi(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
+    const idempotencyKey = `lead:activity:${leadId}:${correlationId}`;
+    const replay = await this.persistence?.findActivity(idempotencyKey);
+    if (replay) return replay;
+    return this.persistApiMutation(leadId, idempotencyKey, "ADD_ACTIVITY", input, () => this.addActivity(leadId, input, principal, correlationId));
+  }
+
+  async correctActivityForApi(leadId: string, originalEventId: string, input: InteractionCorrectionInput, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
+    const idempotencyKey = `lead:correction:${input.idempotencyKey}`;
+    const replay = await this.persistence?.findActivity(idempotencyKey);
+    if (replay) return replay;
+    return this.persistApiMutation(leadId, idempotencyKey, "CORRECT_ACTIVITY", { originalEventId, input }, () => this.correctActivity(leadId, originalEventId, input, principal, correlationId));
+  }
+
+  async changeStatusForApi(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    return this.persistApiMutation(leadId, `lead:status:${leadId}:${correlationId}`, "CHANGE_STATUS", input, () => this.changeStatus(leadId, input, principal, correlationId));
+  }
+
+  async assignLocalLeadForApi(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED"): Promise<LeadRecord> {
+    return this.persistApiMutation(leadId, `lead:assignment:${leadId}:${correlationId}`, "ASSIGN", { assignedToId, reason, assignmentMode }, () => this.assignLocalLead(leadId, assignedToId, principal, correlationId, reason, assignmentMode));
+  }
+
+  async reassignLocalLeadForApi(leadId: string, expectedOwnerId: string, targetUserId: string, principal: Principal, correlationId: string, reason: string): Promise<LeadRecord> {
+    return this.persistApiMutation(leadId, `lead:reassignment:${leadId}:${correlationId}`, "REASSIGN", { expectedOwnerId, targetUserId, reason }, () => this.reassignLocalLead(leadId, expectedOwnerId, targetUserId, principal, correlationId, reason));
+  }
+
+  async applyCollaboratorForApi(leadId: string, targetUserId: string, action: "ADD" | "REMOVE", role: string, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    const result = await this.persistApiMutation(leadId, `lead:collaborator:${leadId}:${correlationId}`, "COLLABORATOR", { targetUserId, action, role }, () => this.applyCollaborator(leadId, targetUserId, action, role, principal, correlationId));
+    if (this.persistence?.enabled) await this.persistence.replaceCollaborators(leadId, result.collaboratorIds ?? []);
+    return result;
+  }
+
+  async persistCollaboratorSnapshotForApi(leadId: string, userIds: readonly string[]): Promise<void> {
+    if (!this.persistence?.enabled) return;
+    await this.persistence.replaceCollaborators(leadId, userIds);
+    await this.refreshPersistentState();
+  }
+
+  async persistWorkflowMutationForApi<T>(
+    leadId: string,
+    idempotencyKey: string,
+    operation: string,
+    input: unknown,
+    mutate: () => T,
+  ): Promise<T> {
+    return this.persistApiMutation(leadId, idempotencyKey, operation, input, mutate);
+  }
+
+  private async persistApiMutation<T>(
+    leadId: string,
+    idempotencyKey: string,
+    operation: string,
+    input: unknown,
+    mutate: () => T,
+  ): Promise<T> {
+    if (!this.persistence?.enabled) return mutate();
+    await this.refreshPersistentState();
+    const before = this.leads.get(leadId);
+    if (!before) throw new NotFoundException({ code: "lead_not_found" });
+    const beforeVersion = before.version ?? 1;
+    const activityIds = new Set(this.activities.map((item) => item.id));
+    const result = mutate();
+    const after = this.leads.get(leadId);
+    if (!after) throw new Error("lead_mutation_state_missing");
+    const activities = this.activities.filter((item) => item.leadId === leadId && !activityIds.has(item.id));
+    const fingerprint = this.persistence.fingerprint({ input, leadId, operation });
+    try {
+      await this.persistence.persistMutation(
+        { ...before, version: beforeVersion },
+        { ...after, version: beforeVersion },
+        activities,
+        idempotencyKey,
+        operation,
+        fingerprint,
+      );
+      await this.refreshPersistentState();
+      if (typeof result === "object" && result !== null && "leadCode" in result) return this.visibleLead(this.leads.get(leadId)!, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;
+      if (typeof result === "object" && result !== null && "id" in result) return (this.activities.find((item) => item.id === result.id) ?? result) as T;
+      return result;
+    } catch (error) {
+      await this.refreshPersistentState();
+      throw error;
+    }
+  }
+
+  private async refreshPersistentState(): Promise<void> {
+    if (!this.persistence?.enabled) return;
+    const snapshot = await this.persistence.snapshot();
+    this.leads.clear();
+    for (const lead of snapshot.leads) this.leads.set(lead.id, Object.freeze({ ...lead, collaboratorIds: [...(lead.collaboratorIds ?? [])] }));
+    this.activities = snapshot.activities.map((activity) => Object.freeze(structuredClone(activity)));
+  }
 
   registerLocalLead(input: Omit<LeadRecord, "id" | "createdAt" | "status"> & { id?: string; status?: LeadStatus }): LeadRecord {
     const lead: LeadRecord = Object.freeze({ ...input, id: input.id ?? randomUUID(), status: input.status ?? "PROSPECT", createdAt: new Date().toISOString() });

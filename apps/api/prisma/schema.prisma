@@ -249,11 +249,15 @@ model Lead {
   importBatchId          String?                          @map("import_batch_id") @db.VarChar(64)
   nextActionAt           DateTime?                        @map("next_action_at") @db.Timestamptz(6)
   lastActivityAt         DateTime?                        @map("last_activity_at") @db.Timestamptz(6)
+  version                Int                              @default(1)
   createdAt              DateTime                         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
   activities             LeadActivity[]
   assignmentBatchItems   AssignmentBatchItem[]
   reassignmentRequests   ReassignmentRequest[]
+  collaborationRequests  LeadCollaborationRequest[]
+  closureRequests        LeadClosureRequest[]
+  mutationReceipts       LeadMutationReceipt[]
   collaborators          LeadCollaborator[]
   provenances            LeadProvenance[]
   ingestionReviewItems   IngestionReviewItem[]
@@ -594,6 +598,62 @@ model LeadCollaborator {
   @@map("lead_collaborators")
 }
 
+model LeadCollaborationRequest {
+  id             String    @id @default(uuid()) @db.Uuid
+  leadId         String    @map("lead_id") @db.Uuid
+  targetUserId   String    @map("target_user_id") @db.Uuid
+  action         String    @db.VarChar(16)
+  role           String    @db.VarChar(40)
+  justification  String    @db.VarChar(500)
+  requesterId    String    @map("requester_id") @db.VarChar(64)
+  state          String    @default("PENDING") @db.VarChar(16)
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt      DateTime? @map("decided_at") @db.Timestamptz(6)
+  decidedBy      String?   @map("decided_by") @db.VarChar(64)
+  decisionReason String?   @map("decision_reason") @db.VarChar(500)
+  lead           Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
+
+  @@index([leadId, createdAt(sort: Desc)])
+  @@index([state, createdAt])
+  @@map("lead_collaboration_requests")
+}
+
+model LeadClosureRequest {
+  id             String    @id @default(uuid()) @db.Uuid
+  leadId         String    @map("lead_id") @db.Uuid
+  target         String    @db.VarChar(24)
+  reason         String    @db.VarChar(80)
+  comment        String    @db.VarChar(1000)
+  evidence       String[]
+  requesterId    String    @map("requester_id") @db.VarChar(64)
+  state          String    @default("PENDING") @db.VarChar(16)
+  version        Int       @default(1)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt      DateTime? @map("decided_at") @db.Timestamptz(6)
+  decidedBy      String?   @map("decided_by") @db.VarChar(64)
+  decisionReason String?   @map("decision_reason") @db.VarChar(500)
+  lead           Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
+
+  @@index([leadId, createdAt(sort: Desc)])
+  @@index([state, createdAt])
+  @@map("lead_closure_requests")
+}
+
+model LeadMutationReceipt {
+  id             String   @id @default(uuid()) @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  idempotencyKey String   @unique @map("idempotency_key") @db.VarChar(160)
+  fingerprint    String   @db.VarChar(64)
+  operation      String   @db.VarChar(48)
+  result         Json
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lead           Lead     @relation(fields: [leadId], references: [id], onDelete: Restrict)
+
+  @@index([leadId, createdAt(sort: Desc)])
+  @@map("lead_mutation_receipts")
+}
+
 model ReassignmentRequest {
   id             String    @id @default(uuid()) @db.Uuid
   leadId         String    @map("lead_id") @db.Uuid
@@ -607,6 +667,8 @@ model ReassignmentRequest {
   decidedBy      String?   @map("decided_by") @db.VarChar(64)
   decidedAt      DateTime? @map("decided_at") @db.Timestamptz(6)
   decisionReason String?   @map("decision_reason") @db.VarChar(500)
+  idempotencyKey String?   @unique @map("idempotency_key") @db.VarChar(128)
+  version        Int       @default(1)
   lead           Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
 
   @@index([leadId, requestedAt(sort: Desc)])
@@ -651,6 +713,12 @@ model LeadActivity {
   authorId      String    @map("author_id") @db.VarChar(64)
   nextActionAt  DateTime? @map("next_action_at") @db.Timestamptz(6)
   correlationId String    @map("correlation_id") @db.VarChar(64)
+  idempotencyKey String?  @unique @map("idempotency_key") @db.VarChar(160)
+  originalEventId String? @map("original_event_id") @db.Uuid
+  correctionOperation String? @map("correction_operation") @db.VarChar(16)
+  correctionReasonCode String? @map("correction_reason_code") @db.VarChar(80)
+  previousSnapshot Json?  @map("previous_snapshot")
+  replacementSnapshot Json? @map("replacement_snapshot")
   occurredAt    DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
   lead          Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
 

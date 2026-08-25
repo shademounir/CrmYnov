@@ -27,9 +27,9 @@ test("fails closed for invalid transitions and controlled closures", () => {
   assert.throws(() => service.changeStatus(lead.id, { status: "UNKNOWN" }, manager, "corr"), hasCode("lead_status_invalid"));
 });
 
-test("controller preserves correlation and rejects a missing principal", () => {
+test("controller preserves correlation and rejects a missing principal", async () => {
   const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(leadInput); const controller = new LeadStatusController(service);
   const request = { principal: adviser, header: () => "corr-controller" } as never;
-  assert.equal(controller.update(lead.id, { status: "CONTACTED" }, request).status, "CONTACTED");
-  assert.throws(() => controller.update(lead.id, { status: "QUALIFIED" }, { header: () => undefined } as never), hasCode("principal_missing"));
+  assert.equal((await controller.update(lead.id, { status: "CONTACTED" }, request)).status, "CONTACTED");
+  await assert.rejects(() => controller.update(lead.id, { status: "QUALIFIED" }, { header: () => undefined } as never), hasCode("principal_missing"));
 });

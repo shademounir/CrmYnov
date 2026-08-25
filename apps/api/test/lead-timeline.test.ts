@@ -27,15 +27,15 @@ test("refuses unauthorized writers and invalid activity types", () => {
   assert.throws(() => service.timeline("00000000-0000-4000-8000-000000000099", admissions), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("lead_not_found"));
 });
 
-test("controller delegates append and read without exposing another lead", () => {
+test("controller delegates append and read without exposing another lead", async () => {
   const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(leadInput);
   const controller = new LeadTimelineController(service);
   const request = { principal: admissions, header: (name: string) => name === "x-correlation-id" ? "corr-controller" : undefined } as never;
-  const created = controller.create(lead.id, { type: "MEETING", result: "Scheduled", note: "Synthetic note" }, request);
+  const created = await controller.create(lead.id, { type: "MEETING", result: "Scheduled", note: "Synthetic note" }, request);
   assert.equal(created.correlationId, "corr-controller");
-  assert.equal(controller.list(lead.id, request).events[0]?.id, created.id);
-  assert.throws(() => controller.list(lead.id, { header: () => undefined } as never), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("principal_missing"));
-  assert.throws(() => controller.create(lead.id, { type: "COMMENT", result: "x" }, { header: () => undefined } as never), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("principal_missing"));
+  assert.equal((await controller.list(lead.id, request)).events[0]?.id, created.id);
+  await assert.rejects(() => controller.list(lead.id, { header: () => undefined } as never), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("principal_missing"));
+  await assert.rejects(() => controller.create(lead.id, { type: "COMMENT", result: "x" }, { header: () => undefined } as never), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("principal_missing"));
 });
 
 test("adds an idempotent expurgated correction while preserving the original", () => {
@@ -67,11 +67,11 @@ test("fails closed for authorization, IDOR, invalid values and concurrent correc
   assert.throws(() => service.correctActivity(lead.id, original.id, { ...valid, idempotencyKey: "correction-0004", expectedCorrectionCount: 1 }, manager, "corr"), hasCode("interaction_correction_concurrent"));
 });
 
-test("controller exposes the compensating correction contract", () => {
+test("controller exposes the compensating correction contract", async () => {
   const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(leadInput);
   const original = service.addActivity(lead.id, { type: "MANUAL_EMAIL", result: "DECLARED" }, admissions, "corr-original");
   const controller = new LeadTimelineController(service); const request = { principal: manager, header: () => "corr-controller" } as never;
-  const correction = controller.correct(lead.id, original.id, { idempotencyKey: "correction-0005", expectedCorrectionCount: 0,
+  const correction = await controller.correct(lead.id, original.id, { idempotencyKey: "correction-0005", expectedCorrectionCount: 0,
     operation: "CORRECT", reasonCode: "WRONG_CHANNEL", replacement: { type: "WHATSAPP", result: "DECLARED" } }, request);
   assert.equal(correction.type, "CORRECTION"); assert.equal(correction.correction?.originalEventId, original.id);
 });
