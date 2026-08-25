@@ -41,17 +41,17 @@ test("fails closed on invalid identities and unknown users", () => {
   assert.throws(() => users.setActive("missing", false, "actor", "corr"), hasResponseCode("collaborator_not_found"));
 });
 
-test("controller delegates protected creation, filtering and status changes", () => {
+test("controller delegates protected creation, filtering and status changes", async () => {
   const { users } = createService();
   const controller = new UserController(users);
   const request = {
     principal: { userId: "synthetic-admin", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-admin" },
     header: (name: string) => name === "x-correlation-id" ? "corr-controller" : undefined,
   } as AuthenticatedRequest;
-  const first = controller.create(request, { professionalEmail: "first@example.invalid", roles: ["SUPER_ADMIN"] });
-  controller.create(request, { professionalEmail: "second@example.invalid", roles: ["SUPER_ADMIN"] });
+  const first = await controller.create(request, { professionalEmail: "first@example.invalid", roles: ["SUPER_ADMIN"] });
+  await controller.create(request, { professionalEmail: "second@example.invalid", roles: ["SUPER_ADMIN"] });
   assert.equal(controller.list("true", undefined, undefined).users.length, 2);
-  assert.equal(controller.setStatus(request, first.id, { active: false }).active, false);
+  assert.equal((await controller.setStatus(request, first.id, { active: false })).active, false);
   assert.equal(controller.list("false", undefined, undefined).users.length, 1);
 });
 

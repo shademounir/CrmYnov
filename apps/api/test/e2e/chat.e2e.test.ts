@@ -4,29 +4,33 @@ import test from "node:test";
 import { createApplication } from "../../src/application.js";
 import { UserService } from "../../src/users/user.service.js";
 import { LeadService } from "../../src/leads/lead.service.js";
+import { digestRecoveryValue, LocalCredentialAdapter } from "../../src/access-recovery/access-recovery.store.js";
 
 test("runs the internal chat journey with member-only history and synthetic data", async (context) => {
   const app = await createApplication();
   const users = app.get(UserService);
   const leads = app.get(LeadService);
-  const author = users.create({ professionalEmail: "chat-author@example.invalid", roles: ["ADMISSIONS"] }, "bootstrap", "chat-author");
-  const colleague = users.create({ professionalEmail: "chat-colleague@example.invalid", roles: ["ADMISSIONS"] }, "bootstrap", "chat-colleague");
-  const outsider = users.create({ professionalEmail: "chat-outsider@example.invalid", roles: ["ADMISSIONS"] }, "bootstrap", "chat-outsider");
-  const lead = leads.registerLocalLead({ leadCode: "LD-2026-CHAT0002", firstName: "Prénom synthétique", lastName: "Nom synthétique", campus: "Campus synthétique", campaign: "Campagne synthétique", educationLevel: "Niveau synthétique", program: "Programme synthétique", source: "SYNTHETIC", assignedToId: author.id });
+  const credentials = app.get(LocalCredentialAdapter);
+  const author = users.create({ professionalEmail: "chat-author@example.invalid", roles: ["ADMISSIONS"], campusId: "Campus-synthetique" }, "bootstrap", "chat-author");
+  const colleague = users.create({ professionalEmail: "chat-colleague@example.invalid", roles: ["ADMISSIONS"], campusId: "Campus-synthetique" }, "bootstrap", "chat-colleague");
+  const outsider = users.create({ professionalEmail: "chat-outsider@example.invalid", roles: ["ADMISSIONS"], campusId: "Campus-autre" }, "bootstrap", "chat-outsider");
+  const lead = leads.registerLocalLead({ leadCode: "LD-2026-CHAT0002", firstName: "Prénom synthétique", lastName: "Nom synthétique", campus: "Campus-synthetique", campaign: "Campagne synthétique", educationLevel: "Niveau synthétique", program: "Programme synthétique", source: "SYNTHETIC", assignedToId: author.id });
   await app.listen(0, "127.0.0.1");
   context.after(() => app.close());
   const address = app.getHttpServer().address() as AddressInfo | null;
   assert.ok(address);
   const base = `http://127.0.0.1:${address.port}`;
 
-  const session = async (userId: string): Promise<string> => {
-    const response = await fetch(`${base}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, roles: ["ADMISSIONS"] }) });
+  const session = async (user: { id: string; professionalEmail: string }): Promise<string> => {
+    credentials.provisionTemporary(user.id, "Temporary1!E2eValue", digestRecoveryValue(user.professionalEmail));
+    credentials.replace(user.id, "Temporary1!E2eValue");
+    const response = await fetch(`${base}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: user.professionalEmail, password: "Temporary1!E2eValue" }) });
     assert.equal(response.status, 201);
     return (await response.json() as { token: string }).token;
   };
-  const authorToken = await session(author.id);
-  const colleagueToken = await session(colleague.id);
-  const outsiderToken = await session(outsider.id);
+  const authorToken = await session(author);
+  const colleagueToken = await session(colleague);
+  const outsiderToken = await session(outsider);
   const jsonHeaders = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}`, "content-type": "application/json", "x-correlation-id": "chat-e2e" });
 
   const create = await fetch(`${base}/chat/conversations`, { method: "POST", headers: jsonHeaders(authorToken), body: JSON.stringify({ type: "DIRECT", participantIds: [colleague.id], leadCode: lead.leadCode }) });

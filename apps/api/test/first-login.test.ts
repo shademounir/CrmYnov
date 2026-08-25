@@ -40,15 +40,15 @@ test("refuses invalid, reused or already consumed temporary credentials", () => 
   assert.throws(() => service.change("synthetic-user", "Replacement2!Value", "Another3!Replacement", "corr-e"), hasCode("temporary_credential_invalid"));
 });
 
-test("controller requires authentication and RBAC blocks pending sessions", () => {
+test("controller requires authentication and RBAC blocks pending sessions", async () => {
   const credentials = new LocalCredentialAdapter();
   const sessions = new SessionService();
   credentials.provisionTemporary("synthetic-user", "Temporary1!Value");
   const service = new FirstLoginService(credentials, sessions, new AuditService());
   const controller = new FirstLoginController(service);
   const request = { principal: { userId: "synthetic-user", roles: ["ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "session", mustChangeSecret: true }, header: (): string => "corr-controller" } as unknown as AuthenticatedRequest;
-  assert.deepEqual(controller.change(request, { currentSecret: "Temporary1!Value", nextSecret: "Replacement2!Value" }), { revokedSessions: 0 });
-  assert.throws(() => controller.change({} as AuthenticatedRequest, {}), hasCode("session_invalid"));
+  assert.deepEqual(await controller.change(request, { currentSecret: "Temporary1!Value", nextSecret: "Replacement2!Value" }), { revokedSessions: 0 });
+  await assert.rejects(controller.change({} as AuthenticatedRequest, {}), hasCode("session_invalid"));
 
   const reflector = { getAllAndOverride: (): never[] => [] };
   const guard = new RbacGuard(reflector as never);

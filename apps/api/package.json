@@ -11,7 +11,8 @@
     "test:integration": "node --import tsx --test test/integration/*.test.ts",
     "test:e2e": "node --import tsx --test test/e2e/*.test.ts",
     "prisma:validate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma validate",
-    "prisma:generate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma generate"
+    "prisma:generate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma generate",
+    "seed:local": "tsx prisma/seed-local.ts"
   },
   "dependencies": {
     "@crm/shared": "0.0.0",
