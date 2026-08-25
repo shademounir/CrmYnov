@@ -30,6 +30,15 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
       "/notifications": { get: { summary: "List the caller internal notifications with unread count", responses: { "200": { description: "Deterministic paginated notifications" }, "400": { description: "Invalid pagination" } } } },
       "/notifications/{id}/read": { patch: { summary: "Idempotently mark one owned notification as read", responses: { "200": { description: "Notification read" }, "404": { description: "Notification unavailable" } } } },
       "/notifications/read-all": { patch: { summary: "Idempotently mark all caller notifications as read", responses: { "200": { description: "Updated count" } } } },
+      "/broadcasts": {
+        get: { summary: "List authorized immutable internal broadcast history", responses: { "200": { description: "Deterministic page without recipient identities" }, "403": { description: "Manager role required" } } },
+        post: { summary: "Create an idempotent internal broadcast draft", responses: { "201": { description: "Bounded draft without delivery" }, "400": { description: "Content, link or audience invalid" }, "403": { description: "Author or audience scope refused" } } },
+      },
+      "/broadcasts/{id}/preview": { post: { summary: "Preview the current authorized recipient count without mutation", responses: { "201": { description: "Aggregate count with mutated=false" }, "404": { description: "Draft unavailable" } } } },
+      "/broadcasts/{id}/confirm": { post: { summary: "Explicitly confirm and freeze one recipient snapshot", responses: { "201": { description: "Exactly-once local internal delivery" }, "409": { description: "Version, preview count or confirmation conflict" } } } },
+      "/broadcasts/{id}/cancel": { patch: { summary: "Cancel an owned draft before emission", responses: { "200": { description: "Draft cancelled" }, "409": { description: "Confirmed broadcast is immutable" } } } },
+      "/broadcasts/{id}/corrections": { post: { summary: "Emit a linked compensating correction to the frozen audience", responses: { "201": { description: "Correction notification emitted" }, "400": { description: "Reason or content invalid" }, "404": { description: "Original unavailable" } } } },
+      "/broadcasts/{id}/recipients": { get: { summary: "Read the frozen recipient identifiers as Admin only", responses: { "200": { description: "Immutable recipient snapshot" }, "403": { description: "Admin role required" } } } },
       "/chat/conversations": {
         get: { summary: "List only the caller internal conversations", responses: { "200": { description: "Deterministic member-scoped conversations" }, "403": { description: "Active collaborator required" } } },
         post: { summary: "Create an internal direct or team conversation with optional lead context", responses: { "201": { description: "Collaborator-only conversation" }, "400": { description: "Invalid participants, title, lead code or deferred attachment" }, "403": { description: "Active collaborator required" }, "404": { description: "Lead context unavailable" } } },

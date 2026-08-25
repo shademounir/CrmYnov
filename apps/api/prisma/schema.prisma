@@ -50,6 +50,39 @@ model Collaborator {
   @@map("collaborators")
 }
 
+model Broadcast {
+  id             String               @id @default(uuid()) @db.Uuid
+  title          String               @db.VarChar(120)
+  content        String               @db.VarChar(4000)
+  internalLink   String?              @map("internal_link") @db.VarChar(500)
+  authorId       String               @map("author_id") @db.VarChar(64)
+  state          String               @db.VarChar(24)
+  version        Int                  @default(1)
+  audience       Json
+  recipientCount Int                  @default(0) @map("recipient_count")
+  correctionOf   String?              @map("correction_of") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  confirmedAt    DateTime?            @map("confirmed_at") @db.Timestamptz(6)
+  cancelledAt    DateTime?            @map("cancelled_at") @db.Timestamptz(6)
+  recipients     BroadcastRecipient[]
+
+  @@index([createdAt(sort: Desc), id])
+  @@index([authorId, createdAt(sort: Desc)])
+  @@index([correctionOf])
+  @@map("broadcasts")
+}
+
+model BroadcastRecipient {
+  broadcastId String    @map("broadcast_id") @db.Uuid
+  userId      String    @map("user_id") @db.VarChar(64)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  broadcast   Broadcast @relation(fields: [broadcastId], references: [id])
+
+  @@id([broadcastId, userId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("broadcast_recipients")
+}
+
 model ChatConversation {
   id             String            @id @default(uuid()) @db.Uuid
   type           String            @db.VarChar(24)
