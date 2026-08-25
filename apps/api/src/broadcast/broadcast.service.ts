@@ -54,13 +54,13 @@ export class BroadcastService {
   confirm(id: string, principal: Principal, input: { confirmed?: boolean; expectedVersion?: number; expectedRecipientCount?: number; idempotencyKey?: string }, correlationId: string): BroadcastView {
     this.assertAuthor(principal);
     const current = this.broadcasts.get(id);
-    if (!current || current.authorId !== principal.userId) throw new NotFoundException({ code: "broadcast_not_found" });
+    if (current?.authorId !== principal.userId) throw new NotFoundException({ code: "broadcast_not_found" });
     if (current.state === "CONFIRMED") {
       if (input.idempotencyKey && this.requests.get(`confirm:${input.idempotencyKey}`) === id) return this.view(current);
       throw new ConflictException({ code: "broadcast_already_confirmed" });
     }
     if (current.state !== "DRAFT" || input.confirmed !== true || input.expectedVersion !== current.version || !input.idempotencyKey || !REQUEST_ID.test(input.idempotencyKey)) throw new ConflictException({ code: "broadcast_confirmation_invalid" });
-    const recipientIds = this.resolveAudience(principal, current.audience).map((user) => user.id).sort();
+    const recipientIds = this.resolveAudience(principal, current.audience).map((user) => user.id).sort((left, right) => left.localeCompare(right));
     if (recipientIds.length !== input.expectedRecipientCount) throw new ConflictException({ code: "broadcast_audience_changed" });
     const confirmed: Readonly<StoredBroadcast> = Object.freeze({ ...current, state: "CONFIRMED", version: current.version + 1, recipientCount: recipientIds.length, recipientIds: Object.freeze(recipientIds), confirmedAt: new Date().toISOString() });
     this.broadcasts.set(id, confirmed); this.requests.set(`confirm:${input.idempotencyKey}`, id);
@@ -82,7 +82,7 @@ export class BroadcastService {
   correct(id: string, principal: Principal, input: { title?: string; content?: string; reason?: string; clientRequestId?: string }, correlationId: string): BroadcastView {
     this.assertAuthor(principal);
     const original = this.broadcasts.get(id);
-    if (!original || original.state !== "CONFIRMED" || (!this.isAdmin(principal) && original.authorId !== principal.userId)) throw new NotFoundException({ code: "broadcast_not_found" });
+    if (original?.state !== "CONFIRMED" || (!this.isAdmin(principal) && original.authorId !== principal.userId)) throw new NotFoundException({ code: "broadcast_not_found" });
     const reason = input.reason?.trim() ?? "";
     const title = input.title?.trim() ?? "";
     const content = input.content?.trim() ?? "";
@@ -114,13 +114,14 @@ export class BroadcastService {
   private ownedDraft(id: string, principal: Principal): Readonly<StoredBroadcast> {
     this.assertAuthor(principal);
     const record = this.broadcasts.get(id);
-    if (!record || record.authorId !== principal.userId) throw new NotFoundException({ code: "broadcast_not_found" });
+    if (record?.authorId !== principal.userId) throw new NotFoundException({ code: "broadcast_not_found" });
     if (record.state !== "DRAFT") throw new ConflictException({ code: "broadcast_immutable" });
     return record;
   }
 
   private normalizeAudience(input?: BroadcastAudience): Required<BroadcastAudience> {
-    const audience = { campusIds: [...new Set(input?.campusIds ?? [])].sort(), teamIds: [...new Set(input?.teamIds ?? [])].sort(), roles: [...new Set(input?.roles ?? [])].sort(), explicitRecipientIds: [...new Set(input?.explicitRecipientIds ?? [])].sort() };
+    const compare = (left: string, right: string): number => left.localeCompare(right);
+    const audience = { campusIds: [...new Set(input?.campusIds ?? [])].sort(compare), teamIds: [...new Set(input?.teamIds ?? [])].sort(compare), roles: [...new Set(input?.roles ?? [])].sort(compare), explicitRecipientIds: [...new Set(input?.explicitRecipientIds ?? [])].sort(compare) };
     if (this.criteriaCount(audience) === 0) throw new BadRequestException({ code: "broadcast_audience_empty" });
     if (![...audience.campusIds, ...audience.teamIds, ...audience.explicitRecipientIds].every((value) => IDENTIFIER.test(value)) || !audience.roles.every(isRole)) throw new BadRequestException({ code: "broadcast_audience_invalid" });
     return audience;

@@ -17,6 +17,11 @@ export class BroadcastController {
   @Post(":id/corrections") correct(@Param("id") id: string, @Req() request: BroadcastRequest, @Body() body: { title?: string; content?: string; reason?: string; clientRequestId?: string }): BroadcastView { return this.broadcasts.correct(id, this.principal(request), body, this.correlationId(request)); }
   @Get() list(@Req() request: BroadcastRequest, @Query("page") page = "1", @Query("pageSize") pageSize = "25"): { items: BroadcastView[]; page: number; pageSize: number; total: number } { return this.broadcasts.list(this.principal(request), Number(page), Number(pageSize)); }
   @Get(":id/recipients") recipients(@Param("id") id: string, @Req() request: BroadcastRequest): { broadcastId: string; recipientIds: string[] } { return this.broadcasts.recipientSnapshot(id, this.principal(request)); }
-  private principal(request: BroadcastRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }
+  private principal(request: BroadcastRequest): Principal {
+    if (!request.principal) {
+      throw new BadRequestException({ code: "principal_missing" });
+    }
+    return request.principal;
+  }
   private correlationId(request: BroadcastRequest): string { return request.header("x-correlation-id") ?? "missing-correlation"; }
 }

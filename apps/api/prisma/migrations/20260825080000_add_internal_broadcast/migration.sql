@@ -5,11 +5,11 @@
 
 CREATE TABLE "broadcasts" (
   "id" UUID NOT NULL,
-  "title" VARCHAR(120) NOT NULL,
-  "content" VARCHAR(4000) NOT NULL,
-  "internal_link" VARCHAR(500),
-  "author_id" VARCHAR(64) NOT NULL,
-  "state" VARCHAR(24) NOT NULL,
+  "title" CHARACTER VARYING(120) NOT NULL,
+  "content" CHARACTER VARYING(4000) NOT NULL,
+  "internal_link" CHARACTER VARYING(500),
+  "author_id" CHARACTER VARYING(64) NOT NULL,
+  "state" CHARACTER VARYING(24) NOT NULL,
   "version" INTEGER NOT NULL DEFAULT 1,
   "audience" JSONB NOT NULL,
   "recipient_count" INTEGER NOT NULL DEFAULT 0,
@@ -26,7 +26,7 @@ CREATE INDEX "broadcasts_correction_of_idx" ON "broadcasts"("correction_of");
 
 CREATE TABLE "broadcast_recipients" (
   "broadcast_id" UUID NOT NULL,
-  "user_id" VARCHAR(64) NOT NULL,
+  "user_id" CHARACTER VARYING(64) NOT NULL,
   "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "broadcast_recipients_pkey" PRIMARY KEY ("broadcast_id", "user_id"),
   CONSTRAINT "broadcast_recipients_broadcast_id_fkey" FOREIGN KEY ("broadcast_id") REFERENCES "broadcasts"("id")
