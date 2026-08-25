@@ -1,0 +1,18 @@
+import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js"; import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js"; import { AppointmentService, type AppointmentEvent, type AppointmentKpis, type AppointmentPage, type AppointmentRecord, type InterviewReport } from "./appointment.service.js";
+@Controller() @UseGuards(RbacGuard) @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
+export class AppointmentController { constructor(@Inject(AppointmentService) private readonly appointments: AppointmentService) {} private principal(request: AuthenticatedRequest): Principal {
+    if (!request.principal) {
+      throw new BadRequestException({ code: "principal_missing" });
+    }
+    return request.principal;
+  } private correlation(request: AuthenticatedRequest): string { return request.header("x-correlation-id") ?? "missing-correlation"; }
+  @Post("leads/:leadId/appointments") create(@Param("leadId") leadId: string, @Body() body: Parameters<AppointmentService["create"]>[1], @Req() request: AuthenticatedRequest): AppointmentRecord { return this.appointments.create(leadId, body, this.principal(request), this.correlation(request)); }
+  @Get("appointments") list(@Query() query: Record<string,string|undefined>, @Req() request: AuthenticatedRequest): AppointmentPage { return this.appointments.list({ ...query, page: Number(query.page ?? 1), pageSize: Number(query.pageSize ?? 25) }, this.principal(request)); }
+  @Get("appointments/availability") availability(@Query("userIds") userIds: string, @Query("from") from: string, @Query("to") to: string, @Req() request: AuthenticatedRequest): { items: ReturnType<AppointmentService["availability"]>; redacted: true } { return { items: this.appointments.availability((userIds ?? "").split(",").filter(Boolean), from, to, this.principal(request)), redacted: true }; }
+  @Get("appointments/kpis") kpis(@Req() request: AuthenticatedRequest): AppointmentKpis { return this.appointments.kpis(this.principal(request)); }
+  @Get("appointments/:id") detail(@Param("id") id: string, @Req() request: AuthenticatedRequest): ReturnType<AppointmentService["detail"]> { return this.appointments.detail(id, this.principal(request), this.correlation(request)); }
+  @Patch("appointments/:id/state") transition(@Param("id") id: string, @Body() body: Parameters<AppointmentService["transition"]>[1], @Req() request: AuthenticatedRequest): AppointmentRecord { return this.appointments.transition(id, body, this.principal(request), this.correlation(request)); }
+  @Post("appointments/:id/compensations") compensate(@Param("id") id: string, @Body() body: Parameters<AppointmentService["compensate"]>[1], @Req() request: AuthenticatedRequest): AppointmentEvent { return this.appointments.compensate(id, body, this.principal(request), this.correlation(request)); }
+  @Post("appointments/:id/interview-report") report(@Param("id") id: string, @Body() body: Parameters<AppointmentService["validateReport"]>[1], @Req() request: AuthenticatedRequest): InterviewReport { return this.appointments.validateReport(id, body, this.principal(request), this.correlation(request)); }
+}

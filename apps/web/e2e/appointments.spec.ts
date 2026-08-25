@@ -1,0 +1,2 @@
+import { expect, test } from "@playwright/test";
+test("synthetic appointment agenda remains accessible and code-only",async({page})=>{ await page.goto("/appointments?view=table&campus=Synthetic"); await expect(page.getByRole("heading",{name:"Agenda des rendez-vous"})).toBeVisible(); await expect(page.getByRole("table")).toBeVisible(); await expect(page.getByText(/Calendriers externes.*désactivés/)).toBeVisible(); await page.getByRole("link",{name:"Jour"}).focus(); await expect(page.getByRole("link",{name:"Jour"})).toBeFocused(); });

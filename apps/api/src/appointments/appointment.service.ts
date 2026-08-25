@@ -1,0 +1,125 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
+import type { Principal } from "../auth/auth.types.js";
+import { AuditService } from "../audit/audit.service.js";
+import { LeadService } from "../leads/lead.service.js";
+import { NotificationService } from "../notifications/notification.service.js";
+
+export const appointmentTypes = ["APPEL_INFORMATION", "VISITE_CAMPUS", "ENTRETIEN_ADMISSION", "ENTRETIEN_MOTIVATION", "TEST_ADMISSION", "RENDEZ_VOUS_DIRECTION", "RENDEZ_VOUS_LIBRE"] as const;
+export const appointmentModes = ["SUR_SITE", "TELEPHONE", "DISTANCIEL_NON_CONNECTE"] as const;
+export const appointmentStates = ["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE", "ANNULE", "REALISE", "ABSENT", "REFUSE"] as const;
+export const interviewResults = ["FAVORABLE", "FAVORABLE_SOUS_CONDITION", "A_COMPLETER", "DEFAVORABLE", "NON_DECIDE"] as const;
+export type AppointmentType = typeof appointmentTypes[number]; export type AppointmentMode = typeof appointmentModes[number];
+export type AppointmentState = typeof appointmentStates[number]; export type InterviewResult = typeof interviewResults[number];
+const finalStates = new Set<AppointmentState>(["ANNULE", "REALISE", "ABSENT", "REFUSE"]);
+const transitions: Readonly<Record<AppointmentState, readonly AppointmentState[]>> = {
+  BROUILLON: ["PLANIFIE", "ANNULE"], PLANIFIE: ["CONFIRME", "REPORTE", "ANNULE", "REFUSE"],
+  CONFIRME: ["REPORTE", "ANNULE", "REALISE", "ABSENT", "REFUSE"], REPORTE: ["CONFIRME", "ANNULE", "REFUSE"],
+  ANNULE: [], REALISE: [], ABSENT: [], REFUSE: [],
+};
+export interface AppointmentRecord { id: string; leadId: string; type: AppointmentType; mode: AppointmentMode; state: AppointmentState; startsAt: string; durationMinutes: number; campus?: string; adviserId: string; organizerId: string; evaluatorId?: string; participantIds: string[]; version: number; createdAt: string; updatedAt: string; conflictWarning: boolean; overloadWarning: boolean }
+export interface AppointmentEvent { id: string; appointmentId: string; type: string; fromState?: AppointmentState; toState?: AppointmentState; actorId: string; reasonCode?: string; occurredAt: string; idempotencyKey: string; compensatesEventId?: string }
+export interface InterviewReport { id: string; appointmentId: string; result: InterviewResult; comment: string; missingPoints?: string; nextAction?: string; followUpAt?: string; recommendation: string; validatedAt: string; validatedBy: string; compensatesReportId?: string }
+export interface AppointmentPage { items: AppointmentRecord[]; page: number; pageSize: number; total: number; timezone: "Africa/Casablanca" }
+export interface AppointmentKpis { timezone: "Africa/Casablanca"; counts: Record<AppointmentState, number>; attendanceRate: { numerator: number; denominator: number; exclusions: string[]; value: number }; firstAppointmentDelayHours: { numerator: number; denominator: number; exclusions: string[]; value: number }; results: Record<InterviewResult, number>; workload: Array<{ adviserId: string; campus: string; count: number }>; safeguards: { disciplinaryScore: false; automaticAdmission: false } }
+
+@Injectable()
+export class AppointmentService {
+  private readonly items = new Map<string, Readonly<AppointmentRecord>>(); private events: Readonly<AppointmentEvent>[] = [];
+  private readonly reports = new Map<string, Readonly<InterviewReport>>(); private readonly receipts = new Map<string, { signature: string; id: string }>();
+  constructor(private readonly leads: LeadService, private readonly notifications: NotificationService, private readonly audit: AuditService) {}
+
+  create(leadId: string, input: { type?: string; mode?: string; startsAt?: string; durationMinutes?: number; campus?: string; adviserId?: string; evaluatorId?: string; participantIds?: string[]; state?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): AppointmentRecord {
+    this.assertOperationalRole(principal); const lead = this.leads.getLead(leadId, principal, correlationId); this.assertCampus(lead.campus, principal);
+    const type = input.type as AppointmentType; const mode = input.mode as AppointmentMode; const state = (input.state ?? "PLANIFIE") as AppointmentState;
+    const start = new Date(input.startsAt ?? ""); const duration = input.durationMinutes ?? 0; const key = input.idempotencyKey ?? "";
+    if (!appointmentTypes.includes(type) || !appointmentModes.includes(mode) || !["BROUILLON", "PLANIFIE"].includes(state) || Number.isNaN(start.valueOf()) || !Number.isInteger(duration) || duration < 15 || duration > 480 || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new BadRequestException({ code: "appointment_invalid" });
+    const requestedCampus = input.campus?.trim();
+    if (mode === "SUR_SITE" && (!requestedCampus || requestedCampus !== lead.campus)) {
+      throw new BadRequestException({ code: "appointment_campus_required" });
+    }
+    const campus = requestedCampus ?? lead.campus;
+    const adviserId = input.adviserId ?? lead.assignedToId ?? principal.userId;
+    const participantIds = [...new Set((input.participantIds ?? []).filter(Boolean))].sort((left, right) => left.localeCompare(right, "en"));
+    const signature = JSON.stringify({ leadId, type, mode, startsAt: start.toISOString(), duration, campus, adviserId, evaluatorId: input.evaluatorId, participantIds, state });
+    const receipt = this.receipts.get(key);
+    if (receipt) {
+      if (receipt.signature !== signature) {
+        throw new ConflictException({ code: "appointment_idempotency_conflict" });
+      }
+      return this.copy(this.items.get(receipt.id)!);
+    }
+    const involved = new Set([adviserId, ...participantIds, ...(input.evaluatorId ? [input.evaluatorId] : [])]); const end = start.valueOf() + duration * 60_000;
+    const conflictWarning = [...this.items.values()].some((item) => !finalStates.has(item.state) && this.involved(item).some((id) => involved.has(id)) && this.overlaps(start.valueOf(), end, item));
+    const localDay = this.localDay(start); const overloadWarning = [...this.items.values()].filter((item) => item.adviserId === adviserId && this.localDay(new Date(item.startsAt)) === localDay && !finalStates.has(item.state)).length >= 7;
+    const now = new Date().toISOString(); const record: Readonly<AppointmentRecord> = Object.freeze({ id: randomUUID(), leadId, type, mode, state, startsAt: start.toISOString(), durationMinutes: duration, ...(campus ? { campus } : {}), adviserId, organizerId: principal.userId, ...(input.evaluatorId ? { evaluatorId: input.evaluatorId } : {}), participantIds, version: 1, createdAt: now, updatedAt: now, conflictWarning, overloadWarning });
+    this.items.set(record.id, record); this.receipts.set(key, { signature, id: record.id }); this.appendEvent(record, "APPOINTMENT_CREATED", principal, key, undefined, state);
+    this.leads.addActivity(leadId, { type: "MEETING", result: `APPOINTMENT_${state}`, ...(state === "PLANIFIE" ? { nextActionAt: record.startsAt } : {}) }, principal, correlationId);
+    this.notify(record, "APPOINTMENT_CREATED", [...involved], key); this.recordAudit(record, principal, correlationId, "APPOINTMENT_CREATED"); return this.copy(record);
+  }
+
+  transition(id: string, input: { state?: string; reason?: string; expectedVersion?: number; idempotencyKey?: string; startsAt?: string }, principal: Principal, correlationId: string): AppointmentRecord {
+    const current = this.authorized(id, principal, correlationId); const next = input.state as AppointmentState; const key = input.idempotencyKey ?? ""; const reason = input.reason?.trim();
+    if (!appointmentStates.includes(next) || !transitions[current.state].includes(next) || input.expectedVersion !== current.version || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new ConflictException({ code: "appointment_transition_refused" });
+    if (["REPORTE", "ANNULE", "ABSENT", "REFUSE"].includes(next) && !reason) throw new BadRequestException({ code: "appointment_reason_required" });
+    const start = next === "REPORTE" ? new Date(input.startsAt ?? "") : new Date(current.startsAt); if (next === "REPORTE" && Number.isNaN(start.valueOf())) throw new BadRequestException({ code: "appointment_reschedule_invalid" });
+    const receipt = this.receipts.get(key); if (receipt) return this.copy(this.items.get(receipt.id)!);
+    const updated: Readonly<AppointmentRecord> = Object.freeze({ ...current, state: next, startsAt: start.toISOString(), version: current.version + 1, updatedAt: new Date().toISOString() }); this.items.set(id, updated); this.receipts.set(key, { signature: `${id}:${next}:${current.version}`, id });
+    this.appendEvent(updated, `APPOINTMENT_${next}`, principal, key, current.state, next, reason); this.leads.addActivity(current.leadId, { type: "MEETING", result: `APPOINTMENT_${next}`, ...(["PLANIFIE", "CONFIRME", "REPORTE"].includes(next) ? { nextActionAt: updated.startsAt } : {}) }, principal, correlationId);
+    this.notify(updated, `APPOINTMENT_${next}`, this.involved(updated), key); this.recordAudit(updated, principal, correlationId, `APPOINTMENT_${next}`); return this.copy(updated);
+  }
+
+  compensate(id: string, input: { originalEventId?: string; reason?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): AppointmentEvent {
+    const current = this.authorized(id, principal, correlationId); if (!this.isManager(principal)) throw new ForbiddenException({ code: "appointment_compensation_forbidden" });
+    const original = this.events.find((event) => event.id === input.originalEventId && event.appointmentId === id); const reason = input.reason?.trim(); const key = input.idempotencyKey ?? "";
+    if (!original || !reason || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new BadRequestException({ code: "appointment_compensation_invalid" });
+    const replay = this.events.find((event) => event.idempotencyKey === key); if (replay) return { ...replay };
+    const event: Readonly<AppointmentEvent> = Object.freeze({ id: randomUUID(), appointmentId: id, type: "APPOINTMENT_COMPENSATION", actorId: principal.userId, reasonCode: reason, occurredAt: new Date().toISOString(), idempotencyKey: key, compensatesEventId: original.id }); this.events = [...this.events, event];
+    this.recordAudit(current, principal, correlationId, "APPOINTMENT_COMPENSATED"); return { ...event };
+  }
+
+  validateReport(id: string, input: { result?: string; comment?: string; missingPoints?: string; nextAction?: string; followUpAt?: string; recommendation?: string; expectedVersion?: number }, principal: Principal, correlationId: string): InterviewReport {
+    const appointment = this.authorized(id, principal, correlationId); if (appointment.state !== "REALISE" || appointment.evaluatorId !== principal.userId || input.expectedVersion !== appointment.version || this.reports.has(id)) throw new ConflictException({ code: "interview_report_refused" });
+    const result = input.result as InterviewResult; const comment = input.comment?.trim(); const recommendation = input.recommendation?.trim(); const followUp = input.followUpAt ? new Date(input.followUpAt) : undefined;
+    if (!interviewResults.includes(result) || !comment || comment.length > 2000 || !recommendation || recommendation.length > 1000 || (followUp && Number.isNaN(followUp.valueOf()))) throw new BadRequestException({ code: "interview_report_invalid" });
+    const report: Readonly<InterviewReport> = Object.freeze({ id: randomUUID(), appointmentId: id, result, comment: "[REDACTED]", ...(input.missingPoints?.trim() ? { missingPoints: "[REDACTED]" } : {}), ...(input.nextAction?.trim() ? { nextAction: input.nextAction.trim().slice(0, 120) } : {}), ...(followUp ? { followUpAt: followUp.toISOString() } : {}), recommendation: "[REDACTED]", validatedAt: new Date().toISOString(), validatedBy: principal.userId });
+    this.reports.set(id, report); this.leads.addActivity(appointment.leadId, { type: "MEETING", result: `INTERVIEW_${result}`, ...(report.followUpAt ? { nextActionAt: report.followUpAt } : {}) }, principal, correlationId); this.notify(appointment, "INTERVIEW_RESULT_AVAILABLE", this.involved(appointment), `report:${report.id}`); this.recordAudit(appointment, principal, correlationId, "INTERVIEW_REPORT_VALIDATED"); return { ...report };
+  }
+
+  list(raw: { page?: number; pageSize?: number; campus?: string; adviserId?: string; type?: string; state?: string; from?: string; to?: string }, principal: Principal): AppointmentPage {
+    this.assertOperationalRole(principal); const page = raw.page ?? 1; const pageSize = raw.pageSize ?? 25; if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "appointment_pagination_invalid" });
+    const from = raw.from ? new Date(raw.from) : undefined; const to = raw.to ? new Date(raw.to) : undefined; if ((from && Number.isNaN(from.valueOf())) || (to && Number.isNaN(to.valueOf()))) throw new BadRequestException({ code: "appointment_period_invalid" });
+    const values = [...this.items.values()].filter((item) => this.canAccess(item, principal) && (!raw.campus || item.campus === raw.campus) && (!raw.adviserId || item.adviserId === raw.adviserId) && (!raw.type || item.type === raw.type) && (!raw.state || item.state === raw.state) && (!from || item.startsAt >= from.toISOString()) && (!to || item.startsAt <= to.toISOString())).sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.id.localeCompare(b.id));
+    return { items: values.slice((page - 1) * pageSize, page * pageSize).map((item) => this.copy(item)), page, pageSize, total: values.length, timezone: "Africa/Casablanca" };
+  }
+  detail(id: string, principal: Principal, correlationId: string): { appointment: AppointmentRecord; events: AppointmentEvent[]; report?: InterviewReport } { const appointment = this.authorized(id, principal, correlationId); const report = this.reports.get(id); return { appointment: this.copy(appointment), events: this.events.filter((event) => event.appointmentId === id).map((event) => ({ ...event })), ...(report ? { report: { ...report } } : {}) }; }
+  availability(userIds: readonly string[], from: string, to: string, principal: Principal): Array<{ userId: string; busyRanges: Array<{ startsAt: string; endsAt: string }> }> {
+    this.assertOperationalRole(principal);
+    const start = new Date(from); const end = new Date(to);
+    if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf()) || start >= end || end.valueOf() - start.valueOf() > 7 * 86_400_000) {
+      throw new BadRequestException({ code: "availability_period_invalid" });
+    }
+    return [...new Set(userIds)].slice(0, 20).map((userId) => ({ userId, busyRanges: [...this.items.values()].filter((item) => this.canAccess(item, principal) && this.involved(item).includes(userId) && !finalStates.has(item.state) && this.overlaps(start.valueOf(), end.valueOf(), item)).map((item) => ({ startsAt: item.startsAt, endsAt: new Date(new Date(item.startsAt).valueOf() + item.durationMinutes * 60_000).toISOString() })) }));
+  }
+  kpis(principal: Principal): AppointmentKpis { const values = [...this.items.values()].filter((item) => this.canAccess(item, principal)); const counts = Object.fromEntries(appointmentStates.map((state) => [state, values.filter((item) => item.state === state).length])) as Record<AppointmentState, number>; const attendanceDenominator = counts.REALISE + counts.ABSENT; const delayValues = values.map((item) => (new Date(item.startsAt).valueOf() - new Date(item.createdAt).valueOf()) / 3_600_000).filter((value) => value >= 0); const results = Object.fromEntries(interviewResults.map((result) => [result, [...this.reports.values()].filter((item) => item.result === result).length])) as Record<InterviewResult, number>; const workload = new Map<string, { adviserId: string; campus: string; count: number }>(); for (const item of values) { const key = `${item.adviserId}:${item.campus ?? "DISTANT"}`; const row = workload.get(key) ?? { adviserId: item.adviserId, campus: item.campus ?? "DISTANT", count: 0 }; row.count += 1; workload.set(key, row); } return { timezone: "Africa/Casablanca", counts, attendanceRate: { numerator: counts.REALISE, denominator: attendanceDenominator, exclusions: ["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE", "ANNULE", "REFUSE"], value: attendanceDenominator ? counts.REALISE / attendanceDenominator : 0 }, firstAppointmentDelayHours: { numerator: delayValues.reduce((sum, value) => sum + value, 0), denominator: delayValues.length, exclusions: ["negative_or_missing_dates"], value: delayValues.length ? delayValues.reduce((sum, value) => sum + value, 0) / delayValues.length : 0 }, results, workload: [...workload.values()].sort((a, b) => a.adviserId.localeCompare(b.adviserId) || a.campus.localeCompare(b.campus)), safeguards: { disciplinaryScore: false, automaticAdmission: false } }; }
+
+  private authorized(id: string, principal: Principal, correlationId: string): Readonly<AppointmentRecord> {
+    const item = this.items.get(id);
+    if (!item || !this.canAccess(item, principal)) {
+      throw new NotFoundException({ code: "appointment_not_found" });
+    }
+    this.leads.getLead(item.leadId, principal, correlationId);
+    return item;
+  }
+  private canAccess(item: Readonly<AppointmentRecord>, principal: Principal): boolean { const scope = principal.scopes.some((value) => value.kind === "GLOBAL" || (value.kind === "CAMPUS" && value.id === item.campus)); return scope && (this.isManager(principal) || this.involved(item).includes(principal.userId)); }
+  private assertCampus(campus: string, principal: Principal): void { if (!principal.scopes.some((scope) => scope.kind === "GLOBAL" || (scope.kind === "CAMPUS" && scope.id === campus))) throw new NotFoundException({ code: "lead_not_found" }); }
+  private assertOperationalRole(principal: Principal): void { if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "appointment_role_forbidden" }); }
+  private isManager(principal: Principal): boolean { return principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role)); }
+  private involved(item: Readonly<AppointmentRecord>): string[] { return [...new Set([item.organizerId, item.adviserId, ...item.participantIds, ...(item.evaluatorId ? [item.evaluatorId] : [])])]; }
+  private overlaps(start: number, end: number, item: Readonly<AppointmentRecord>): boolean { const itemStart = new Date(item.startsAt).valueOf(); return start < itemStart + item.durationMinutes * 60_000 && end > itemStart; }
+  private localDay(date: Date): string { return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).format(date); }
+  private copy(item: Readonly<AppointmentRecord>): AppointmentRecord { return { ...item, participantIds: [...item.participantIds] }; }
+  private appendEvent(item: Readonly<AppointmentRecord>, type: string, principal: Principal, idempotencyKey: string, fromState?: AppointmentState, toState?: AppointmentState, reasonCode?: string): void { this.events = [...this.events, Object.freeze({ id: randomUUID(), appointmentId: item.id, type, ...(fromState ? { fromState } : {}), ...(toState ? { toState } : {}), actorId: principal.userId, ...(reasonCode ? { reasonCode } : {}), occurredAt: new Date().toISOString(), idempotencyKey })]; }
+  private notify(item: Readonly<AppointmentRecord>, event: string, recipients: readonly string[], key: string): void { for (const recipientId of new Set(recipients)) this.notifications.create({ recipientId, type: "APPOINTMENT", priority: event.includes("CANCEL") || event.includes("ABSENT") ? "HIGH" : "NORMAL", resourceType: "APPOINTMENT", resourceId: item.id, href: `/appointments/${item.id}` }, `appointment:${event}:${key}:${recipientId}`); }
+  private recordAudit(item: Readonly<AppointmentRecord>, principal: Principal, correlationId: string, eventType: string): void { this.audit.record({ eventType, actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, after: { appointmentId: item.id, leadId: item.leadId, type: item.type, mode: item.mode, state: item.state, startsAt: item.startsAt, durationMinutes: item.durationMinutes, campus: item.campus, version: item.version }, result: "SUCCESS", idempotencyKey: `${eventType}:${item.id}:${item.version}` }); }
+}
