@@ -45,8 +45,9 @@ export class AccessRecoveryService {
     const returnPath = allowedReturnPath(returnPathValue);
     const identityDigest = digestRecoveryValue(email);
 
-    if (this.identities.has(identityDigest)) {
-      this.challenges.issue(identityDigest, returnPath, now);
+    const subjectId = this.identities.resolve(identityDigest);
+    if (subjectId) {
+      this.challenges.issue(subjectId, returnPath, now);
     } else {
       // Equal cryptographic work without retaining the submitted identifier.
       digestRecoveryValue(`${identityDigest}:${returnPath}`);
@@ -64,8 +65,12 @@ export class AccessRecoveryService {
     if (!/^[A-Za-z0-9_-]{40,128}$/.test(token) || nextSecret.length < 14 || nextSecret.length > 128) {
       throw new BadRequestException({ code: "recovery_completion_invalid" });
     }
-    const identityDigest = this.challenges.consume(token, returnPath, now);
-    if (!identityDigest) throw new ForbiddenException({ code: "recovery_challenge_invalid" });
-    this.credentials.replace(identityDigest, nextSecret);
+    const subjectId = this.challenges.consume(token, returnPath, now);
+    if (!subjectId) throw new ForbiddenException({ code: "recovery_challenge_invalid" });
+    this.credentials.replace(subjectId, nextSecret);
+  }
+
+  async flush(): Promise<void> {
+    await Promise.all([this.challenges.flush(), this.credentials.flush()]);
   }
 }

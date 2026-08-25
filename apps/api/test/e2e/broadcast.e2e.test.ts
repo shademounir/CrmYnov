@@ -3,15 +3,16 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { createApplication } from "../../src/application.js";
 import { UserService } from "../../src/users/user.service.js";
+import { digestRecoveryValue, LocalCredentialAdapter } from "../../src/access-recovery/access-recovery.store.js";
 
 test("runs the 14-step synthetic internal broadcast journey", async (context) => {
-  const app = await createApplication(); const users = app.get(UserService);
+  const app = await createApplication(); const users = app.get(UserService); const credentials = app.get(LocalCredentialAdapter);
   const manager = users.create({ professionalEmail: "broadcast-manager@example.invalid", roles: ["MANAGER"], campusId: "campus-a", teamId: "team-a" }, "bootstrap", "manager");
   const recipient = users.create({ professionalEmail: "broadcast-recipient@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-a", teamId: "team-a" }, "bootstrap", "recipient");
   const outsider = users.create({ professionalEmail: "broadcast-outsider@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-b", teamId: "team-b" }, "bootstrap", "outsider");
   await app.listen(0, "127.0.0.1"); context.after(() => app.close()); const address = app.getHttpServer().address() as AddressInfo | null; assert.ok(address); const base = `http://127.0.0.1:${address.port}`;
-  const session = async (userId: string, roles: string[]): Promise<string> => { const response = await fetch(`${base}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId, roles }) }); assert.equal(response.status, 201); return (await response.json() as { token: string }).token; };
-  const managerToken = await session(manager.id, ["MANAGER"]); const recipientToken = await session(recipient.id, ["ADMISSIONS"]); const outsiderToken = await session(outsider.id, ["ADMISSIONS"]);
+  const session = async (user: { id: string; professionalEmail: string }): Promise<string> => { credentials.provisionTemporary(user.id, "Temporary1!E2eValue", digestRecoveryValue(user.professionalEmail)); credentials.replace(user.id, "Temporary1!E2eValue"); const response = await fetch(`${base}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: user.professionalEmail, password: "Temporary1!E2eValue" }) }); assert.equal(response.status, 201); return (await response.json() as { token: string }).token; };
+  const managerToken = await session(manager); const recipientToken = await session(recipient); const outsiderToken = await session(outsider);
   const headers = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}`, "content-type": "application/json", "x-correlation-id": "broadcast-e2e" });
   assert.equal((await fetch(`${base}/broadcasts`, { method: "POST", headers: headers(recipientToken), body: JSON.stringify({}) })).status, 403);
   const created = await fetch(`${base}/broadcasts`, { method: "POST", headers: headers(managerToken), body: JSON.stringify({ title: "Information synthétique", content: "Texte interne inerte <script>sans exécution</script>", audience: { campusIds: ["campus-a"], roles: ["ADMISSIONS"] }, clientRequestId: "broadcast-e2e-draft-01" }) }); assert.equal(created.status, 201); const draft = await created.json() as { id: string };

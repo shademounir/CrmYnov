@@ -71,7 +71,7 @@ test("rate limits repeated requests without echoing the submitted identity", () 
   );
 });
 
-test("controller delegates recovery requests with the observed client address", () => {
+test("controller delegates recovery requests with the observed client address", async () => {
   const calls: unknown[][] = [];
   const recovery = {
     request: (...args: unknown[]) => {
@@ -79,10 +79,11 @@ test("controller delegates recovery requests with the observed client address", 
       return RECOVERY_ACCEPTED;
     },
     complete: () => undefined,
+    flush: () => Promise.resolve(),
   } as unknown as AccessRecoveryService;
   const controller = new AccessRecoveryController(recovery);
 
-  const result = controller.request(
+  const result = await controller.request(
     { ip: "127.0.0.1" } as never,
     { email: "synthetic@example.invalid", returnPath: "/access-recovery/complete" },
   );
@@ -91,7 +92,7 @@ test("controller delegates recovery requests with the observed client address", 
   assert.deepEqual(calls, [["synthetic@example.invalid", "/access-recovery/complete", "127.0.0.1"]]);
 });
 
-test("controller falls back to an unknown client and delegates completion", () => {
+test("controller falls back to an unknown client and delegates completion", async () => {
   const requests: unknown[][] = [];
   const completions: unknown[][] = [];
   const recovery = {
@@ -102,11 +103,12 @@ test("controller falls back to an unknown client and delegates completion", () =
     complete: (...args: unknown[]) => {
       completions.push(args);
     },
+    flush: () => Promise.resolve(),
   } as unknown as AccessRecoveryService;
   const controller = new AccessRecoveryController(recovery);
 
-  controller.request({} as never, {});
-  controller.complete({
+  await controller.request({} as never, {});
+  await controller.complete({
     token: "synthetic-token",
     returnPath: "/access-recovery/complete",
     nextSecret: "synthetic-next-value-42",

@@ -8,16 +8,19 @@ export class AccessRecoveryController {
 
   @Post("requests")
   @HttpCode(HttpStatus.ACCEPTED)
-  request(
+  async request(
     @Req() request: Request,
     @Body() body: { email?: unknown; returnPath?: unknown },
-  ): typeof RECOVERY_ACCEPTED {
-    return this.recovery.request(body.email, body.returnPath, request.ip ?? "unknown");
+  ): Promise<typeof RECOVERY_ACCEPTED> {
+    const result = this.recovery.request(body.email, body.returnPath, request.ip ?? "unknown");
+    await this.recovery.flush();
+    return result;
   }
 
   @Post("completions")
   @HttpCode(HttpStatus.NO_CONTENT)
-  complete(@Body() body: { token?: unknown; returnPath?: unknown; nextSecret?: unknown }): void {
+  async complete(@Body() body: { token?: unknown; returnPath?: unknown; nextSecret?: unknown }): Promise<void> {
     this.recovery.complete(body.token, body.returnPath, body.nextSecret);
+    await this.recovery.flush();
   }
 }

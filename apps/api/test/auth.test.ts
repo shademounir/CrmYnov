@@ -10,7 +10,8 @@ import { SessionController } from "../src/auth/session.controller.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import type { ExecutionContext } from "@nestjs/common";
 import type { NextFunction, Response } from "express";
-import { LocalCredentialAdapter } from "../src/access-recovery/access-recovery.store.js";
+import { digestRecoveryValue, LocalCredentialAdapter } from "../src/access-recovery/access-recovery.store.js";
+import { UserService } from "../src/users/user.service.js";
 
 function hasErrorCode(code: string): (error: unknown) => boolean {
   return (error: unknown): boolean => error instanceof Error && "getResponse" in error && JSON.stringify((error as { getResponse: () => unknown }).getResponse()).includes(code);
@@ -66,19 +67,24 @@ test("role and authentication parsing reject malformed input", () => {
   assert.equal(forged.principal, undefined);
 });
 
-test("session controller enforces validation, ownership and admin revocation", () => {
+test("session controller verifies a local credential, ownership and admin revocation", async () => {
   const sessions = new SessionService();
-  const controller = new SessionController(sessions, new RateLimitService(), new AuditService(), new LocalCredentialAdapter());
+  const audit = new AuditService();
+  const users = new UserService(sessions, audit);
+  const credentials = new LocalCredentialAdapter();
+  const userRecord = users.create({ professionalEmail: "synthetic-user@example.invalid", roles: ["AUDITOR"] }, "bootstrap", "auth-user");
+  credentials.provisionTemporary(userRecord.id, "Temporary1!Value", digestRecoveryValue(userRecord.professionalEmail));
+  const controller = new SessionController(sessions, new RateLimitService(), audit, credentials, users);
   const request = (value: Record<string, unknown>): AuthenticatedRequest => ({ header: () => "test-correlation", ...value }) as unknown as AuthenticatedRequest;
-  assert.throws(() => controller.create({ ip: "client-a" } as AuthenticatedRequest, { userId: "x", roles: ["FORGED"] }), hasErrorCode("identity_invalid"));
-  const user = controller.create(request({ ip: "client-a" }), { userId: "synthetic-user", roles: ["AUDITOR"] });
-  assert.throws(
-    () => controller.revoke({ principal: { userId: "other", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: "other-session" } } as AuthenticatedRequest, user.sessionId),
+  await assert.rejects(controller.create({ ip: "client-a" } as AuthenticatedRequest, { email: "unknown@example.invalid", password: "invalid" }), hasErrorCode("identity_invalid"));
+  const user = await controller.create(request({ ip: "client-a" }), { email: userRecord.professionalEmail, password: "Temporary1!Value" });
+  await assert.rejects(
+    controller.revoke({ principal: { userId: "other", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: "other-session" } } as AuthenticatedRequest, user.sessionId),
     hasErrorCode("session_ownership_required"),
   );
-  assert.equal(controller.revoke(request({ principal: { userId: "synthetic-user", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: user.sessionId } }), user.sessionId).revoked, true);
-  controller.create(request({ ip: "client-b" }), { userId: "synthetic-user", roles: ["AUDITOR"] });
-  assert.equal(controller.revokeUser(request({ principal: { userId: "synthetic-admin", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "admin-session" } }), "synthetic-user").revokedSessions, 1);
+  assert.equal((await controller.revoke(request({ principal: { userId: userRecord.id, roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: user.sessionId } }), user.sessionId)).revoked, true);
+  await controller.create(request({ ip: "client-b" }), { email: userRecord.professionalEmail, password: "Temporary1!Value" });
+  assert.equal((await controller.revokeUser(request({ principal: { userId: "synthetic-admin", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "admin-session" } }), userRecord.id)).revokedSessions, 1);
 });
 
 test("resource controller fails closed for ownership and scope", () => {
