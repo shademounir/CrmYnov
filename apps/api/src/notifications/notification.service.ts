@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
-export const notificationTypes = ["ASSIGNMENT", "REASSIGNMENT_DECISION", "CLOSURE_REQUEST", "COLLABORATOR_REQUEST", "FOLLOW_UP_DUE", "IMPORT_REVIEW", "CHAT_MENTION", "BROADCAST", "BROADCAST_CORRECTION", "DOCUMENT_RECEIVED", "DOCUMENT_VALIDATED", "DOCUMENT_REFUSED"] as const;
+export const notificationTypes = ["ASSIGNMENT", "REASSIGNMENT_DECISION", "CLOSURE_REQUEST", "COLLABORATOR_REQUEST", "FOLLOW_UP_DUE", "IMPORT_REVIEW", "CHAT_MENTION", "BROADCAST", "BROADCAST_CORRECTION", "DOCUMENT_RECEIVED", "DOCUMENT_VALIDATED", "DOCUMENT_REFUSED", "APPOINTMENT"] as const;
 export type NotificationType = typeof notificationTypes[number];
 export type NotificationPriority = "LOW" | "NORMAL" | "HIGH";
-export interface NotificationRecord { id: string; recipientId: string; type: NotificationType; priority: NotificationPriority; resourceType: "LEAD" | "IMPORT" | "CHAT" | "BROADCAST" | "DOCUMENT"; resourceId: string; href: string; createdAt: string; readAt?: string }
+export interface NotificationRecord { id: string; recipientId: string; type: NotificationType; priority: NotificationPriority; resourceType: "LEAD" | "IMPORT" | "CHAT" | "BROADCAST" | "DOCUMENT" | "APPOINTMENT"; resourceId: string; href: string; createdAt: string; readAt?: string }
 export interface NotificationPage { items: NotificationRecord[]; page: number; pageSize: number; total: number; unread: number }
 
 @Injectable()
@@ -16,7 +16,7 @@ export class NotificationService {
   constructor(@Inject(AuditService) private readonly audit: AuditService) {}
 
   create(input: Omit<NotificationRecord, "id" | "createdAt" | "readAt">, deduplicationKey: string): NotificationRecord {
-    if (!notificationTypes.includes(input.type) || !input.recipientId || !input.resourceId || !/^\/(leads|imports|chat|broadcasts)\/[a-zA-Z0-9-]+(?:\/[^?#\s]*)?$/.test(input.href)) throw new BadRequestException({ code: "notification_invalid" });
+    if (!notificationTypes.includes(input.type) || !input.recipientId || !input.resourceId || !/^\/(leads|imports|chat|broadcasts|appointments)\/[a-zA-Z0-9-]+(?:\/[^?#\s]*)?$/.test(input.href)) throw new BadRequestException({ code: "notification_invalid" });
     const known = this.deduplication.get(deduplicationKey);
     if (known) return { ...this.notifications.get(known)! };
     const record: Readonly<NotificationRecord> = Object.freeze({ ...input, id: randomUUID(), createdAt: new Date().toISOString() });

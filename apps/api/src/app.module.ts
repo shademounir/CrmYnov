@@ -74,9 +74,11 @@ import { CandidateDocumentService } from "./documents/candidate-document.service
 import { LocalTemporaryDocumentStorageAdapter } from "./documents/document-storage.adapter.js";
 import { TelephonyController } from "./telephony/telephony.controller.js";
 import { TelephonyService } from "./telephony/telephony.service.js";
+import { AppointmentController } from "./appointments/appointment.controller.js";
+import { AppointmentService } from "./appointments/appointment.service.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SessionService,
     RateLimitService,
@@ -108,6 +110,7 @@ import { TelephonyService } from "./telephony/telephony.service.js";
     LocalTemporaryDocumentStorageAdapter,
     CandidateDocumentService,
     TelephonyService,
+    AppointmentService,
     FollowUpService,
     ClosureService,
     LeadCollaborationService,

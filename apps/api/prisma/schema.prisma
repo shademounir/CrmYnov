@@ -212,6 +212,7 @@ model Lead {
   documentChecklistItems CandidateDocumentChecklistItem[]
   documents              CandidateDocument[]
   telephonyCalls         TelephonyCall[]
+  appointments           Appointment[]
 
   @@index([assignedToId, status])
   @@index([assignmentMode, importBatchId])
@@ -221,19 +222,95 @@ model Lead {
   @@map("leads")
 }
 
+model Appointment {
+  id               String                   @id @default(uuid()) @db.Uuid
+  leadId           String                   @map("lead_id") @db.Uuid
+  type             String                   @db.VarChar(40)
+  mode             String                   @db.VarChar(32)
+  state            String                   @default("BROUILLON") @db.VarChar(24)
+  startsAt         DateTime                 @map("starts_at") @db.Timestamptz(6)
+  durationMinutes  Int                      @map("duration_minutes")
+  timezone         String                   @default("Africa/Casablanca") @db.VarChar(40)
+  campus           String?                  @db.VarChar(120)
+  adviserId        String                   @map("adviser_id") @db.VarChar(64)
+  organizerId      String                   @map("organizer_id") @db.VarChar(64)
+  evaluatorId      String?                  @map("evaluator_id") @db.VarChar(64)
+  version          Int                      @default(1)
+  createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  lead             Lead                     @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  participants     AppointmentParticipant[]
+  events           AppointmentEvent[]
+  interviewReports InterviewReport[]
+
+  @@index([leadId, startsAt(sort: Desc)])
+  @@index([adviserId, startsAt])
+  @@index([campus, state, startsAt])
+  @@map("appointments")
+}
+
+model AppointmentParticipant {
+  id            String      @id @default(uuid()) @db.Uuid
+  appointmentId String      @map("appointment_id") @db.Uuid
+  userId        String      @map("user_id") @db.VarChar(64)
+  role          String      @db.VarChar(24)
+  response      String      @default("PENDING") @db.VarChar(16)
+  respondedAt   DateTime?   @map("responded_at") @db.Timestamptz(6)
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  @@unique([appointmentId, userId, role])
+  @@index([userId, response])
+  @@map("appointment_participants")
+}
+
+model AppointmentEvent {
+  id                 String      @id @default(uuid()) @db.Uuid
+  appointmentId      String      @map("appointment_id") @db.Uuid
+  idempotencyKey     String      @unique @map("idempotency_key") @db.VarChar(128)
+  eventType          String      @map("event_type") @db.VarChar(48)
+  fromState          String?     @map("from_state") @db.VarChar(24)
+  toState            String?     @map("to_state") @db.VarChar(24)
+  actorId            String      @map("actor_id") @db.VarChar(64)
+  reasonCode         String?     @map("reason_code") @db.VarChar(120)
+  compensatesEventId String?     @map("compensates_event_id") @db.Uuid
+  occurredAt         DateTime    @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  appointment        Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  @@index([appointmentId, occurredAt, id])
+  @@map("appointment_events")
+}
+
+model InterviewReport {
+  id                     String      @id @default(uuid()) @db.Uuid
+  appointmentId          String      @map("appointment_id") @db.Uuid
+  result                 String      @db.VarChar(32)
+  redactedComment        String      @map("redacted_comment") @db.VarChar(32)
+  redactedMissingPoints  String?     @map("redacted_missing_points") @db.VarChar(32)
+  nextAction             String?     @map("next_action") @db.VarChar(120)
+  followUpAt             DateTime?   @map("follow_up_at") @db.Timestamptz(6)
+  redactedRecommendation String      @map("redacted_recommendation") @db.VarChar(32)
+  validatedBy            String      @map("validated_by") @db.VarChar(64)
+  validatedAt            DateTime    @default(now()) @map("validated_at") @db.Timestamptz(6)
+  compensatesReportId    String?     @map("compensates_report_id") @db.Uuid
+  appointment            Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  @@index([appointmentId, validatedAt])
+  @@map("interview_reports")
+}
+
 model TelephonyConfiguration {
-  id                     String   @id @default(uuid()) @db.Uuid
-  mode                   String   @default("DISABLED") @db.VarChar(24)
-  clickToCallEnabled     Boolean  @default(false) @map("click_to_call_enabled")
-  inboundEnabled         Boolean  @default(false) @map("inbound_enabled")
-  outboundEnabled        Boolean  @default(false) @map("outbound_enabled")
-  recordingPolicy        String   @default("DISABLED") @map("recording_policy") @db.VarChar(24)
-  maxCallDurationSeconds Int      @default(7200) @map("max_call_duration_seconds")
-  providerConfigurationRef String? @map("provider_configuration_ref") @db.VarChar(160)
-  version                Int      @default(1)
-  updatedBy              String   @map("updated_by") @db.VarChar(64)
-  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                       String   @id @default(uuid()) @db.Uuid
+  mode                     String   @default("DISABLED") @db.VarChar(24)
+  clickToCallEnabled       Boolean  @default(false) @map("click_to_call_enabled")
+  inboundEnabled           Boolean  @default(false) @map("inbound_enabled")
+  outboundEnabled          Boolean  @default(false) @map("outbound_enabled")
+  recordingPolicy          String   @default("DISABLED") @map("recording_policy") @db.VarChar(24)
+  maxCallDurationSeconds   Int      @default(7200) @map("max_call_duration_seconds")
+  providerConfigurationRef String?  @map("provider_configuration_ref") @db.VarChar(160)
+  version                  Int      @default(1)
+  updatedBy                String   @map("updated_by") @db.VarChar(64)
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("telephony_configurations")
 }
