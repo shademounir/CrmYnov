@@ -79,11 +79,15 @@ import { TelephonyService } from "./telephony/telephony.service.js";
 import { AppointmentController } from "./appointments/appointment.controller.js";
 import { AppointmentService } from "./appointments/appointment.service.js";
 import { PrismaService } from "./persistence/prisma.service.js";
+import { LocalOutboxRepository } from "./outbox/local-outbox.repository.js";
+import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
 
 @Module({
   controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     PrismaService,
+    LocalOutboxRepository,
+    LocalOutboxWorker,
     SessionService,
     RateLimitService,
     RbacGuard,

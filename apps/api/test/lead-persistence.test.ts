@@ -5,6 +5,7 @@ import type { PrismaService } from "../src/persistence/prisma.service.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
 import { LeadService, type LeadActivityRecord, type LeadRecord } from "../src/leads/lead.service.js";
+import { LocalOutboxRepository } from "../src/outbox/local-outbox.repository.js";
 
 const leadId = "00000000-0000-4000-8000-000000000211";
 const userId = "00000000-0000-4000-8000-000000000212";
@@ -17,10 +18,10 @@ const lead = (): LeadRecord & { version: number } => ({ id: leadId, leadCode: "L
 const activity = (id = "00000000-0000-4000-8000-000000000213"): LeadActivityRecord => ({ id, leadId, type: "LEAD_CREATED", result: "PROSPECT", authorId: userId, correlationId: "synthetic-correlation", occurredAt: now });
 const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes(code);
 
-type FakeState = { leads: Row[]; activities: Row[]; receipts: Row[]; collaborators: Row[] };
+type FakeState = { leads: Row[]; activities: Row[]; receipts: Row[]; collaborators: Row[]; outbox: Row[] };
 type Row = Record<string, unknown>;
 function fakeRepository(): { repository: LeadPersistenceRepository; state: FakeState } {
-  const state: FakeState = { leads: [], activities: [], receipts: [], collaborators: [] };
+  const state: FakeState = { leads: [], activities: [], receipts: [], collaborators: [], outbox: [] };
   const client = {
     lead: {
       findMany: async () => state.leads.map((row) => ({ ...row, collaborators: state.collaborators.filter((item) => item.leadId === row.id && item.active).map((item) => ({ userId: item.userId })) })),
@@ -40,6 +41,10 @@ function fakeRepository(): { repository: LeadPersistenceRepository; state: FakeS
       findUnique: async ({ where }: { where: { idempotencyKey: string } }) => state.receipts.find((item) => item.idempotencyKey === where.idempotencyKey) ?? null,
       create: async ({ data }: { data: Record<string, unknown> }) => { state.receipts.push(data); return data; },
     },
+    localOutboxEvent: {
+      findUnique: async ({ where }: { where: { idempotencyKey: string } }) => state.outbox.find((item) => item.idempotencyKey === where.idempotencyKey) ?? null,
+      create: async ({ data }: { data: Record<string, unknown> }) => { const row = { id: `outbox-${state.outbox.length + 1}`, ...data }; state.outbox.push(row); return row; },
+    },
     leadCollaborator: {
       updateMany: async ({ where, data }: { where: { leadId: string; userId: { notIn: string[] } }; data: { active: boolean } }) => {
         for (const item of state.collaborators) if (item.leadId === where.leadId && !where.userId.notIn.includes(String(item.userId))) item.active = data.active;
@@ -52,7 +57,8 @@ function fakeRepository(): { repository: LeadPersistenceRepository; state: FakeS
     },
     $transaction: async (value: unknown) => typeof value === "function" ? (value as (tx: unknown) => unknown)(client) : Promise.all(value as Promise<unknown>[]),
   };
-  return { repository: new LeadPersistenceRepository({ enabled: true, client } as unknown as PrismaService), state };
+  const prisma = { enabled: true, client } as unknown as PrismaService;
+  return { repository: new LeadPersistenceRepository(prisma, new LocalOutboxRepository(prisma)), state };
 }
 
 test("creates and replays a lead mutation with a stable fingerprint", async () => {
@@ -60,7 +66,8 @@ test("creates and replays a lead mutation with a stable fingerprint", async () =
   const fingerprint = repository.fingerprint({ operation: "create", leadId });
   const created = await repository.createLead(lead(), activity(), "lead-create-synthetic", fingerprint);
   assert.equal(created.leadCode, "LD-PERSIST-001");
-  assert.equal(state.leads.length, 1); assert.equal(state.activities.length, 1);
+  assert.equal(state.leads.length, 1); assert.equal(state.activities.length, 1); assert.equal(state.outbox.length, 1);
+  assert.deepEqual(state.outbox[0]?.payload, { operation: "CREATE", status: "PROSPECT", version: 1 });
   assert.equal((await repository.findActivity("lead-create-synthetic"))?.id, activity().id);
   assert.deepEqual(await repository.createLead(lead(), activity(), "lead-create-synthetic", fingerprint), created);
   await assert.rejects(() => repository.createLead(lead(), activity(), "lead-create-synthetic", repository.fingerprint({ different: true })), hasCode("lead_idempotency_conflict"));
@@ -73,7 +80,7 @@ test("persists append-only activities with optimistic lead concurrency", async (
   const after = { ...before, status: "CONTACTED" as const, lastActivityAt: "2026-08-25T12:31:00.000Z" };
   const next = activity("00000000-0000-4000-8000-000000000214"); next.type = "STATUS_CHANGED"; next.result = "CONTACTED";
   const stored = await repository.persistMutation(before, after, [next], "lead-status-synthetic", "CHANGE_STATUS", repository.fingerprint(after));
-  assert.equal(stored.version, 2); assert.equal(stored.status, "CONTACTED"); assert.equal(state.activities.length, 2);
+  assert.equal(stored.version, 2); assert.equal(stored.status, "CONTACTED"); assert.equal(state.activities.length, 2); assert.equal(state.outbox.length, 2);
   await assert.rejects(() => repository.persistMutation(before, after, [], "lead-stale-synthetic", "CHANGE_STATUS", repository.fingerprint("stale")), hasCode("lead_concurrent_mutation"));
 });
 

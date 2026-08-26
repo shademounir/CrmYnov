@@ -14,6 +14,30 @@ model SystemProbe {
   @@map("system_probes")
 }
 
+model LocalOutboxEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  topic          String    @db.VarChar(80)
+  aggregateType  String    @map("aggregate_type") @db.VarChar(48)
+  aggregateId    String    @map("aggregate_id") @db.VarChar(80)
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(160)
+  payload        Json
+  status         String    @default("PENDING") @db.VarChar(16)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5) @map("max_attempts")
+  availableAt    DateTime  @default(now()) @map("available_at") @db.Timestamptz(6)
+  lockedAt       DateTime? @map("locked_at") @db.Timestamptz(6)
+  lockedBy       String?   @map("locked_by") @db.VarChar(80)
+  deliveredAt    DateTime? @map("delivered_at") @db.Timestamptz(6)
+  lastErrorCode  String?   @map("last_error_code") @db.VarChar(80)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, availableAt, createdAt])
+  @@index([aggregateType, aggregateId, createdAt])
+  @@index([lockedAt])
+  @@map("local_outbox_events")
+}
+
 model AuditEvent {
   id             String   @id @default(uuid()) @db.Uuid
   eventType      String   @map("event_type") @db.VarChar(80)
@@ -34,17 +58,17 @@ model AuditEvent {
 }
 
 model Collaborator {
-  id                    String   @id @default(uuid()) @db.Uuid
-  professionalEmail     String   @unique @map("professional_email") @db.VarChar(254)
-  secondaryEmail        String?  @map("secondary_email") @db.VarChar(254)
+  id                    String                   @id @default(uuid()) @db.Uuid
+  professionalEmail     String                   @unique @map("professional_email") @db.VarChar(254)
+  secondaryEmail        String?                  @map("secondary_email") @db.VarChar(254)
   roles                 String[]
-  campusId              String?  @map("campus_id") @db.VarChar(64)
-  teamId                String?  @map("team_id") @db.VarChar(64)
-  active                Boolean  @default(true)
-  firstLoginRequired    Boolean  @default(true) @map("first_login_required")
-  authenticationVersion Int      @default(1) @map("authentication_version")
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  campusId              String?                  @map("campus_id") @db.VarChar(64)
+  teamId                String?                  @map("team_id") @db.VarChar(64)
+  active                Boolean                  @default(true)
+  firstLoginRequired    Boolean                  @default(true) @map("first_login_required")
+  authenticationVersion Int                      @default(1) @map("authentication_version")
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   passwordHash          LocalPasswordHash?
   sessions              LocalSession[]
   recoveryChallenges    LocalRecoveryChallenge[]
@@ -705,22 +729,22 @@ model AssignmentBatchItem {
 }
 
 model LeadActivity {
-  id            String    @id @default(uuid()) @db.Uuid
-  leadId        String    @map("lead_id") @db.Uuid
-  type          String    @db.VarChar(32)
-  result        String    @db.VarChar(120)
-  note          String?   @db.VarChar(2000)
-  authorId      String    @map("author_id") @db.VarChar(64)
-  nextActionAt  DateTime? @map("next_action_at") @db.Timestamptz(6)
-  correlationId String    @map("correlation_id") @db.VarChar(64)
-  idempotencyKey String?  @unique @map("idempotency_key") @db.VarChar(160)
-  originalEventId String? @map("original_event_id") @db.Uuid
-  correctionOperation String? @map("correction_operation") @db.VarChar(16)
-  correctionReasonCode String? @map("correction_reason_code") @db.VarChar(80)
-  previousSnapshot Json?  @map("previous_snapshot")
-  replacementSnapshot Json? @map("replacement_snapshot")
-  occurredAt    DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  lead          Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  id                   String    @id @default(uuid()) @db.Uuid
+  leadId               String    @map("lead_id") @db.Uuid
+  type                 String    @db.VarChar(32)
+  result               String    @db.VarChar(120)
+  note                 String?   @db.VarChar(2000)
+  authorId             String    @map("author_id") @db.VarChar(64)
+  nextActionAt         DateTime? @map("next_action_at") @db.Timestamptz(6)
+  correlationId        String    @map("correlation_id") @db.VarChar(64)
+  idempotencyKey       String?   @unique @map("idempotency_key") @db.VarChar(160)
+  originalEventId      String?   @map("original_event_id") @db.Uuid
+  correctionOperation  String?   @map("correction_operation") @db.VarChar(16)
+  correctionReasonCode String?   @map("correction_reason_code") @db.VarChar(80)
+  previousSnapshot     Json?     @map("previous_snapshot")
+  replacementSnapshot  Json?     @map("replacement_snapshot")
+  occurredAt           DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  lead                 Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
 
   @@index([leadId, occurredAt(sort: Desc), id])
   @@map("lead_activities")

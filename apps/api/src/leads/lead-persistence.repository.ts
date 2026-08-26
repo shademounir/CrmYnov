@@ -1,7 +1,8 @@
-import { ConflictException, Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { LeadActivity as PrismaLeadActivity, Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { LocalOutboxRepository } from "../outbox/local-outbox.repository.js";
 import type { ActivityCorrection, CorrectionReasonCode, LeadActivityRecord, LeadRecord } from "./lead.service.js";
 
 type StoredLead = LeadRecord & { version: number };
@@ -9,7 +10,10 @@ type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivi
 
 @Injectable()
 export class LeadPersistenceRepository {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Optional() @Inject(LocalOutboxRepository) private readonly outbox?: LocalOutboxRepository,
+  ) {}
 
   get enabled(): boolean {
     return this.prisma.enabled && Boolean(this.prisma.client);
@@ -91,6 +95,13 @@ export class LeadPersistenceRepository {
       await tx.leadMutationReceipt.create({
         data: { leadId: lead.id, idempotencyKey, fingerprint, operation: "CREATE", result: lead as unknown as Prisma.InputJsonValue },
       });
+      await this.outbox?.enqueueInTransaction(tx, {
+        topic: "LEAD.CREATED",
+        aggregateType: "LEAD",
+        aggregateId: lead.id,
+        idempotencyKey: `outbox:${idempotencyKey}`,
+        payload: { operation: "CREATE", status: lead.status, version: lead.version },
+      });
       return lead;
     }, { isolationLevel: "Serializable" });
   }
@@ -130,6 +141,13 @@ export class LeadPersistenceRepository {
       const result: StoredLead = { ...after, version: before.version + 1 };
       await tx.leadMutationReceipt.create({
         data: { leadId: after.id, idempotencyKey, fingerprint, operation, result: result as unknown as Prisma.InputJsonValue },
+      });
+      await this.outbox?.enqueueInTransaction(tx, {
+        topic: "LEAD.MUTATED",
+        aggregateType: "LEAD",
+        aggregateId: after.id,
+        idempotencyKey: `outbox:${idempotencyKey}`,
+        payload: { operation, status: result.status, version: result.version, activityTypes: activities.map((activity) => activity.type) },
       });
       return result;
     }, { isolationLevel: "Serializable" });
