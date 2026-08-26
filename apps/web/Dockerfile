@@ -15,6 +15,8 @@ RUN npm run build --workspace=@crm/shared && npm run build --workspace=@crm/web
 FROM node:22.21.1-bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get upgrade --yes \
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /workspace
