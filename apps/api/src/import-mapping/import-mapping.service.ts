@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -9,6 +9,7 @@ import {
   type IngestionRecordInput,
   type IngestionSource,
 } from "../ingestion/ingestion.service.js";
+import { PersistentIngestionService, type PersistentImportResult } from "../ingestion/persistent-ingestion.service.js";
 
 export const crmImportTargets = [
   "firstName", "lastName", "email", "phone", "educationLevel", "program", "campus", "campaign",
@@ -63,6 +64,7 @@ export interface ImportDryRunInput {
   };
   assignment: { strategy: "UNASSIGNED" | "FIXED" | "ROUND_ROBIN" | "CONTROLLED_RANDOM"; targetUserId?: string };
 }
+export interface ConfirmMappedImportInput extends ImportDryRunInput { confirmed: true; sourceFileSha256: string }
 
 const MAPPING_KEY = /^[a-z][a-z0-9-]{2,63}$/;
 const MAX_COLUMNS = 100;
@@ -109,9 +111,22 @@ const LEGACY_COLUMNS: ImportMappingColumnInput[] = [
 export class ImportMappingService {
   private readonly mappings = new Map<string, Readonly<ImportMappingTemplate>[]>();
 
-  constructor(private readonly ingestion: IngestionService, private readonly audit: AuditService) {
+  constructor(private readonly ingestion: IngestionService, private readonly audit: AuditService, @Optional() private readonly persistent?: PersistentIngestionService) {
     this.mappings.set("forminator-zapier-v1", [this.builtIn("forminator-zapier-v1", "Forminator / Zapier", "FORMINATOR_ZAPIER", FORM_COLUMNS)]);
     this.mappings.set("legacy-crm-canonical-v1", [this.builtIn("legacy-crm-canonical-v1", "LEADS YNOV.MA canonique", "LEGACY_CRM", LEGACY_COLUMNS)]);
+  }
+
+  async confirm(input: ConfirmMappedImportInput, principal: Principal, correlationId: string): Promise<PersistentImportResult> {
+    this.assertRole(principal);
+    if (input.confirmed !== true || !/^[0-9a-f]{64}$/.test(input.sourceFileSha256)) throw new BadRequestException({ code: "import_confirmation_invalid" });
+    if (!this.persistent) throw new ConflictException({ code: "persistent_import_unavailable" });
+    const mapping = this.getVersion(input.mappingKey, input.mappingVersion);
+    this.validateDryRun(input, mapping);
+    const records = input.rows.map((row, index) => this.toRecord(row, index + 1, mapping, input));
+    const preview = this.ingestion.dryRun({ idempotencyKey: input.idempotencyKey, profile: mapping.profile, assignment: input.assignment, records }, principal, `${correlationId}:preflight`);
+    const resolvedAssignments = Object.fromEntries(preview.lines.flatMap((line) => line.proposedAssigneeId ? [[String(line.lineNumber), line.proposedAssigneeId]] : []));
+    return this.persistent.confirm({ idempotencyKey: input.idempotencyKey, profile: mapping.profile, confirmed: true, mappingId: mapping.id,
+      mappingVersion: mapping.version, sourceFileSha256: input.sourceFileSha256, assignment: input.assignment, records, resolvedAssignments }, principal, correlationId);
   }
 
   list(principal: Principal): ImportMappingTemplate[] {

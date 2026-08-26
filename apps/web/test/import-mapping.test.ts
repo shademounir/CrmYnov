@@ -12,4 +12,6 @@ test("renders the versioned mapping and non-mutating dry-run journey", () => {
   assert.match(rendered, /Aléatoire contrôlé/);
   assert.match(rendered, /Simuler sans importer/);
   assert.match(rendered, /non persisté, transmis uniquement à l.API locale/);
+  assert.match(rendered, /La confirmation explicite du dry-run est obligatoire|Je confirme les compteurs/);
+  assert.match(rendered, /PostgreSQL local/);
 });
