@@ -60,3 +60,38 @@ test("controller requires a principal and exposes bounded preview", () => {
   assert.equal(preview.mutated, false); assert.equal(preview.items[0]?.outcome, "READY");
   assert.throws(() => controller.preview({ idempotencyKey: "preview-002", strategy: "FIXED", targetUserId: firstUser, items: [] }, { header: () => undefined } as never), hasCode("principal_missing"));
 });
+
+test("persists fixed API batches with replay, skip and refusal outcomes", async () => {
+  const audit = new AuditService();
+  const engine = new AssignmentService(audit);
+  engine.configure([{ id: "persistent-rule", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [
+    { userId: firstUser, active: true, capacity: 10, activeLeadCount: 0 },
+  ] }], manager, "persistent-config");
+  const records = new Map([
+    ["persistent-ready", { ...leadInput("LD-PERSIST-READY"), id: "persistent-ready", status: "PROSPECT" as const, createdAt: "2026-08-25T12:00:00.000Z" }],
+    ["persistent-assigned", { ...leadInput("LD-PERSIST-ASSIGNED"), id: "persistent-assigned", status: "PROSPECT" as const, createdAt: "2026-08-25T12:00:00.000Z", assignedToId: secondUser }],
+    ["persistent-single", { ...leadInput("LD-PERSIST-SINGLE"), id: "persistent-single", status: "PROSPECT" as const, createdAt: "2026-08-25T12:00:00.000Z" }],
+  ]);
+  const persistentLeads = {
+    persistenceEnabled: () => true,
+    findLocalLeadForApi: (id: string) => Promise.resolve(records.get(id)),
+    assignLocalLeadForApi: (id: string, assignedToId: string) => {
+      const updated = { ...records.get(id)!, assignedToId };
+      records.set(id, updated);
+      return Promise.resolve(updated);
+    },
+  } as unknown as LeadService;
+  const service = new LeadAssignmentService(persistentLeads, engine, audit);
+  const input = { idempotencyKey: "persistent-batch-001", strategy: "FIXED" as const, targetUserId: firstUser, confirmed: true,
+    items: [
+      { leadId: "persistent-ready", source: "FORM", campaign: "Campaign" },
+      { leadId: "persistent-assigned", source: "FORM", campaign: "Campaign" },
+      { leadId: "persistent-missing", source: "FORM", campaign: "Campaign" },
+    ] };
+  const result = await service.assignBatchForApi(input, manager, "persistent-batch");
+  assert.equal(result.assigned[0]?.assignedToId, firstUser);
+  assert.equal(result.skipped[0]?.reason, "lead_already_assigned");
+  assert.equal(result.refused[0]?.reason, "lead_not_found");
+  assert.equal((await service.assignBatchForApi(input, manager, "persistent-replay")).batchId, result.batchId);
+  assert.equal((await service.assignOneForApi("persistent-single", firstUser, true, "persistent-single-001", manager, "persistent-single")).assignedToId, firstUser);
+});

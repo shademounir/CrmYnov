@@ -10,23 +10,23 @@ export class LeadTimelineController {
   constructor(@Inject(LeadService) private readonly leads: LeadService) {}
 
   @Get()
-  list(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): { events: LeadActivityRecord[] } {
+  async list(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): Promise<{ events: LeadActivityRecord[] }> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return { events: this.leads.timeline(leadId, request.principal) };
+    return { events: await this.leads.timelineForApi(leadId, request.principal) };
   }
 
   @Post()
   @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN")
-  create(@Param("leadId") leadId: string, @Body() body: { type: string; result: string; note?: string; nextActionAt?: string }, @Req() request: AuthenticatedRequest): LeadActivityRecord {
+  async create(@Param("leadId") leadId: string, @Body() body: { type: string; result: string; note?: string; nextActionAt?: string }, @Req() request: AuthenticatedRequest): Promise<LeadActivityRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.addActivity(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.leads.addActivityForApi(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 
   @Post(":eventId/corrections")
   @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
-  correct(@Param("leadId") leadId: string, @Param("eventId") eventId: string, @Body() body: InteractionCorrectionInput, @Req() request: AuthenticatedRequest): LeadActivityRecord {
+  async correct(@Param("leadId") leadId: string, @Param("eventId") eventId: string, @Body() body: InteractionCorrectionInput, @Req() request: AuthenticatedRequest): Promise<LeadActivityRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.correctActivity(leadId, eventId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.leads.correctActivityForApi(leadId, eventId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }
 
@@ -37,9 +37,9 @@ export class LeadStatusController {
   constructor(@Inject(LeadService) private readonly leads: LeadService) {}
 
   @Patch()
-  update(@Param("leadId") leadId: string, @Body() body: { status: string; reason?: string }, @Req() request: AuthenticatedRequest): LeadRecord {
+  async update(@Param("leadId") leadId: string, @Body() body: { status: string; reason?: string }, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.changeStatus(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.leads.changeStatusForApi(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }
 
@@ -50,26 +50,26 @@ export class LeadController {
   constructor(@Inject(LeadService) private readonly leads: LeadService) {}
 
   @Post()
-  create(@Body() body: CreateLeadInput, @Req() request: AuthenticatedRequest): CreateLeadResult {
+  async create(@Body() body: CreateLeadInput, @Req() request: AuthenticatedRequest): Promise<CreateLeadResult> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.createLead(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.leads.createLeadForApi(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 
   @Get()
   @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
-  list(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): LeadPage {
+  async list(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): Promise<LeadPage> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     const normalized: LeadListQuery = { page: Number(query.page ?? 1), pageSize: Number(query.pageSize ?? 25) };
     for (const key of ["search", "assignedToId", "collaboratorId", "status", "source", "channel", "program", "campaign", "campus", "createdFrom", "createdTo", "assignmentMode", "importBatchId", "view", "savedView", "sortBy", "sortDirection"] as const) {
       if (query[key] !== undefined) normalized[key] = query[key];
     }
-    return this.leads.listLeads(normalized, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.leads.listLeadsForApi(normalized, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 
   @Get(":leadId")
   @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
-  detail(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): LeadRecord {
+  async detail(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.getLead(leadId, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.leads.getLeadForApi(leadId, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }

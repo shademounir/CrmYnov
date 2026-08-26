@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService, type LeadRecord } from "../leads/lead.service.js";
+import { LeadWorkflowPersistenceRepository } from "../leads/lead-workflow-persistence.repository.js";
 import { AssignmentService } from "./assignment.service.js";
 
 export type ReassignmentStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -16,10 +17,51 @@ export interface DecideReassignmentInput { approved: boolean; reason: string }
 const IDEMPOTENCY_KEY = /^[a-zA-Z0-9:_-]{8,128}$/;
 
 @Injectable()
-export class ReassignmentService {
+export class ReassignmentService implements OnModuleInit {
   private readonly requests = new Map<string, Readonly<ReassignmentRequest>>();
   private readonly idempotency = new Map<string, string>();
-  constructor(private readonly leads: LeadService, private readonly engine: AssignmentService, private readonly audit: AuditService) {}
+  constructor(
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(AssignmentService) private readonly engine: AssignmentService,
+    @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(LeadWorkflowPersistenceRepository) private readonly persistence?: LeadWorkflowPersistenceRepository,
+  ) {}
+
+  async onModuleInit(): Promise<void> { await this.refreshPersistentState(); }
+  persistenceEnabled(): boolean { return this.persistence?.enabled === true; }
+
+  async requestForApi(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string): Promise<ReassignmentRequest> {
+    if (!this.persistence?.enabled) return this.request(leadId, input, principal, correlationId);
+    const replay = await this.persistence.findReassignment(input.idempotencyKey);
+    if (replay) return replay;
+    await this.refreshPersistentState();
+    const record = await this.leads.persistWorkflowMutationForApi(
+      leadId, `reassignment-request:${input.idempotencyKey}`, "REASSIGNMENT_REQUEST", input,
+      () => this.request(leadId, input, principal, correlationId),
+    );
+    const stored = await this.persistence.createReassignment(record, input.idempotencyKey);
+    await this.refreshPersistentState();
+    return stored;
+  }
+
+  async decideForApi(requestId: string, input: DecideReassignmentInput, principal: Principal, correlationId: string): Promise<{ request: ReassignmentRequest; lead?: LeadRecord }> {
+    if (!this.persistence?.enabled) return this.decide(requestId, input, principal, correlationId);
+    await this.refreshPersistentState();
+    const current = this.requests.get(requestId);
+    if (!current) throw new NotFoundException({ code: "reassignment_request_not_found" });
+    const result = await this.leads.persistWorkflowMutationForApi(
+      current.leadId, `reassignment-decision:${requestId}`, "REASSIGNMENT_DECISION", input,
+      () => this.decide(requestId, input, principal, correlationId),
+    );
+    const stored = await this.persistence.decideReassignment(result.request, 1);
+    await this.refreshPersistentState();
+    const lead = result.lead ? await this.leads.findLocalLeadForApi(result.lead.id) : undefined;
+    return { request: stored, ...(lead ? { lead } : {}) };
+  }
+
+  async listForLeadForApi(leadId: string, principal: Principal): Promise<ReassignmentRequest[]> {
+    await this.refreshPersistentState(); return this.listForLead(leadId, principal);
+  }
 
   request(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string): ReassignmentRequest {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "reassignment_request_role_forbidden" });
@@ -84,4 +126,10 @@ export class ReassignmentService {
   }
   private assertApprover(principal: Principal): void { if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "reassignment_approval_role_required" }); }
   private copy(request: Readonly<ReassignmentRequest>): ReassignmentRequest { return { ...request }; }
+  private async refreshPersistentState(): Promise<void> {
+    if (!this.persistence?.enabled) return;
+    const snapshot = await this.persistence.snapshot();
+    this.requests.clear();
+    for (const item of snapshot.reassignments) this.requests.set(item.id, Object.freeze({ ...item }));
+  }
 }

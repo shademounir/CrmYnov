@@ -26,9 +26,9 @@ test("rejects malformed inputs and unauthorized callers", () => {
   assert.throws(() => service.createLead(input, { ...principal, roles: ["AUDITOR"] }, "corr"), hasCode("role_forbidden"));
 });
 
-test("controller delegates creation with correlation and fails without principal", () => {
+test("controller delegates creation with correlation and fails without principal", async () => {
   const controller = new LeadController(new LeadService(new AuditService()));
-  const result = controller.create(input, { principal, header: () => "corr-controller" } as never);
+  const result = await controller.create(input, { principal, header: () => "corr-controller" } as never);
   assert.equal(result.lead.firstName, "Camille");
-  assert.throws(() => controller.create(input, { header: () => undefined } as never), hasCode("principal_missing"));
+  await assert.rejects(() => controller.create(input, { header: () => undefined } as never), hasCode("principal_missing"));
 });

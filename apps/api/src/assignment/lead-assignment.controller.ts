@@ -11,16 +11,16 @@ export class LeadAssignmentController {
   constructor(@Inject(LeadAssignmentService) private readonly assignments: LeadAssignmentService) {}
 
   @Post("leads/:leadId/assignment")
-  assignOne(@Param("leadId") leadId: string, @Body() body: { targetUserId: string; confirmed?: boolean; idempotencyKey: string }, @Req() request: AuthenticatedRequest): LeadRecord {
-    return this.assignments.assignOne(leadId, body.targetUserId, body.confirmed === true, body.idempotencyKey, this.principal(request), this.correlation(request));
+  async assignOne(@Param("leadId") leadId: string, @Body() body: { targetUserId: string; confirmed?: boolean; idempotencyKey: string }, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {
+    return this.assignments.assignOneForApi(leadId, body.targetUserId, body.confirmed === true, body.idempotencyKey, this.principal(request), this.correlation(request));
   }
   @Post("lead-assignments/preview")
   preview(@Body() body: BatchAssignmentInput, @Req() request: AuthenticatedRequest): { items: AssignmentPreviewItem[]; mutated: false } {
     return { items: this.assignments.preview(body, this.principal(request)), mutated: false };
   }
   @Post("lead-assignments")
-  assignBatch(@Body() body: BatchAssignmentInput, @Req() request: AuthenticatedRequest): AssignmentBatchResult {
-    return this.assignments.assignBatch(body, this.principal(request), this.correlation(request));
+  async assignBatch(@Body() body: BatchAssignmentInput, @Req() request: AuthenticatedRequest): Promise<AssignmentBatchResult> {
+    return this.assignments.assignBatchForApi(body, this.principal(request), this.correlation(request));
   }
   private principal(request: AuthenticatedRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }
   private correlation(request: AuthenticatedRequest): string { return request.header("x-correlation-id") ?? "missing-correlation"; }

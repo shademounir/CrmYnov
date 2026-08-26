@@ -23,12 +23,12 @@ test("returns authorized detail, masks auditor contacts and fails closed", () =>
   assert.throws(() => service.getLead("00000000-0000-4000-8000-000000000099", admissions, "corr"), hasCode("lead_not_found"));
 });
 
-test("controller exposes list and detail without trusting forged identifiers", () => {
+test("controller exposes list and detail without trusting forged identifiers", async () => {
   const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(input); const controller = new LeadController(service);
   const request = { principal: admissions, header: () => "corr-controller" } as never;
-  assert.equal(controller.list({ page: "1", pageSize: "25" }, request).items[0]?.id, lead.id);
-  assert.equal(controller.detail(lead.id, request).leadCode, input.leadCode);
-  assert.throws(() => controller.detail(lead.id, { header: () => undefined } as never), hasCode("principal_missing"));
+  assert.equal((await controller.list({ page: "1", pageSize: "25" }, request)).items[0]?.id, lead.id);
+  assert.equal((await controller.detail(lead.id, request)).leadCode, input.leadCode);
+  await assert.rejects(() => controller.detail(lead.id, { header: () => undefined } as never), hasCode("principal_missing"));
 });
 
 test("filters deterministic saved provenance and incomplete views", () => {

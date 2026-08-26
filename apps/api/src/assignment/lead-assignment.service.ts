@@ -53,6 +53,35 @@ export class LeadAssignmentService {
     return assigned;
   }
 
+  async assignOneForApi(leadId: string, targetUserId: string, confirmed: boolean, idempotencyKey: string, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    const result = await this.assignBatchForApi({ idempotencyKey, confirmed, strategy: "FIXED", targetUserId,
+      items: [{ leadId, source: (await this.leads.findLocalLeadForApi(leadId))?.source ?? "UNKNOWN", campaign: (await this.leads.findLocalLeadForApi(leadId))?.campaign ?? "UNKNOWN" }] }, principal, correlationId);
+    const assigned = result.assigned[0];
+    if (!assigned) throw new ConflictException({ code: result.skipped[0]?.reason ?? result.refused[0]?.reason ?? "assignment_failed" });
+    return assigned;
+  }
+
+  async assignBatchForApi(input: BatchAssignmentInput, principal: Principal, correlationId: string): Promise<AssignmentBatchResult> {
+    if (!this.leads.persistenceEnabled()) return this.assignBatch(input, principal, correlationId);
+    this.validate(input, true);
+    const previous = this.completed.get(input.idempotencyKey);
+    if (previous) return this.copy(previous);
+    const assigned: LeadRecord[] = []; const skipped: AssignmentPreviewItem[] = []; const refused: AssignmentPreviewItem[] = [];
+    for (const [index, item] of input.items.entries()) {
+      try {
+        const lead = await this.leads.findLocalLeadForApi(item.leadId);
+        if (!lead) { refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: "lead_not_found" }); continue; }
+        if (lead.assignedToId) { skipped.push({ leadId: item.leadId, outcome: "SKIPPED", reason: "lead_already_assigned" }); continue; }
+        const target = input.strategy === "FIXED" ? this.fixedTarget(input) : this.engineTarget(input, item, index, principal, correlationId);
+        assigned.push(await this.leads.assignLocalLeadForApi(item.leadId, target, principal, `${correlationId}:${index}`, `BATCH:${input.idempotencyKey}`, input.strategy));
+      } catch (error) { refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: this.reason(error) }); }
+    }
+    const result: Readonly<AssignmentBatchResult> = Object.freeze({ batchId: randomUUID(), idempotencyKey: input.idempotencyKey,
+      assigned: assigned.map((lead) => Object.freeze({ ...lead })), skipped: skipped.map((item) => Object.freeze({ ...item })), refused: refused.map((item) => Object.freeze({ ...item })) });
+    this.completed.set(input.idempotencyKey, result);
+    return this.copy(result);
+  }
+
   assignBatch(input: BatchAssignmentInput, principal: Principal, correlationId: string): AssignmentBatchResult {
     this.validate(input, true);
     const previous = this.completed.get(input.idempotencyKey);
