@@ -13,7 +13,7 @@ COPY packages/shared packages/shared
 RUN npm run prisma:generate && npm run build --workspace=@crm/shared && npm run build --workspace=@crm/api
 RUN npm prune --omit=dev --ignore-scripts
 
-FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runtime
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace
 COPY --from=build --chown=nonroot:nonroot /workspace/node_modules ./node_modules
