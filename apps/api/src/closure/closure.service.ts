@@ -84,7 +84,9 @@ export class ClosureService implements OnModuleInit {
     if (current.requesterId !== principal.userId) { throw new ForbiddenException({ code: "closure_cancel_forbidden" }); }
     if (current.state !== "PENDING") { throw new ConflictException({ code: "closure_concurrent_decision" }); }
     const updated: Readonly<ClosureRequest> = Object.freeze({ ...current, state: "CANCELLED", version: current.version + 1, decidedAt: new Date().toISOString(), decidedBy: principal.userId, decisionReason: "REQUESTER_CANCELLED" });
-    this.requests.set(id, updated); this.record(updated, principal, correlationId, "CLOSURE_CANCELLED"); return this.copy(updated);
+    this.requests.set(id, updated);
+    this.record(updated, principal, correlationId, "CLOSURE_CANCELLED");
+    return this.copy(updated);
   }
 
   list(principal: Principal): ClosureRequest[] { const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN"); return [...this.requests.values()].filter((item) => manager || item.requesterId === principal.userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).map((item) => this.copy(item)); }

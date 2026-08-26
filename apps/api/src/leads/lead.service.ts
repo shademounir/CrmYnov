@@ -146,8 +146,17 @@ export class LeadService implements OnModuleInit {
   }
 
   async applyCollaboratorForApi(leadId: string, targetUserId: string, action: "ADD" | "REMOVE", role: string, principal: Principal, correlationId: string): Promise<LeadRecord> {
-    const result = await this.persistApiMutation(leadId, `lead:collaborator:${leadId}:${correlationId}`, "COLLABORATOR", { targetUserId, action, role }, () => this.applyCollaborator(leadId, targetUserId, action, role, principal, correlationId));
-    if (this.persistence?.enabled) await this.persistence.replaceCollaborators(leadId, result.collaboratorIds ?? []);
+    let collaboratorIds: string[] = [];
+    const result = await this.persistApiMutation(leadId, `lead:collaborator:${leadId}:${correlationId}`, "COLLABORATOR", { targetUserId, action, role }, () => {
+      const updated = this.applyCollaborator(leadId, targetUserId, action, role, principal, correlationId);
+      collaboratorIds = [...(updated.collaboratorIds ?? [])];
+      return updated;
+    });
+    if (this.persistence?.enabled) {
+      await this.persistence.replaceCollaborators(leadId, collaboratorIds);
+      await this.refreshPersistentState();
+      return this.visibleLead(this.leads.get(leadId)!, principal);
+    }
     return result;
   }
 

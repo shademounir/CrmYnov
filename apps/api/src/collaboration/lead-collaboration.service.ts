@@ -48,7 +48,7 @@ export class LeadCollaborationService implements OnModuleInit {
     if (updated.state === "APPROVED" && leadBefore) {
       const collaborators = new Set(leadBefore.collaboratorIds ?? []);
       if (updated.action === "ADD") collaborators.add(updated.targetUserId); else collaborators.delete(updated.targetUserId);
-      await this.leads.persistCollaboratorSnapshotForApi(updated.leadId, [...collaborators].sort());
+      await this.leads.persistCollaboratorSnapshotForApi(updated.leadId, [...collaborators].sort((left, right) => left.localeCompare(right)));
     }
     await this.refreshPersistentState(); return stored;
   }
@@ -65,7 +65,10 @@ export class LeadCollaborationService implements OnModuleInit {
     if ((action === "ADD" && present) || (action === "REMOVE" && !present)) { throw new ConflictException({ code: "collaboration_state_conflict" }); }
     if ([...this.requests.values()].some((item) => item.leadId === leadId && item.targetUserId === targetUserId && item.state === "PENDING")) { throw new ConflictException({ code: "collaboration_pending" }); }
     const record: Readonly<CollaborationRequest> = Object.freeze({ id: randomUUID(), leadId, targetUserId, action, role, justification, requesterId: principal.userId, state: "PENDING", version: 1, createdAt: new Date().toISOString() });
-    this.requests.set(record.id, record); this.notifications.create({ recipientId: "manager-queue", type: "COLLABORATOR_REQUEST", priority: "NORMAL", resourceType: "LEAD", resourceId: leadId, href: `/leads/${leadId}/collaborators` }, `collaboration-request:${record.id}`); this.record(record, principal, correlationId, "COLLABORATION_REQUESTED"); return { ...record };
+    this.requests.set(record.id, record);
+    this.notifications.create({ recipientId: "manager-queue", type: "COLLABORATOR_REQUEST", priority: "NORMAL", resourceType: "LEAD", resourceId: leadId, href: `/leads/${leadId}/collaborators` }, `collaboration-request:${record.id}`);
+    this.record(record, principal, correlationId, "COLLABORATION_REQUESTED");
+    return { ...record };
   }
 
   decide(id: string, input: { decision?: "APPROVE" | "REJECT"; reason?: string; expectedVersion?: number }, principal: Principal, correlationId: string): CollaborationRequest {

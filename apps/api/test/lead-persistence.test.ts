@@ -2,11 +2,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PrismaService } from "../src/persistence/prisma.service.js";
+import { AuditService } from "../src/audit/audit.service.js";
 import { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
-import type { LeadActivityRecord, LeadRecord } from "../src/leads/lead.service.js";
+import { LeadService, type LeadActivityRecord, type LeadRecord } from "../src/leads/lead.service.js";
 
 const leadId = "00000000-0000-4000-8000-000000000211";
 const userId = "00000000-0000-4000-8000-000000000212";
+const ownerId = "00000000-0000-4000-8000-000000000216";
+const targetId = "00000000-0000-4000-8000-000000000217";
 const now = "2026-08-25T12:30:00.000Z";
 const lead = (): LeadRecord & { version: number } => ({ id: leadId, leadCode: "LD-PERSIST-001", firstName: "Alex", lastName: "Synthétique",
   email: "alex@example.invalid", phone: "+212600000211", campus: "SYNTHETIC", campaign: "SYNTHETIC", educationLevel: "BAC",
@@ -92,4 +95,33 @@ test("returns an empty snapshot and fails closed when persistence is unavailable
   assert.equal(repository.enabled, false); assert.deepEqual(await repository.snapshot(), { leads: [], activities: [] });
   assert.equal(await repository.findActivity("missing"), undefined);
   await assert.rejects(() => repository.createLead(lead(), activity(), "missing-client", "fingerprint"), /lead_persistence_unavailable/);
+});
+
+test("routes the complete Lead API lifecycle through the persistent adapter", async () => {
+  const { repository, state } = fakeRepository();
+  const service = new LeadService(new AuditService(), repository);
+  const principal = { userId, roles: ["MANAGER" as const], scopes: [{ kind: "GLOBAL" as const }], sessionId: "synthetic-persistent-session" };
+  await service.onModuleInit();
+  assert.equal(service.persistenceEnabled(), true);
+
+  const created = await service.createLeadForApi({ firstName: "Nora", lastName: "Synthétique", email: "nora@example.invalid",
+    phone: "+212600000299", campus: "SYNTHETIC", campaign: "SYNTHETIC", educationLevel: "BAC",
+    program: "SYNTHETIC", source: "TEST" }, principal, "persistent-create");
+  const id = created.lead.id;
+  assert.equal((await service.listLeadsForApi({ page: 1, pageSize: 20 }, principal, "persistent-list")).total, 1);
+  assert.equal((await service.getLeadForApi(id, principal, "persistent-get")).id, id);
+  assert.equal((await service.findLocalLeadForApi(id))?.id, id);
+  assert.equal((await service.timelineForApi(id, principal)).length, 1);
+
+  const interaction = await service.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_NOTE" }, principal, "persistent-activity");
+  assert.equal((await service.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_NOTE" }, principal, "persistent-activity")).id, interaction.id);
+  const correction = await service.correctActivityForApi(id, interaction.id, { idempotencyKey: "persistent-correction", expectedCorrectionCount: 0,
+    operation: "CANCEL", reasonCode: "DUPLICATE_ENTRY" }, principal, "persistent-correction");
+  assert.equal(correction.correction?.operation, "CANCEL");
+  assert.equal((await service.changeStatusForApi(id, { status: "CONTACTED", reason: "Contact synthétique" }, principal, "persistent-status")).status, "CONTACTED");
+  assert.equal((await service.assignLocalLeadForApi(id, ownerId, principal, "persistent-assignment", "Affectation synthétique")).assignedToId, ownerId);
+  assert.equal((await service.reassignLocalLeadForApi(id, ownerId, targetId, principal, "persistent-reassignment", "Réaffectation synthétique")).assignedToId, targetId);
+  assert.deepEqual((await service.applyCollaboratorForApi(id, userId, "ADD", "ADVISER", principal, "persistent-collaboration")).collaboratorIds, [userId]);
+  await service.persistCollaboratorSnapshotForApi(id, [userId]);
+  assert.equal(state.receipts.length, 7);
 });
