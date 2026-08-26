@@ -97,21 +97,32 @@ export class PersistentIngestionService {
     const email = record.email?.trim().toLowerCase() || undefined;
     const phone = record.phone?.replace(/[^+\d]/g, "") || undefined;
     const externalId = record.externalId?.trim() || undefined;
-    const external = externalId ? await tx.leadProvenance.findUnique({ where: { technicalSystem_externalId: { technicalSystem: record.technicalSystem.trim(), externalId } } }) : null;
-    const identities = [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])];
-    const identityMatches = identities.length ? await tx.lead.findMany({ where: { OR: identities }, select: { id: true }, take: 3 }) : [];
-    const matches = new Set([...(external ? [external.leadId] : []), ...identityMatches.map((lead) => lead.id)]);
+    const { external, matches } = await this.findMatches(tx, record.technicalSystem.trim(), externalId, email, phone);
     if (matches.size > 1) return this.review(tx, batchId, record.lineNumber, "IDENTITY_COLLISION");
     const matchedLeadId = [...matches][0];
     if (mappedStatus === "DUPLICATE" && !matchedLeadId) return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
     if (mappedStatus === "UNKNOWN") return this.review(tx, batchId, record.lineNumber, "STATUS_UNKNOWN", matchedLeadId);
     if (record.program && input.allowedPrograms?.length && !input.allowedPrograms.includes(record.program.trim())) return this.review(tx, batchId, record.lineNumber, "PROGRAM_UNKNOWN", matchedLeadId);
-    if (matchedLeadId) {
-      if (!external) await this.provenance(tx, batchId, matchedLeadId, record);
-      await this.activity(tx, matchedLeadId, "PROVENANCE_ATTACHED", record.source, principal.userId, `${correlationId}:${record.lineNumber}:provenance`);
-      return { lineNumber: record.lineNumber, outcome: mappedStatus === "DUPLICATE" ? "IGNORED" : "ATTACHED", leadId: matchedLeadId };
-    }
+    if (matchedLeadId) return this.attachMatch(tx, batchId, matchedLeadId, record, mappedStatus === "DUPLICATE", Boolean(external), principal.userId, correlationId);
+    if (mappedStatus === "DUPLICATE") return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
     if (!record.campus?.trim() || !record.campaign?.trim() || !record.educationLevel?.trim() || !record.program?.trim()) return this.review(tx, batchId, record.lineNumber, "REQUIRED_MAPPING_MISSING");
+    return this.createLead(tx, batchId, record, input, mappedStatus, email, phone, principal.userId, correlationId);
+  }
+
+  private async findMatches(tx: Prisma.TransactionClient, technicalSystem: string, externalId: string | undefined, email: string | undefined, phone: string | undefined): Promise<{ external: { leadId: string } | null; matches: Set<string> }> {
+    const external = externalId ? await tx.leadProvenance.findUnique({ where: { technicalSystem_externalId: { technicalSystem, externalId } } }) : null;
+    const identities = [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])];
+    const identityMatches = identities.length ? await tx.lead.findMany({ where: { OR: identities }, select: { id: true }, take: 3 }) : [];
+    return { external, matches: new Set([...(external ? [external.leadId] : []), ...identityMatches.map((lead) => lead.id)]) };
+  }
+
+  private async attachMatch(tx: Prisma.TransactionClient, batchId: string, leadId: string, record: IngestionRecordInput, ignored: boolean, provenanceExists: boolean, actorId: string, correlationId: string): Promise<Line> {
+    if (!provenanceExists) await this.provenance(tx, batchId, leadId, record);
+    await this.activity(tx, leadId, "PROVENANCE_ATTACHED", record.source, actorId, `${correlationId}:${record.lineNumber}:provenance`);
+    return { lineNumber: record.lineNumber, outcome: ignored ? "IGNORED" : "ATTACHED", leadId };
+  }
+
+  private async createLead(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, mappedStatus: "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST", email: string | undefined, phone: string | undefined, actorId: string, correlationId: string): Promise<Line> {
     const leadId = randomUUID();
     const assignedToId = input.resolvedAssignments?.[String(record.lineNumber)];
     if (input.assignment.strategy !== "UNASSIGNED" && !assignedToId) return this.review(tx, batchId, record.lineNumber, "ASSIGNMENT_UNRESOLVED");
@@ -119,11 +130,11 @@ export class PersistentIngestionService {
     await tx.lead.create({ data: {
       id: leadId, leadCode: `LD-${new Date().getUTCFullYear()}-${leadId.slice(0, 8).toUpperCase()}`,
       firstName: record.firstName.trim(), lastName: record.lastName.trim(), email: email ?? null, phone: phone ?? null,
-      campus: record.campus.trim(), campaign: record.campaign.trim(), educationLevel: record.educationLevel.trim(), program: record.program.trim(),
+      campus: record.campus!.trim(), campaign: record.campaign!.trim(), educationLevel: record.educationLevel!.trim(), program: record.program!.trim(),
       source: record.source, status: mappedStatus, assignedToId: assignedToId ?? null, assignmentMode: assignedToId ? input.assignment.strategy : null,
       importBatchId: batchId,
     } });
-    await this.activity(tx, leadId, "LEAD_CREATED", mappedStatus, principal.userId, `${correlationId}:${record.lineNumber}:created`);
+    await this.activity(tx, leadId, "LEAD_CREATED", mappedStatus, actorId, `${correlationId}:${record.lineNumber}:created`);
     await this.provenance(tx, batchId, leadId, record);
     for (const [index, historical] of (record.historicalActivities ?? []).entries()) {
       await tx.leadActivity.create({ data: { id: randomUUID(), leadId, type: historical.type, result: historical.result.slice(0, 240), authorId: "LEGACY_IMPORT", correlationId: `${correlationId}:${record.lineNumber}:historical:${index}`, occurredAt: new Date(historical.occurredAt) } });
@@ -161,7 +172,7 @@ export class PersistentIngestionService {
   private validateRecord(record: IngestionRecordInput): string | undefined {
     if (!record.firstName?.trim() || !record.lastName?.trim()) return "identity_name_missing";
     if (!record.email?.trim() && !record.phone?.trim() && !record.externalId?.trim()) return "identity_key_missing";
-    if (record.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(record.email.trim())) return "email_invalid";
+    if (record.email && !this.validEmail(record.email.trim())) return "email_invalid";
     if (record.phone && !/^\+?\d{8,15}$/.test(record.phone.replace(/[^+\d]/g, ""))) return "phone_invalid";
     if (!record.technicalSystem?.trim() || !record.originalSource?.trim()) return "provenance_missing";
     if (record.occurredAt && Number.isNaN(new Date(record.occurredAt).valueOf())) return "occurred_at_invalid";
@@ -183,7 +194,7 @@ export class PersistentIngestionService {
   }
 
   private fingerprint(input: ConfirmPersistentImportInput): string {
-    const canonical = { ...input, confirmed: true, allowedPrograms: [...(input.allowedPrograms ?? [])].sort(), records: [...input.records].sort((a, b) => a.lineNumber - b.lineNumber) };
+    const canonical = { ...input, confirmed: true, allowedPrograms: [...(input.allowedPrograms ?? [])].sort((left, right) => left.localeCompare(right)), records: [...input.records].sort((a, b) => a.lineNumber - b.lineNumber) };
     return createHash("sha256").update(JSON.stringify(this.canonical(canonical))).digest("hex");
   }
 
@@ -192,6 +203,15 @@ export class PersistentIngestionService {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .filter(([, item]) => item !== undefined).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, this.canonical(item)]));
     return value;
+  }
+
+  private validEmail(value: string): boolean {
+    if (value.length > 254 || value.includes(" ") || value.includes("\t") || value.includes("\r") || value.includes("\n")) return false;
+    const at = value.indexOf("@");
+    if (at < 1 || at !== value.lastIndexOf("@") || at > 64) return false;
+    const domain = value.slice(at + 1);
+    const dot = domain.lastIndexOf(".");
+    return dot > 0 && dot < domain.length - 1;
   }
 
   private replay(batch: { id: string; idempotencyKey: string; fingerprint: string; totalCount: number; createdCount: number; attachedCount: number; reviewCount: number; invalidCount: number; report: { id: string } | null }, fingerprint: string): PersistentImportResult {
