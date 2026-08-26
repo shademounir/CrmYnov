@@ -32,6 +32,7 @@ import { AssignmentDashboardController } from "./assignment/assignment-dashboard
 import { AssignmentDashboardService } from "./assignment/assignment-dashboard.service.js";
 import { IngestionController } from "./ingestion/ingestion.controller.js";
 import { IngestionService } from "./ingestion/ingestion.service.js";
+import { PersistentIngestionService } from "./ingestion/persistent-ingestion.service.js";
 import { ImportProfileController } from "./import-profile/import-profile.controller.js";
 import { ImportProfileService } from "./import-profile/import-profile.service.js";
 import { ImportMappingController } from "./import-mapping/import-mapping.controller.js";
@@ -106,6 +107,7 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     ReassignmentService,
     AssignmentDashboardService,
     IngestionService,
+    PersistentIngestionService,
     ImportProfileService,
     ImportMappingService,
     ImportReportService,

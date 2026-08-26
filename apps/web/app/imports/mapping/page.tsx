@@ -6,8 +6,9 @@ interface MappingColumn { sourceColumn: string; targetField?: string; action: st
 interface MappingTemplate { id: string; mappingKey: string; name: string; profile: string; version: number; columns: MappingColumn[]; builtIn: boolean }
 interface DryRunResult {
   total: number; valid: number; duplicates: number; manualReview: number; invalid: number; ignored: number;
-  assigned: number; unassigned: number; mutated: false; lines: Array<{ lineNumber: number; outcome: string; reason?: string }>;
+  assigned: number; unassigned: number; mutated: false; lines: Array<{ lineNumber: number; outcome: string; reason?: string; proposedAssigneeId?: string }>;
 }
+interface PersistentResult { batchId: string; reportId: string; total: number; created: number; attached: number; manualReview: number; invalid: number; replayed: boolean }
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -20,6 +21,8 @@ export default function ImportMappingPage(): React.JSX.Element {
   const [campaign, setCampaign] = useState("");
   const [rowsText, setRowsText] = useState("[]");
   const [result, setResult] = useState<DryRunResult | null>(null);
+  const [persistent, setPersistent] = useState<PersistentResult | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
   const selected = useMemo(() => mappings.find((mapping) => mapping.mappingKey === mappingKey), [mappingKey, mappings]);
 
@@ -31,7 +34,7 @@ export default function ImportMappingPage(): React.JSX.Element {
   }, []);
 
   async function simulate(event: React.SyntheticEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); setError(""); setResult(null);
+    event.preventDefault(); setError(""); setResult(null); setPersistent(null); setConfirmed(false);
     if (!selected) { setError("Sélectionnez une version de mapping disponible."); return; }
     let rows: Array<Record<string, string>>;
     try {
@@ -63,9 +66,27 @@ export default function ImportMappingPage(): React.JSX.Element {
     setResult(await response.json() as DryRunResult);
   }
 
+  async function persist(): Promise<void> {
+    setError(""); setPersistent(null);
+    if (!selected || !result || !confirmed) { setError("La confirmation explicite du dry-run est obligatoire."); return; }
+    let rows: Array<Record<string, string>>;
+    try { rows = JSON.parse(rowsText) as Array<Record<string, string>>; } catch { setError("Aperçu structuré invalide."); return; }
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${selected.id}:${rowsText}`));
+    const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const response = await fetch(`${API}/lead-import/confirmations`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ idempotencyKey: `import-${hex.slice(0, 24)}`, confirmed: true, sourceFileSha256: hex, mappingKey: selected.mappingKey,
+        mappingVersion: selected.version, sourceColumns: selected.columns.map((column) => column.sourceColumn), rows,
+        context: { source: selected.profile === "LEGACY_CRM" ? "LEGACY_IMPORT" : "WEB_FORM", technicalSystem: selected.profile,
+          originalSource: selected.profile, campus, campaign }, assignment: { strategy, ...(strategy === "FIXED" ? { targetUserId } : {}) } }),
+    });
+    if (!response.ok) { setError("Confirmation refusée sans écriture partielle. Consultez la file À vérifier."); return; }
+    setPersistent(await response.json() as PersistentResult);
+  }
+
   return <main>
     <h1>Mapping et simulation d’import</h1>
     <p>Le dry-run normalise, détecte les doublons et prévisualise l’affectation sans créer ni modifier de lead.</p>
+    <p>La confirmation explicite du dry-run est obligatoire avant l’import dans PostgreSQL local.</p>
     <ol><li>Profil</li><li>Mapping versionné</li><li>Contexte</li><li>Affectation</li><li>Simulation</li><li>Confirmation séparée</li></ol>
     <form onSubmit={(event) => void simulate(event)}>
       <label>Profil de mapping <select value={mappingKey} onChange={(event) => setMappingKey(event.target.value)}>
@@ -89,6 +110,10 @@ export default function ImportMappingPage(): React.JSX.Element {
       <p>Total {result.total} — valides {result.valid} — doublons {result.duplicates} — revue {result.manualReview} — invalides {result.invalid} — ignorées {result.ignored}</p>
       <p>Affectés {result.assigned} — non affectés {result.unassigned} — mutation : {result.mutated ? "oui" : "non"}</p>
       <ul>{result.lines.map((line) => <li key={line.lineNumber}>Ligne {line.lineNumber} : {line.outcome}{line.reason ? ` (${line.reason})` : ""}</li>)}</ul>
+      <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> Je confirme les compteurs, collisions et affectations affichés.</label>
+      <button type="button" disabled={!confirmed} onClick={() => void persist()}>Importer dans PostgreSQL local</button>
     </section> : null}
+    {persistent ? <section aria-live="polite"><h2>Import persistant confirmé</h2><p>Lot {persistent.batchId} — rapport {persistent.reportId}</p>
+      <p>Créés {persistent.created} — provenances ajoutées {persistent.attached} — à vérifier {persistent.manualReview} — invalides {persistent.invalid}</p></section> : null}
   </main>;
 }

@@ -4,10 +4,12 @@ import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import {
   ImportMappingService,
   type ImportDryRunInput,
+  type ConfirmMappedImportInput,
   type ImportMappingTemplate,
   type SaveImportMappingInput,
 } from "./import-mapping.service.js";
 import type { IngestionDryRunResult } from "../ingestion/ingestion.service.js";
+import type { PersistentImportResult } from "../ingestion/persistent-ingestion.service.js";
 
 @Controller("lead-import")
 @UseGuards(RbacGuard)
@@ -31,5 +33,11 @@ export class ImportMappingController {
   dryRun(@Body() body: ImportDryRunInput, @Req() request: AuthenticatedRequest): IngestionDryRunResult & { mappingId: string; mappingVersion: number } {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.mappings.dryRun(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+
+  @Post("confirmations")
+  async confirm(@Body() body: ConfirmMappedImportInput, @Req() request: AuthenticatedRequest): Promise<PersistentImportResult> {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.mappings.confirm(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }

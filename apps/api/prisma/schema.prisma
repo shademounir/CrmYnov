@@ -524,6 +524,7 @@ model IngestionBatch {
   profile        String                @db.VarChar(40)
   assignmentMode String                @map("assignment_mode") @db.VarChar(32)
   actorId        String                @map("actor_id") @db.VarChar(64)
+  fingerprint    String                @default("legacy-unverified") @db.VarChar(64)
   totalCount     Int                   @map("total_count")
   createdCount   Int                   @map("created_count")
   attachedCount  Int                   @map("attached_count")
