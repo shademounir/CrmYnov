@@ -2,8 +2,9 @@ import { BadRequestException, Controller, Get, Inject, Query, Req, UseGuards } f
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { SharedContributionService, type SharedContributionQuery, type SharedContributionReport } from "./shared-contribution.service.js";
+import { ReportingPersistenceGuard } from "./reporting-persistence.guard.js";
 @Controller("reports/shared-contributions")
-@UseGuards(RbacGuard)
+@UseGuards(RbacGuard, ReportingPersistenceGuard)
 @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
 export class SharedContributionController {
   constructor(@Inject(SharedContributionService) private readonly service: SharedContributionService) {}

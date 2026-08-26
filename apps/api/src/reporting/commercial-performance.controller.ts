@@ -2,9 +2,10 @@ import { BadRequestException, Controller, Get, Inject, Query, Req, UseGuards } f
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { CommercialPerformanceService, type CommercialPerformanceQuery, type CommercialPerformanceReport } from "./commercial-performance.service.js";
+import { ReportingPersistenceGuard } from "./reporting-persistence.guard.js";
 
 @Controller("reports/commercial-performance")
-@UseGuards(RbacGuard)
+@UseGuards(RbacGuard, ReportingPersistenceGuard)
 @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
 export class CommercialPerformanceController {
   constructor(@Inject(CommercialPerformanceService) private readonly performance: CommercialPerformanceService) {}

@@ -2,9 +2,10 @@ import { BadRequestException, Controller, Get, Inject, Query, Req, UseGuards } f
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { CommercialFunnelService, type CommercialFunnel, type CommercialFunnelQuery } from "./commercial-funnel.service.js";
+import { ReportingPersistenceGuard } from "./reporting-persistence.guard.js";
 
 @Controller("reports/commercial-funnel")
-@UseGuards(RbacGuard)
+@UseGuards(RbacGuard, ReportingPersistenceGuard)
 @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
 export class CommercialFunnelController {
   constructor(@Inject(CommercialFunnelService) private readonly funnel: CommercialFunnelService) {}

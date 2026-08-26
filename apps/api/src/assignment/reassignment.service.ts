@@ -29,6 +29,7 @@ export class ReassignmentService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> { await this.refreshPersistentState(); }
   persistenceEnabled(): boolean { return this.persistence?.enabled === true; }
+  async refreshReportingForApi(): Promise<void> { await this.refreshPersistentState(); }
 
   async requestForApi(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string): Promise<ReassignmentRequest> {
     if (!this.persistence?.enabled) return this.request(leadId, input, principal, correlationId);

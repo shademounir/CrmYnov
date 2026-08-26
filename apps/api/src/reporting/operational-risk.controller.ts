@@ -2,9 +2,10 @@ import { BadRequestException, Controller, Get, Inject, Query, Req, UseGuards } f
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { OperationalRiskService, type OperationalRiskQuery, type OperationalRiskReport } from "./operational-risk.service.js";
+import { ReportingPersistenceGuard } from "./reporting-persistence.guard.js";
 
 @Controller("reports/operational-risks")
-@UseGuards(RbacGuard)
+@UseGuards(RbacGuard, ReportingPersistenceGuard)
 @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
 export class OperationalRiskController {
   constructor(@Inject(OperationalRiskService) private readonly service: OperationalRiskService) {}

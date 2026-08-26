@@ -67,6 +67,8 @@ import { SharedContributionController } from "./reporting/shared-contribution.co
 import { SharedContributionService } from "./reporting/shared-contribution.service.js";
 import { ManagerDashboardController, PersonalDashboardController } from "./reporting/manager-dashboard.controller.js";
 import { ManagerDashboardService } from "./reporting/manager-dashboard.service.js";
+import { ReportingPersistenceService } from "./reporting/reporting-persistence.service.js";
+import { ReportingPersistenceGuard } from "./reporting/reporting-persistence.guard.js";
 import { ChatController } from "./chat/chat.controller.js";
 import { ChatService } from "./chat/chat.service.js";
 import { BroadcastController } from "./broadcast/broadcast.controller.js";
@@ -132,6 +134,8 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     OperationalRiskService,
     SharedContributionService,
     ManagerDashboardService,
+    ReportingPersistenceService,
+    ReportingPersistenceGuard,
   ],
 })
 export class AppModule {}

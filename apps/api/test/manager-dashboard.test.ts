@@ -46,11 +46,11 @@ test("consolidates versioned reports with common filters and explicit safeguards
   assert.equal(audit.list().some((event) => event.eventType === "MANAGER_DASHBOARD_VIEWED"), true);
 });
 
-test("controller fails closed without a principal and preserves correlation", () => {
-  const service = { read: (_query: unknown, _principal: Principal, correlationId: string) => ({ definitionVersion: "manager-dashboard-v1", correlationId }) } as unknown as ManagerDashboardService;
+test("controller fails closed without a principal and preserves correlation", async () => {
+  const service = { readForApi: (_query: unknown, _principal: Principal, correlationId: string) => Promise.resolve({ definitionVersion: "manager-dashboard-v1", correlationId }) } as unknown as ManagerDashboardService;
   const controller = new ManagerDashboardController(service);
   assert.throws(() => controller.read({}, {} as never));
-  const response = controller.read({}, { principal: manager, header: () => "corr-explicit" } as never) as unknown as { correlationId: string };
+  const response = await controller.read({}, { principal: manager, header: () => "corr-explicit" } as never) as unknown as { correlationId: string };
   assert.equal(response.correlationId, "corr-explicit");
   assert.throws(() => controller.export({}, {} as never));
 });
@@ -97,6 +97,24 @@ test("personal dashboard exposes only authenticated adviser aggregates", () => {
   );
   const report = service.readPersonal({ period: "30d", view: "personal" }, adviser, "corr-personal", new Date("2026-08-24T12:00:00.000Z"));
   assert.equal(report.definitionVersion, "personal-dashboard-v1"); assert.equal(report.filters.adviserId, adviser.userId); assert.equal(report.safeguards.personalScopeOnly, true);
-  const controller = new PersonalDashboardController(service);
+  const controller = new PersonalDashboardController({ readPersonalForApi: (...args: Parameters<ManagerDashboardService["readPersonal"]>) => Promise.resolve(service.readPersonal(...args)) } as unknown as ManagerDashboardService);
   assert.throws(() => controller.read({}, {} as never));
+});
+
+test("API reporting refreshes PostgreSQL-backed state and exposes scoped persistence evidence", async () => {
+  const calls: string[] = [];
+  const persistence = {
+    refresh: (): Promise<void> => { calls.push("refresh"); return Promise.resolve(); },
+    evidence: (): Promise<{ source: "POSTGRESQL"; distinctLeadCount: number; appointmentCount: number; documentMetadataCount: number; importBatchCount: number }> => Promise.resolve({ source: "POSTGRESQL", distinctLeadCount: 2, appointmentCount: 1, documentMetadataCount: 3, importBatchCount: 1 }),
+  };
+  const service = new ManagerDashboardService(
+    dependency<CommercialFunnelService>("funnel", { definitionVersion: "commercial-funnel-v1", cohort: { totalUniqueLeads: 0 }, attainment: { enrolled: 0 }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 0, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}),
+    { reportingSnapshot: () => [] } as unknown as LeadService, new AuditService(), persistence as never,
+  );
+  const report = await service.readForApi({ period: "30d" }, { ...manager, scopes: [{ kind: "GLOBAL" }] }, "corr-persistent", new Date("2026-08-24T12:00:00.000Z"));
+  assert.deepEqual(calls, ["refresh"]);
+  assert.deepEqual(report.persistence, { source: "POSTGRESQL", distinctLeadCount: 2, appointmentCount: 1, documentMetadataCount: 3, importBatchCount: 1 });
 });
