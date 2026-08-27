@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assignmentRequest } from "../app/_components/assignment-form.js";
-import { mutationBody } from "../app/_components/api-mutation-form.js";
-import { broadcastPayload } from "../app/_components/broadcast-draft-form.js";
-import { apiString, displayApiValue, resourceObjects } from "../app/_components/connected-resource.js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AssignmentForm, assignmentRequest } from "../app/_components/assignment-form.js";
+import { ApiMutationForm, mutationBody } from "../app/_components/api-mutation-form.js";
+import { BroadcastDraftForm, broadcastPayload } from "../app/_components/broadcast-draft-form.js";
+import { apiString, ConnectedResource, displayApiValue, resourceObjects } from "../app/_components/connected-resource.js";
+import { LoginForm } from "../app/_components/login-form.js";
 
 test("normalizes generic form values, booleans and identifier arrays", () => {
   const form = new FormData();
@@ -32,4 +35,17 @@ test("extracts only API objects and displays structured values safely", () => {
   assert.deepEqual(resourceObjects("invalid"), []);
   assert.equal(displayApiValue(undefined), "—"); assert.equal(displayApiValue(false), "false"); assert.equal(displayApiValue({ nested: true }), "Donnée structurée");
   assert.equal(apiString({ id: 42 }, "id"), "42"); assert.equal(apiString({ nested: {} }, "nested", "fallback"), "fallback");
+});
+
+test("renders every connected form in a safe initial state", () => {
+  const login = renderToStaticMarkup(createElement(LoginForm));
+  assert.match(login, /Connexion locale/u); assert.match(login, /type="password"/u); assert.doesNotMatch(login, /Identifiants refusés/u);
+  const assignment = renderToStaticMarkup(createElement(AssignmentForm));
+  assert.match(assignment, /Prévisualiser sans modifier/u); assert.doesNotMatch(assignment, /Affectation confirmée/u);
+  const broadcast = renderToStaticMarkup(createElement(BroadcastDraftForm));
+  assert.match(broadcast, /Créer le brouillon via l’API/u); assert.doesNotMatch(broadcast, /Création refusée/u);
+  const mutation = renderToStaticMarkup(createElement(ApiMutationForm, { endpoint: "/api/crm/leads", submitLabel: "Créer", children: createElement("input", { name: "firstName" }) }));
+  assert.match(mutation, /Créer/u); assert.doesNotMatch(mutation, /Opération refusée/u);
+  const resource = renderToStaticMarkup(createElement(ConnectedResource, { endpoint: "/api/crm/leads", fields: [{ key: "leadCode", label: "Identifiant" }], emptyMessage: "Aucun lead", ariaLabel: "Leads" }));
+  assert.match(resource, /Chargement depuis l’API locale/u);
 });
