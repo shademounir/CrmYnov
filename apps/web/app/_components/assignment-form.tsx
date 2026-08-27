@@ -2,6 +2,12 @@
 
 import { useState } from "react";
 
+export function assignmentRequest(leadId: string, targetUserId: string, action: string, idempotencyKey: string): { endpoint: string; body: Record<string, unknown>; preview: boolean } {
+  const preview = action === "preview";
+  if (preview) return { endpoint: "/api/crm/lead-assignments/preview", preview, body: { idempotencyKey, strategy: "FIXED", targetUserId, items: [{ leadId, source: "UI_LOCAL", campaign: "UI_LOCAL" }] } };
+  return { endpoint: `/api/crm/leads/${encodeURIComponent(leadId)}/assignment`, preview, body: { targetUserId, confirmed: true, idempotencyKey } };
+}
+
 export function AssignmentForm(): React.JSX.Element {
   const [state, setState] = useState("idle");
   async function submit(formData: FormData): Promise<void> {
@@ -13,12 +19,14 @@ export function AssignmentForm(): React.JSX.Element {
     const targetUserId = typeof targetValue === "string" ? targetValue : "";
     const action = typeof actionValue === "string" ? actionValue : "preview";
     const idempotencyKey = `ui-assignment:${crypto.randomUUID()}`;
-    const preview = action === "preview";
-    const response = await fetch(preview ? "/api/crm/lead-assignments/preview" : `/api/crm/leads/${encodeURIComponent(leadId)}/assignment`, {
+    const request = assignmentRequest(leadId, targetUserId, action, idempotencyKey);
+    const response = await fetch(request.endpoint, {
       method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" },
-      body: JSON.stringify(preview ? { idempotencyKey, strategy: "FIXED", targetUserId, items: [{ leadId, source: "UI_LOCAL", campaign: "UI_LOCAL" }] } : { targetUserId, confirmed: true, idempotencyKey }),
+      body: JSON.stringify(request.body),
     });
-    setState(response.ok ? (preview ? "previewed" : "confirmed") : "error");
+    let nextState = "error";
+    if (response.ok) nextState = request.preview ? "previewed" : "confirmed";
+    setState(nextState);
   }
-  return <form action={submit} aria-label="Prévisualiser ou confirmer une affectation"><label>Lead<input name="leadId" required /></label><label>Conseiller cible<input name="targetUserId" required /></label><button name="action" value="preview" type="submit">Prévisualiser sans modifier</button><button name="action" value="confirm" type="submit">Confirmer via l’API</button>{state === "previewed" ? <p role="status">Prévisualisation validée sans mutation.</p> : null}{state === "confirmed" ? <p role="status">Affectation confirmée par l’API.</p> : null}{state === "error" ? <p role="alert">Opération refusée par l’API.</p> : null}</form>;
+  return <form action={submit} aria-label="Prévisualiser ou confirmer une affectation"><label>Lead<input name="leadId" required /></label><label>Conseiller cible<input name="targetUserId" required /></label><button name="action" value="preview" type="submit">Prévisualiser sans modifier</button><button name="action" value="confirm" type="submit">Confirmer via l’API</button>{state === "previewed" ? <output>Prévisualisation validée sans mutation.</output> : null}{state === "confirmed" ? <output>Affectation confirmée par l’API.</output> : null}{state === "error" ? <p role="alert">Opération refusée par l’API.</p> : null}</form>;
 }

@@ -2,7 +2,7 @@
 
 ## Contrat
 
-L’interface Next.js appelle exclusivement `/api/crm/*` sur sa propre origine. Le route handler transmet les requêtes à NestJS via `CRM_API_INTERNAL_URL`. Le défaut local de développement est `http://127.0.0.1:3001` et le défaut du conteneur de production est le service Compose `http://api:3001`. Une valeur fournie mais invalide provoque un refus fermé.
+L’interface Next.js appelle exclusivement `/api/crm/*` sur sa propre origine. Le route handler transmet les requêtes à NestJS via la variable obligatoire `CRM_API_INTERNAL_URL`. L’image Web la fixe au service Compose interne `http://api:3001`. Pour un lancement Next.js hors Docker, la fournir explicitement avec l’adresse locale de NestJS. Une valeur absente ou invalide provoque un refus fermé.
 
 La connexion échange l’identifiant et le mot de passe avec `POST /api/crm/sessions`. Le jeton renvoyé par NestJS n’est pas exposé au JavaScript navigateur : Next.js le conserve dans un cookie `HttpOnly`, `SameSite=Strict`, limité à la racine. Les requêtes suivantes sont transformées côté serveur en en-tête Bearer. Les réponses sont expurgées de toute propriété `token`.
 

@@ -11,7 +11,7 @@ test("agenda exposes the persistent accessible API view without external integra
   assert.ok(html.includes("Agenda des rendez-vous"));
   assert.ok(html.includes("Chargement depuis l’API locale"));
   assert.ok(html.includes("Africa/Casablanca"));
-  assert.ok(html.includes("calendriers externes"));
+  assert.ok(html.includes("Calendriers externes"));
 });
 
 test("lead appointment form contains controlled types and duration", async () => {

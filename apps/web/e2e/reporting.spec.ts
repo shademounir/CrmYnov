@@ -17,8 +17,8 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
   contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
 
 async function mockReporting(page: Page): Promise<void> {
-  await page.route("**/api/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
-  await page.route("**/api/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
+  await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
+  await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
   await page.route("**/reports/manager-dashboard/export?*", (route) => route.fulfill({ status: 200, contentType: "text/csv", headers: { "content-disposition": "attachment; filename=crm-manager-dashboard-v1.csv" }, body: "schemaVersion,timezone,period\nmanager-dashboard-export-v1,Africa/Casablanca,7d\nsection,dimension,value,count\nkpi,uniqueLeads,,3\n" }));
 }
 
@@ -43,9 +43,9 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
 test("personal scope, empty and error states fail closed", async ({ page }) => {
   await mockReporting(page); await page.goto("/manager/reports/dashboard?view=personal&period=30d"); await expect(page.getByRole("heading", { name: "Mes indicateurs autorisés" })).toBeVisible();
   await expect(page.getByText("Cette vue est limitée au collaborateur connecté")).toBeVisible();
-  await page.unroute("**/api/reports/manager-dashboard?*"); await page.route("**/api/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...managerReport, cards: { uniqueLeads: 0, enrolled: 0, unassigned: 0, overdueFollowUps: 0, activeAlerts: 0 } }) }));
+  await page.unroute("**/api/crm/reports/manager-dashboard?*"); await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...managerReport, cards: { uniqueLeads: 0, enrolled: 0, unassigned: 0, overdueFollowUps: 0, activeAlerts: 0 } }) }));
   await page.goto("/manager/reports/dashboard?period=7d"); await expect(page.getByRole("heading", { name: "Aucun résultat" })).toBeVisible();
-  await page.unroute("**/api/reports/manager-dashboard?*"); await page.route("**/api/reports/manager-dashboard?*", (route) => route.fulfill({ status: 403, contentType: "application/json", body: "{}" }));
+  await page.unroute("**/api/crm/reports/manager-dashboard?*"); await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 403, contentType: "application/json", body: "{}" }));
   await page.goto("/manager/reports/dashboard?period=7d&adviserId=outside-scope"); await expect(page.locator("main section[role=alert]")).toContainText("Erreur de chargement");
 });
 
@@ -57,7 +57,7 @@ test("hostile labels remain inert and external destinations are refused", async 
     drillDowns: [{ key: "uniqueLeads", count: 1, href: "javascript:alert(1)" }],
     export: { ...managerReport.export, href: "https://external.invalid/export" },
   };
-  await page.route("**/api/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(hostileReport) }));
+  await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(hostileReport) }));
   await page.goto("/manager/reports/dashboard?period=7d");
   await expect(page.getByText(hostile, { exact: true }).first()).toBeVisible();
   expect((await page.locator("script").allTextContents()).every((content) => !content.includes("window.__unsafe"))).toBe(true);

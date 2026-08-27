@@ -1,7 +1,7 @@
 export const MAX_BODY_BYTES = 1_048_576;
 
 export function apiOrigin(environment: Readonly<Record<string, string | undefined>> = process.env): string {
-  const value = environment.CRM_API_INTERNAL_URL ?? (environment.NODE_ENV === "development" ? "http://127.0.0.1:3001" : environment.NODE_ENV === "production" ? "http://api:3001" : "");
+  const value = environment.CRM_API_INTERNAL_URL ?? "";
   if (!/^https?:\/\/[a-z0-9.-]+(?::\d+)?$/iu.test(value)) throw new Error("crm_api_internal_url_invalid");
   return value;
 }
