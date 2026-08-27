@@ -4,9 +4,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import BroadcastsPage from "../app/broadcasts/page.js";
 import BroadcastSummaryPage from "../app/broadcasts/[broadcastId]/page.js";
 
-test("renders the accessible synthetic broadcast authoring and immutable history journey", () => {
+test("renders persistent broadcast authoring and immutable history", () => {
   const html = renderToStaticMarkup(BroadcastsPage());
-  for (const text of ["Broadcast interne", "Préparer un brouillon", "Prévisualiser l&#x27;audience", "3 destinataires internes synthétiques", "Je confirme explicitement", "Historique immuable", "correction compensatoire"]) assert.equal(html.includes(text), true);
+  for (const text of ["Broadcast interne", "Préparer un brouillon", "Créer le brouillon via l’API", "Chargement depuis l’API locale", "collaborateurs actifs"]) assert.equal(html.includes(text), true);
   assert.equal(html.includes("@example"), false); assert.equal(html.includes("+212"), false); assert.equal(html.includes("https://"), false);
 });
 

@@ -3,9 +3,9 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import ManagerAssignmentPage from "../app/manager/assignment/page.js";
 
-test("renders the Manager assignment KPIs, alerts and bounded actions", () => {
+test("renders the persistent Manager assignment dashboard and bounded actions", () => {
   const html = renderToStaticMarkup(ManagerAssignmentPage());
-  for (const expected of ["Pilotage des affectations", "Non affectés", "À relancer", "Charge par conseiller", "Configurer ou simuler", "Affecter un lead ou un lot", "autorité finale"])
+  for (const expected of ["Pilotage des affectations", "API persistante", "Chargement depuis l’API locale", "Prévisualiser ou confirmer une affectation", "Prévisualiser sans modifier", "Confirmer via l’API"])
     assert.match(html, new RegExp(expected));
   assert.equal(html.includes("@example."), false);
 });

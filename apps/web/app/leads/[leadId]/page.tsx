@@ -1,14 +1,13 @@
+"use client";
+
+import { useParams } from "next/navigation";
+import { ConnectedResource } from "../../_components/connected-resource";
+
+function LeadDetail(): React.JSX.Element {
+  const { leadId } = useParams<{ leadId: string }>();
+  return <ConnectedResource endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}`} ariaLabel="Fiche lead persistante" emptyMessage="Lead introuvable." fields={[{ key: "leadCode", label: "Identifiant" }, { key: "status", label: "Statut" }, { key: "campaign", label: "Campagne" }, { key: "program", label: "Formation" }, { key: "assignedToId", label: "Conseiller" }, { key: "nextActionAt", label: "Prochaine action" }]} />;
+}
+
 export default function LeadDetailPage(): React.JSX.Element {
-  return <main><h1>Fiche lead synthétique</h1><dl><dt>Identifiant</dt><dd>LD-SYNTH-001</dd><dt>Campagne</dt><dd>Campagne test</dd>
-    <dt>Formation</dt><dd>Programme test</dd><dt>Prochaine action</dt><dd>Aucune</dd></dl>
-    <p>Les contacts sont masqués lorsque le rôle ne permet pas leur consultation. Les accès directs sont contrôlés par l’API.</p>
-    <section aria-label="Demande de réaffectation"><h2>Demander une réaffectation</h2>
-      <p>La propriété reste inchangée jusqu’à une décision distincte d’un Manager ou Administrateur.</p>
-      <label>Nouveau conseiller <input name="targetUserId" placeholder="Identifiant synthétique" /></label>
-      <label>Motif <textarea name="reason" /></label>
-      <label><input name="moveOpenTasks" type="checkbox" /> Transférer les tâches et relances ouvertes</label>
-      <button type="button">Soumettre la demande</button>
-    </section>
-    <section aria-label="Décision Manager"><h2>Validation Manager</h2><label>Motif de décision <textarea name="decisionReason" /></label><button type="button">Approuver</button><button type="button">Refuser</button></section>
-  </main>;
+  return <main><h1>Fiche lead persistante</h1><LeadDetail /><p>Les contacts sont masqués lorsque le rôle ne permet pas leur consultation. Les accès directs sont contrôlés par l’API.</p><nav aria-label="Actions lead"><a href="timeline">Timeline</a> <a href="follow-ups">Relances</a> <a href="appointments">Rendez-vous</a> <a href="documents">Documents</a> <a href="status">Statut</a></nav></main>;
 }

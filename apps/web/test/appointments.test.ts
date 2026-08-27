@@ -6,14 +6,12 @@ import AppointmentsPage from "../app/appointments/page.js";
 import LeadAppointmentsPage from "../app/leads/[leadId]/appointments/page.js";
 import AppointmentReportingPage from "../app/manager/reports/appointments/page.js";
 
-test("agenda exposes accessible day, week and table views without external integration", async () => {
-  for (const [view, heading] of [["day", "Rendez-vous du jour"], ["week", "Semaine"], ["table", "Vue tableau"]] as const) {
-    const html = renderToStaticMarkup(await AppointmentsPage({ searchParams: Promise.resolve({ view, campus: "Campus synthétique", adviserId: "synthetic-adviser" }) }));
-    assert.ok(html.includes(heading));
-    assert.ok(html.includes("Tableau accessible"));
-    assert.ok(html.includes("Africa/Casablanca"));
-    assert.ok(html.includes("Calendriers externes"));
-  }
+test("agenda exposes the persistent accessible API view without external integration", () => {
+  const html = renderToStaticMarkup(AppointmentsPage());
+  assert.ok(html.includes("Agenda des rendez-vous"));
+  assert.ok(html.includes("Chargement depuis l’API locale"));
+  assert.ok(html.includes("Africa/Casablanca"));
+  assert.ok(html.includes("calendriers externes"));
 });
 
 test("lead appointment form contains controlled types and duration", async () => {

@@ -7,3 +7,5 @@ button { background: #0052cc; color: white; cursor: pointer; }
 button:disabled { cursor: wait; opacity: 0.7; }
 table { border-collapse: collapse; width: 100%; }
 th, td { border-bottom: 1px solid #dfe1e6; padding: 0.75rem; text-align: left; }
+.table-scroll { overflow-x: auto; }
+[role="alert"] { border-left: 0.3rem solid #c9372c; padding: 1rem; background: #fff2f0; }
