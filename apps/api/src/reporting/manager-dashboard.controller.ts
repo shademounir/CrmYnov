@@ -9,16 +9,16 @@ import { ManagerDashboardService, type ManagerDashboardReport, type PersonalDash
 export class ManagerDashboardController {
   constructor(@Inject(ManagerDashboardService) private readonly dashboard: ManagerDashboardService) {}
   @Get()
-  read(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): ManagerDashboardReport {
+  read(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): Promise<ManagerDashboardReport> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.dashboard.read(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.dashboard.readForApi(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
   @Get("export")
   @Header("content-type", "text/csv; charset=utf-8")
   @Header("content-disposition", "attachment; filename=crm-manager-dashboard-v1.csv")
-  export(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): string {
+  export(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): Promise<string> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.dashboard.exportAggregated(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.dashboard.exportAggregatedForApi(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }
 
@@ -28,8 +28,8 @@ export class ManagerDashboardController {
 export class PersonalDashboardController {
   constructor(@Inject(ManagerDashboardService) private readonly dashboard: ManagerDashboardService) {}
   @Get()
-  read(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): PersonalDashboardReport {
+  read(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): Promise<PersonalDashboardReport> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.dashboard.readPersonal(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.dashboard.readPersonalForApi(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }

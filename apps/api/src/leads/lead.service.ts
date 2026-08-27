@@ -80,6 +80,10 @@ export class LeadService implements OnModuleInit {
     return this.persistence?.enabled === true;
   }
 
+  async refreshReportingForApi(): Promise<void> {
+    await this.refreshPersistentState();
+  }
+
   async createLeadForApi(input: CreateLeadInput, principal: Principal, correlationId: string): Promise<CreateLeadResult> {
     if (!this.persistence?.enabled) return this.createLead(input, principal, correlationId);
     await this.refreshPersistentState();
