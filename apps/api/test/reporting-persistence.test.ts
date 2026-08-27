@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExecutionContext } from "@nestjs/common";
 import type { Principal } from "../src/auth/auth.types.js";
 import type { ReassignmentService } from "../src/assignment/reassignment.service.js";
 import type { LeadService } from "../src/leads/lead.service.js";
@@ -28,7 +27,7 @@ test("refreshes persistent lead and reassignment projections before reporting", 
     source: "LOCAL_SYNTHETIC_FALLBACK", distinctLeadCount: 0, appointmentCount: 0, documentMetadataCount: 0, importBatchCount: 0,
   });
   const guard = new ReportingPersistenceGuard(service);
-  assert.equal(await guard.canActivate({} as ExecutionContext), true);
+  assert.equal(await guard.canActivate(), true);
   assert.equal(calls.length, 4);
 });
 
@@ -59,4 +58,28 @@ test("counts PostgreSQL evidence with fail-closed campus, adviser and period sco
   assert.equal(lead.campus, "campus-synthetic");
   assert.deepEqual(lead.OR, [{ assignedToId: "adviser-synthetic" }, { collaborators: { some: { userId: "adviser-synthetic", active: true } } }]);
   assert.equal(JSON.stringify(requests).includes("firstName"), false);
+});
+
+test("keeps global reporting evidence unscoped when no optional filter is supplied", async () => {
+  const requests: Array<{ model: string; where: unknown }> = [];
+  const count = (model: string) => (query: { where: unknown }): number => {
+    requests.push({ model, where: query.where });
+    return 0;
+  };
+  const client = {
+    lead: { count: count("lead") }, appointment: { count: count("appointment") },
+    candidateDocument: { count: count("document") }, ingestionBatch: { count: count("batch") },
+    $transaction: (queries: number[]): Promise<number[]> => Promise.resolve(queries),
+  };
+  const noop = { refreshReportingForApi: (): Promise<void> => Promise.resolve() };
+  const service = new ReportingPersistenceService(
+    { client } as unknown as PrismaService, noop as LeadService, noop as ReassignmentService,
+  );
+  const globalPrincipal: Principal = { ...manager, scopes: [{ kind: "GLOBAL" }] };
+
+  assert.deepEqual(await service.evidence(globalPrincipal, {}), {
+    source: "POSTGRESQL", distinctLeadCount: 0, appointmentCount: 0, documentMetadataCount: 0, importBatchCount: 0,
+  });
+  assert.deepEqual(requests.find((request) => request.model === "lead")?.where, { createdAt: {} });
+  assert.deepEqual(requests.find((request) => request.model === "batch")?.where, { importedAt: {} });
 });
