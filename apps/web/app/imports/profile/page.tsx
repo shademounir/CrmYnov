@@ -27,7 +27,7 @@ export default function ImportProfilePage(): React.JSX.Element {
     if (!(file instanceof File) || file.size === 0 || file.size > 5 * 1024 * 1024) { setError("Sélectionnez un fichier CSV ou XLSX de 5 Mio maximum."); return; }
     let contentBase64: string;
     try { contentBase64 = await readBase64(file); } catch { setError("Lecture locale du fichier impossible."); return; }
-    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"}/lead-import/profiles`, {
+    const response = await fetch("/api/crm/lead-import/profiles", {
       method: "POST", credentials: "include", headers: { "content-type": "application/json" },
       body: JSON.stringify({ fileName: file.name, mimeType: file.type, sizeBytes: file.size, contentBase64, expectedProfile }),
     });

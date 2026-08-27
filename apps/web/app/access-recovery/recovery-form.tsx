@@ -13,7 +13,7 @@ export function RecoveryForm(): React.JSX.Element {
     setPending(true);
     const data = new FormData(event.currentTarget);
     try {
-      await fetch("http://localhost:3001/access-recovery/requests", {
+      await fetch("/api/crm/access-recovery/requests", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: data.get("email"), returnPath: "/access-recovery/complete" }),

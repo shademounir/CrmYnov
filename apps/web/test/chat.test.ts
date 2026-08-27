@@ -5,16 +5,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import InternalChatPage from "../app/chat/page.js";
 import ConversationPage from "../app/chat/[conversationId]/page.js";
 
-test("renders a synthetic collaborator-only internal chat journey", () => {
+test("renders a persistent collaborator-only internal chat journey", () => {
   const html = renderToStaticMarkup(React.createElement(InternalChatPage));
   assert.match(html, /Chat interne/u);
-  assert.match(html, /Aucun lead ne peut participer/u);
-  assert.match(html, /Historique paginé des messages/u);
-  assert.match(html, /Édition limitée à 60 minutes/u);
-  assert.match(html, /pièces jointes différées/u);
-  assert.match(html, /Mentionner un membre/u);
-  assert.match(html, /droit de mutation/u);
-  assert.match(html, /Convertir en activité/u);
+  assert.match(html, /Conversations persistantes/u);
+  assert.match(html, /Chargement depuis l’API locale/u);
+  assert.match(html, /Créer via l’API/u);
+  assert.match(html, /RBAC et appartenance vérifiés côté API/u);
+  assert.match(html, /Aucun contenu de message dans les journaux/u);
   assert.doesNotMatch(html, /@ynov\.com|\+212|LD-2026/u);
 });
 

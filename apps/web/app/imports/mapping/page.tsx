@@ -10,7 +10,7 @@ interface DryRunResult {
 }
 interface PersistentResult { batchId: string; reportId: string; total: number; created: number; attached: number; manualReview: number; invalid: number; replayed: boolean }
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API = "/api/crm";
 
 export default function ImportMappingPage(): React.JSX.Element {
   const [mappings, setMappings] = useState<MappingTemplate[]>([]);

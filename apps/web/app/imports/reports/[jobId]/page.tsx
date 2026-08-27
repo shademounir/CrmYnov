@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 interface Report { jobId: string; mappingId: string; mappingVersion: number; total: number; created: number; updated: number; ignored: number; duplicates: number; errors: number; reconciled: true; rejectionCount: number }
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API = "/api/crm";
 
 export default function ImportReportPage({ params }: Readonly<{ params: { jobId: string } }>): React.JSX.Element {
   const [report, setReport] = useState<Report | null>(null); const [error, setError] = useState("");

@@ -64,7 +64,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
     if (initialReport) return;
     const controller = new AbortController();
     setState("loading");
-    fetch(`/api/reports/${query.get("view") === "personal" ? "personal-dashboard" : "manager-dashboard"}?${query.toString()}`, { credentials: "same-origin", signal: controller.signal, headers: { accept: "application/json" } })
+    fetch(`/api/crm/reports/${query.get("view") === "personal" ? "personal-dashboard" : "manager-dashboard"}?${query.toString()}`, { credentials: "same-origin", signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => {
         if (!response.ok) throw new Error(`reporting_${response.status}`);
         return response.json() as Promise<ReportingReport>;
