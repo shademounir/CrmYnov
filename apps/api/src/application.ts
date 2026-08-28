@@ -22,6 +22,12 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
           responses: { "200": { description: "Service is healthy" } },
         },
       },
+      "/health/ready": {
+        get: {
+          summary: "API and PostgreSQL readiness",
+          responses: { "200": { description: "API and local database are ready" }, "503": { description: "Database unavailable" } },
+        },
+      },
       "/sessions": { post: { summary: "Authenticate a persistent local collaborator and create a short-lived session", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["email", "password"], properties: { email: { type: "string", format: "email" }, password: { type: "string", format: "password" } } } } } }, responses: { "201": { description: "Session created" }, "403": { description: "Identity, credential or scope refused" }, "429": { description: "Rate limit exceeded" } } } },
       "/sessions/{sessionId}": { delete: { summary: "Revoke a session", responses: { "200": { description: "Revocation result" }, "403": { description: "Ownership required" } } } },
       "/sessions/users/{userId}/revoke": { post: { summary: "Revoke every active session for a user", responses: { "201": { description: "Sessions revoked" }, "403": { description: "SUPER_ADMIN required" } } } },
