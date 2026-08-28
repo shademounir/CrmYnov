@@ -37,7 +37,8 @@ test("Windows runbook script refuses persistent databases and broad cleanup", as
 
 test("runtime probes cover persistence, two instances, seed replay and outbox concurrency", async () => {
   const [check, dockerfile] = await Promise.all([readFile(files.check, "utf8"), readFile(files.dockerfile, "utf8")]);
-  assert.match(check, /api-secondary:3001\/health\/ready/);
+  assert.match(check, /CRM_SECONDARY_READY_URL/);
+  assert.match(check, /localReadinessUrl/);
   assert.match(check, /systemProbe\.upsert/);
   assert.match(check, /outbox_unique_concurrency_failed/);
   assert.match(check, /outbox_claim_concurrency_failed/);

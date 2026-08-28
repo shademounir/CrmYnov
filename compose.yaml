@@ -26,6 +26,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
       CRM_LOCAL_SEED_PASSWORD: ${CRM_LOCAL_SEED_PASSWORD:?CRM_LOCAL_SEED_PASSWORD is required}
+      CRM_PRIMARY_READY_URL: http://api:3001/health/ready
+      CRM_SECONDARY_READY_URL: http://api-secondary:3001/health/ready
     depends_on:
       postgres:
         condition: service_healthy
