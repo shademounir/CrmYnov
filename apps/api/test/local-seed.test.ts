@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
-import { seedLocalIdentity, validateLocalSeedPassword } from "../prisma/seed-local.js";
+import { LOCAL_SYNTHETIC_IDENTITIES, seedLocalIdentity, validateLocalSeedPassword } from "../prisma/seed-local.js";
 
 test("validates the local seed password without exposing it", () => {
   assert.equal(validateLocalSeedPassword("Synthetic1!Password"), "Synthetic1!Password");
@@ -10,7 +10,7 @@ test("validates the local seed password without exposing it", () => {
   }
 });
 
-test("upserts one synthetic Super Admin and stores only derived password material", async () => {
+test("upserts the five synthetic recipe roles and stores only derived password material", async () => {
   const writes: unknown[] = [];
   const client = {
     collaborator: {
@@ -28,7 +28,8 @@ test("upserts one synthetic Super Admin and stores only derived password materia
   } as unknown as PrismaClient;
   const rawPassword = "Synthetic1!Password";
   await seedLocalIdentity(client, rawPassword);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, LOCAL_SYNTHETIC_IDENTITIES.length * 2);
   assert.equal(JSON.stringify(writes).includes(rawPassword), false);
-  assert.match(JSON.stringify(writes), /super-admin@example\.invalid/);
+  for (const identity of LOCAL_SYNTHETIC_IDENTITIES) assert.equal(JSON.stringify(writes).includes(identity.professionalEmail), true);
+  assert.deepEqual(LOCAL_SYNTHETIC_IDENTITIES.map((identity) => identity.roles[0]), ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"]);
 });

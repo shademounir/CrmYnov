@@ -20,6 +20,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV CRM_API_INTERNAL_URL=http://api:3001
+ENV HOSTNAME=0.0.0.0
 WORKDIR /workspace
 COPY --from=build --chown=node:node /workspace/apps/web/.next/standalone ./
 COPY --from=build --chown=node:node /workspace/apps/web/.next/static ./apps/web/.next/static

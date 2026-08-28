@@ -113,7 +113,10 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     ImportProfileService,
     ImportMappingService,
     ImportReportService,
-    ForminatorWebhookService,
+    {
+      provide: ForminatorWebhookService,
+      useFactory: (): ForminatorWebhookService => new ForminatorWebhookService(),
+    },
     QuickLeadService,
     ImportWizardService,
     ImportReviewService,
@@ -121,7 +124,10 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     ChatService,
     LocalBroadcastPublisher,
     BroadcastService,
-    LocalTemporaryDocumentStorageAdapter,
+    {
+      provide: LocalTemporaryDocumentStorageAdapter,
+      useFactory: (): LocalTemporaryDocumentStorageAdapter => new LocalTemporaryDocumentStorageAdapter(),
+    },
     CandidateDocumentService,
     TelephonyService,
     AppointmentService,

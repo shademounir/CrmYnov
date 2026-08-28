@@ -12,6 +12,8 @@
     "test:e2e": "npm run prisma:generate --silent && node --import tsx --test test/e2e/*.test.ts",
     "prisma:validate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma validate",
     "prisma:generate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "db:prepare:local": "npm run prisma:migrate:deploy && npm run seed:local",
     "seed:local": "tsx prisma/seed-local.ts"
   },
   "dependencies": {

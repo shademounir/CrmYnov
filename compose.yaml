@@ -13,12 +13,24 @@ services:
       timeout: 3s
       retries: 12
       start_period: 5s
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-    networks: [crmynov]
+    networks: [backend]
     restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: migration
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      CRM_LOCAL_SEED_PASSWORD: ${CRM_LOCAL_SEED_PASSWORD:?CRM_LOCAL_SEED_PASSWORD is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
 
   api:
     build:
@@ -29,17 +41,42 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
       LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 10s
     ports:
       - "127.0.0.1:${API_PORT:?API_PORT is required}:3001"
-    networks: [crmynov]
+    networks: [backend, frontend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  api-secondary:
+    profiles: [multi-instance]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      API_PORT: "3001"
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL is required}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [backend, frontend]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
@@ -52,18 +89,20 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      CRM_API_INTERNAL_URL: http://api:3001
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 10s
     ports:
       - "127.0.0.1:${WEB_PORT:?WEB_PORT is required}:3000"
-    networks: [crmynov]
+    networks: [frontend]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
@@ -71,8 +110,9 @@ services:
     restart: unless-stopped
 
 networks:
-  crmynov:
+  backend:
     internal: true
+  frontend:
 
 volumes:
   postgres-data:
