@@ -38,7 +38,7 @@ function Invoke-Compose([string[]]$Arguments) {
 
 function Start-Stack {
   Assert-LocalContract
-  Invoke-Compose @("up", "-d", "--build", "--wait")
+  Invoke-Compose @("up", "-d", "--build", "--force-recreate", "--wait")
 }
 
 function Stop-Stack {

@@ -31,6 +31,7 @@ test("Windows runbook script refuses persistent databases and broad cleanup", as
   assert.match(script, /crmynov-local_postgres-data/);
   assert.match(script, /Host -ne "postgres"/);
   assert.match(script, /ConfirmCleanup is required/);
+  assert.match(script, /--force-recreate/);
   assert.match(script, /docker volume rm \$ExpectedVolume/);
   assert.doesNotMatch(script, /down[^\r\n]*--volumes|volume prune|system prune|rm -rf|wsl --unregister/i);
 });

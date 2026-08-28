@@ -3,7 +3,8 @@ import { defineConfig, devices } from "@playwright/test";
 const localPersistentStack = process.env.CRM_LOCAL_E2E === "true";
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: ".",
+  testMatch: ["e2e/**/*.spec.ts", "test/e2e/**/*.test.ts"],
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
