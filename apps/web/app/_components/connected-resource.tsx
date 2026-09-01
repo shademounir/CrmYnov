@@ -51,14 +51,14 @@ export function ConnectedResource({ endpoint, fields, itemPathPrefix, itemPathKe
     return (): void => controller.abort();
   }, [endpoint]);
 
-  if (state.kind === "loading") return <output aria-live="polite">Chargement depuis l’API locale…</output>;
-  if (state.kind === "error") return <section role="alert"><h2>Connexion impossible</h2><p>La ressource n’est pas affichée. Vérifiez la session et la disponibilité de l’API locale.</p><button type="button" onClick={() => globalThis.location.reload()}>Réessayer</button></section>;
-  if (state.kind === "empty") return <output>{emptyMessage}</output>;
-  return <div className="table-scroll"><table aria-label={ariaLabel}><thead><tr>{fields.map((field) => <th key={field.key}>{field.label}</th>)}{itemPathPrefix ? <th>Action</th> : null}</tr></thead><tbody>{state.items.map((item, index) => {
+  if (state.kind === "loading") return <section className="connected-state" aria-live="polite" aria-busy="true"><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="sr-only">Chargement depuis l’API locale…</span></section>;
+  if (state.kind === "error") return <section className="ui-state ui-state--error" role="alert"><h2>Connexion impossible</h2><p>La ressource n’est pas affichée. Vérifiez la session et la disponibilité de l’API locale.</p><button type="button" onClick={() => globalThis.location.reload()}>Réessayer</button></section>;
+  if (state.kind === "empty") return <section className="ui-state" aria-live="polite"><h2>Aucun résultat</h2><p>{emptyMessage}</p></section>;
+  return <div className="table-scroll connected-resource"><table aria-label={ariaLabel}><thead><tr>{fields.map((field) => <th scope="col" key={field.key}>{field.label}</th>)}{itemPathPrefix ? <th scope="col">Action</th> : null}</tr></thead><tbody>{state.items.map((item, index) => {
     const key = displayApiValue(item.id ?? item.leadCode ?? index);
     const itemIdentifier = apiString(item, itemPathKey);
     let action: React.JSX.Element | null = null;
-    if (itemPathPrefix) action = itemIdentifier ? <td><a href={`${itemPathPrefix}/${encodeURIComponent(itemIdentifier)}`}>Ouvrir</a></td> : <td>—</td>;
-    return <tr key={key}>{fields.map((field) => <td key={field.key}>{displayApiValue(item[field.key])}</td>)}{action}</tr>;
+    if (itemPathPrefix) action = itemIdentifier ? <td data-label="Action"><a className="row-action" href={`${itemPathPrefix}/${encodeURIComponent(itemIdentifier)}`} aria-label={`Ouvrir ${key}`}>Ouvrir</a></td> : <td data-label="Action">—</td>;
+    return <tr key={key}>{fields.map((field) => <td data-label={field.label} key={field.key}>{displayApiValue(item[field.key])}</td>)}{action}</tr>;
   })}</tbody></table></div>;
 }
