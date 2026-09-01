@@ -26,15 +26,18 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   await page.context().addCookies([{ name: "crm_session", value: "synthetic-manager-session", domain: "localhost", path: "/" }]);
   await mockReporting(page); await page.goto("/manager/reports/dashboard");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "crm_session")).toBe(true);
+  await page.locator("details.reporting-filter-popover > summary").click();
   await page.locator('select[name="period"]').selectOption("7d");
   await page.locator('input[name="campus"]').fill("campus-a");
   await page.locator('input[name="source"]').fill("SYNTHETIC");
   await page.getByRole("button", { name: "Appliquer" }).click(); await expect(page).toHaveURL(/period=7d.*campus=campus-a.*source=SYNTHETIC/u);
+  await page.getByText("Analyses détaillées et tableaux accessibles", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "Indicateurs clés" })).toBeVisible(); await expect(page.getByRole("link", { name: /Leads uniques.*3/u })).toBeVisible();
   const funnel = page.getByRole("button", { name: /Funnel commercial/u }); await funnel.focus(); await expect(funnel).toBeFocused();
   await expect(page.getByRole("table", { name: /Données alternatives — Funnel commercial/u })).toBeVisible();
   await page.getByRole("link", { name: /Leads uniques.*3/u }).click(); await expect(page).toHaveURL(/\/leads\?campus=campus-a.*returnTo=/u);
   await page.getByRole("link", { name: "Retour au dashboard avec les filtres conservés" }).click(); await expect(page).toHaveURL(/period=7d.*campus=campus-a/u);
+  await page.getByText("Analyses détaillées et tableaux accessibles", { exact: true }).click();
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("link", { name: "Exporter les agrégats CSV" }).click(); const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("crm-manager-dashboard-v1.csv");
   await expect(page.locator("body")).not.toContainText(/@example|LD-SYNTH|\+212/u);
@@ -59,6 +62,7 @@ test("hostile labels remain inert and external destinations are refused", async 
   };
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(hostileReport) }));
   await page.goto("/manager/reports/dashboard?period=7d");
+  await page.getByText("Analyses détaillées et tableaux accessibles", { exact: true }).click();
   await expect(page.getByText(hostile, { exact: true }).first()).toBeVisible();
   expect((await page.locator("script").allTextContents()).every((content) => !content.includes("window.__unsafe"))).toBe(true);
   expect(await page.evaluate(() => (window as typeof window & { __unsafe?: boolean }).__unsafe)).toBeUndefined();
