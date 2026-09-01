@@ -24,7 +24,7 @@ const report: DashboardReport = {
 test("renders URL-backed filters and the non-sensitive loading state", async () => {
   const element = await ManagerReportsDashboardPage({ searchParams: Promise.resolve({ period: "7d", campus: "campus-a", ignored: "unsafe" }) });
   const html = renderToStaticMarkup(element);
-  for (const text of ["Tableau de bord CRM", "Filtres interactifs du reporting", "Africa/Casablanca", "Préférences locales non sensibles", "Chargement", "Réinitialiser"]) assert.equal(html.includes(text), true);
+  for (const text of ["Centre d’activité", "Filtres interactifs du reporting", "Préférences locales non sensibles", "Chargement", "Réinitialiser"]) assert.equal(html.includes(text), true);
   assert.equal(html.includes("unsafe"), false);
 });
 

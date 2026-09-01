@@ -17,6 +17,27 @@ Les composants partagés vivent dans `apps/web/app/_components/ui` : `PageHeader
 
 `PermissionGate` masque une action non autorisée côté interface, mais ne remplace jamais le contrôle RBAC et anti-IDOR du backend.
 
+Le shell CRMY-160 complète ces primitives avec la navigation onyx, la topbar, la recherche globale reliée à l’API, les cartes KPI, les files rapides, les panneaux du dashboard et les cartes mobiles des leads. Les icônes proviennent exclusivement de Phosphor Icons ; le logo raster transparent est l’actif officiel optimisé fourni par le Product Owner.
+
+## États interactifs
+
+- `hover` : variation légère de surface ou de bordure, sans déplacement qui gêne la lecture ;
+- `focus-visible` : anneau de 3 px, décalé de 2 px et visible sur fond clair comme onyx ;
+- `active` : surface onyx ou bleu canard pâle selon la nature du contrôle ;
+- `disabled` : contraste atténué, curseur interdit et attribut natif `disabled` ;
+- `loading` : état annoncé avec `aria-busy`, texte explicite et skeleton sans donnée métier ;
+- `error` : bloc `role="alert"`, motif expurgé et action de nouvelle tentative ;
+- `success` : message textuel associé à l’état vert, jamais une couleur seule ;
+- confirmation destructive : modale explicite, action dangereuse distincte et action d’annulation prioritaire au clavier ;
+- toast, tooltip, pagination et menus : noms accessibles, fermeture clavier et cibles tactiles de 44 × 44 px minimum.
+
+## Responsive
+
+- Desktop : shell complet et tableaux denses jusqu’à cinq actions prioritaires.
+- Tablette : sidebar compacte, grille KPI conservée et panneaux principaux empilés lorsque nécessaire.
+- Mobile : navigation en tiroir, tableaux Leads et Priorités transformés en cartes verticales ; les rubans KPI et vues enregistrées restent balayables sans provoquer de débordement de page.
+- Les actions d’une fiche longue restent collantes et la timeline conserve son filtre sans modifier l’historique immuable.
+
 ## Accessibilité
 
 - Focus visible de 3 px avec décalage.
