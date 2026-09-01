@@ -171,15 +171,7 @@ export function AppShellView({
         {!collapsed ? <span>CRM Admissions</span> : null}
         <button type="button" className="mobile-close" onClick={onMobileClose} aria-label="Fermer la navigation"><X size={22} /></button>
       </div>
-      <nav aria-label="Navigation principale">
-        {navigation.map(({ href, label, icon: Icon }) => {
-          const active = isActive(pathname, href);
-          return <Link key={`${label}-${href}`} href={href} className={active ? "active" : ""} aria-current={active ? "page" : undefined} title={collapsed ? label : undefined}>
-            <Icon size={21} weight={active ? "fill" : "regular"} aria-hidden="true" />
-            {!collapsed ? <span>{label}</span> : <span className="sr-only">{label}</span>}
-          </Link>;
-        })}
-      </nav>
+      <SidebarNavigation pathname={pathname} collapsed={collapsed} />
       <Link className="sidebar-profile" href="/admin/users" aria-label="Ouvrir le profil de la session locale">
         <span className="avatar" aria-hidden="true">SL</span>
         {!collapsed ? <span><b>Session locale</b><small>Droits contrôlés par l’API</small></span> : null}
@@ -204,17 +196,34 @@ export function AppShellView({
           </div>
         </div>
       </header>
-      {search.kind !== "closed" ? <section className="search-results" aria-label="Résultats de la recherche globale" aria-live="polite">
-        {search.kind === "loading" ? <p>Recherche en cours…</p> : null}
-        {search.kind === "ready" ? search.items.map((item) => <Link key={item.id} href={`/leads/${encodeURIComponent(item.id)}`} onClick={onSearchSelect}><MagnifyingGlass size={17} /><span><b>{item.label}</b><small>{item.detail}</small></span></Link>) : null}
-        {search.kind === "empty" ? <p>Aucun lead ne correspond à « {query} ».</p> : null}
-        {search.kind === "session" ? <p><WarningCircle size={18} /> Session expirée. <Link href="/">Se reconnecter</Link></p> : null}
-        {search.kind === "forbidden" ? <p><WarningCircle size={18} /> Accès interdit pour cette recherche.</p> : null}
-        {search.kind === "error" ? <p><WarningCircle size={18} /> API locale momentanément indisponible.</p> : null}
-      </section> : null}
+      <GlobalSearchResults search={search} query={query} onSearchSelect={onSearchSelect} />
       <div className="route-context sr-only" aria-live="polite">Page actuelle : {currentLabel}</div>
       <div className="page-canvas">{children}</div>
     </div>
     {mobileOpen ? <button type="button" className="scrim" onClick={onMobileClose} aria-label="Fermer la navigation" /> : null}
   </div>;
+}
+
+function SidebarNavigation({ pathname, collapsed }: Readonly<{ pathname: string; collapsed: boolean }>): React.JSX.Element {
+  return <nav aria-label="Navigation principale">
+    {navigation.map(({ href, label, icon: Icon }) => {
+      const active = isActive(pathname, href);
+      return <Link key={`${label}-${href}`} href={href} className={active ? "active" : ""} aria-current={active ? "page" : undefined} title={collapsed ? label : undefined}>
+        <Icon size={21} weight={active ? "fill" : "regular"} aria-hidden="true" />
+        {!collapsed ? <span>{label}</span> : <span className="sr-only">{label}</span>}
+      </Link>;
+    })}
+  </nav>;
+}
+
+function GlobalSearchResults({ search, query, onSearchSelect }: Readonly<{ search: SearchState; query: string; onSearchSelect: () => void }>): React.JSX.Element | null {
+  if (search.kind === "closed") return null;
+  return <section className="search-results" aria-label="Résultats de la recherche globale" aria-live="polite">
+    {search.kind === "loading" ? <p>Recherche en cours…</p> : null}
+    {search.kind === "ready" ? search.items.map((item) => <Link key={item.id} href={`/leads/${encodeURIComponent(item.id)}`} onClick={onSearchSelect}><MagnifyingGlass size={17} /><span><b>{item.label}</b><small>{item.detail}</small></span></Link>) : null}
+    {search.kind === "empty" ? <p>Aucun lead ne correspond à « {query} ».</p> : null}
+    {search.kind === "session" ? <p><WarningCircle size={18} /> Session expirée. <Link href="/">Se reconnecter</Link></p> : null}
+    {search.kind === "forbidden" ? <p><WarningCircle size={18} /> Accès interdit pour cette recherche.</p> : null}
+    {search.kind === "error" ? <p><WarningCircle size={18} /> API locale momentanément indisponible.</p> : null}
+  </section>;
 }
