@@ -122,7 +122,8 @@ export class LeadService implements OnModuleInit {
       const fields = ["firstName","lastName","campus","campaign","educationLevel","program","source"] as const;
       if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
       if (input.email !== undefined && input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) throw new BadRequestException({ code: "lead_email_invalid" });
-      const updated = Object.freeze({ ...current, ...input, email: input.email?.trim().toLowerCase() ?? current.email, version: current.version });
+      const normalized = { ...current, ...input, ...(input.email !== undefined ? { email: input.email.trim().toLowerCase() } : {}), ...(input.phone !== undefined ? { phone: input.phone.replace(/[^+\d]/g, "") } : {}) };
+      const updated = Object.freeze(normalized);
       this.leads.set(leadId, updated);
       this.audit.record({ eventType: "LEAD_UPDATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:lead:update:${leadId}:${input.idempotencyKey}`, before: { version: current.version }, after: { version: current.version, fields: Object.keys(input).filter((key) => key !== "idempotencyKey" && key !== "expectedVersion") } });
       return updated;
