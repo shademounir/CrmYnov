@@ -77,10 +77,10 @@ test("persists append-only activities with optimistic lead concurrency", async (
   const { repository, state } = fakeRepository();
   await repository.createLead(lead(), activity(), "lead-create-concurrency", repository.fingerprint("create"));
   const before = lead();
-  const after = { ...before, status: "CONTACTED" as const, lastActivityAt: "2026-08-25T12:31:00.000Z" };
+  const after = { ...before, firstName: "Alice", email: "alice@example.invalid", phone: "+212600000212", status: "CONTACTED" as const, lastActivityAt: "2026-08-25T12:31:00.000Z" };
   const next = activity("00000000-0000-4000-8000-000000000214"); next.type = "STATUS_CHANGED"; next.result = "CONTACTED";
   const stored = await repository.persistMutation(before, after, [next], "lead-status-synthetic", "CHANGE_STATUS", repository.fingerprint(after));
-  assert.equal(stored.version, 2); assert.equal(stored.status, "CONTACTED"); assert.equal(state.activities.length, 2); assert.equal(state.outbox.length, 2);
+  assert.equal(stored.version, 2); assert.equal(stored.status, "CONTACTED"); assert.equal(state.leads[0]?.firstName, "Alice"); assert.equal(state.leads[0]?.email, "alice@example.invalid"); assert.equal(state.leads[0]?.phone, "+212600000212"); assert.equal(state.activities.length, 2); assert.equal(state.outbox.length, 2);
   await assert.rejects(() => repository.persistMutation(before, after, [], "lead-stale-synthetic", "CHANGE_STATUS", repository.fingerprint("stale")), hasCode("lead_concurrent_mutation"));
 });
 
