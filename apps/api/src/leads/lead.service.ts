@@ -41,7 +41,7 @@ export interface LeadActivityRecord {
 
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
-export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">>> & { expectedVersion?: number; idempotencyKey: string };
+export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">> & { expectedVersion?: number; idempotencyKey: string };
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
 export interface LeadAssignmentSnapshot {
   total: number; assigned: number; unassigned: number; followUpDue: number;
