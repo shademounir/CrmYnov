@@ -37,10 +37,10 @@ export default function ReferencesPage(): React.JSX.Element {
   return <main><PageHeader eyebrow="Administration" title="Tags et référentiels" description="Valeurs gouvernées. Les droits sont contrôlés côté serveur ; les archives restent conservées." />
     <Link href="/admin/users">Retour aux utilisateurs</Link>
     <section className="panel reference-admin"><label>Référentiel<select value={kind} onChange={(event) => { setKind(event.target.value as ReferenceKind); setEditing(null); setScope("GLOBAL"); }}>{Object.entries(referenceLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-      {state === "loading" ? <p role="status">Chargement / enregistrement…</p> : null}
+      {state === "loading" ? <output>Chargement / enregistrement…</output> : null}
       {state === "error" ? <p role="alert">Opération refusée ou service indisponible. Vérifiez vos droits et les valeurs saisies.</p> : null}
       {state === "conflict" ? <p role="alert">Conflit de version, alias ambigu ou valeur déjà utilisée. Actualisez avant de réessayer.</p> : null}
-      {saved && state === "ready" ? <p role="status">Modification enregistrée et auditée.</p> : null}
+      {saved && state === "ready" ? <output>Modification enregistrée et auditée.</output> : null}
       <button type="button" onClick={() => setRevision((value) => value + 1)}>Actualiser</button>
       <form key={`${kind}-${editing?.id ?? "new"}`} action={save} className="reference-fields"><h2>{editing ? "Modifier la définition" : "Créer une définition"}</h2>
         {!editing ? <label>Code stable<input name="code" required maxLength={120} /></label> : <p>Code stable : {editing.code}</p>}

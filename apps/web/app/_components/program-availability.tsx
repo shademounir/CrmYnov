@@ -17,7 +17,8 @@ export function ProgramAvailability({ programId, campuses, revision, onSave }: R
   }, [programId, campusId, revision]);
   return <form action={async () => { if (current) await onSave(`/${programId}/availability/${campusId}`, "POST", { active: !current.active, expectedVersion: current.version }); }}>
     <label>Disponibilité campus<select value={campusId} required onChange={(event) => setCampusId(event.target.value)}><option value="">Choisir un campus</option>{campuses.map((campus) => <option key={campus.id} value={campus.id}>{campus.label}</option>)}</select></label>
-    {error ? <p role="alert">Disponibilité inaccessible. Vérifiez vos droits sur ce campus.</p> : campusId && !current ? <p role="status">Lecture de la disponibilité…</p> : null}
+    {error ? <p role="alert">Disponibilité inaccessible. Vérifiez vos droits sur ce campus.</p> : null}
+    {!error && campusId && !current ? <output>Lecture de la disponibilité…</output> : null}
     {current ? <p>Disponibilité actuelle : {current.active ? "active" : "inactive"} · version {current.version}</p> : null}
     <button type="submit" disabled={!current}>{current?.active ? "Désactiver pour ce campus" : "Activer pour ce campus"}</button>
   </form>;

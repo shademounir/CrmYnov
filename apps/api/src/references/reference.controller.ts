@@ -5,7 +5,8 @@ import { strictBody, type ReferenceInput, type ReferenceKind, type ReferenceUpda
 import { ReferenceService } from "./reference.service.js";
 
 function principal(request: AuthenticatedRequest): Principal {
-  if (!request.principal) throw new UnauthorizedException({ code: "principal_missing" }); return request.principal;
+  if (!request.principal) throw new UnauthorizedException({ code: "principal_missing" });
+  return request.principal;
 }
 function correlation(request: AuthenticatedRequest): string { return request.header("x-correlation-id") ?? "reference-request"; }
 

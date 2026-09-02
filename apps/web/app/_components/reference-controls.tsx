@@ -52,7 +52,7 @@ export function LeadReferenceSelectors({ initial = { campus: "", program: "", ca
     <ReferenceSelect name="campus" label="Campus" options={campuses} value={values.campus} disabled={state === "loading"} onChange={(campus) => setValues({ campus, program: "", campaign: "" })} />
     <ReferenceSelect name="program" label="Formation" options={programs} value={values.program} disabled={state !== "ready"} onChange={(program) => setValues({ ...values, program })} />
     <ReferenceSelect name="campaign" label="Campagne" options={campaigns} value={values.campaign} disabled={state !== "ready"} onChange={(campaign) => setValues({ ...values, campaign })} />
-    {state === "loading" ? <p role="status">Chargement des valeurs autorisées…</p> : null}
+    {state === "loading" ? <output>Chargement des valeurs autorisées…</output> : null}
     {state === "error" ? <p role="alert">Référentiels indisponibles. Ne validez pas le formulaire.</p> : null}
     {state === "ready" && !campuses.length ? <p>Aucun campus actif disponible. Contacter un administrateur.</p> : null}
   </fieldset>;

@@ -17,13 +17,14 @@ export async function validateLeadReferences(tx: ReferenceTransaction, values: L
   const changed = (Object.keys(referenceFields) as Array<keyof LeadReferenceValues>).filter((key) => !previous || values[key] !== previous[key]);
   if (!changed.length) return values;
   const campus = await resolveReference(tx, "CAMPUS", values.campus);
-  if (!campus || (changed.includes("campus") && campus.state !== "ACTIVE")) unknownReference("campus");
+  if (!campus) unknownReference("campus");
+  if (changed.includes("campus") && campus.state !== "ACTIVE") unknownReference("campus");
   const result = { ...values };
   if (changed.includes("campus")) result.campus = campus.code;
   for (const field of ["program", "campaign"] as const) {
     if (!changed.includes(field) && !changed.includes("campus")) continue;
     const ref = await resolveReference(tx, referenceFields[field], values[field], campus.id);
-    if (!ref || ref.state !== "ACTIVE") unknownReference(field);
+    if (ref?.state !== "ACTIVE") unknownReference(field);
     if (field === "program") {
       const availability = await tx.crmProgramAvailability.findUnique({ where: { programId_campusId: { programId: ref.id, campusId: campus.id } } });
       if (!availability?.active) unknownReference(field);

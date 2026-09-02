@@ -53,3 +53,21 @@ réel ni compte cloud ; les données restent dans l'instance de test jetable.
 - Les scopes déjà utilisés ne sont pas déplacés sans une opération métier dédiée.
 - La future story CRMY-169 n'est pas implémentée.
 - Aucun bouton ou endpoint de suppression de lead n'est introduit.
+
+## Limites de l'analyse SQL et preuve PostgreSQL
+
+Le premier scan Sonar de la PR CRMY-44 a appliqué des règles `plsql` à la
+migration PostgreSQL. La recommandation `VarcharUsageCheck` demande `VARCHAR2`,
+un type Oracle : elle n'est pas applicable au dialecte utilisé. PostgreSQL
+documente `VARCHAR(n)` comme alias SQL standard de `CHARACTER VARYING(n)` :
+[documentation officielle](https://www.postgresql.org/docs/current/datatype-character.html).
+La migration a été appliquée à PostgreSQL éphémère ; les contraintes, le
+rollback transactionnel et les écritures concurrentes sont testés réellement.
+
+La répétition des littéraux `GLOBAL`/`CAMPUS` dans les contraintes DDL est
+également signalée par `plsql:S1192`. Ces contraintes protègent chaque table ;
+introduire une constante PL/SQL ou retirer une contrainte serait incorrect.
+Ces constats restent visibles pour la revue humaine, avec cette justification,
+sans exclusion de fichier, changement de Quality Gate, suppression de règle ni
+marquage automatique de faux positif. Une éventuelle correction de la
+classification du dialecte Sonar relève d'une intervention séparée.

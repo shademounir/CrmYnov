@@ -34,21 +34,7 @@ export class ReferenceService {
       const rows = await tx.crmReference.findMany({ where: { kind, ...(options.includeArchived ? {} : { state: "ACTIVE" }), ...(campus ? { OR: [{ campusId: campus.id }, { scope: "GLOBAL" }] } : {}) }, orderBy: [{ label: "asc" }, { id: "asc" }] });
       const allowed: CrmReference[] = [];
       for (const row of rows) {
-        const context = await this.context(tx, row);
-        if (lead && row.scope === "CAMPUS" && !lead.campusKeys.some((key) => context.campusKeys.includes(key))) continue;
-        context.readableResource = Boolean(options.leadId && lead?.readableResource && await this.usedByLead(tx, row, options.leadId));
-        if (row.kind === "CAMPUS") context.active = context.active && this.hasCampus(principal, await this.campusKeys(tx, row));
-        if (row.kind === "PROGRAM" && !campus) {
-          const availability = await tx.crmProgramAvailability.findMany({ where: { programId: row.id, active: true } });
-          const keys = await Promise.all(availability.map(async (item) => this.campusKeys(tx, await this.get(tx, item.campusId))));
-          context.active = context.active && keys.some((value) => this.hasCampus(principal, value));
-        }
-        if (!await this.permissions.can(principal, "lead.references.view", context)) continue;
-        if (kind === "PROGRAM" && campus) {
-          const availability = await tx.crmProgramAvailability.findUnique({ where: { programId_campusId: { programId: row.id, campusId: campus.id } } });
-          if (!availability?.active) continue;
-        }
-        allowed.push(row);
+        if (await this.visibleDefinition(tx, row, principal, lead, options.leadId, campus)) allowed.push(row);
       }
       return allowed;
     });
@@ -135,7 +121,7 @@ export class ReferenceService {
     return this.repository.transaction(async (tx) => {
       const context = await this.leadContext(tx, leadId, principal);
       await this.permissions.assertCan(principal, "lead.tags.assign", context);
-      const tagIds = [...input.tagIds].sort();
+      const tagIds = [...input.tagIds].sort((left, right) => left.localeCompare(right, "en"));
       const idempotencyKey = `tags:${leadId}:${input.idempotencyKey}`;
       const fingerprint = createHash("sha256").update(JSON.stringify({ tagIds, actorId: principal.userId, version: input.expectedVersion })).digest("hex");
       const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
@@ -180,6 +166,22 @@ export class ReferenceService {
   }
 
   private managePermission(kind: string): PermissionKey { return kind === "TAG" ? "lead.tags.manage" : "lead.references.manage"; }
+  private async visibleDefinition(tx: ReferenceTransaction, row: CrmReference, principal: Principal, lead: ResourceContext | undefined, leadId: string | undefined, campus: CrmReference | undefined): Promise<boolean> {
+    const context = await this.context(tx, row);
+    if (lead && row.scope === "CAMPUS" && !lead.campusKeys.some((key) => context.campusKeys.includes(key))) return false;
+    context.readableResource = Boolean(leadId && lead?.readableResource && await this.usedByLead(tx, row, leadId));
+    if (row.kind === "CAMPUS") context.active = context.active && this.hasCampus(principal, await this.campusKeys(tx, row));
+    if (row.kind === "PROGRAM" && !campus) context.active = context.active && await this.programInPrincipalCampus(tx, row.id, principal);
+    if (!await this.permissions.can(principal, "lead.references.view", context)) return false;
+    if (row.kind !== "PROGRAM" || !campus) return true;
+    const availability = await tx.crmProgramAvailability.findUnique({ where: { programId_campusId: { programId: row.id, campusId: campus.id } } });
+    return Boolean(availability?.active);
+  }
+  private async programInPrincipalCampus(tx: ReferenceTransaction, programId: string, principal: Principal): Promise<boolean> {
+    const availability = await tx.crmProgramAvailability.findMany({ where: { programId, active: true } });
+    const keys = await Promise.all(availability.map(async (item) => this.campusKeys(tx, await this.get(tx, item.campusId))));
+    return keys.some((value) => this.hasCampus(principal, value));
+  }
   private async campaignInUse(tx: ReferenceTransaction, reference: CrmReference): Promise<boolean> {
     if (reference.kind !== "CAMPAIGN") return false;
     const keys = new Set((await tx.crmReferenceKey.findMany({ where: { referenceId: reference.id } })).map((row) => row.key));
@@ -190,17 +192,21 @@ export class ReferenceService {
   private async usedByLead(tx: ReferenceTransaction, row: CrmReference, leadId: string): Promise<boolean> {
     if (row.kind === "TAG") return (await tx.crmLeadTag.count({ where: { leadId, tagId: row.id, active: true } })) > 0;
     const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId } });
-    const raw = row.kind === "CAMPUS" ? lead.campus : row.kind === "PROGRAM" ? lead.program : row.kind === "CAMPAIGN" ? lead.campaign : undefined;
+    const values: Readonly<Record<string, string>> = { CAMPUS: lead.campus, PROGRAM: lead.program, CAMPAIGN: lead.campaign };
+    const raw = values[row.kind];
     if (!raw) return false;
     if (row.state === "LEGACY") return raw === row.label;
     return (await tx.crmReferenceKey.count({ where: { referenceId: row.id, key: referenceKey(raw) } })) > 0;
   }
   private async get(tx: ReferenceTransaction, id: string): Promise<CrmReference> {
     referenceId(id); const row = await tx.crmReference.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException({ code: "reference_not_found" }); return row;
+    if (!row) throw new NotFoundException({ code: "reference_not_found" });
+    return row;
   }
   private async campus(tx: ReferenceTransaction, id: string): Promise<CrmReference> {
-    const campus = await this.get(tx, id); if (campus.kind !== "CAMPUS" || campus.state !== "ACTIVE") unknownReference("campus"); return campus;
+    const campus = await this.get(tx, id);
+    if (campus.kind !== "CAMPUS" || campus.state !== "ACTIVE") unknownReference("campus");
+    return campus;
   }
   private async campusKeys(tx: ReferenceTransaction, campus: CrmReference): Promise<string[]> {
     const aliases = await tx.crmReferenceKey.findMany({ where: { referenceId: campus.id } });

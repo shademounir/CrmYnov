@@ -92,6 +92,23 @@ test("failed transaction rolls back tags, lead version, timeline and business au
   await assert.rejects(() => service.assignTags(leadId, { tagIds: [tag.id], expectedVersion: 1, idempotencyKey: "synthetic-rollback" }, superAdmin, "rollback"), hasCode("reference_store_unavailable"));
   assert.equal(rows.lead[0]?.version, 1); assert.equal(rows.crmLeadTag.length, 0); assert.equal(rows.leadActivity.length, 0); assert.equal(rows.auditEvent.length, audits);
 });
+
+test("tag ordering is explicit and replay ignores input order without duplicating timeline or audit", async () => {
+  const { service, rows } = await setup(); const leadId = randomUUID();
+  rows.lead.push({ id: leadId, campus: "SYNTHETIC", version: 1 });
+  const first = await service.create(definition("TAG", "SORT-FIRST"), superAdmin, "first-tag");
+  const second = await service.create(definition("TAG", "SORT-SECOND"), superAdmin, "second-tag");
+  const ordered = [first.id, second.id].sort((left, right) => left.localeCompare(right, "en"));
+  const audits = rows.auditEvent.length;
+  const result = await service.assignTags(leadId, { tagIds: [...ordered].reverse(), expectedVersion: 1, idempotencyKey: "synthetic-sort-replay" }, superAdmin, "sort");
+  assert.deepEqual(result, { tagIds: ordered, version: 2 });
+  const replay = await service.assignTags(leadId, { tagIds: ordered, expectedVersion: 1, idempotencyKey: "synthetic-sort-replay" }, superAdmin, "sort-replay");
+  assert.deepEqual(replay, result);
+  assert.equal(rows.lead[0]?.version, 2);
+  assert.equal(rows.leadActivity.length, 1);
+  assert.equal(rows.auditEvent.length, audits + 1);
+  assert.equal(rows.crmLeadTag.filter((row) => row.active).length, 2);
+});
 test("legacy strings remain exact; unrelated edits survive; new unknown values fail with sanitized 422", async () => {
   const { service, rows } = await setup(); const id = randomUUID();
   rows.lead.push({ id, campus: "SYNTHETIC", program: "Ancien libellé ", campaign: "Historique", version: 1 });

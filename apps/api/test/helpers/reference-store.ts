@@ -28,7 +28,8 @@ export function referenceStore(): { repository: ReferenceRepository; rows: Recor
   }
   function create(model: Model, data: Row = {}): Row {
     if (model === "auditEvent" && auditFails) throw new Error("synthetic audit failure");
-    const uniqueFields = model === "crmReference" ? ["kind", "scopeKey", "code"] : model === "crmReferenceKey" ? ["kind", "scopeKey", "key"] : model === "leadMutationReceipt" ? ["idempotencyKey"] : [];
+    const constraints: Partial<Record<Model, string[]>> = { crmReference: ["kind", "scopeKey", "code"], crmReferenceKey: ["kind", "scopeKey", "key"], leadMutationReceipt: ["idempotencyKey"] };
+    const uniqueFields = constraints[model] ?? [];
     if (uniqueFields.length && rows[model].some((row) => uniqueFields.every((key) => row[key] === data[key]))) throw Object.assign(new Error("duplicate"), { code: "P2002" });
     const row: Row = { id: randomUUID(), state: "ACTIVE", active: true, version: 1, createdAt: new Date(), updatedAt: new Date(), ...data };
     rows[model].push(row); return related(model, row);
@@ -52,7 +53,10 @@ export function referenceStore(): { repository: ReferenceRepository; rows: Recor
   const client = { ...models, $transaction: async <T>(action: (tx: ReferenceTransaction) => Promise<T>): Promise<T> => {
     const snapshot = structuredClone(rows);
     try { return await action(models as unknown as ReferenceTransaction); }
-    catch (error) { for (const name of names) rows[name] = snapshot[name]; throw error; }
+    catch (error) {
+      for (const name of names) rows[name] = snapshot[name];
+      throw error;
+    }
   } };
   return { repository: new ReferenceRepository({ client } as unknown as PrismaService), rows, failAudit: (): void => { auditFails = true; } };
 }

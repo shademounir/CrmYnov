@@ -42,7 +42,7 @@ export class PermissionService {
   constructor(@Inject(GrantProvider) private readonly provider: GrantProvider) {}
 
   async can(principal: Principal | undefined, permission: string, context: ResourceContext): Promise<boolean> {
-    if (!principal?.userId || !principal.sessionId || principal.mustChangeSecret || !permissionKeys.some((key) => key === permission)) return false;
+    if (!principal?.userId || !principal.sessionId || principal.mustChangeSecret || !(permissionKeys as readonly string[]).includes(permission)) return false;
     try {
       const grants = await this.provider.grants(principal);
       return grants.some((grant) => grant.permission === permission && this.matches(grant.scope, principal, context));

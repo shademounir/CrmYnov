@@ -15,7 +15,8 @@ export function LeadReferencesClient({ leadId }: Readonly<{ leadId: string }>): 
     return (): void => { current = false; };
   }, [leadId]);
   async function save(form: FormData): Promise<void> {
-    if (!lead) return; setState("loading");
+    if (!lead) return;
+    setState("loading");
     const fields = Object.fromEntries(["campus", "program", "campaign"].map((key) => [key, referenceFormText(form, key)]));
     try {
       const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}`, { method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...fields, expectedVersion: lead.version, idempotencyKey: crypto.randomUUID() }) });
@@ -25,9 +26,9 @@ export function LeadReferencesClient({ leadId }: Readonly<{ leadId: string }>): 
   }
   return <main><h1>Référentiels du lead</h1><Link href={`/leads/${encodeURIComponent(leadId)}`}>Retour à la fiche</Link>
     <p>Une valeur historique inchangée est conservée. Toute nouvelle sélection doit être active et autorisée.</p>
-    {state === "loading" ? <p role="status">Chargement / enregistrement…</p> : null}
+    {state === "loading" ? <output>Chargement / enregistrement…</output> : null}
     {state === "error" ? <p role="alert">Modification refusée. Vérifiez les valeurs actives, vos droits et rechargez en cas de conflit.</p> : null}
-    {state === "success" ? <p role="status">Modification confirmée par l’API.</p> : null}
+    {state === "success" ? <output>Modification confirmée par l’API.</output> : null}
     {lead ? <form action={save}><LeadReferenceSelectors initial={lead} /><button type="submit" disabled={state === "loading"}>Enregistrer les référentiels</button></form> : null}
   </main>;
 }

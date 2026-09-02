@@ -7,7 +7,7 @@ import {
   CaretDown,
   ChartBar,
   ChatCircleDots,
-  Gear,
+  GearIcon as Gear,
   GitBranch,
   House,
   List,

@@ -24,8 +24,8 @@ export function LeadTagsClient({ leadId }: Readonly<{ leadId: string }>): React.
     } catch { setState("error"); }
   }
   return <main><h1>Tags du lead</h1><Link href={`/leads/${encodeURIComponent(leadId)}`}>Retour à la fiche</Link><section className="panel reference-admin">
-    {state === "loading" ? <p role="status">Chargement / enregistrement…</p> : null}
-    {saved && state === "ready" ? <p role="status">Tags enregistrés. Timeline et audit mis à jour.</p> : null}
+    {state === "loading" ? <output>Chargement / enregistrement…</output> : null}
+    {saved && state === "ready" ? <output>Tags enregistrés. Timeline et audit mis à jour.</output> : null}
     {state === "error" || state === "conflict" ? <p role="alert">{state === "conflict" ? "Le lead a changé. Rechargez avant une nouvelle tentative." : "Accès refusé ou données indisponibles."}</p> : null}
     <button type="button" onClick={() => setRevision((value) => value + 1)}>Recharger les tags</button>
     <form action={save}><fieldset disabled={!canAssign || state === "loading"}><legend>Ajouter, retirer ou remplacer des tags</legend>{items.map((tag) => <label key={tag.id} className="reference-tag"><input type="checkbox" checked={selected.includes(tag.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, tag.id] : selected.filter((id) => id !== tag.id))} />{tag.label}{tag.state !== "ACTIVE" ? " — archivé, conservé dans l’historique" : ""}</label>)}{!items.length && state === "ready" ? <p>Aucun tag actif disponible.</p> : null}<button type="submit">Enregistrer les tags</button></fieldset></form>
