@@ -5,6 +5,7 @@ import { AppModule } from "./app.module.js";
 import { correlationMiddleware } from "./correlation.middleware.js";
 import { authenticationMiddleware } from "./auth/auth.middleware.js";
 import { SessionService } from "./auth/session.service.js";
+import { referencePaths } from "./references/reference.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -16,6 +17,7 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
     openapi: "3.0.3",
     info: { title: "CRM Admissions API", version: "0.1.0" },
     paths: {
+      ...referencePaths,
       "/health": {
         get: {
           summary: "API operational health",

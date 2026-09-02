@@ -1,0 +1,11 @@
+.reference-admin { padding: 1.25rem; margin-block: 1rem; }
+.reference-fields { display: grid; gap: 1rem; padding: 1rem; border: 1px solid var(--border, #d4d8dd); border-radius: 12px; min-width: 0; }
+.reference-fields label, .reference-admin label { display: grid; gap: .5rem; }
+.reference-fields input, .reference-fields select, .reference-admin input:not([type="checkbox"]), .reference-admin select { min-height: 44px; max-width: 100%; width: 100%; }
+.reference-admin button, .reference-fields button { min-width: 44px; min-height: 44px; margin: .25rem; }
+.reference-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 1rem; padding: 0; list-style: none; }
+.reference-list > li { padding: 1rem; border: 1px solid var(--border, #d4d8dd); border-radius: 12px; overflow-wrap: anywhere; }
+.reference-tag { display: flex !important; align-items: center; min-height: 44px; gap: .75rem; }
+.reference-admin summary { min-height: 44px; cursor: pointer; }
+.reference-admin :focus-visible, .reference-fields :focus-visible { outline: 3px solid #13756d; outline-offset: 3px; }
+@media (min-width: 900px) { .reference-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .reference-fields h2, .reference-fields p { grid-column: 1 / -1; } }

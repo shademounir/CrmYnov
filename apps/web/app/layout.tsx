@@ -6,6 +6,7 @@ import "@fontsource/montserrat/700.css";
 import { AppShell } from "./_components/app-shell";
 import "./styles.css";
 import "./ynov-v2.css";
+import "./references.css";
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
   return <html lang="fr"><body><AppShell>{children}</AppShell></body></html>;

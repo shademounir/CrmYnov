@@ -45,6 +45,7 @@ const navigation = [
   { href: "/chat", label: "Chat", icon: ChatCircleDots },
   { href: "/manager/reports/commercial-performance", label: "Rapports", icon: ChartBar },
   { href: "/admin/users", label: "Administration", icon: Gear },
+  { href: "/admin/references", label: "Référentiels", icon: Gear },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {

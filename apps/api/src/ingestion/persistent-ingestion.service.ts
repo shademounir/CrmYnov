@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, UnprocessableEntityException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { validateLeadReferences } from "../references/reference.repository.js";
 import type { IngestionBatchInput, IngestionRecordInput } from "./ingestion.service.js";
 
 export interface ConfirmPersistentImportInput extends IngestionBatchInput {
@@ -106,7 +107,13 @@ export class PersistentIngestionService {
     if (matchedLeadId) return this.attachMatch(tx, batchId, matchedLeadId, record, mappedStatus === "DUPLICATE", Boolean(external), principal.userId, correlationId);
     if (mappedStatus === "DUPLICATE") return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
     if (!record.campus?.trim() || !record.campaign?.trim() || !record.educationLevel?.trim() || !record.program?.trim()) return this.review(tx, batchId, record.lineNumber, "REQUIRED_MAPPING_MISSING");
-    return this.createLead(tx, batchId, record, input, mappedStatus, email, phone, principal.userId, correlationId);
+    try {
+      const references = await validateLeadReferences(tx, { campus: record.campus, campaign: record.campaign, program: record.program });
+      return await this.createLead(tx, batchId, { ...record, ...references }, input, mappedStatus, email, phone, principal.userId, correlationId);
+    } catch (error) {
+      if (!(error instanceof UnprocessableEntityException)) throw error;
+      return this.review(tx, batchId, record.lineNumber, "REFERENCE_VALUE_UNKNOWN");
+    }
   }
 
   private async findMatches(tx: Prisma.TransactionClient, technicalSystem: string, externalId: string | undefined, email: string | undefined, phone: string | undefined): Promise<{ external: { leadId: string } | null; matches: Set<string> }> {
