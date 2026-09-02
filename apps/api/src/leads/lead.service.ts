@@ -118,11 +118,20 @@ export class LeadService implements OnModuleInit {
     if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "role_forbidden" });
     return this.persistApiMutation(leadId, `lead:update:${leadId}:${input.idempotencyKey}`, "UPDATE_LEAD", input, () => {
       const current = this.leads.get(leadId); if (!current) throw new NotFoundException({ code: "lead_not_found" });
+      const globalScope = principal.scopes.some((scope) => scope.kind === "GLOBAL");
+      const campusScope = principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === current.campus);
+      if (!globalScope && !campusScope) throw new ForbiddenException({ code: "lead_campus_forbidden" });
+      const elevated = principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+      if (!elevated && current.assignedToId !== principal.userId && !current.collaboratorIds?.includes(principal.userId)) throw new ForbiddenException({ code: "lead_collaboration_required" });
       if (input.expectedVersion !== undefined && current.version !== undefined && input.expectedVersion !== current.version) throw new ConflictException({ code: "lead_version_conflict" });
       const fields = ["firstName","lastName","campus","campaign","educationLevel","program","source"] as const;
       if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
-      if (input.email !== undefined && input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) throw new BadRequestException({ code: "lead_email_invalid" });
-      const normalized = { ...current, ...input, ...(input.email !== undefined ? { email: input.email.trim().toLowerCase() } : {}), ...(input.phone !== undefined ? { phone: input.phone.replace(/[^+\d]/g, "") } : {}) };
+      if (input.email !== undefined && input.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email.trim())) throw new BadRequestException({ code: "lead_email_invalid" });
+      if (input.phone !== undefined && input.phone && !/^\+?\d{8,15}$/.test(input.phone.replace(/[^+\d]/g, ""))) throw new BadRequestException({ code: "lead_phone_invalid" });
+      const normalized: LeadRecord = { ...current };
+      for (const field of fields) if (input[field] !== undefined) normalized[field] = input[field].trim();
+      if (input.email !== undefined) { if (input.email.trim()) normalized.email = input.email.trim().toLowerCase(); else delete normalized.email; }
+      if (input.phone !== undefined) { if (input.phone.trim()) normalized.phone = input.phone.replace(/[^+\d]/g, ""); else delete normalized.phone; }
       const updated = Object.freeze(normalized);
       this.leads.set(leadId, updated);
       this.audit.record({ eventType: "LEAD_UPDATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:lead:update:${leadId}:${input.idempotencyKey}`, before: { version: current.version }, after: { version: current.version, fields: Object.keys(input).filter((key) => key !== "idempotencyKey" && key !== "expectedVersion") } });
