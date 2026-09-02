@@ -60,3 +60,11 @@ test("controller forwards only authenticated principals and correlation metadata
   assert.equal((await controller.list(request)).at(0)?.id, created.id); await controller.update(created.id, { name: "Contrôleur 2", filters: {} }, request); await controller.remove(created.id, request);
   await assert.rejects(() => controller.list({ header: () => undefined } as never), /principal_missing/);
 });
+
+test("refuses unsupported roles and duplicate private names", async () => {
+  const { views } = service(); await views.create({ name: "Même nom", filters: {} }, owner, "first-name");
+  await assert.rejects(() => views.create({ name: "Même nom", filters: {} }, owner, "duplicate-name"), code("saved_view_name_conflict"));
+  const auditor: Principal = { ...owner, roles: ["AUDITOR"] };
+  await assert.rejects(() => views.create({ name: "Refusée", filters: {} }, auditor, "auditor"), code("saved_view_role_forbidden"));
+  await assert.rejects(() => views.list({ ...owner, roles: [] }), code("saved_view_role_forbidden"));
+});
