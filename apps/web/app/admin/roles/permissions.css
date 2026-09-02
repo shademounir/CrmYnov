@@ -1,0 +1,13 @@
+.permission-toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; padding: 1.25rem; margin-block: 1rem; }
+.permission-toolbar label { display: grid; gap: .4rem; flex: 1 1 15rem; }
+.permission-editor { padding: 1.25rem; margin-block: 1rem; }
+.permission-list { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.permission-list > li { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 1rem; border: 1px solid var(--border, #dce3e6); border-radius: .6rem; }
+.permission-list > li > div { flex: 2 1 18rem; overflow-wrap: anywhere; }
+.permission-list > li > label { display: grid; gap: .4rem; flex: 1 1 14rem; }
+.permission-toggle { display: flex !important; align-items: center; min-height: 44px; gap: .6rem; cursor: pointer; }
+.permission-toggle input { width: 44px; height: 44px; accent-color: #147b73; }
+.permission-editor select, .permission-editor input, .permission-toolbar select, .permission-toolbar input, .permission-toolbar button { min-height: 44px; max-width: 100%; }
+.permission-editor :focus-visible, .permission-toolbar :focus-visible { outline: 3px solid #147b73; outline-offset: 3px; }
+.permission-list p { margin-block: .4rem; }
+@media (max-width: 700px) { .permission-list > li { display: grid; grid-template-columns: minmax(0, 1fr); } .permission-list select { width: 100%; } }

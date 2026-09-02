@@ -43,6 +43,12 @@ export class TelephonyService {
     this.adapters = { MANUAL_EXTERNAL: new ManualExternalTelephonyAdapter(), COOVOX: new DisabledTelephonyAdapter("COOVOX"), LINPHONE: new DisabledTelephonyAdapter("LINPHONE") };
   }
 
+  /** Internal locator; the browser cannot supply the resource's authority. */
+  permissionLeadId(id: string): string | undefined {
+    const call = this.calls.get(id);
+    if (!call) throw new NotFoundException({ code: "call_not_found" });
+    return call.leadId;
+  }
   configuration(): TelephonyConfiguration { return { ...this.config }; }
   configure(input: Partial<Omit<TelephonyConfiguration, "version" | "updatedBy" | "updatedAt" | "webhookEnabled">> & { expectedVersion?: number }, principal: Principal, correlationId: string): TelephonyConfiguration {
     if (!principal.roles.includes("SUPER_ADMIN")) throw new ForbiddenException({ code: "telephony_configuration_forbidden" });

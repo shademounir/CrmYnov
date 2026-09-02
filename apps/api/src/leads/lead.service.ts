@@ -349,6 +349,7 @@ export class LeadService implements OnModuleInit {
       const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
         .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
       return (global || allowedCampuses.has(lead.campus))
+        && (principal.permissionLeadIds === undefined || principal.permissionLeadIds.has(lead.id))
         && (!search || searchable.some((value) => value.includes(search)))
         && this.matchesView(lead, view, principal, now)
         && this.matchesSavedView(lead, savedView)
@@ -539,7 +540,7 @@ export class LeadService implements OnModuleInit {
   }
 
   private visibleLead(lead: Readonly<LeadRecord>, principal: Principal): LeadRecord {
-    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS")) return { ...lead };
+    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS" || role === "MANAGER")) return { ...lead };
     return { ...lead, email: "***", phone: "***" };
   }
 

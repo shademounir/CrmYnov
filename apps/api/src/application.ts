@@ -6,9 +6,15 @@ import { correlationMiddleware } from "./correlation.middleware.js";
 import { authenticationMiddleware } from "./auth/auth.middleware.js";
 import { SessionService } from "./auth/session.service.js";
 import { referencePaths } from "./references/reference.openapi.js";
+import { dynamicPermissionPaths } from "./permissions/dynamic-openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
+  configureApplication(app);
+  return app;
+}
+
+export function configureApplication(app: INestApplication): void {
   app.use(correlationMiddleware);
   app.use(authenticationMiddleware(app.get(SessionService)));
   app.enableCors({ origin: "http://localhost:3000", methods: ["GET", "POST", "DELETE", "PATCH"] });
@@ -18,6 +24,7 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
     info: { title: "CRM Admissions API", version: "0.1.0" },
     paths: {
       ...referencePaths,
+      ...dynamicPermissionPaths,
       "/health": {
         get: {
           summary: "API operational health",
@@ -172,5 +179,4 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
   } as const;
   app.use("/docs", serve, setup(openApi));
   app.getHttpAdapter().get("/docs-json", (_request: unknown, response: { json: (body: unknown) => void }) => response.json(openApi));
-  return app;
 }

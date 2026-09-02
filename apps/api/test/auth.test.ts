@@ -52,7 +52,7 @@ test("rate limiting is deterministic and isolated per key", () => {
   assert.doesNotThrow(() => limiter.assertAllowed("client-a", 2_001, 2, 1_000));
 });
 
-test("role and authentication parsing reject malformed input", () => {
+test("role and authentication parsing reject malformed input", async () => {
   assert.equal(isRole("AUDITOR"), true);
   assert.equal(isRole("FORGED"), false);
   const sessions = new SessionService();
@@ -60,10 +60,10 @@ test("role and authentication parsing reject malformed input", () => {
   const middleware = authenticationMiddleware(sessions);
   const next: NextFunction = () => undefined;
   const request = { header: (name: string) => name === "authorization" ? `Bearer ${session.token}` : undefined } as AuthenticatedRequest;
-  middleware(request, {} as Response, next);
+  await middleware(request, {} as Response, next);
   assert.equal(request.principal?.sessionId, session.sessionId);
   const forged = { header: () => "Bearer forged" } as unknown as AuthenticatedRequest;
-  middleware(forged, {} as Response, next);
+  await middleware(forged, {} as Response, next);
   assert.equal(forged.principal, undefined);
 });
 

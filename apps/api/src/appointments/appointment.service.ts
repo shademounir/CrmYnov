@@ -29,6 +29,13 @@ export class AppointmentService {
   private readonly reports = new Map<string, Readonly<InterviewReport>>(); private readonly receipts = new Map<string, { signature: string; id: string }>();
   constructor(private readonly leads: LeadService, private readonly notifications: NotificationService, private readonly audit: AuditService) {}
 
+  /** Internal locator, not an API returning appointment data. */
+  permissionLeadId(id: string): string {
+    const item = this.items.get(id);
+    if (!item) throw new NotFoundException({ code: "appointment_not_found" });
+    return item.leadId;
+  }
+
   create(leadId: string, input: { type?: string; mode?: string; startsAt?: string; durationMinutes?: number; campus?: string; adviserId?: string; evaluatorId?: string; participantIds?: string[]; state?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): AppointmentRecord {
     this.assertOperationalRole(principal); const lead = this.leads.getLead(leadId, principal, correlationId); this.assertCampus(lead.campus, principal);
     const type = input.type as AppointmentType; const mode = input.mode as AppointmentMode; const state = (input.state ?? "PLANIFIE") as AppointmentState;
