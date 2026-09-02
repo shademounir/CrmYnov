@@ -21,6 +21,8 @@ import { FirstLoginService } from "./first-login/first-login.service.js";
 import { LeadController, LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
 import { LeadService } from "./leads/lead.service.js";
 import { LeadPersistenceRepository } from "./leads/lead-persistence.repository.js";
+import { SavedLeadViewController } from "./leads/saved-lead-view.controller.js";
+import { SavedLeadViewService } from "./leads/saved-lead-view.service.js";
 import { LeadWorkflowPersistenceRepository } from "./leads/lead-workflow-persistence.repository.js";
 import { AssignmentController } from "./assignment/assignment.controller.js";
 import { AssignmentService } from "./assignment/assignment.service.js";
@@ -86,7 +88,7 @@ import { LocalOutboxRepository } from "./outbox/local-outbox.repository.js";
 import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     PrismaService,
     LocalOutboxRepository,
@@ -103,6 +105,7 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     FirstLoginService,
     LeadService,
     LeadPersistenceRepository,
+    SavedLeadViewService,
     LeadWorkflowPersistenceRepository,
     AssignmentService,
     LeadAssignmentService,

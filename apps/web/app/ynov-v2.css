@@ -511,6 +511,14 @@ input, select, textarea { color: var(--onyx); }
 .lead-toolbar label { margin: 0; }
 .lead-toolbar input, .lead-toolbar select { min-height: 42px; margin: 0; border: 0; }
 .advanced-filters { border-bottom: 1px solid var(--border); }
+.saved-view-controls { padding: 14px 15px; border-bottom: 1px solid var(--border); display: grid; gap: 10px; }
+.saved-view-controls__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.saved-view-controls__row strong { margin-right: auto; }
+.saved-view-controls input { min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 0 12px; }
+.saved-view-chip { display: inline-flex; align-items: center; min-height: 36px; border-radius: 18px; background: #e9f7f5; padding-left: 10px; color: var(--teal-dark); }
+.saved-view-chip a { color: inherit; font-weight: 700; }
+.saved-view-chip button { min-width: 36px; min-height: 36px; border: 0; background: transparent; font-size: 18px; color: inherit; cursor: pointer; }
+.saved-view-status, .saved-view-empty { margin: 0; color: #5d6b7b; font-size: 12px; }
 .advanced-filters summary { min-height: 44px; padding: 0 15px; color: var(--teal-dark); display: flex; align-items: center; cursor: pointer; font-size: 11px; font-weight: 700; }
 .filter-grid { padding: 0 14px 14px; display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: 10px; }
 .filter-grid label { color: var(--muted); font-size: 9px; }

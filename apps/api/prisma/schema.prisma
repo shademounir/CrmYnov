@@ -298,6 +298,20 @@ model Lead {
   @@map("leads")
 }
 
+model SavedLeadView {
+  id        String   @id @default(uuid()) @db.Uuid
+  ownerId   String   @map("owner_id") @db.VarChar(64)
+  name      String   @db.VarChar(80)
+  filters   Json
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([ownerId, name])
+  @@index([ownerId, updatedAt(sort: Desc)])
+  @@map("saved_lead_views")
+}
+
 model Appointment {
   id               String                   @id @default(uuid()) @db.Uuid
   leadId           String                   @map("lead_id") @db.Uuid

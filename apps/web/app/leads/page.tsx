@@ -7,6 +7,7 @@ import { Funnel, Plus } from "@phosphor-icons/react";
 import { ConnectedResource } from "../_components/connected-resource";
 import { PageHeader } from "../_components/ui/page-header";
 import DashboardReturnLink from "./dashboard-return-link";
+import { SavedViews } from "./saved-views";
 
 function LeadResults(): React.JSX.Element {
   const searchParams = useSearchParams();
@@ -22,6 +23,7 @@ export default function LeadsPage(): React.JSX.Element {
     <DashboardReturnLink />
     <nav className="saved-views" aria-label="Vues Leads"><Link href="/leads?view=ALL">Tous les leads</Link><Link href="/leads?view=MINE">Mes leads</Link><Link href="/leads?view=FOLLOW_UP">À relancer</Link><Link href="/leads?view=UNASSIGNED">Non affectés</Link><Link href="/leads?view=NO_ACTIVITY">Sans activité</Link><Link href="/leads?view=CLOSED">Clôturés</Link></nav>
     <section className="panel leads-work-panel">
+      <Suspense fallback={null}><LeadSavedViews /></Suspense>
       <form className="lead-filter-form" action="/leads" method="get" aria-label="Recherche et filtres des leads">
         <div className="lead-toolbar"><label><span className="sr-only">Identité ou identifiant</span><input name="search" placeholder="Rechercher par nom, email, téléphone ou LD-…" /></label><label><span className="sr-only">Statut</span><select name="status"><option value="">Tous les statuts</option><option value="PROSPECT">Prospect</option><option value="CONTACTED">Contacté</option><option value="QUALIFIED">Qualifié</option><option value="ENROLLED">Inscrit</option><option value="CLOSED_LOST">Sans suite</option></select></label><button className="secondary-button" type="submit"><Funnel size={18} /> Appliquer</button></div>
         <details className="advanced-filters"><summary>Filtres avancés</summary><div className="filter-grid"><label>Conseiller<input name="assignedToId" /></label><label>Source<input name="source" /></label><label>Formation<input name="program" /></label><label>Campagne<input name="campaign" /></label><label>Campus<input name="campus" /></label><label>Mode d’affectation<input name="assignmentMode" /></label><label>Lot d’import<input name="importBatchId" /></label><label>Du<input name="createdFrom" type="date" /></label><label>Au<input name="createdTo" type="date" /></label><label>Trier par<select name="sortBy"><option value="createdAt">Date</option><option value="leadCode">Identifiant</option><option value="lastName">Nom</option><option value="status">Statut</option></select></label></div></details>
@@ -32,4 +34,9 @@ export default function LeadsPage(): React.JSX.Element {
     </section>
     <nav className="api-pagination-note" aria-label="Pagination">Pagination pilotée par l’API</nav>
   </main>;
+}
+
+function LeadSavedViews(): React.JSX.Element {
+  const params = useSearchParams();
+  return <SavedViews current={Object.fromEntries(params.entries())} />;
 }
