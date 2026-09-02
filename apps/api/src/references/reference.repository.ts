@@ -14,7 +14,7 @@ export async function resolveReference(tx: ReferenceTransaction, kind: Reference
 }
 
 export async function validateLeadReferences(tx: ReferenceTransaction, values: LeadReferenceValues, previous?: LeadReferenceValues): Promise<LeadReferenceValues> {
-  const changed = (Object.keys(referenceFields) as Array<keyof LeadReferenceValues>).filter((key) => !previous || values[key] !== previous[key]);
+  const changed = (Object.keys(referenceFields) as Array<keyof LeadReferenceValues>).filter((key) => values[key] !== previous?.[key]);
   if (!changed.length) return values;
   const campus = await resolveReference(tx, "CAMPUS", values.campus);
   if (!campus) unknownReference("campus");
@@ -23,15 +23,20 @@ export async function validateLeadReferences(tx: ReferenceTransaction, values: L
   if (changed.includes("campus")) result.campus = campus.code;
   for (const field of ["program", "campaign"] as const) {
     if (!changed.includes(field) && !changed.includes("campus")) continue;
-    const ref = await resolveReference(tx, referenceFields[field], values[field], campus.id);
-    if (ref?.state !== "ACTIVE") unknownReference(field);
-    if (field === "program") {
-      const availability = await tx.crmProgramAvailability.findUnique({ where: { programId_campusId: { programId: ref.id, campusId: campus.id } } });
-      if (!availability?.active) unknownReference(field);
-    }
-    result[field] = ref.code;
+    result[field] = await activeReferenceCode(tx, field, values[field], campus.id);
   }
   return result;
+}
+
+/** Validate in the caller's transaction; never change authorization or historic values. */
+async function activeReferenceCode(tx: ReferenceTransaction, field: "program" | "campaign", value: string, campusId: string): Promise<string> {
+  const ref = await resolveReference(tx, referenceFields[field], value, campusId);
+  if (ref?.state !== "ACTIVE") unknownReference(field);
+  if (field === "program") {
+    const availability = await tx.crmProgramAvailability.findUnique({ where: { programId_campusId: { programId: ref.id, campusId } } });
+    if (!availability?.active) unknownReference(field);
+  }
+  return ref.code;
 }
 
 @Injectable()

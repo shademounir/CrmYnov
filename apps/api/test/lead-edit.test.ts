@@ -49,3 +49,28 @@ test("fails closed for an unrelated adviser, another campus, and an unauthentica
   const request = { principal: manager, header: () => "corr-controller" } as never;
   assert.equal((await controller.update(leadId, { source: "MANUAL", idempotencyKey: "edit-controller" }, request)).source, "MANUAL");
 });
+
+test("linear email validation preserves the existing syntax and normalization contract", async () => {
+  for (const email of [" ALEX@EXAMPLE.INVALID ", "a+b@sub.example.invalid", "a.b@x.invalid", "é@x.invalid", "a@..b", "a@x..", "a@x.y.z"]) {
+    const { leads, leadId, audit } = fixture();
+    const updated = await leads.updateLeadForApi(leadId, { email, idempotencyKey: "email-syntax-valid" }, adviser, "syntax-valid");
+    assert.equal(updated.email, email.trim().toLowerCase());
+    assert.equal(updated.campus, "Campus A");
+    assert.equal(audit.list().filter((event) => event.eventType === "LEAD_UPDATED").length, 1);
+  }
+  for (const email of ["@x.invalid", "a@x", "a@.b", "a@b.", "a@@x.invalid", "a b@x.invalid", "a@x. invalid", "a\t@x.invalid", "a@x\u00a0.invalid"]) {
+    const { leads, leadId, audit } = fixture();
+    await assert.rejects(() => leads.updateLeadForApi(leadId, { email, idempotencyKey: "email-syntax-invalid" }, adviser, "syntax-invalid"), hasCode("lead_email_invalid"));
+    assert.equal(leads.findLocalLead(leadId)?.email, "ALEX@EXAMPLE.INVALID");
+    assert.equal(audit.list().filter((event) => event.eventType === "LEAD_UPDATED").length, 0);
+  }
+});
+
+test("long synthetic email inputs finish without backtracking or success audit on rejection", { timeout: 5000 }, async () => {
+  const { leads, leadId, audit } = fixture();
+  for (const email of [`a@${"a".repeat(100_000)}`, `a@${"a.".repeat(50_000)}@invalid`, `${"a".repeat(100_000)}@.b`]) {
+    await assert.rejects(() => leads.updateLeadForApi(leadId, { email, idempotencyKey: "email-long-invalid" }, adviser, "long-invalid"), hasCode("lead_email_invalid"));
+  }
+  assert.equal(leads.findLocalLead(leadId)?.email, "ALEX@EXAMPLE.INVALID");
+  assert.equal(audit.list().filter((event) => event.eventType === "LEAD_UPDATED").length, 0);
+});

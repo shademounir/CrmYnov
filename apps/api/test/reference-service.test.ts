@@ -8,6 +8,7 @@ import { referenceStore } from "./helpers/reference-store.js";
 import type { Principal, Role } from "../src/auth/auth.types.js";
 import type { ReferenceInput } from "../src/references/reference.contract.js";
 import type { TagAssignment } from "../src/references/reference.contract.js";
+import { validateLeadReferences } from "../src/references/reference.repository.js";
 
 const actor = (role: Role, campus = "SYNTHETIC"): Principal => ({ userId: "synthetic-actor", roles: [role], scopes: [{ kind: "CAMPUS", id: campus }], sessionId: "synthetic-session" });
 const superAdmin = actor("SUPER_ADMIN");
@@ -122,4 +123,42 @@ test("legacy strings remain exact; unrelated edits survive; new unknown values f
   await service.validateForLead({ campus: "SYNTHETIC", program: "B1", campaign: "SYNTHETIC" }, actor("ADMISSIONS"));
   const legacy = rows.crmReference.find((row) => row.state === "LEGACY")!;
   await assert.rejects(() => service.update(String(legacy.id), { expectedVersion: 1, state: "ACTIVE" }, superAdmin, "legacy-restore"), hasCode("reference_legacy_immutable"));
+});
+
+test("reference validation preserves untouched legacy values and validates only changed fields", async () => {
+  const { repository, rows } = await setup();
+  const historical = { campus: "Unknown historical campus ", program: "Legacy programme ", campaign: "Legacy campaign " };
+  const before = structuredClone(rows);
+  assert.deepEqual(await repository.transaction((tx) => validateLeadReferences(tx, historical, historical)), historical);
+  const previous = { campus: "SYNTHETIC", program: "Legacy programme ", campaign: "Legacy campaign " };
+  const updated = { ...previous, campaign: " synthetic " };
+  assert.deepEqual(await repository.transaction((tx) => validateLeadReferences(tx, updated, previous)), { ...previous, campaign: "SYNTHETIC" });
+  assert.deepEqual(rows, before, "validation alone must not mutate definitions, leads or audits");
+});
+
+test("reference validation stays fail closed for missing, archived and unavailable references", async () => {
+  const { repository, rows, service, campusId, programId } = await setup();
+  const values = { campus: "SYNTHETIC", program: "B1", campaign: "SYNTHETIC" };
+  for (const field of ["campus", "program", "campaign"] as const) {
+    await assert.rejects(() => repository.transaction((tx) => validateLeadReferences(tx, { ...values, [field]: "UNKNOWN" })), hasCode("REFERENCE_VALUE_UNKNOWN"));
+  }
+  await service.availability(programId, campusId, false, 1, superAdmin, "validation-disable");
+  await assert.rejects(() => repository.transaction((tx) => validateLeadReferences(tx, values)), hasCode("REFERENCE_VALUE_UNKNOWN"));
+  await service.availability(programId, campusId, true, 2, superAdmin, "validation-enable");
+  for (const kind of ["CAMPUS", "PROGRAM", "CAMPAIGN"]) {
+    const row = rows.crmReference.find((item) => item.kind === kind)!;
+    row.state = "ARCHIVED";
+    await assert.rejects(() => repository.transaction((tx) => validateLeadReferences(tx, values)), hasCode("REFERENCE_VALUE_UNKNOWN"));
+    rows.crmReference.find((item) => item.id === row.id)!.state = "ACTIVE";
+  }
+});
+
+test("changing campus revalidates unchanged program and campaign in the destination campus", async () => {
+  const { repository, service, programId } = await setup();
+  const other = await service.create(definition("CAMPUS", "OTHER"), superAdmin, "validation-other");
+  const previous = { campus: "SYNTHETIC", program: "B1", campaign: "SYNTHETIC" };
+  const next = { ...previous, campus: " other " };
+  await assert.rejects(() => repository.transaction((tx) => validateLeadReferences(tx, next, previous)), hasCode("REFERENCE_VALUE_UNKNOWN"));
+  await service.availability(programId, other.id, true, 0, superAdmin, "validation-other-enable");
+  assert.deepEqual(await repository.transaction((tx) => validateLeadReferences(tx, next, previous)), { ...previous, campus: "OTHER" });
 });

@@ -152,7 +152,7 @@ export class LeadService implements OnModuleInit {
   private normalizeLeadContacts(normalized: LeadRecord, input: UpdateLeadInput): void {
     if (input.email !== undefined) {
       const email = input.email.trim().toLowerCase();
-      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new BadRequestException({ code: "lead_email_invalid" });
+      if (email && !this.validLeadEmail(email)) throw new BadRequestException({ code: "lead_email_invalid" });
       if (email) normalized.email = email;
       else delete normalized.email;
     }
@@ -162,6 +162,14 @@ export class LeadService implements OnModuleInit {
       if (input.phone.trim()) normalized.phone = phone;
       else delete normalized.phone;
     }
+  }
+
+  private validLeadEmail(email: string): boolean {
+    // Preserve the existing syntax contract with a bounded number of linear scans.
+    const at = email.indexOf("@");
+    const dot = email.indexOf(".", at + 2);
+    return at > 0 && at === email.lastIndexOf("@") && dot > at + 1
+      && dot < email.length - 1 && !/\s/u.test(email);
   }
 
   async findLocalLeadForApi(leadId: string): Promise<LeadRecord | undefined> {
