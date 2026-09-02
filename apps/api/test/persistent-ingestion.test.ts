@@ -17,6 +17,8 @@ const base = (): ConfirmPersistentImportInput => ({ idempotencyKey: "synthetic-i
 function setup() {
   const state: State = { batches: [], reports: [], leads: [], provenances: [], activities: [], reviews: [], rejections: [] };
   const client = {
+    crmReferenceKey: { findMany: async ({ where }: { where: { kind: string; key: string } }) => ["SYNTHETIC", "SYNTHETIC_CAMPAIGN", "SYNTHETIC_PROGRAM"].includes(where.key) ? [{ reference: { id: `${where.kind}-synthetic`, code: where.key, state: "ACTIVE" } }] : [] },
+    crmProgramAvailability: { findUnique: async () => ({ active: true }) },
     ingestionBatch: {
       findUnique: async ({ where }: { where: { idempotencyKey: string } }) => { const row = state.batches.find((item) => item.idempotencyKey === where.idempotencyKey); return row ? { ...row, report: state.reports.find((report) => report.batchId === row.id) ?? null } : null; },
       create: async ({ data }: { data: Row }) => { state.batches.push({ ...data }); return data; },

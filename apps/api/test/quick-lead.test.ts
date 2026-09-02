@@ -6,6 +6,7 @@ import { AuditService } from "../src/audit/audit.service.js";
 import { IngestionService } from "../src/ingestion/ingestion.service.js";
 import { LeadService } from "../src/leads/lead.service.js";
 import { QuickLeadController } from "../src/quick-lead/quick-lead.controller.js";
+import type { ReferenceService } from "../src/references/reference.service.js";
 import { QuickLeadService, type QuickLeadInput } from "../src/quick-lead/quick-lead.service.js";
 
 const manager = { userId: "synthetic-manager", roles: ["MANAGER" as const], scopes: [{ kind: "GLOBAL" as const }], sessionId: "00000000-0000-4000-8000-000000000001" };
@@ -50,8 +51,11 @@ test("fails closed for contradictory identities, missing identity and unauthoriz
   assert.throws(() => service.preview("a@example.invalid", undefined, { ...manager, roles: ["AUDITOR"] }));
 });
 
-test("controller exposes minimal match evidence and correlation", () => {
-  const { service } = setup(); const controller = new QuickLeadController(service); const request = { principal: manager, header: () => "corr-controller" } as never;
+test("controller exposes minimal match evidence and correlation", async () => {
+  const { service } = setup(); let validated = false;
+  const references = { validateForLead: (): Promise<void> => { validated = true; return Promise.resolve(); } } as unknown as ReferenceService;
+  const controller = new QuickLeadController(service, references); const request = { principal: manager, header: () => "corr-controller" } as never;
   assert.deepEqual(controller.matches({ email: "none@example.invalid" }, request), { items: [] });
-  assert.equal(controller.submit(input("PHONE_CALL", "quick-controller"), request).activityType, "PHONE_CALL");
+  assert.equal((await controller.submit(input("PHONE_CALL", "quick-controller"), request)).activityType, "PHONE_CALL");
+  assert.equal(validated, true);
 });

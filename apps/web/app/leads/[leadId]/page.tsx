@@ -24,7 +24,7 @@ function LeadPrimaryActions(): React.JSX.Element {
 
 function LeadSectionLinks(): React.JSX.Element {
   const { leadId } = useParams<{ leadId: string }>();
-  return <nav className="lead-section-links" aria-label="Sections de la fiche"><Link href={leadSectionHref(leadId, "timeline")}>Timeline immuable</Link><Link href={leadSectionHref(leadId, "follow-ups")}>Relances</Link><Link href={leadSectionHref(leadId, "appointments")}>Rendez-vous</Link><Link href={leadSectionHref(leadId, "documents")}>Documents</Link><Link href={leadSectionHref(leadId, "status")}>Changement de statut</Link></nav>;
+  return <nav className="lead-section-links" aria-label="Sections de la fiche"><Link href={leadSectionHref(leadId, "timeline")}>Timeline immuable</Link><Link href={leadSectionHref(leadId, "follow-ups")}>Relances</Link><Link href={leadSectionHref(leadId, "appointments")}>Rendez-vous</Link><Link href={leadSectionHref(leadId, "documents")}>Documents</Link><Link href={leadSectionHref(leadId, "status")}>Changement de statut</Link><Link href={`/leads/${encodeURIComponent(leadId)}/tags`}>Tags gouvernés</Link><Link href={`/leads/${encodeURIComponent(leadId)}/references`}>Référentiels</Link></nav>;
 }
 
 export default function LeadDetailPage(): React.JSX.Element {

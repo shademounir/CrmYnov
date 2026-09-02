@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadPersistenceRepository } from "./lead-persistence.repository.js";
+import { ReferenceService } from "../references/reference.service.js";
+import { strictBody } from "../references/reference.contract.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
-export type ActivityType = (typeof activityTypes)[number];
+export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
 export const correctionReasonCodes = ["WRONG_CHANNEL", "WRONG_RESULT", "WRONG_NEXT_ACTION", "DUPLICATE_ENTRY", "OTHER_CONTROLLED"] as const;
 export type CorrectionReasonCode = (typeof correctionReasonCodes)[number];
 export interface ExpurgatedActivitySnapshot { type: ActivityType; result: string; noteState: "ABSENT" | "REDACTED"; nextActionAt?: string }
@@ -71,6 +73,7 @@ export class LeadService implements OnModuleInit {
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(LeadPersistenceRepository) private readonly persistence?: LeadPersistenceRepository,
+    @Optional() @Inject(ReferenceService) private readonly references?: ReferenceService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -86,17 +89,20 @@ export class LeadService implements OnModuleInit {
   }
 
   async createLeadForApi(input: CreateLeadInput, principal: Principal, correlationId: string): Promise<CreateLeadResult> {
+    strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "nextActionAt"]);
+    await this.references?.validateForLead(input, principal);
     if (!this.persistence?.enabled) return this.createLead(input, principal, correlationId);
     await this.refreshPersistentState();
     const fingerprint = this.persistence.fingerprint({ input, actorId: principal.userId });
     const activityIds = new Set(this.activities.map((item) => item.id));
-    const result = this.createLead(input, principal, correlationId);
+    const result = this.createLead(input, principal, correlationId, true);
     const lead = { ...result.lead, version: 1 };
     const activity = this.activities.find((item) => item.leadId === lead.id && !activityIds.has(item.id));
     if (!activity) throw new Error("lead_create_activity_missing");
     try {
-      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint);
+      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint, principal);
       await this.refreshPersistentState();
+      this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `lead-created:${stored.id}`, after: { leadId: stored.id, leadCode: stored.leadCode, duplicateCandidateCount: result.duplicateCandidates.length } });
       return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };
     } catch (error) {
       await this.refreshPersistentState();
@@ -115,8 +121,10 @@ export class LeadService implements OnModuleInit {
   }
 
   async updateLeadForApi(leadId: string, input: UpdateLeadInput, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "expectedVersion", "idempotencyKey"]);
+    await this.references?.validateForLead(input, principal, leadId);
     if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "role_forbidden" });
-    return this.persistApiMutation(leadId, `lead:update:${leadId}:${input.idempotencyKey}`, "UPDATE_LEAD", input, () => {
+    const result = await this.persistApiMutation(leadId, `lead:update:${leadId}:${input.idempotencyKey}`, "UPDATE_LEAD", input, () => {
       const current = this.leads.get(leadId); if (!current) throw new NotFoundException({ code: "lead_not_found" });
       const globalScope = principal.scopes.some((scope) => scope.kind === "GLOBAL");
       const campusScope = principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === current.campus);
@@ -124,19 +132,44 @@ export class LeadService implements OnModuleInit {
       const elevated = principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
       if (!elevated && current.assignedToId !== principal.userId && !current.collaboratorIds?.includes(principal.userId)) throw new ForbiddenException({ code: "lead_collaboration_required" });
       if (input.expectedVersion !== undefined && current.version !== undefined && input.expectedVersion !== current.version) throw new ConflictException({ code: "lead_version_conflict" });
-      const fields = ["firstName","lastName","campus","campaign","educationLevel","program","source"] as const;
-      if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
-      if (input.email !== undefined && input.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email.trim())) throw new BadRequestException({ code: "lead_email_invalid" });
-      if (input.phone !== undefined && input.phone && !/^\+?\d{8,15}$/.test(input.phone.replace(/[^+\d]/g, ""))) throw new BadRequestException({ code: "lead_phone_invalid" });
-      const normalized: LeadRecord = { ...current };
-      for (const field of fields) if (input[field] !== undefined) normalized[field] = input[field].trim();
-      if (input.email !== undefined) { if (input.email.trim()) normalized.email = input.email.trim().toLowerCase(); else delete normalized.email; }
-      if (input.phone !== undefined) { if (input.phone.trim()) normalized.phone = input.phone.replace(/[^+\d]/g, ""); else delete normalized.phone; }
-      const updated = Object.freeze(normalized);
+      const updated = Object.freeze(this.normalizeLeadUpdate(current, input));
       this.leads.set(leadId, updated);
-      this.audit.record({ eventType: "LEAD_UPDATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:lead:update:${leadId}:${input.idempotencyKey}`, before: { version: current.version }, after: { version: current.version, fields: Object.keys(input).filter((key) => key !== "idempotencyKey" && key !== "expectedVersion") } });
       return updated;
-    });
+    }, principal);
+    this.audit.record({ eventType: "LEAD_UPDATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:lead:update:${leadId}:${input.idempotencyKey}`, after: { version: result.version, fields: Object.keys(input).filter((key) => key !== "idempotencyKey" && key !== "expectedVersion") } });
+    return result;
+  }
+
+  private normalizeLeadUpdate(current: LeadRecord, input: UpdateLeadInput): LeadRecord {
+    const fields = ["firstName", "lastName", "campus", "campaign", "educationLevel", "program", "source"] as const;
+    if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
+    const normalized: LeadRecord = { ...current };
+    for (const field of fields) if (input[field] !== undefined) normalized[field] = input[field].trim();
+    this.normalizeLeadContacts(normalized, input);
+    return normalized;
+  }
+
+  private normalizeLeadContacts(normalized: LeadRecord, input: UpdateLeadInput): void {
+    if (input.email !== undefined) {
+      const email = input.email.trim().toLowerCase();
+      if (email && !this.validLeadEmail(email)) throw new BadRequestException({ code: "lead_email_invalid" });
+      if (email) normalized.email = email;
+      else delete normalized.email;
+    }
+    if (input.phone !== undefined) {
+      const phone = input.phone.replace(/[^+\d]/g, "");
+      if (input.phone && !/^\+?\d{8,15}$/.test(phone)) throw new BadRequestException({ code: "lead_phone_invalid" });
+      if (input.phone.trim()) normalized.phone = phone;
+      else delete normalized.phone;
+    }
+  }
+
+  private validLeadEmail(email: string): boolean {
+    // Preserve the existing syntax contract with a bounded number of linear scans.
+    const at = email.indexOf("@");
+    const dot = email.indexOf(".", at + 2);
+    return at > 0 && at === email.lastIndexOf("@") && dot > at + 1
+      && dot < email.length - 1 && !/\s/u.test(email);
   }
 
   async findLocalLeadForApi(leadId: string): Promise<LeadRecord | undefined> {
@@ -212,6 +245,7 @@ export class LeadService implements OnModuleInit {
     operation: string,
     input: unknown,
     mutate: () => T,
+    auditActor?: Principal,
   ): Promise<T> {
     if (!this.persistence?.enabled) return mutate();
     await this.refreshPersistentState();
@@ -232,6 +266,7 @@ export class LeadService implements OnModuleInit {
         idempotencyKey,
         operation,
         fingerprint,
+        auditActor,
       );
       await this.refreshPersistentState();
       if (typeof result === "object" && result !== null && "leadCode" in result) return this.visibleLead(this.leads.get(leadId)!, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;
@@ -257,7 +292,7 @@ export class LeadService implements OnModuleInit {
     return { ...lead };
   }
 
-  createLead(input: CreateLeadInput, principal: Principal, correlationId: string): CreateLeadResult {
+  createLead(input: CreateLeadInput, principal: Principal, correlationId: string, deferAudit = false): CreateLeadResult {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const required = [input.firstName, input.lastName, input.campus, input.campaign, input.educationLevel, input.program, input.source];
     if (required.some((value) => !value?.trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
@@ -280,7 +315,7 @@ export class LeadService implements OnModuleInit {
     this.activities = [...this.activities, activity];
     const createdLead: Readonly<LeadRecord> = Object.freeze({ ...lead, lastActivityAt: activity.occurredAt });
     this.leads.set(lead.id, createdLead);
-    this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
+    if (!deferAudit) this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { leadId: lead.id, leadCode, duplicateCandidateCount: duplicateCandidates.length }, result: "SUCCESS",
       idempotencyKey: `lead-created:${lead.id}` });
     return { lead: { ...createdLead }, duplicateCandidates };
@@ -512,7 +547,7 @@ export class LeadService implements OnModuleInit {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const lead = this.leads.get(leadId);
     if (!lead) throw new NotFoundException({ code: "lead_not_found" });
-    if (!activityTypes.includes(input.type as ActivityType) || !input.result?.trim()) throw new BadRequestException({ code: "activity_invalid" });
+    if (!(activityTypes as readonly string[]).includes(input.type) || !input.result?.trim()) throw new BadRequestException({ code: "activity_invalid" });
     const nextActionAt = input.nextActionAt ? new Date(input.nextActionAt) : undefined;
     if (nextActionAt && Number.isNaN(nextActionAt.valueOf())) throw new BadRequestException({ code: "next_action_invalid" });
     const activity: LeadActivityRecord = Object.freeze({
@@ -571,7 +606,7 @@ export class LeadService implements OnModuleInit {
   }
 
   private validateCorrectionReplacement(input: { type: string; result: string; nextActionAt?: string }): ExpurgatedActivitySnapshot {
-    if (!activityTypes.includes(input.type as ActivityType) || input.type === "CORRECTION" || !/^[A-Z][A-Z0-9_]{1,63}$/.test(input.result)) throw new BadRequestException({ code: "interaction_correction_value_invalid" });
+    if (!(activityTypes as readonly string[]).includes(input.type) || input.type === "CORRECTION" || !/^[A-Z][A-Z0-9_]{1,63}$/.test(input.result)) throw new BadRequestException({ code: "interaction_correction_value_invalid" });
     const nextActionAt = input.nextActionAt ? new Date(input.nextActionAt) : undefined;
     if (nextActionAt && Number.isNaN(nextActionAt.valueOf())) throw new BadRequestException({ code: "interaction_correction_next_action_invalid" });
     return Object.freeze({ type: input.type as ActivityType, result: input.result, noteState: "ABSENT", ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}) });

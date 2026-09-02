@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { randomUUID } from "node:crypto";
+import type { CrmReference } from "@prisma/client";
+import type { AuthenticatedRequest } from "../src/auth/auth.types.js";
+import { ReferenceController, LeadTagController } from "../src/references/reference.controller.js";
+import { ReferenceService } from "../src/references/reference.service.js";
+import { DefaultGrantProvider, PermissionService } from "../src/permissions/permission.service.js";
+import { referencePaths } from "../src/references/reference.openapi.js";
+import { referenceStore } from "./helpers/reference-store.js";
+
+test("reference controllers enforce authentication and delegate strict contracts with server principal", async () => {
+  const store = referenceStore(); const service = new ReferenceService(store.repository, new PermissionService(new DefaultGrantProvider()));
+  const controller = new ReferenceController(service); const tags = new LeadTagController(service);
+  const request = { principal: { userId: "synthetic-admin", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "synthetic-session" }, header: () => undefined } as unknown as AuthenticatedRequest;
+  const campus = await controller.create({ kind: "CAMPUS", code: "SYNTHETIC", label: "Synthetic", scope: "GLOBAL", campusId: null }, request) as CrmReference;
+  const program = await controller.create({ kind: "PROGRAM", code: "B1", label: "Programme synthétique", scope: "GLOBAL", campusId: null }, request) as CrmReference;
+  const tag = await controller.create({ kind: "TAG", code: "TEST", label: "Tag synthétique", scope: "GLOBAL", campusId: null }, request) as CrmReference;
+  assert.deepEqual(await controller.availability(program.id, campus.id, { active: true, expectedVersion: 0 }, request), { active: true, version: 1 });
+  assert.deepEqual(await controller.readAvailability(program.id, campus.id, request), { active: true, version: 1 });
+  const listed = await controller.list({ kind: "PROGRAM", campusId: campus.id }, request) as { items: CrmReference[] }; assert.equal(listed.items.length, 1);
+  assert.equal((await controller.update(tag.id, { label: "Renommé", expectedVersion: 1 }, request) as CrmReference).version, 2);
+  const leadId = randomUUID(); store.rows.lead.push({ id: leadId, campus: "SYNTHETIC", program: "B1", campaign: "OLD", version: 1 });
+  assert.deepEqual(await tags.assign(leadId, { tagIds: [tag.id], expectedVersion: 1, idempotencyKey: "synthetic-controller" }, request), { tagIds: [tag.id], version: 2 });
+  assert.equal((await tags.list(leadId, request) as { items: CrmReference[] }).items[0]?.id, tag.id);
+  assert.equal((await controller.list({ kind: "TAG", leadId, includeArchived: "true" }, request) as { items: CrmReference[] }).items.length, 1);
+  assert.deepEqual(await controller.legacy({}, request), { created: 1 });
+  const missing = { header: () => undefined } as unknown as AuthenticatedRequest;
+  await assert.rejects(() => controller.list({ kind: "TAG" }, missing));
+  assert.throws(() => tags.list(leadId, missing));
+  assert.throws(() => controller.legacy({ roles: ["SUPER_ADMIN"] }, request));
+  assert.ok(referencePaths["/references"].post.requestBody);
+  assert.equal("delete" in referencePaths["/leads/{leadId}/tags"], false);
+});

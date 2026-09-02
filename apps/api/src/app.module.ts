@@ -1,4 +1,8 @@
 import { Module } from "@nestjs/common";
+import { DefaultGrantProvider, GrantProvider, PermissionService } from "./permissions/permission.service.js";
+import { ReferenceRepository } from "./references/reference.repository.js";
+import { ReferenceService } from "./references/reference.service.js";
+import { ReferenceController, LeadTagController } from "./references/reference.controller.js";
 import { HealthController } from "./health.controller.js";
 import { RateLimitService } from "./auth/rate-limit.service.js";
 import { RbacGuard } from "./auth/rbac.guard.js";
@@ -88,8 +92,12 @@ import { LocalOutboxRepository } from "./outbox/local-outbox.repository.js";
 import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
 
 @Module({
-  controllers: [HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
+    { provide: GrantProvider, useClass: DefaultGrantProvider },
+    PermissionService,
+    ReferenceRepository,
+    ReferenceService,
     PrismaService,
     LocalOutboxRepository,
     LocalOutboxWorker,
