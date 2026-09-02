@@ -11,13 +11,14 @@ const globalManager: Principal = { userId: "manager", roles: ["MANAGER"], scopes
 const code = (expected: string) => (error: unknown): boolean => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.() ?? error).includes(expected);
 function service(): { views: SavedLeadViewService; audit: AuditService } { const audit = new AuditService(); return { views: new SavedLeadViewService(audit), audit }; }
 function persistentService(): SavedLeadViewService {
-  const rows = new Map<string, { id: string; ownerId: string; name: string; filters: Record<string, string>; version: number; createdAt: Date; updatedAt: Date }>();
+  type Row = { id: string; ownerId: string; name: string; filters: Record<string, string>; version: number; createdAt: Date; updatedAt: Date };
+  const rows = new Map<string, Row>();
   const store = {
-    findMany: async ({ where }: { where: { ownerId: string } }) => [...rows.values()].filter((row) => row.ownerId === where.ownerId),
-    findUnique: async ({ where }: { where: { id: string } }) => rows.get(where.id) ?? null,
-    create: async ({ data }: { data: { ownerId: string; name: string; filters: Record<string, string> } }) => { const now = new Date(); const row = { id: `view-${rows.size + 1}`, ...data, version: 1, createdAt: now, updatedAt: now }; rows.set(row.id, row); return row; },
-    update: async ({ where, data }: { where: { id: string }; data: { name: string; filters: Record<string, string>; version: { increment: number } } }) => { const current = rows.get(where.id)!; const row = { ...current, name: data.name, filters: data.filters, version: current.version + data.version.increment, updatedAt: new Date() }; rows.set(row.id, row); return row; },
-    delete: async ({ where }: { where: { id: string } }) => { const current = rows.get(where.id)!; rows.delete(where.id); return current; },
+    findMany: ({ where }: { where: { ownerId: string } }): Promise<Row[]> => Promise.resolve([...rows.values()].filter((row) => row.ownerId === where.ownerId)),
+    findUnique: ({ where }: { where: { id: string } }): Promise<Row | null> => Promise.resolve(rows.get(where.id) ?? null),
+    create: ({ data }: { data: { ownerId: string; name: string; filters: Record<string, string> } }): Promise<Row> => { const now = new Date(); const row = { id: `view-${rows.size + 1}`, ...data, version: 1, createdAt: now, updatedAt: now }; rows.set(row.id, row); return Promise.resolve(row); },
+    update: ({ where, data }: { where: { id: string }; data: { name: string; filters: Record<string, string>; version: { increment: number } } }): Promise<Row> => { const current = rows.get(where.id)!; const row = { ...current, name: data.name, filters: data.filters, version: current.version + data.version.increment, updatedAt: new Date() }; rows.set(row.id, row); return Promise.resolve(row); },
+    delete: ({ where }: { where: { id: string } }): Promise<Row> => { const current = rows.get(where.id)!; rows.delete(where.id); return Promise.resolve(current); },
   };
   const client = { savedLeadView: store, $transaction: async <T>(callback: (tx: { savedLeadView: typeof store }) => Promise<T>): Promise<T> => callback({ savedLeadView: store }) };
   return new SavedLeadViewService(new AuditService(), { client } as never);
