@@ -41,6 +41,7 @@ export interface LeadActivityRecord {
 
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
+export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">>> & { expectedVersion?: number; idempotencyKey: string };
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
 export interface LeadAssignmentSnapshot {
   total: number; assigned: number; unassigned: number; followUpDue: number;
@@ -111,6 +112,21 @@ export class LeadService implements OnModuleInit {
   async getLeadForApi(leadId: string, principal: Principal, correlationId: string): Promise<LeadRecord> {
     await this.refreshPersistentState();
     return this.getLead(leadId, principal, correlationId);
+  }
+
+  async updateLeadForApi(leadId: string, input: UpdateLeadInput, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "role_forbidden" });
+    return this.persistApiMutation(leadId, `lead:update:${leadId}:${input.idempotencyKey}`, "UPDATE_LEAD", input, () => {
+      const current = this.leads.get(leadId); if (!current) throw new NotFoundException({ code: "lead_not_found" });
+      if (input.expectedVersion !== undefined && current.version !== undefined && input.expectedVersion !== current.version) throw new ConflictException({ code: "lead_version_conflict" });
+      const fields = ["firstName","lastName","campus","campaign","educationLevel","program","source"] as const;
+      if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
+      if (input.email !== undefined && input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) throw new BadRequestException({ code: "lead_email_invalid" });
+      const updated = Object.freeze({ ...current, ...input, email: input.email?.trim().toLowerCase() ?? current.email, version: current.version });
+      this.leads.set(leadId, updated);
+      this.audit.record({ eventType: "LEAD_UPDATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:lead:update:${leadId}:${input.idempotencyKey}`, before: { version: current.version }, after: { version: current.version, fields: Object.keys(input).filter((key) => key !== "idempotencyKey" && key !== "expectedVersion") } });
+      return updated;
+    });
   }
 
   async findLocalLeadForApi(leadId: string): Promise<LeadRecord | undefined> {

@@ -128,6 +128,15 @@ export class LeadPersistenceRepository {
       const updated = await tx.lead.updateMany({
         where: { id: before.id, version: before.version },
         data: {
+          firstName: after.firstName,
+          lastName: after.lastName,
+          email: after.email ?? null,
+          phone: after.phone ?? null,
+          campus: after.campus,
+          campaign: after.campaign,
+          educationLevel: after.educationLevel,
+          program: after.program,
+          source: after.source,
           status: after.status,
           assignedToId: after.assignedToId ?? null,
           assignmentMode: after.assignmentMode ?? null,
