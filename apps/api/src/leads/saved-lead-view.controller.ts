@@ -10,5 +10,5 @@ export class SavedLeadViewController {
   @Post() async create(@Body() body: SavedLeadViewInput, @Req() request: AuthenticatedRequest): Promise<SavedLeadView> { return this.views.create(body, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation"); }
   @Patch(":id") async update(@Param("id") id: string, @Body() body: SavedLeadViewInput, @Req() request: AuthenticatedRequest): Promise<SavedLeadView> { return this.views.update(id, body, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation"); }
   @Delete(":id") async remove(@Param("id") id: string, @Req() request: AuthenticatedRequest): Promise<void> { await this.views.remove(id, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation"); }
-  private principal(request: AuthenticatedRequest) { if (!request.principal) throw new Error("principal_missing"); return request.principal; }
+  private principal(request: AuthenticatedRequest): NonNullable<AuthenticatedRequest["principal"]> { if (!request.principal) throw new Error("principal_missing"); return request.principal; }
 }

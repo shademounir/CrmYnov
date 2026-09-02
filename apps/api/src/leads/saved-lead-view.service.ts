@@ -17,7 +17,7 @@ export class SavedLeadViewService {
   async list(principal: Principal): Promise<SavedLeadView[]> {
     if (!this.readAllowed(principal)) throw new ForbiddenException({ code: "saved_view_role_forbidden" });
     if (this.prisma?.client) return (await this.prisma.client.savedLeadView.findMany({ where: { ownerId: principal.userId }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }] })).map((row) => this.public(row));
-    return [...this.views.values()].filter((view) => view.ownerId === principal.userId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)).map(({ ownerId: _ownerId, ...view }) => view);
+    return [...this.views.values()].filter((view) => view.ownerId === principal.userId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)).map((view) => this.strip(view));
   }
 
   async create(input: SavedLeadViewInput, principal: Principal, correlationId: string): Promise<SavedLeadView> {
@@ -60,7 +60,7 @@ export class SavedLeadViewService {
   private readAllowed(principal: Principal): boolean { return principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR"].includes(role)); }
   private assertWrite(principal: Principal): void { if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "saved_view_role_forbidden" }); }
   private public(row: { id: string; name: string; filters: unknown; version: number; createdAt: Date; updatedAt: Date }): SavedLeadView { return { id: row.id, name: row.name, filters: row.filters as Partial<Record<FilterKey, string>>, version: row.version, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() }; }
-  private strip(view: SavedLeadView & { ownerId: string }): SavedLeadView { const { ownerId: _ownerId, ...result } = view; return result; }
+  private strip(view: SavedLeadView & { ownerId: string }): SavedLeadView { return { id: view.id, name: view.name, filters: view.filters, version: view.version, createdAt: view.createdAt, updatedAt: view.updatedAt }; }
   private duplicate(error: unknown): boolean { return (error as { code?: string }).code === "P2002"; }
   private audited(type: string, view: SavedLeadView, principal: Principal, correlationId: string): void { this.audit.record({ eventType: type, actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:${type}:${view.id}:${view.version}`, after: { viewId: view.id, name: view.name, filterKeys: Object.keys(view.filters) } }); }
 }
