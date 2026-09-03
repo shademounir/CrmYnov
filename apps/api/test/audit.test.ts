@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AuditController } from "../src/audit/audit.controller.js";
 import { AuditService, minimizeIp, type AuditInput } from "../src/audit/audit.service.js";
 
 test("records immutable, sanitized and idempotent audit events", () => {
@@ -16,9 +15,8 @@ test("records immutable, sanitized and idempotent audit events", () => {
 
 test("bounds listing and exposes no mutation operation", () => {
   const audit = new AuditService();
-  const controller = new AuditController(audit);
-  assert.deepEqual(controller.list("9999"), { events: [] });
-  assert.equal("update" in controller, false);
-  assert.equal("delete" in controller, false);
+  assert.deepEqual(audit.list(9999), []);
+  assert.equal("update" in audit, false);
+  assert.equal("delete" in audit, false);
   assert.equal(minimizeIp("2001:db8:1234:5678:90ab:cdef:1:2"), "2001:db8:1234:5678::");
 });

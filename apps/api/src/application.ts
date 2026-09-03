@@ -7,6 +7,7 @@ import { authenticationMiddleware } from "./auth/auth.middleware.js";
 import { SessionService } from "./auth/session.service.js";
 import { referencePaths } from "./references/reference.openapi.js";
 import { dynamicPermissionPaths } from "./permissions/dynamic-openapi.js";
+import { auditPaths } from "./audit/audit.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -25,6 +26,7 @@ export function configureApplication(app: INestApplication): void {
     paths: {
       ...referencePaths,
       ...dynamicPermissionPaths,
+      ...auditPaths,
       "/health": {
         get: {
           summary: "API operational health",
@@ -41,7 +43,6 @@ export function configureApplication(app: INestApplication): void {
       "/sessions/{sessionId}": { delete: { summary: "Revoke a session", responses: { "200": { description: "Revocation result" }, "403": { description: "Ownership required" } } } },
       "/sessions/users/{userId}/revoke": { post: { summary: "Revoke every active session for a user", responses: { "201": { description: "Sessions revoked" }, "403": { description: "SUPER_ADMIN required" } } } },
       "/resources/{resourceId}": { patch: { summary: "Update a resource within the caller ownership and scope", responses: { "200": { description: "Resource updated" }, "403": { description: "Resource unavailable" } } } },
-      "/audit-events": { get: { summary: "List the append-only audit trail", responses: { "200": { description: "Sanitized audit events" }, "403": { description: "AUDITOR or SUPER_ADMIN required" } } } },
       "/notifications": { get: { summary: "List the caller internal notifications with unread count", responses: { "200": { description: "Deterministic paginated notifications" }, "400": { description: "Invalid pagination" } } } },
       "/notifications/{id}/read": { patch: { summary: "Idempotently mark one owned notification as read", responses: { "200": { description: "Notification read" }, "404": { description: "Notification unavailable" } } } },
       "/notifications/read-all": { patch: { summary: "Idempotently mark all caller notifications as read", responses: { "200": { description: "Updated count" } } } },

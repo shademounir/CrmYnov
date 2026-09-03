@@ -39,6 +39,7 @@ export class ReassignmentService implements OnModuleInit {
     const record = await this.leads.persistWorkflowMutationForApi(
       leadId, `reassignment-request:${input.idempotencyKey}`, "REASSIGNMENT_REQUEST", input,
       () => this.request(leadId, input, principal, correlationId),
+      principal, correlationId,
     );
     const stored = await this.persistence.createReassignment(record, input.idempotencyKey);
     await this.refreshPersistentState();
@@ -53,6 +54,7 @@ export class ReassignmentService implements OnModuleInit {
     const result = await this.leads.persistWorkflowMutationForApi(
       current.leadId, `reassignment-decision:${requestId}`, "REASSIGNMENT_DECISION", input,
       () => this.decide(requestId, input, principal, correlationId),
+      principal, correlationId,
     );
     const stored = await this.persistence.decideReassignment(result.request, 1);
     await this.refreshPersistentState();

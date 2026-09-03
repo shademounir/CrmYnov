@@ -1,5 +1,6 @@
 import type { Principal, Role } from "../auth/auth.types.js";
 import { configurationKey, definition, GLOBAL_CAMPUS, permissionCatalogue, type ConfigurationSnapshot, type ConfigurationTarget, type Grants, type PermissionScope } from "./dynamic-contract.js";
+import { auditDecision, auditRoles } from "./audit-access.js";
 
 export interface EvaluationContext { campus: string; active: boolean; own: boolean; team: boolean; managedTeam?: boolean; campusAllowed: boolean; globalAllowed: boolean; restriction?: string }
 export interface GrantExplanation { role: Role; sourceScope: PermissionScope; globalCeiling: PermissionScope; campusCeiling: PermissionScope; campusGrant: PermissionScope; allowed: boolean; restriction: string | null }
@@ -7,6 +8,7 @@ export interface PermissionDecision { permission: string; allowed: boolean; sour
 const readRoles: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"];
 const managers: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER"];
 const defaultRoles: Record<string, readonly Role[]> = {
+  "audit.view": auditRoles,
   "lead.create": ["SUPER_ADMIN", "ADMIN", "ADMISSIONS"], "lead.edit": [...managers, "ADMISSIONS"], "lead.assign": managers,
   "lead.reassign.request": [...managers, "ADMISSIONS"], "lead.reassign.approve": managers,
   "lead.close.request": [...managers, "ADMISSIONS"], "lead.close.approve": managers,
@@ -63,6 +65,12 @@ function explainRole(role: Role, key: string, rows: readonly ConfigurationSnapsh
 }
 export function evaluatePermission(principal: Principal, key: string, rows: readonly ConfigurationSnapshot[], context: EvaluationContext): PermissionDecision {
   if (!definition(key)?.available || !principal.userId || !principal.sessionId || principal.mustChangeSecret) return { permission: key, allowed: false, sources: [], restriction: "permission_or_session_invalid" };
+  if (key === "audit.view") {
+    // GLOBAL must come from actual grants and ceilings, never from a URL or role alone.
+    const auditContext = { ...context, globalAllowed: true, campusAllowed: context.campus !== GLOBAL_CAMPUS && context.campusAllowed };
+    const sources = [...new Set(principal.roles)].map((role) => explainRole(role, key, rows, auditContext));
+    return auditDecision(sources, auditContext);
+  }
   const sources = [...new Set(principal.roles)].map((role) => explainRole(role, key, rows, context));
   return { permission: key, allowed: sources.some((source) => source.allowed), sources, restriction: context.restriction ?? null };
 }

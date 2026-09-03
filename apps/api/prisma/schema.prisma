@@ -171,6 +171,9 @@ model LocalOutboxEvent {
 
 model AuditEvent {
   id             String   @id @default(uuid()) @db.Uuid
+  campusId       String?  @map("campus_id") @db.VarChar(64)
+  resourceType   String?  @map("resource_type") @db.VarChar(40)
+  resourceId     String?  @map("resource_id") @db.VarChar(64)
   eventType      String   @map("event_type") @db.VarChar(80)
   actorId        String?  @map("actor_id") @db.VarChar(64)
   actorRoles     String[] @map("actor_roles")
@@ -185,6 +188,8 @@ model AuditEvent {
 
   @@index([occurredAt(sort: Desc)])
   @@index([actorId, occurredAt(sort: Desc)])
+  @@index([campusId, occurredAt(sort: Desc), id])
+  @@index([resourceId, occurredAt(sort: Desc)])
   @@map("audit_events")
 }
 
