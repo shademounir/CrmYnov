@@ -6,6 +6,18 @@ import type { Principal } from "../auth/auth.types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 export type PermissionTransaction = Prisma.TransactionClient;
+
+/** Only a fence conflict before the business handler is safe to retry. */
+function retryFenceOrThrow(error: unknown, handlerStarted: boolean, attempt: number): void {
+  if (error instanceof HttpException) throw error;
+  const code = error && typeof error === "object" && "code" in error ? error.code : null;
+  if (code === "P2034" && !handlerStarted && attempt < 4) return;
+  if (code === "P2034" || code === "P2002" || code === "P2025") {
+    throw new ConflictException({ code: "permission_version_conflict" });
+  }
+  throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
+}
+
 @Injectable()
 export class DynamicPermissionRepository {
   private readonly execution = new AsyncLocalStorage<PermissionTransaction>();
@@ -18,23 +30,17 @@ export class DynamicPermissionRepository {
     for (let attempt = 0; ; attempt++) {
       let handlerStarted = false;
       try {
-      return await client.$transaction(async (tx) => {
-        // One transaction-scoped local lock serializes changes to authorization state.
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(169, 1)`;
-        // A stale Serializable snapshot waiting behind a revocation must conflict,
-        // never execute using the old grants. Every protected unit advances this row.
-        await tx.rolePermissionEpoch.upsert({ where: { id: 1 }, create: { id: 1, version: 1 }, update: { version: { increment: 1 } } });
-        handlerStarted = true;
-        return this.prisma.withTransaction(tx, () => this.execution.run(tx, () => action(tx)));
-      }, { isolationLevel: "Serializable", timeout: 30_000, maxWait: 5_000 });
-    } catch (error) {
-      if (error instanceof HttpException) throw error;
-      const code = error && typeof error === "object" && "code" in error ? error.code : null;
-      // Retry only acquisition of the fence, before any handler or business effect.
-      // A conflict after handler entry is never replayed automatically.
-      if (code === "P2034" && !handlerStarted && attempt < 4) continue;
-      if (code === "P2034" || code === "P2002" || code === "P2025") throw new ConflictException({ code: "permission_version_conflict" });
-      throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
+        return await client.$transaction(async (tx) => {
+          // One transaction-scoped local lock serializes changes to authorization state.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(169, 1)`;
+          // A stale Serializable snapshot waiting behind a revocation must conflict,
+          // never execute using the old grants. Every protected unit advances this row.
+          await tx.rolePermissionEpoch.upsert({ where: { id: 1 }, create: { id: 1, version: 1 }, update: { version: { increment: 1 } } });
+          handlerStarted = true;
+          return this.prisma.withTransaction(tx, () => this.execution.run(tx, () => action(tx)));
+        }, { isolationLevel: "Serializable", timeout: 30_000, maxWait: 5_000 });
+      } catch (error) {
+        retryFenceOrThrow(error, handlerStarted, attempt);
       }
     }
   }

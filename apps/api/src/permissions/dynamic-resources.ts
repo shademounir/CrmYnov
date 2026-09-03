@@ -8,7 +8,7 @@ import type { EvaluationContext } from "./dynamic-evaluator.js";
 
 export async function canonicalCampus(tx: PermissionTransaction, value: string): Promise<{ id: string; keys: string[] }> {
   const campus = /^[a-f\d-]{36}$/i.test(value) ? await tx.crmReference.findUnique({ where: { id: value } }) : await resolveReference(tx, "CAMPUS", value);
-  if (!campus || campus.kind !== "CAMPUS" || campus.state !== "ACTIVE") permissionDenied();
+  if (campus?.kind !== "CAMPUS" || campus.state !== "ACTIVE") permissionDenied();
   return { id: campus.id, keys: [campus.id, campus.code, campus.label, ...(await tx.crmReferenceKey.findMany({ where: { referenceId: campus.id } })).map((row) => row.key)] };
 }
 export async function leadResource(tx: PermissionTransaction, id: string): Promise<ResourceContext> {
@@ -29,6 +29,21 @@ async function relatedLeadId(tx: PermissionTransaction, request: AuthenticatedRe
   if (controller === "DocumentVerificationController") return (await tx.candidateDocument.findUnique({ where: { id } }))?.leadId ?? permissionDenied();
   return undefined;
 }
+function requestedCampuses(request: AuthenticatedRequest, body: Record<string, unknown>): (string | undefined)[] {
+  const selected = scalar(body.campus ?? body.campusId ?? request.query.campus ?? request.query.campusId);
+  const records = Array.isArray(body.records) ? body.records as unknown[] : [];
+  const campuses = records.map((record) => record && typeof record === "object" && "campus" in record ? scalar(record.campus) : undefined);
+  if (records.length && campuses.some((campus) => !campus)) permissionDenied();
+  if (selected) campuses.push(selected);
+  return campuses;
+}
+async function principalCampuses(tx: PermissionTransaction, principal: Principal): Promise<string[]> {
+  if (!principal.roles.includes("SUPER_ADMIN")) {
+    return principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []);
+  }
+  const campuses = await tx.crmReference.findMany({ where: { kind: "CAMPUS", state: "ACTIVE" }, select: { id: true } });
+  return campuses.map((row) => row.id);
+}
 export async function routeContexts(tx: PermissionTransaction, request: AuthenticatedRequest, controller: string, key: string, principal: Principal, serverLeadIds: readonly string[] = []): Promise<EvaluationContext[]> {
   if (serverLeadIds.length) return Promise.all(serverLeadIds.map(async (id) => resourceEvaluationContext(tx, principal, await leadResource(tx, id))));
   const leadId = scalar(request.params.leadId) ?? await relatedLeadId(tx, request, controller);
@@ -40,17 +55,8 @@ export async function routeContexts(tx: PermissionTransaction, request: Authenti
     return Promise.all(body.leadIds.map(async (id) => resourceEvaluationContext(tx, principal, await leadResource(tx, id))));
   }
   if (definition(key)?.reserved || key.startsWith("users.")) return [campusContext(principal, GLOBAL_CAMPUS)];
-  const selected = scalar(body.campus ?? body.campusId ?? request.query.campus ?? request.query.campusId);
-  const records = Array.isArray(body.records) ? body.records as unknown[] : [];
-  const campuses = records.map((record) => record && typeof record === "object" && "campus" in record ? scalar(record.campus) : undefined);
-  if (records.length && campuses.some((campus) => !campus)) permissionDenied();
-  if (selected) campuses.push(selected);
-  if (!campuses.length) {
-    const allowed = principal.roles.includes("SUPER_ADMIN")
-      ? (await tx.crmReference.findMany({ where: { kind: "CAMPUS", state: "ACTIVE" }, select: { id: true } })).map((row) => row.id)
-      : principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []);
-    campuses.push(...allowed);
-  }
+  const campuses = requestedCampuses(request, body);
+  if (!campuses.length) campuses.push(...await principalCampuses(tx, principal));
   if (!campuses.length) return [campusContext(principal, GLOBAL_CAMPUS)];
   return Promise.all([...new Set(campuses)].map(async (value) => {
     const campus = await canonicalCampus(tx, value!);

@@ -7,6 +7,18 @@ import type { EvaluationContext } from "./dynamic-evaluator.js";
 import { resolveReference } from "../references/reference.repository.js";
 
 export function permissionDenied(): never { throw new ForbiddenException({ code: "permission_denied" }); }
+async function currentCampusScopes(tx: PermissionTransaction, campusId: string | null): Promise<Scope[]> {
+  if (!campusId) return [];
+  const scopes: Scope[] = [{ kind: "CAMPUS", id: campusId }];
+  const campus = /^[a-f\d-]{36}$/i.test(campusId)
+    ? await tx.crmReference.findUnique({ where: { id: campusId } })
+    : await resolveReference(tx, "CAMPUS", campusId);
+  if (!campus) return scopes;
+  for (const id of [campus.id, campus.code, campus.label]) {
+    if (id !== campusId) scopes.push({ kind: "CAMPUS", id });
+  }
+  return scopes;
+}
 export async function currentPrincipal(tx: PermissionTransaction, principal: Principal): Promise<Principal> {
   const user = await tx.collaborator.findUnique({ where: { id: principal.userId } });
   const session = await tx.localSession.findUnique({ where: { id: principal.sessionId } });
@@ -14,11 +26,7 @@ export async function currentPrincipal(tx: PermissionTransaction, principal: Pri
   if (!user.roles.length || user.roles.some((role) => !(roles as readonly string[]).includes(role))) permissionDenied();
   const scopes: Scope[] = [];
   if (user.roles.includes("SUPER_ADMIN")) scopes.push({ kind: "GLOBAL" });
-  if (user.campusId) {
-    scopes.push({ kind: "CAMPUS", id: user.campusId });
-    const campus = /^[a-f\d-]{36}$/i.test(user.campusId) ? await tx.crmReference.findUnique({ where: { id: user.campusId } }) : await resolveReference(tx, "CAMPUS", user.campusId);
-    if (campus) for (const id of [campus.id, campus.code, campus.label]) if (id !== user.campusId) scopes.push({ kind: "CAMPUS", id });
-  }
+  scopes.push(...await currentCampusScopes(tx, user.campusId));
   if (user.teamId) scopes.push({ kind: "TEAM", id: user.teamId });
   return { ...principal, roles: user.roles as Role[], scopes, mustChangeSecret: user.firstLoginRequired || principal.mustChangeSecret };
 }
