@@ -30,6 +30,7 @@ export class LeadCollaborationService implements OnModuleInit {
     const record = await this.leads.persistWorkflowMutationForApi(
       leadId, `collaboration-request:${leadId}:${correlationId}`, "COLLABORATION_REQUEST", input,
       () => this.request(leadId, input, principal, correlationId),
+      principal, correlationId,
     );
     const stored = await this.persistence.saveCollaboration(record);
     await this.refreshPersistentState(); return stored;
@@ -43,6 +44,7 @@ export class LeadCollaborationService implements OnModuleInit {
     const updated = await this.leads.persistWorkflowMutationForApi(
       current.leadId, `collaboration-decision:${id}:${input.expectedVersion ?? "missing"}`, "COLLABORATION_DECISION", input,
       () => this.decide(id, input, principal, correlationId),
+      principal, correlationId,
     );
     const stored = await this.persistence.saveCollaboration(updated, current.version);
     if (updated.state === "APPROVED" && leadBefore) {

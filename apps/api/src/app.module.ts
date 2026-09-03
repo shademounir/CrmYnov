@@ -25,6 +25,7 @@ import {
 } from "./access-recovery/access-recovery.store.js";
 import { AuditController } from "./audit/audit.controller.js";
 import { AuditService } from "./audit/audit.service.js";
+import { AuditReader } from "./audit/audit-reader.js";
 import { UserController } from "./users/user.controller.js";
 import { UserService } from "./users/user.service.js";
 import { FirstLoginController } from "./first-login/first-login.controller.js";
@@ -120,6 +121,7 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     LocalRecoveryChallengeStore,
     LocalCredentialAdapter,
     AuditService,
+    AuditReader,
     UserService,
     FirstLoginService,
     LeadService,

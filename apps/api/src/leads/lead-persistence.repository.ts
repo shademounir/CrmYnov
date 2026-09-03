@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, Optional } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { LeadActivity as PrismaLeadActivity, Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
@@ -9,6 +9,12 @@ import type { ActivityCorrection, CorrectionReasonCode, LeadActivityRecord, Lead
 
 type StoredLead = LeadRecord & { version: number };
 type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[] }>;
+const mutationEvents: Readonly<Record<string, string>> = {
+  UPDATE_LEAD: "LEAD_UPDATED", ADD_ACTIVITY: "LEAD_ACTIVITY_ADDED", CORRECT_ACTIVITY: "LEAD_ACTIVITY_COMPENSATED",
+  CHANGE_STATUS: "LEAD_STATUS_CHANGED", ASSIGN: "LEAD_ASSIGNED", REASSIGN: "LEAD_REASSIGNED", COLLABORATOR: "LEAD_COLLABORATOR_CHANGED",
+  REASSIGNMENT_REQUEST: "REASSIGNMENT_REQUESTED", REASSIGNMENT_DECISION: "REASSIGNMENT_DECIDED",
+  COLLABORATION_REQUEST: "COLLABORATION_REQUESTED", COLLABORATION_DECISION: "COLLABORATION_DECIDED", CLOSURE_DECISION: "CLOSURE_DECIDED",
+};
 
 @Injectable()
 export class LeadPersistenceRepository {
@@ -87,8 +93,10 @@ export class LeadPersistenceRepository {
     activity: LeadActivityRecord,
     idempotencyKey: string,
     fingerprint: string,
-    principal?: Principal,
+    principal: Principal,
+    correlationId: string,
   ): Promise<StoredLead> {
+    this.requireAuditActor(principal);
     const client = this.requiredClient();
     return client.$transaction(async (tx) => {
       const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
@@ -97,7 +105,7 @@ export class LeadPersistenceRepository {
       lead = { ...lead, ...references };
       await tx.lead.create({ data: this.leadCreateData(lead) });
       await tx.leadActivity.create({ data: this.activityData(activity, idempotencyKey) });
-      if (principal) await this.auditMutation(tx, "LEAD_CREATED", lead.id, 1, idempotencyKey, principal);
+      await this.auditMutation(tx, "LEAD_CREATED", lead.id, 1, idempotencyKey, principal, correlationId);
       await tx.leadMutationReceipt.create({
         data: { leadId: lead.id, idempotencyKey, fingerprint, operation: "CREATE", result: lead as unknown as Prisma.InputJsonValue },
       });
@@ -126,8 +134,12 @@ export class LeadPersistenceRepository {
     idempotencyKey: string,
     operation: string,
     fingerprint: string,
-    principal?: Principal,
+    principal: Principal,
+    correlationId: string,
   ): Promise<StoredLead> {
+    this.requireAuditActor(principal);
+    const eventType = mutationEvents[operation];
+    if (!eventType) throw new Error("lead_audit_operation_unknown");
     const client = this.requiredClient();
     return client.$transaction(async (tx) => {
       const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
@@ -157,7 +169,8 @@ export class LeadPersistenceRepository {
       if (updated.count !== 1) throw new ConflictException({ code: "lead_concurrent_mutation" });
       for (const [index, activity] of activities.entries()) await tx.leadActivity.create({ data: this.activityData(activity, activities.length === 1 ? idempotencyKey : `${idempotencyKey}:${index}`) });
       const result: StoredLead = { ...after, version: before.version + 1 };
-      if (principal) await this.auditMutation(tx, "LEAD_UPDATED", after.id, result.version, idempotencyKey, principal);
+      if (operation === "COLLABORATOR") await this.replaceCollaboratorsInTransaction(tx, after.id, after.collaboratorIds ?? []);
+      await this.auditMutation(tx, eventType, after.id, result.version, idempotencyKey, principal, correlationId);
       await tx.leadMutationReceipt.create({
         data: { leadId: after.id, idempotencyKey, fingerprint, operation, result: result as unknown as Prisma.InputJsonValue },
       });
@@ -174,7 +187,10 @@ export class LeadPersistenceRepository {
 
   async replaceCollaborators(leadId: string, userIds: readonly string[]): Promise<void> {
     const client = this.requiredClient();
-    await client.$transaction(async (tx) => {
+    await client.$transaction((tx) => this.replaceCollaboratorsInTransaction(tx, leadId, userIds), { isolationLevel: "Serializable" });
+  }
+
+  private async replaceCollaboratorsInTransaction(tx: Prisma.TransactionClient, leadId: string, userIds: readonly string[]): Promise<void> {
       await tx.leadCollaborator.updateMany({ where: { leadId, active: true, userId: { notIn: [...userIds] } }, data: { active: false } });
       for (const userId of userIds) {
         await tx.leadCollaborator.upsert({
@@ -183,7 +199,6 @@ export class LeadPersistenceRepository {
           update: { active: true },
         });
       }
-    }, { isolationLevel: "Serializable" });
   }
 
   private requiredClient(): NonNullable<PrismaService["client"]> {
@@ -191,8 +206,13 @@ export class LeadPersistenceRepository {
     return this.prisma.client;
   }
 
-  private async auditMutation(tx: Prisma.TransactionClient, eventType: string, leadId: string, version: number, key: string, principal: Principal): Promise<void> {
-    await tx.auditEvent.create({ data: { eventType, actorId: principal.userId, actorRoles: principal.roles, correlationId: leadId, result: "SUCCESS", idempotencyKey: `lead-audit:${createHash("sha256").update(key).digest("hex")}`, after: { leadId, version } } });
+  private requireAuditActor(principal: Principal): void {
+    if (!principal?.userId || !principal.sessionId || !principal.roles.length) throw new UnauthorizedException({ code: "audit_actor_required" });
+  }
+
+  private async auditMutation(tx: Prisma.TransactionClient, eventType: string, leadId: string, version: number, key: string, principal: Principal, correlationId: string): Promise<void> {
+    const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId }, select: { campus: true } });
+    await tx.auditEvent.create({ data: { eventType, campusId: lead.campus, resourceType: "LEAD", resourceId: leadId, actorId: principal.userId, actorRoles: principal.roles, correlationId, result: "SUCCESS", idempotencyKey: `lead-audit:${createHash("sha256").update(key).digest("hex")}`, after: { version, scope: "CAMPUS" } } });
   }
 
   private replay(storedFingerprint: string, fingerprint: string, result: Prisma.JsonValue): StoredLead {

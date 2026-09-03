@@ -1,6 +1,7 @@
 import { ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import type { Principal, Role } from "../auth/auth.types.js";
 import { definition } from "./dynamic-contract.js";
+import { hasAuditRole } from "./audit-access.js";
 
 export const permissionKeys = ["lead.tags.assign", "lead.tags.manage", "lead.references.view", "lead.references.manage", "lead.references.archive", "settings.campus.manage", "settings.global.manage"] as const;
 export type PermissionKey = typeof permissionKeys[number];
@@ -47,6 +48,7 @@ export class PermissionService {
 
   async can(principal: Principal | undefined, permission: string, context: ResourceContext): Promise<boolean> {
     if (!principal?.userId || !principal.sessionId || principal.mustChangeSecret) return false;
+    if (permission === "audit.view" && !hasAuditRole(principal)) return false;
     try {
       if (this.provider.decision) return definition(permission)?.available === true && await this.provider.decision(principal, permission, context);
       if (!(permissionKeys as readonly string[]).includes(permission)) return false;

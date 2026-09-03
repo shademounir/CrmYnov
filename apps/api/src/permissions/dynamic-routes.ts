@@ -21,7 +21,6 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   ImportReportController: { create: ["import.execute"], get: ["import.view"], export: ["import.report.export"] },
   SavedLeadViewController: { list: ["lead.view"], create: ["lead.edit"], update: ["lead.edit"], remove: ["lead.edit"] },
   NotificationController: { list: ["lead.view"], markAll: ["notification.manage"], markRead: ["notification.manage"] },
-  AuditController: { list: ["audit.view"] },
   ManagerDashboardController: { read: ["reporting.view"], export: ["reporting.export"] },
   TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], detail: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
 };
@@ -38,7 +37,7 @@ const groupedHandlers: Readonly<Record<string, readonly string[]>> = {
   BroadcastController: ["create", "preview", "confirm", "cancel", "correct", "list", "recipients"],
 };
 // These controllers enforce their own permission or security lifecycle contract.
-const delegated = new Set(["ReferenceController", "LeadTagController", "DynamicPermissionController"]);
+const delegated = new Set(["ReferenceController", "LeadTagController", "DynamicPermissionController", "AuditController"]);
 export const lifecycleControllers = new Set(["HealthController", "SessionController", "AccessRecoveryController", "FirstLoginController", "ForminatorWebhookController"]);
 export function routePermissions(controller: string, handler: string): readonly string[] | null {
   if (controller === "ChatController" && handler === "convertToActivity") return ["chat.use", "interaction.create"];

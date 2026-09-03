@@ -39,6 +39,7 @@ export class ClosureService implements OnModuleInit {
     const updated = await this.leads.persistWorkflowMutationForApi(
       current.leadId, `closure-decision:${id}:${input.expectedVersion ?? "missing"}`, "CLOSURE_DECISION", input,
       () => this.decide(id, input, principal, correlationId),
+      principal, correlationId,
     );
     const stored = await this.persistence.saveClosure(updated, current.version);
     await this.refreshPersistentState(); return stored;

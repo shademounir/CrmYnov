@@ -100,7 +100,7 @@ export class LeadService implements OnModuleInit {
     const activity = this.activities.find((item) => item.leadId === lead.id && !activityIds.has(item.id));
     if (!activity) throw new Error("lead_create_activity_missing");
     try {
-      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint, principal);
+      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint, principal, correlationId);
       await this.refreshPersistentState();
       this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `lead-created:${stored.id}`, after: { leadId: stored.id, leadCode: stored.leadCode, duplicateCandidateCount: result.duplicateCandidates.length } });
       return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };
@@ -135,7 +135,7 @@ export class LeadService implements OnModuleInit {
       const updated = Object.freeze(this.normalizeLeadUpdate(current, input));
       this.leads.set(leadId, updated);
       return updated;
-    }, principal);
+    }, principal, correlationId);
     this.audit.record({ eventType: "LEAD_UPDATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `audit:lead:update:${leadId}:${input.idempotencyKey}`, after: { version: result.version, fields: Object.keys(input).filter((key) => key !== "idempotencyKey" && key !== "expectedVersion") } });
     return result;
   }
@@ -186,37 +186,34 @@ export class LeadService implements OnModuleInit {
     const idempotencyKey = `lead:activity:${leadId}:${correlationId}`;
     const replay = await this.persistence?.findActivity(idempotencyKey);
     if (replay) return replay;
-    return this.persistApiMutation(leadId, idempotencyKey, "ADD_ACTIVITY", input, () => this.addActivity(leadId, input, principal, correlationId));
+    return this.persistApiMutation(leadId, idempotencyKey, "ADD_ACTIVITY", input, () => this.addActivity(leadId, input, principal, correlationId), principal, correlationId);
   }
 
   async correctActivityForApi(leadId: string, originalEventId: string, input: InteractionCorrectionInput, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
     const idempotencyKey = `lead:correction:${input.idempotencyKey}`;
     const replay = await this.persistence?.findActivity(idempotencyKey);
     if (replay) return replay;
-    return this.persistApiMutation(leadId, idempotencyKey, "CORRECT_ACTIVITY", { originalEventId, input }, () => this.correctActivity(leadId, originalEventId, input, principal, correlationId));
+    return this.persistApiMutation(leadId, idempotencyKey, "CORRECT_ACTIVITY", { originalEventId, input }, () => this.correctActivity(leadId, originalEventId, input, principal, correlationId), principal, correlationId);
   }
 
   async changeStatusForApi(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): Promise<LeadRecord> {
-    return this.persistApiMutation(leadId, `lead:status:${leadId}:${correlationId}`, "CHANGE_STATUS", input, () => this.changeStatus(leadId, input, principal, correlationId));
+    return this.persistApiMutation(leadId, `lead:status:${leadId}:${correlationId}`, "CHANGE_STATUS", input, () => this.changeStatus(leadId, input, principal, correlationId), principal, correlationId);
   }
 
   async assignLocalLeadForApi(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED"): Promise<LeadRecord> {
-    return this.persistApiMutation(leadId, `lead:assignment:${leadId}:${correlationId}`, "ASSIGN", { assignedToId, reason, assignmentMode }, () => this.assignLocalLead(leadId, assignedToId, principal, correlationId, reason, assignmentMode));
+    return this.persistApiMutation(leadId, `lead:assignment:${leadId}:${correlationId}`, "ASSIGN", { assignedToId, reason, assignmentMode }, () => this.assignLocalLead(leadId, assignedToId, principal, correlationId, reason, assignmentMode), principal, correlationId);
   }
 
   async reassignLocalLeadForApi(leadId: string, expectedOwnerId: string, targetUserId: string, principal: Principal, correlationId: string, reason: string): Promise<LeadRecord> {
-    return this.persistApiMutation(leadId, `lead:reassignment:${leadId}:${correlationId}`, "REASSIGN", { expectedOwnerId, targetUserId, reason }, () => this.reassignLocalLead(leadId, expectedOwnerId, targetUserId, principal, correlationId, reason));
+    return this.persistApiMutation(leadId, `lead:reassignment:${leadId}:${correlationId}`, "REASSIGN", { expectedOwnerId, targetUserId, reason }, () => this.reassignLocalLead(leadId, expectedOwnerId, targetUserId, principal, correlationId, reason), principal, correlationId);
   }
 
   async applyCollaboratorForApi(leadId: string, targetUserId: string, action: "ADD" | "REMOVE", role: string, principal: Principal, correlationId: string): Promise<LeadRecord> {
-    let collaboratorIds: string[] = [];
     const result = await this.persistApiMutation(leadId, `lead:collaborator:${leadId}:${correlationId}`, "COLLABORATOR", { targetUserId, action, role }, () => {
       const updated = this.applyCollaborator(leadId, targetUserId, action, role, principal, correlationId);
-      collaboratorIds = [...(updated.collaboratorIds ?? [])];
       return updated;
-    });
+    }, principal, correlationId);
     if (this.persistence?.enabled) {
-      await this.persistence.replaceCollaborators(leadId, collaboratorIds);
       await this.refreshPersistentState();
       return this.visibleLead(this.leads.get(leadId)!, principal);
     }
@@ -235,8 +232,10 @@ export class LeadService implements OnModuleInit {
     operation: string,
     input: unknown,
     mutate: () => T,
+    auditActor: Principal,
+    correlationId: string,
   ): Promise<T> {
-    return this.persistApiMutation(leadId, idempotencyKey, operation, input, mutate);
+    return this.persistApiMutation(leadId, idempotencyKey, operation, input, mutate, auditActor, correlationId);
   }
 
   private async persistApiMutation<T>(
@@ -245,7 +244,8 @@ export class LeadService implements OnModuleInit {
     operation: string,
     input: unknown,
     mutate: () => T,
-    auditActor?: Principal,
+    auditActor: Principal,
+    correlationId: string,
   ): Promise<T> {
     if (!this.persistence?.enabled) return mutate();
     await this.refreshPersistentState();
@@ -267,6 +267,7 @@ export class LeadService implements OnModuleInit {
         operation,
         fingerprint,
         auditActor,
+        correlationId,
       );
       await this.refreshPersistentState();
       if (typeof result === "object" && result !== null && "leadCode" in result) return this.visibleLead(this.leads.get(leadId)!, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;
