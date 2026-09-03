@@ -1,6 +1,7 @@
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Principal, Role, Scope } from "./auth.types.js";
+import { isRole } from "./auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 
 interface SessionRecord extends Principal {
@@ -87,6 +88,25 @@ export class SessionService implements OnModuleInit {
     if (this.activeUsers.get(session.userId) === false) return undefined;
     if ((this.authenticationVersions.get(session.userId) ?? session.authenticationVersion) !== session.authenticationVersion) return undefined;
     return { userId: session.userId, roles: [...session.roles], scopes: [...session.scopes], sessionId: session.sessionId, mustChangeSecret: session.mustChangeSecret };
+  }
+
+  /** Persistent sessions must work on every API instance and never use stale identity. */
+  async authenticateForApi(token: string): Promise<Principal | undefined> {
+    const client = this.prisma?.client;
+    if (!client) return this.authenticate(token); // Explicit historical in-memory harness.
+    const tokenDigest = digestToken(token);
+    const row = await client.localSession.findUnique({ where: { tokenDigest }, include: { collaborator: { include: { passwordHash: { select: { mustChange: true } } } } } });
+    if (!row?.active || row.expiresAt <= new Date()) return undefined;
+    const user = row.collaborator;
+    if (!user.active || row.authenticationVersion !== user.authenticationVersion || !user.roles.length || !user.roles.every(isRole)) return undefined;
+    const scopes: Scope[] = [];
+    if (user.roles.includes("SUPER_ADMIN")) scopes.push({ kind: "GLOBAL" });
+    if (user.campusId) scopes.push({ kind: "CAMPUS", id: user.campusId });
+    if (user.teamId) scopes.push({ kind: "TEAM", id: user.teamId });
+    const principal: Principal = { userId: user.id, sessionId: row.id, roles: user.roles, scopes, mustChangeSecret: user.firstLoginRequired || user.passwordHash?.mustChange === true };
+    this.sessions.set(tokenDigest, { ...principal, tokenDigest, active: true, expiresAt: row.expiresAt.getTime(), authenticationVersion: row.authenticationVersion });
+    this.updateIdentityState(user.id, user.active, user.authenticationVersion);
+    return principal;
   }
 
   revoke(sessionId: string): boolean {

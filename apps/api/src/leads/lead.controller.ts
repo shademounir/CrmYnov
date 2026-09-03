@@ -5,7 +5,7 @@ import { LeadService, type CreateLeadInput, type CreateLeadResult, type Interact
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
-@RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
+@RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
 export class LeadTimelineController {
   constructor(@Inject(LeadService) private readonly leads: LeadService) {}
 
@@ -67,7 +67,7 @@ export class LeadController {
   }
 
   @Get(":leadId")
-  @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN", "AUDITOR")
+  @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
   async detail(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.leads.getLeadForApi(leadId, request.principal, request.header("x-correlation-id") ?? "missing-correlation");

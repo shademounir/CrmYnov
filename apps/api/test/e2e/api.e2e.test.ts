@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { createApplication } from "../../src/application.js";
+import { createApplication } from "./synthetic-application.js";
 import { digestRecoveryValue, LocalCredentialAdapter } from "../../src/access-recovery/access-recovery.store.js";
 import { UserService } from "../../src/users/user.service.js";
 

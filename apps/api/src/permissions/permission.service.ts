@@ -1,5 +1,6 @@
 import { ForbiddenException, Inject, Injectable } from "@nestjs/common";
 import type { Principal, Role } from "../auth/auth.types.js";
+import { definition } from "./dynamic-contract.js";
 
 export const permissionKeys = ["lead.tags.assign", "lead.tags.manage", "lead.references.view", "lead.references.manage", "lead.references.archive", "settings.campus.manage", "settings.global.manage"] as const;
 export type PermissionKey = typeof permissionKeys[number];
@@ -16,7 +17,10 @@ export interface ResourceContext {
 }
 type GrantScope = "GLOBAL" | "CAMPUS" | "APPLICABLE" | "ACTIVE_APPLICABLE" | "OWNER" | "READABLE_RESOURCE";
 export interface Grant { permission: PermissionKey; scope: GrantScope }
-export abstract class GrantProvider { abstract grants(principal: Principal): Promise<readonly Grant[]>; }
+export abstract class GrantProvider {
+  abstract grants(principal: Principal): Promise<readonly Grant[]>;
+  decision?(principal: Principal, permission: string, resource: ResourceContext): Promise<boolean>;
+}
 
 const defaultGrants: Readonly<Record<Role, readonly Grant[]>> = {
   SUPER_ADMIN: permissionKeys.map((permission) => ({ permission, scope: "GLOBAL" })),
@@ -42,8 +46,10 @@ export class PermissionService {
   constructor(@Inject(GrantProvider) private readonly provider: GrantProvider) {}
 
   async can(principal: Principal | undefined, permission: string, context: ResourceContext): Promise<boolean> {
-    if (!principal?.userId || !principal.sessionId || principal.mustChangeSecret || !(permissionKeys as readonly string[]).includes(permission)) return false;
+    if (!principal?.userId || !principal.sessionId || principal.mustChangeSecret) return false;
     try {
+      if (this.provider.decision) return definition(permission)?.available === true && await this.provider.decision(principal, permission, context);
+      if (!(permissionKeys as readonly string[]).includes(permission)) return false;
       const grants = await this.provider.grants(principal);
       return grants.some((grant) => grant.permission === permission && this.matches(grant.scope, principal, context));
     } catch { return false; }

@@ -10,6 +10,8 @@ export interface Principal {
   scopes: Scope[];
   sessionId: string;
   mustChangeSecret?: boolean | undefined;
+  /** Request-local server authorization filter; never accepted from a client or session payload. */
+  permissionLeadIds?: ReadonlySet<string>;
 }
 
 export interface AuthenticatedRequest extends Request {

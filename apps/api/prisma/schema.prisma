@@ -2,6 +2,75 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model RolePermissionEpoch {
+  id      Int    @id
+  version BigInt @default(0)
+
+  @@map("role_permission_epoch")
+}
+
+// No implicit backfill from Collaborator.teamId: responsibility is explicit.
+model TeamResponsibility {
+  id String @id @default(uuid()) @db.Uuid
+  teamId String @map("team_id") @db.VarChar(64)
+  campusId String @map("campus_id") @db.Uuid
+  managerId String @map("manager_id") @db.Uuid
+  active Boolean @default(true)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  manager Collaborator @relation(fields: [managerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  campus CrmReference @relation(fields: [campusId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@unique([teamId, campusId, managerId])
+  @@map("team_responsibilities")
+}
+
+model RolePermissionConfiguration {
+  id        String @id @db.VarChar(200)
+  kind      String @db.VarChar(16)
+  role      String @db.VarChar(20)
+  campus    String @db.VarChar(80)
+  version   Int @default(0)
+  versions  RolePermissionVersion[]
+  @@map("role_permission_configurations")
+}
+
+model RolePermissionVersion {
+  id              String @id @default(uuid()) @db.Uuid
+  configurationId String @map("configuration_id") @db.VarChar(200)
+  number          Int
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  configuration   RolePermissionConfiguration @relation(fields: [configurationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  grants          RolePermissionGrant[]
+  audits          RolePermissionAuditEvent[]
+  @@unique([configurationId, number])
+  @@map("role_permission_versions")
+}
+
+model RolePermissionGrant {
+  id          String @id @default(uuid()) @db.Uuid
+  versionId   String @map("version_id") @db.Uuid
+  permission  String @db.VarChar(80)
+  scope       String @db.VarChar(10)
+  version     RolePermissionVersion @relation(fields: [versionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@unique([versionId, permission])
+  @@map("role_permission_grants")
+}
+
+model RolePermissionAuditEvent {
+  id          String @id @default(uuid()) @db.Uuid
+  versionId   String @map("version_id") @db.Uuid
+  actorId     String @map("actor_id") @db.Uuid
+  actorRoles  Json @map("actor_roles")
+  reason      String @db.VarChar(40)
+  previous    Json
+  next        Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  version     RolePermissionVersion @relation(fields: [versionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([versionId, createdAt])
+  @@map("role_permission_audit_events")
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -32,6 +101,7 @@ model CrmReference {
   programs     CrmProgramAvailability[] @relation("AvailableProgram")
   availability CrmProgramAvailability[] @relation("AvailableCampus")
   tags         CrmLeadTag[]
+  teamResponsibilities TeamResponsibility[]
 
   @@unique([kind, scopeKey, code])
   @@index([kind, state, campusId])
@@ -133,6 +203,7 @@ model Collaborator {
   passwordHash          LocalPasswordHash?
   sessions              LocalSession[]
   recoveryChallenges    LocalRecoveryChallenge[]
+  teamResponsibilities TeamResponsibility[]
 
   @@index([active, campusId, teamId])
   @@map("collaborators")

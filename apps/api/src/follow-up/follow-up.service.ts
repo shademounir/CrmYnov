@@ -25,6 +25,13 @@ export class FollowUpService {
     return { ...record };
   }
 
+  /** Internal locator, followed by authorization on the current persisted lead. */
+  permissionLeadId(id: string): string {
+    const item = this.items.get(id);
+    if (!item) throw new NotFoundException({ code: "follow_up_not_found" });
+    return item.leadId;
+  }
+
   notifyDue(now = new Date()): { due: number; notifications: number } {
     let due = 0; let notifications = 0;
     for (const item of this.items.values()) if (item.state === "SCHEDULED" && item.dueAt <= now.toISOString()) {
@@ -37,6 +44,7 @@ export class FollowUpService {
   decide(id: string, input: { action?: "POSTPONE" | "COMPLETE" | "CANCEL"; dueAt?: string; reason?: string; expectedVersion?: number }, principal: Principal, correlationId: string): FollowUpRecord {
     const current = this.items.get(id); if (!current) throw new NotFoundException({ code: "follow_up_not_found" });
     if (current.ownerId !== principal.userId && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "follow_up_forbidden" });
+    if (!this.leads.reportingSnapshot(principal).some((lead) => lead.id === current.leadId)) throw new ForbiddenException({ code: "follow_up_forbidden" });
     if (input.expectedVersion !== current.version || current.state === "COMPLETED" || current.state === "CANCELLED") throw new ConflictException({ code: "follow_up_concurrent" });
     const reason = input.reason?.trim(); if (!input.action || !reason) throw new BadRequestException({ code: "follow_up_decision_invalid" });
     const due = input.action === "POSTPONE" ? new Date(input.dueAt ?? "") : undefined;
@@ -47,7 +55,11 @@ export class FollowUpService {
     return { ...updated };
   }
 
-  list(principal: Principal): FollowUpRecord[] { return [...this.items.values()].filter((item) => item.ownerId === principal.userId || principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")).sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)).map((item) => ({ ...item })); }
+  list(principal: Principal): FollowUpRecord[] {
+    const visible = new Set(this.leads.reportingSnapshot(principal).map((lead) => lead.id));
+    return [...this.items.values()].filter((item) => visible.has(item.leadId) && (item.ownerId === principal.userId || principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")))
+      .sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)).map((item) => ({ ...item }));
+  }
   reportingSnapshot(principal: Principal): FollowUpRecord[] {
     const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     if (!manager && !principal.roles.includes("ADMISSIONS")) throw new ForbiddenException({ code: "reporting_role_required" });

@@ -286,6 +286,14 @@ export class ChatService {
     return { ...receipt };
   }
 
+  /** Internal resource locator; membership is checked before returning context. */
+  permissionLeadId(messageId: string, principal: Principal): string {
+    const message = this.assertMessageMember(messageId, principal);
+    const leadId = this.conversations.get(message.conversationId)?.leadId;
+    if (!leadId) throw new ConflictException({ code: "chat_lead_context_required" });
+    return leadId;
+  }
+
   convertMessageToActivity(
     messageId: string,
     principal: Principal,

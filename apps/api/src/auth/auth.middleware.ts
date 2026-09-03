@@ -3,11 +3,16 @@ import type { AuthenticatedRequest } from "./auth.types.js";
 import { SessionService } from "./session.service.js";
 
 export function authenticationMiddleware(sessions: SessionService) {
-  return (request: AuthenticatedRequest, _response: Response, next: NextFunction): void => {
+  return async (request: AuthenticatedRequest, response: Response, next: NextFunction): Promise<void> => {
     const header = request.header("authorization");
     if (header?.startsWith("Bearer ")) {
-      const principal = sessions.authenticate(header.slice(7));
-      if (principal) request.principal = principal;
+      try {
+        const principal = await sessions.authenticateForApi(header.slice(7));
+        if (principal) request.principal = principal;
+      } catch {
+        response.status(503).json({ code: "authentication_unavailable" });
+        return;
+      }
     }
     next();
   };

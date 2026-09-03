@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { createApplication } from "../../src/application.js";
+import { createApplication } from "./synthetic-application.js";
 import { AuditService } from "../../src/audit/audit.service.js";
 import { SessionService } from "../../src/auth/session.service.js";
 import type { Role } from "../../src/auth/auth.types.js";

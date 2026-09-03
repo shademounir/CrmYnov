@@ -46,6 +46,7 @@ const navigation = [
   { href: "/manager/reports/commercial-performance", label: "Rapports", icon: ChartBar },
   { href: "/admin/users", label: "Administration", icon: Gear },
   { href: "/admin/references", label: "Référentiels", icon: Gear },
+  { href: "/admin/roles", label: "Rôles et permissions", icon: Gear },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {
