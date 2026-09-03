@@ -14,6 +14,13 @@ interface AdditionState {
   request: LeadCollaborationRequest;
 }
 
+export function compareAuditKeys(left: string, right: string): number {
+  return left.localeCompare(right, "en");
+}
+export function compareNumericResults(left: number, right: number): number {
+  return left - right;
+}
+
 /** Only called with the harness-owned tmpfs database; no supplied DATABASE_URL. */
 export async function prepareLeadAuditFixture(client: PrismaClient): Promise<LeadAuditFixture> {
   async function reference(kind: "CAMPUS" | "PROGRAM" | "CAMPAIGN", code: string): Promise<string> {
@@ -131,7 +138,7 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   for (const event of events) {
     assert.deepEqual(event.actorRoles, ["ADMIN"]); assert.equal(event.campusId, "SYNTHETIC-A"); assert.equal(event.resourceType, "LEAD"); assert.equal(event.result, "SUCCESS");
     assert.equal(event.sessionId, null); assert.equal(event.minimizedIp, null);
-    assert.deepEqual(Object.keys(event.after as object).sort(), ["scope", "version"]);
+    assert.deepEqual(Object.keys(event.after as object).sort(compareAuditKeys), ["scope", "version"]);
     assert.equal((event.after as { scope: string }).scope, "CAMPUS");
     for (const excluded of [input.email, actor.token, actor.sessionId, "password", "token", "hash"]) assert.equal(JSON.stringify(event.after).includes(excluded), false);
   }
@@ -164,7 +171,7 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   }
   const latest = await client.lead.findUniqueOrThrow({ where: { id } }), beforeRace = await client.auditEvent.count({ where: { resourceId: id } });
   const concurrent = await Promise.all([1, 2].map((number) => request(`/leads/${id}`, "PATCH", { source: `SYNTHETIC-${number}`, expectedVersion: latest.version, idempotencyKey: `cycle-race-${number}` }, `cycle-race-${number}`)));
-  assert.deepEqual(concurrent.map((response) => response.status).sort(), [200, 409]);
+  assert.deepEqual(concurrent.map((response) => response.status).sort(compareNumericResults), [200, 409]);
   const conflict = concurrent.find((response) => response.status === 409)!;
   const conflictBody = await conflict.json() as { code: string };
   assert.ok(["lead_version_conflict", "permission_version_conflict"].includes(conflictBody.code));

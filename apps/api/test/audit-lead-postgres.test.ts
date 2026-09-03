@@ -6,7 +6,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
-import { assertLeadAuditCycle, prepareLeadAuditFixture } from "./audit-lead-cycle.js";
+import { assertLeadAuditCycle, prepareLeadAuditFixture } from "./helpers/audit-lead-cycle.test.js";
 
 async function availablePort(): Promise<number> {
   const server = createServer();

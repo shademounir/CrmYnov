@@ -33,6 +33,12 @@ Une recherche/détail réussi ajoute AUDIT_SEARCHED/AUDIT_VIEWED avant réponse.
 Si cet append échoue, la lecture échoue ; aucun filtre textuel libre ni
 secret n'est journalisé. Une erreur ne modifie aucun événement antérieur.
 
+Arbitrage PO de finalisation : les filtres de cet écran restent fonctionnels
+et réinitialisables dans l'interface ; leur synchronisation dans l'URL n'est
+pas un critère CRMY-54 et n'est pas implémentée dans cette livraison. Elle
+reste une amélioration ultérieure non bloquante, à coordonner avec les vues
+et filtres URL déjà couverts par CRMY-52, sans création automatique de ticket.
+
 Réponse en liste autorisée : ID technique, type, rôle, ressource/campus, date,
 résultat et quelques métadonnées booléennes/entières (version, active, count…).
 Jamais session, hash, token, IP, correlationId ou contenu avant/après arbitraire.
