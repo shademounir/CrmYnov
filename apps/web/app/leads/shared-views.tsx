@@ -8,6 +8,14 @@ const empty: SharingSnapshot = { owned: [], received: [], audiences: [], history
 type Pending = { label: string; path: string; method: string; body: object };
 type Feedback = { kind: "idle" } | { kind: "success" | "error"; text: string };
 
+function SharingFeedback({ loading, feedback }: Readonly<{ loading: boolean; feedback: Feedback }>): React.JSX.Element {
+  return <>
+    {loading ? <p role="status">Chargement des vues et des audiences autorisées…</p> : null}
+    {feedback.kind === "error" ? <p role="alert" className="shared-view-error">{feedback.text}</p> : null}
+    {feedback.kind === "success" ? <p role="status">{feedback.text}</p> : null}
+  </>;
+}
+
 function AudienceBadges({ view }: Readonly<{ view: SharedView }>): React.JSX.Element {
   return <ul className="shared-view-badges" aria-label={`Portées autorisées de ${view.name}`}>
     {view.visibleAudiences.map((audience, index) => <li key={`${audience.type}:${index}`}><span className="shared-view-badge">{audience.type === "TEAM" ? "Équipe" : "Campus"}</span> <span>{audience.label}</span></li>)}
@@ -76,9 +84,7 @@ export function SharedViewControls({ current, readPrivateViews }: Readonly<{ cur
   return <section className="shared-view-controls" aria-labelledby="view-sharing-title" aria-busy={loading || busy}>
     <header className="shared-view-row"><h2 id="view-sharing-title">Partage des vues</h2><button type="button" className="secondary-button" disabled={busy} onClick={() => requestRefresh()}>Actualiser les partages</button></header>
     <p>Vous partagez des filtres, jamais des droits sur les leads. Chaque lecteur conserve son propre périmètre.</p>
-    {loading ? <p role="status">Chargement des vues et des audiences autorisées…</p> : null}
-    {feedback.kind === "error" ? <p role="alert" className="shared-view-error">{feedback.text}</p> : null}
-    {feedback.kind === "success" ? <p role="status">{feedback.text}</p> : null}
+    <SharingFeedback loading={loading} feedback={feedback} />
     <div className="shared-view-grid">
       <label>Ma vue originale<select value={selected} disabled={unavailable} onChange={(event) => setSelected(event.target.value)}><option value="">Choisir une vue privée</option>{snapshot.owned.map((view) => <option key={view.id} value={view.id}>{view.name} — v{view.version}</option>)}</select></label>
       <label>Destinataire autorisé<select value={audienceId} disabled={unavailable} onChange={(event) => setAudienceId(event.target.value)}><option value="">Choisir une équipe ou un campus</option>{snapshot.audiences.map((value) => <option key={value.id} value={value.id}>{value.kind === "TEAM" ? "Équipe" : "Campus"} — {value.label}</option>)}</select></label>
