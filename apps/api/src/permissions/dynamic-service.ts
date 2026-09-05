@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { roles, type Principal, type Role } from "../auth/auth.types.js";
 import { businessRoleLabels, type ResourceContext } from "./permission.service.js";
-import { configurationKey, definition, GLOBAL_CAMPUS, permissionCatalogue, scopeWithin, validateGrants, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
+import { configurationKey, definition, GLOBAL_CAMPUS, historicalGrants, permissionCatalogue, scopeWithin, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
 import { defaultConfiguration, evaluatePermission, resolveGrants, type PermissionDecision } from "./dynamic-evaluator.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "./dynamic-repository.js";
 import { campusContext, currentPrincipal, permissionDenied, resourceEvaluationContext } from "./dynamic-context.js";
@@ -52,12 +52,14 @@ function assertCeilings(input: ConfigurationInput, rows: ConfigurationSnapshot[]
 }
 function assertAdminGrantBounds(actor: Principal, input: ConfigurationInput, rows: ConfigurationSnapshot[]): void {
   if (actor.roles.includes("SUPER_ADMIN")) return;
+  // Configuring a scope uses administrative authority, not ownership of a business resource.
+  // The closed registry calls this capability roles.permissions.manage (settings management).
+  const authority = evaluatePermission(actor, "roles.permissions.manage", rows, campusContext(actor, input.campus));
   for (const [key, scope] of Object.entries(input.grants)) {
     if (scope === "NONE") continue;
-    const decision = evaluatePermission(actor, key, rows, campusContext(actor, input.campus));
-    if (definition(key)?.reserved || !decision.allowed) permissionDenied();
-    // A personal or team-only grant cannot safely delegate a different user's resource set.
-    if (!decision.sources.some((source) => source.allowed && scopeWithin(scope, source.sourceScope))) permissionDenied();
+    if (scope === "GLOBAL" || definition(key)?.reserved) permissionDenied();
+    if (!authority.sources.some((source) => source.role === "ADMIN" && source.allowed &&
+      [source.sourceScope, source.globalCeiling, source.campusCeiling, source.campusGrant].every((ceiling) => scopeWithin(scope, ceiling)))) permissionDenied();
   }
 }
 export function configurationChanges(before: Grants, after: Grants): ConfigurationChange[] {
@@ -171,8 +173,7 @@ export class DynamicPermissionService {
       const principal = await currentPrincipal(tx, actor); editableTarget(principal, input);
       const version = await tx.rolePermissionVersion.findUnique({ where: { configurationId_number: { configurationId: configurationKey(input), number: input.restoreVersion } }, include: { grants: true } });
       if (!version) permissionDenied();
-      const grants = Object.fromEntries(version.grants.map((grant) => [grant.permission, grant.scope]));
-      validateGrants(grants, input);
+      const grants = historicalGrants(Object.fromEntries(version.grants.map((grant) => [grant.permission, grant.scope])), input);
       const restored: ConfigurationInput = { kind: input.kind, role: input.role, campus: input.campus, expectedVersion: input.expectedVersion, confirmed: input.confirmed, reason: "RESTORE_VERSION", grants };
       validateInput(restored);
       return this.saveInTransaction(tx, principal, restored);

@@ -1,7 +1,7 @@
 import { ConflictException, HttpException, Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
-import { configurationKey, validateGrants, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
+import { configurationKey, historicalGrants, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
 import type { Principal } from "../auth/auth.types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -52,8 +52,7 @@ export class DynamicPermissionRepository {
       if (configurationKey(target) !== row.id || row.version < 1) throw new Error("permission_configuration_invalid");
       const versions = row.versions.filter((version) => version.number === row.version);
       if (versions.length !== 1) throw new Error("permission_version_missing");
-      const grants = Object.fromEntries(versions[0]!.grants.map((grant) => [grant.permission, grant.scope]));
-      validateGrants(grants, target);
+      const grants = historicalGrants(Object.fromEntries(versions[0]!.grants.map((grant) => [grant.permission, grant.scope])), target);
       return { ...target, id: row.id, version: row.version, grants };
     });
   }

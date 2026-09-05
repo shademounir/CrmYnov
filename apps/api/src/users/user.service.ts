@@ -5,9 +5,10 @@ import { isRole } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { professionalDisplayName } from "./professional-display-name.js";
 
 export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean; authenticationVersion: number }
-export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; roles: string[]; campusId?: string; teamId?: string }
+export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; professionalDisplayName?: string | null; roles: string[]; campusId?: string; teamId?: string }
 export interface UpdateAuthorization { roles: string[]; campusId?: string; teamId?: string; reason: string; confirmed: boolean }
 
 const IDENTIFIER = /^[a-zA-Z0-9_-]{2,64}$/;
@@ -47,6 +48,7 @@ export class UserService implements OnModuleInit {
   }
 
   create(input: CreateCollaborator, actorId: string, correlationId: string): Collaborator {
+    const displayName = professionalDisplayName(input.professionalDisplayName);
     const email = input.professionalEmail.trim().toLowerCase();
     if (!isEmail(email) || (input.secondaryEmail && !isEmail(input.secondaryEmail)) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "collaborator_invalid" });
     if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
@@ -55,8 +57,8 @@ export class UserService implements OnModuleInit {
     this.users.set(user.id, user);
     this.sessions.updateIdentityState(user.id, true, user.authenticationVersion);
     const client = this.prisma?.client;
-    if (client) this.enqueue(client.collaborator.create({ data: { id: user.id, professionalEmail: user.professionalEmail, secondaryEmail: user.secondaryEmail ?? null, roles: user.roles, campusId: user.campusId ?? null, teamId: user.teamId ?? null, active: true, firstLoginRequired: true, authenticationVersion: 1 } }));
-    this.audit.record({ eventType: "COLLABORATOR_CREATED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, after: { subjectId: user.id, roles: user.roles, campusId: user.campusId, teamId: user.teamId }, result: "SUCCESS", idempotencyKey: `collaborator-created:${user.id}` });
+    if (client) this.enqueue(client.collaborator.create({ data: { id: user.id, professionalEmail: user.professionalEmail, professionalDisplayName: displayName, secondaryEmail: user.secondaryEmail ?? null, roles: user.roles, campusId: user.campusId ?? null, teamId: user.teamId ?? null, active: true, firstLoginRequired: true, authenticationVersion: 1 } }));
+    this.audit.record({ eventType: "COLLABORATOR_CREATED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, after: { subjectId: user.id, roles: user.roles, campusId: user.campusId, teamId: user.teamId, displayNameProvided: displayName !== null }, result: "SUCCESS", idempotencyKey: `collaborator-created:${user.id}` });
     return { ...user, roles: [...user.roles] };
   }
 

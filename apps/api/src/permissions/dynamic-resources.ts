@@ -60,6 +60,7 @@ export async function routeContexts(tx: PermissionTransaction, request: Authenti
   if (!campuses.length) return [campusContext(principal, GLOBAL_CAMPUS)];
   return Promise.all([...new Set(campuses)].map(async (value) => {
     const campus = await canonicalCampus(tx, value!);
-    return resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+    return resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true,
+      ...(controller === "SavedLeadViewController" ? { ownerId: principal.userId } : {}) });
   }));
 }

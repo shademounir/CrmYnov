@@ -15,6 +15,7 @@ import { canonicalCampus, leadResource } from "../src/permissions/dynamic-resour
 import type { Principal, Role } from "../src/auth/auth.types.js";
 import { createApplication } from "../src/application.js";
 import { SessionService } from "../src/auth/session.service.js";
+import { HttpException } from "@nestjs/common";
 import type { AddressInfo } from "node:net";
 
 const enabled = process.env.CRMY169_EPHEMERAL_TEST === "true" || process.env.CI === "true";
@@ -208,5 +209,87 @@ test("CRMY-169 ephemeral PostgreSQL: authorization, versions, restore, rollback 
     assert.equal((await read(`leads/${lead.id}`, managerSession.token)).status, 200);
     await service.teamResponsibilities(superAdmin, { teamId: "synthetic-team", campusId, managerId: manager.userId, active: false, expectedVersion: 3, confirmed: true });
     assert.equal((await read(`leads/${lead.id}`, managerSession.token)).status, 403, "same membership without responsibility cannot grant TEAM");
+  });
+  await t.test("administrative delegation is separate from runtime ownership (CRMY-170 PO arbitration)", async (delegation) => {
+    const delegationCampus = await campus(`DELEGATION-${marker}`);
+    const campusAdmin = await actor(["ADMIN"], delegationCampus);
+    const campusManager = await actor(["MANAGER"], delegationCampus);
+    const campusAdviser = await actor(["ADMISSIONS"], delegationCampus);
+    const campusReader = await actor(["AUDITOR"], delegationCampus);
+    const configured: ConfigurationTarget = { kind: "ROLE", role: "MANAGER", campus: delegationCampus };
+    const adminTarget: ConfigurationTarget = { ...configured, role: "ADMIN" };
+    const configurationId = configurationKey(configured);
+    function forbidden(error: unknown): boolean {
+      return error instanceof HttpException && error.getStatus() === 403 && JSON.stringify(error.getResponse()) === JSON.stringify({ code: "permission_denied" });
+    }
+    let version = 0;
+    for (const scope of ["OWN", "TEAM", "CAMPUS"] as const) {
+      await delegation.test(`Admin CAMPUS with administrative grant configures ${scope}`, async () => {
+        const grants: Grants = { ...defaultConfiguration(configured), "lead.view": scope };
+        assert.equal(grants["lead.views.revoke.own"], "OWN", "keep the original grant, do not bypass the regression");
+        const before = await client.rolePermissionAuditEvent.count();
+        assert.equal((await service.preview(campusAdmin, change(configured, grants, version))).mutated, false);
+        assert.equal(await client.rolePermissionAuditEvent.count(), before);
+        // The third transition restores CAMPUS; every version is a real changed configuration.
+        assert.equal((await service.save(campusAdmin, change(configured, grants, version))).version, ++version);
+        assert.equal((await second.read(campusAdmin, configured)).grants["lead.view"], scope);
+        assert.equal(await client.rolePermissionAuditEvent.count(), before + 1);
+      });
+    }
+    await delegation.test("Admin cannot configure GLOBAL or another campus and failures append nothing", async () => {
+      const before = await service.history(campusAdmin, configured);
+      await assert.rejects(() => service.save(campusAdmin, change({ ...configured, campus: "GLOBAL" }, { ...defaultConfiguration({ ...configured, campus: "GLOBAL" }), "lead.view": "GLOBAL" })), forbidden);
+      await assert.rejects(() => service.save(campusAdmin, change(configured, { ...defaultConfiguration(configured), "lead.view": "GLOBAL" }, version)), (error: unknown) => error instanceof HttpException && error.getStatus() === 400);
+      await assert.rejects(() => service.preview(campusAdmin, change({ ...configured, campus: otherCampus }, defaultConfiguration(configured))), forbidden);
+      assert.deepEqual(await service.history(campusAdmin, configured), before);
+    });
+    await delegation.test("Admin without roles.permissions.manage cannot preview or save even OWN", async () => {
+      const disabled = { ...defaultConfiguration(adminTarget), "roles.permissions.manage": "NONE" as const };
+      await service.save(superAdmin, change(adminTarget, disabled));
+      const input = change(configured, { ...defaultConfiguration(configured), "lead.view": "OWN" }, version);
+      await assert.rejects(() => service.preview(campusAdmin, input), forbidden);
+      await assert.rejects(() => service.save(campusAdmin, input), forbidden);
+      assert.equal((await service.read(superAdmin, configured)).version, version);
+      await service.save(superAdmin, change(adminTarget, defaultConfiguration(adminTarget), 1));
+    });
+    await delegation.test("Manager, Conseiller and AUDITOR cannot configure role permissions", async () => {
+      for (const who of [campusManager, campusAdviser, campusReader]) {
+        await assert.rejects(() => service.save(who, change(configured, { ...defaultConfiguration(configured), "lead.view": "OWN" }, version)), forbidden);
+      }
+      const readerTarget: ConfigurationTarget = { ...configured, role: "AUDITOR" };
+      await assert.rejects(() => service.save(superAdmin, change(readerTarget, { ...defaultConfiguration(readerTarget), "lead.views.revoke.own": "OWN" })), (error: unknown) => error instanceof HttpException && error.getStatus() === 400);
+    });
+    await delegation.test("runtime revoke.own requires the actual owner despite administrative authority", async () => {
+      const ownView = await client.savedLeadView.create({ data: { ownerId: campusAdmin.userId, name: "Vue synthétique propriétaire", filters: {} } });
+      const otherView = await client.savedLeadView.create({ data: { ownerId: campusManager.userId, name: "Vue synthétique autre propriétaire", filters: {} } });
+      const provider = new PermissionService(new DynamicGrantProvider(service));
+      const ownResource = { scope: "CAMPUS" as const, campusKeys: [delegationCampus], active: true, ownerId: ownView.ownerId };
+      assert.equal(await provider.can(campusAdmin, "lead.views.revoke.own", ownResource), true);
+      assert.equal(await provider.can(campusAdmin, "lead.views.revoke.own", { ...ownResource, ownerId: otherView.ownerId }), false);
+      await assert.rejects(() => provider.assertCan(campusAdmin, "lead.views.revoke.own", { ...ownResource, ownerId: otherView.ownerId }), forbidden);
+      assert.equal(await provider.can(campusAdmin, "lead.views.revoke.own", { ...ownResource, campusKeys: [otherCampus] }), false);
+      assert.equal(await provider.can(campusReader, "lead.views.revoke.own", { ...ownResource, ownerId: campusReader.userId }), false);
+    });
+    await delegation.test("delegation cannot exceed a narrower administrative campus ceiling", async () => {
+      const ceilingTarget: ConfigurationTarget = { kind: "CEILING", role: "*", campus: delegationCampus };
+      await service.save(superAdmin, change(ceilingTarget, { ...defaultConfiguration(ceilingTarget), "roles.permissions.manage": "NONE" }));
+      await assert.rejects(() => service.save(campusAdmin, change(configured, { ...defaultConfiguration(configured), "lead.view": "OWN" }, version)), forbidden);
+    });
+    await delegation.test("configuration versions and author audits are append-only", async () => {
+      const history = await service.history(campusAdmin, configured);
+      assert.deepEqual(history.map((entry) => entry.number), [3, 2, 1]);
+      for (const entry of history) {
+        assert.equal(entry.audits.length, 1); assert.equal(entry.audits[0]?.actorId, campusAdmin.userId);
+        assert.equal(entry.grants.find((grant) => grant.permission === "lead.views.revoke.own")?.scope, "OWN");
+      }
+      assert.equal(await client.rolePermissionVersion.count({ where: { configurationId } }), 3);
+    });
+    await delegation.test("Super Admin can configure GLOBAL within the global ceiling", async () => {
+      const globalRole: ConfigurationTarget = { kind: "ROLE", role: "ADMISSIONS", campus: "GLOBAL" };
+      const saved = await service.save(superAdmin, change(globalRole, { ...defaultConfiguration(globalRole), "lead.view": "GLOBAL" }));
+      assert.equal(saved.version, 1);
+      assert.equal((await service.read(superAdmin, globalRole)).grants["lead.view"], "GLOBAL");
+      await assert.rejects(() => service.read(campusAdmin, globalRole), forbidden);
+    });
   });
 });

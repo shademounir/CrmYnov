@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("Start", "Verify", "Restart", "Stop", "Validate", "Cleanup")]
+  [ValidateSet("Start", "Seed", "Verify", "Restart", "Stop", "Validate", "Cleanup")]
   [string]$Action,
   [switch]$ConfirmCleanup
 )
@@ -47,18 +47,25 @@ function Stop-Stack {
 }
 
 function Invoke-Check([string]$Mode) {
-  Invoke-Compose @("run", "--rm", "--no-deps", "migrate", "npx", "tsx", "apps/api/scripts/local-mvp-check.ts", $Mode)
+  Invoke-Compose @("run", "--rm", "--no-deps", "--env", "CRM_PRIMARY_READY_URL=http://api:3001/health/ready", "--env", "CRM_SECONDARY_READY_URL=http://api-secondary:3001/health/ready", "migrate", "apps/api/dist-local/scripts/local-mvp-check.js", $Mode)
+}
+
+function Invoke-Seed {
+  Assert-LocalContract
+  Invoke-Compose @("--profile", "seed", "run", "--rm", "--no-deps", "seed")
 }
 
 Push-Location $RepositoryRoot
 try {
   switch ($Action) {
     "Start" { Start-Stack }
+    "Seed" { Invoke-Seed }
     "Verify" { Assert-LocalContract; Invoke-Check "verify" }
     "Restart" { Stop-Stack; Start-Stack }
     "Stop" { Stop-Stack }
     "Validate" {
       Start-Stack
+      Invoke-Seed
       Invoke-Check "prepare"
       Stop-Stack
       Start-Stack

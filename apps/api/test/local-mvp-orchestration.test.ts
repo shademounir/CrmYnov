@@ -45,6 +45,26 @@ test("runtime probes cover persistence, two instances, seed replay and outbox co
   assert.match(check, /outbox_claim_concurrency_failed/);
   assert.match(check, /synthetic_seed_incomplete/);
   assert.match(check, /hostname !== "postgres"/);
-  assert.match(dockerfile, /AS migration/);
-  assert.match(dockerfile, /USER node:node/);
+  assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552 AS runtime/);
+  assert.match(dockerfile, /USER 65532:65532/);
+  assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/);
+});
+
+test("migration and explicit synthetic seed use the API image without shell or npm", async () => {
+  const compose = await readFile(files.compose, "utf8");
+  const migration = compose.split(/^ {2}migrate:/m)[1]?.split(/^ {2}seed:/m)[0] ?? "";
+  const seed = compose.split(/^ {2}seed:/m)[1]?.split(/^ {2}api:/m)[0] ?? "";
+  assert.match(migration, /image: crmynov-api:local/);
+  assert.match(migration, /command: \["node_modules\/prisma\/build\/index.js", "migrate", "deploy", "--schema", "apps\/api\/prisma\/schema.prisma"\]/);
+  assert.doesNotMatch(migration, /CRM_LOCAL_SEED_PASSWORD|db:prepare|target: migration/);
+  assert.match(seed, /profiles: \[seed\]/);
+  assert.match(seed, /image: crmynov-api:local/);
+  assert.match(seed, /command: \["apps\/api\/dist-local\/prisma\/seed-local.js"\]/);
+  assert.match(seed, /CRM_LOCAL_SEED_PASSWORD/);
+  for (const service of [migration, seed]) {
+    assert.match(service, /read_only: true/);
+    assert.match(service, /cap_drop: \[ALL\]/);
+    assert.match(service, /restart: "no"/);
+    assert.doesNotMatch(service, /"npm"|"npx"|"sh"|"bash"/);
+  }
 });

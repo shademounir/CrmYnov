@@ -1,0 +1,20 @@
+.shared-view-controls { margin-top: 24px; padding: 24px; border: 1px solid #dfe5e7; border-radius: 12px; background: #fff; color: #1d1d1e; }
+.shared-view-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-block: 12px; }
+.shared-view-row h2 { flex: 1; }
+.shared-view-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; }
+.shared-view-controls label { display: grid; gap: 8px; }
+.shared-view-controls button, .shared-view-controls input, .shared-view-controls select, .shared-view-controls a { min-height: 44px; min-width: 44px; }
+.shared-view-controls button:focus-visible, .shared-view-controls input:focus-visible, .shared-view-controls select:focus-visible, .shared-view-controls a:focus-visible { outline: 3px solid #17665f; outline-offset: 3px; }
+.shared-view-controls button:disabled { opacity: .55; cursor: not-allowed; }
+.shared-view-controls button.secondary-button { color: var(--onyx); background: var(--surface); border-color: var(--border); }
+.shared-view-controls button.secondary-button:hover:not(:disabled), .shared-view-controls button.secondary-button:focus-visible { color: var(--onyx); background: var(--teal-soft); border-color: var(--teal-dark); }
+.shared-view-controls button.secondary-button:focus-visible { outline: 3px solid var(--teal-dark); outline-offset: 3px; }
+.shared-view-controls button.secondary-button:disabled { color: var(--muted); background: var(--page); border-color: var(--border); opacity: 1; cursor: not-allowed; }
+.shared-view-card { padding: 16px; border: 1px solid #dfe5e7; border-radius: 8px; overflow-wrap: anywhere; }
+.shared-view-confirm { padding: 16px; border: 2px solid #17665f; background: #edf8f6; border-radius: 8px; }
+.shared-view-error { color: #9d2323; }
+.shared-view-badges { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0; list-style: none; }
+.shared-view-badges li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.shared-view-badge { display: inline-block; padding: 4px 10px; border: 1px solid #17665f; border-radius: 16px; background: #edf8f6; color: #17665f; font-weight: 600; }
+.shared-view-controls, #shared-view-history { scroll-margin-top: 80px; }
+@media (max-width: 600px) { .shared-view-controls { padding: 16px; } .shared-view-grid { grid-template-columns: 1fr; } .shared-view-row > button { width: 100%; } }

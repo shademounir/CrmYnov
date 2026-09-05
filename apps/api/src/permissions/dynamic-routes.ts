@@ -40,6 +40,8 @@ const groupedHandlers: Readonly<Record<string, readonly string[]>> = {
 const delegated = new Set(["ReferenceController", "LeadTagController", "DynamicPermissionController", "AuditController"]);
 export const lifecycleControllers = new Set(["HealthController", "SessionController", "AccessRecoveryController", "FirstLoginController", "ForminatorWebhookController"]);
 export function routePermissions(controller: string, handler: string): readonly string[] | null {
+  // Each operation rechecks persisted audience, owner and grant inside the shared fence.
+  if (controller === "ViewSharingController") return ["audiences", "received", "history", "read", "share", "revoke", "duplicate", "archive"].includes(handler) ? [] : null;
   if (controller === "ChatController" && handler === "convertToActivity") return ["chat.use", "interaction.create"];
   if (delegated.has(controller)) return [];
   if (grouped[controller]) return (groupedHandlers[controller] ?? ["read"]).includes(handler) ? [grouped[controller]] : null;

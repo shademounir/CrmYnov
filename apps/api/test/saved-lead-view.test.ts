@@ -10,7 +10,7 @@ const other: Principal = { ...owner, userId: "other" };
 const globalManager: Principal = { userId: "manager", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "synthetic-manager" };
 const code = (expected: string) => (error: unknown): boolean => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.() ?? error).includes(expected);
 function service(): { views: SavedLeadViewService; audit: AuditService } { const audit = new AuditService(); return { views: new SavedLeadViewService(audit), audit }; }
-function persistentService(): SavedLeadViewService {
+function persistentService(): { views: SavedLeadViewService; auditTypes: string[] } {
   type Row = { id: string; ownerId: string; name: string; filters: Record<string, string>; version: number; createdAt: Date; updatedAt: Date };
   const rows = new Map<string, Row>();
   const store = {
@@ -20,8 +20,18 @@ function persistentService(): SavedLeadViewService {
     update: ({ where, data }: { where: { id: string }; data: { name: string; filters: Record<string, string>; version: { increment: number } } }): Promise<Row> => { const current = rows.get(where.id)!; const row = { ...current, name: data.name, filters: data.filters, version: current.version + data.version.increment, updatedAt: new Date() }; rows.set(row.id, row); return Promise.resolve(row); },
     delete: ({ where }: { where: { id: string } }): Promise<Row> => { const current = rows.get(where.id)!; rows.delete(where.id); return Promise.resolve(current); },
   };
-  const client = { savedLeadView: store, $transaction: async <T>(callback: (tx: { savedLeadView: typeof store }) => Promise<T>): Promise<T> => callback({ savedLeadView: store }) };
-  return new SavedLeadViewService(new AuditService(), { client } as never);
+  const auditTypes: string[] = [];
+  const transaction = {
+    savedLeadView: store,
+    savedLeadViewShare: { count: (): Promise<number> => Promise.resolve(0) },
+    collaborator: { findUniqueOrThrow: (): Promise<{ campusId: string }> => Promise.resolve({ campusId: "Campus A" }) },
+    auditEvent: { create: ({ data }: { data: { eventType: string; resourceType: string; actorId: string; after: { version: number } } }): Promise<object> => {
+      assert.equal(data.resourceType, "SAVED_LEAD_VIEW"); assert.equal(data.actorId, owner.userId); assert.ok(data.after.version >= 1);
+      auditTypes.push(data.eventType); return Promise.resolve({ ...data });
+    } },
+  };
+  const client = { savedLeadView: store, $transaction: async <T>(callback: (tx: typeof transaction) => Promise<T>): Promise<T> => callback(transaction) };
+  return { views: new SavedLeadViewService(new AuditService(), { client } as never), auditTypes };
 }
 
 test("creates, loads, updates and deletes a private normalized lead view with an append-only audit", async () => {
@@ -49,9 +59,10 @@ test("prevents cross-user reads, updates and deletes and validates optimistic ve
 });
 
 test("uses the Prisma transaction adapter for persistent private views", async () => {
-  const views = persistentService(); const created = await views.create({ name: "Persistée", filters: { program: "Programme" } }, owner, "persistent-create");
+  const { views, auditTypes } = persistentService(); const created = await views.create({ name: "Persistée", filters: { program: "Programme" } }, owner, "persistent-create");
   assert.equal((await views.list(owner)).length, 1); assert.equal((await views.update(created.id, { name: "Persistée 2", filters: { source: "WEB" }, expectedVersion: 1 }, owner, "persistent-update")).version, 2);
   await views.remove(created.id, owner, "persistent-delete"); await assert.rejects(() => views.remove(created.id, owner, "missing"), code("saved_view_not_found"));
+  assert.deepEqual(auditTypes, ["SAVED_LEAD_VIEW_CREATED", "SAVED_LEAD_VIEW_UPDATED", "SAVED_LEAD_VIEW_DELETED"]);
 });
 
 test("controller forwards only authenticated principals and correlation metadata", async () => {

@@ -8,6 +8,8 @@ import { SessionService } from "./auth/session.service.js";
 import { referencePaths } from "./references/reference.openapi.js";
 import { dynamicPermissionPaths } from "./permissions/dynamic-openapi.js";
 import { auditPaths } from "./audit/audit.openapi.js";
+import { viewSharingPaths } from "./leads/view-sharing.openapi.js";
+import { createCollaboratorBody } from "./users/user.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -27,6 +29,7 @@ export function configureApplication(app: INestApplication): void {
       ...referencePaths,
       ...dynamicPermissionPaths,
       ...auditPaths,
+      ...viewSharingPaths,
       "/health": {
         get: {
           summary: "API operational health",
@@ -102,7 +105,7 @@ export function configureApplication(app: INestApplication): void {
       "/leads/{leadId}/collaboration-requests": { post: { summary: "Request a controlled secondary collaborator change", responses: { "201": { description: "Pending request without access change" }, "409": { description: "Duplicate or conflicting request" } } } },
       "/collaboration-requests": { get: { summary: "List authorized secondary collaborator decisions", responses: { "200": { description: "Decision history" } } } },
       "/collaboration-requests/{id}/decision": { patch: { summary: "Approve or reject as a distinct Manager/Admin", responses: { "200": { description: "Decision recorded" }, "403": { description: "Role separation refused" }, "409": { description: "Concurrent decision" } } } },
-      "/users": { get: { summary: "Filter collaborators", responses: { "200": { description: "Collaborators" }, "403": { description: "SUPER_ADMIN required" } } }, post: { summary: "Create a collaborator", responses: { "201": { description: "Collaborator created" }, "403": { description: "SUPER_ADMIN required" } } } },
+      "/users": { get: { summary: "Filter collaborators", responses: { "200": { description: "Collaborators" }, "403": { description: "SUPER_ADMIN required" } } }, post: { summary: "Create a collaborator", requestBody: createCollaboratorBody, responses: { "201": { description: "Collaborator created" }, "403": { description: "SUPER_ADMIN required or invalid professional name" } } } },
       "/users/{id}/status": { patch: { summary: "Activate or deactivate a collaborator", responses: { "200": { description: "Status updated and sessions revoked when needed" }, "409": { description: "Last Super Admin protected" } } } },
       "/users/{id}/authorization": { patch: { summary: "Change roles and scopes with confirmation and immediate session revocation", responses: { "200": { description: "Authorization updated" }, "403": { description: "SUPER_ADMIN or valid reason required" }, "409": { description: "Last Super Admin protected" } } } },
       "/first-login/change-secret": { post: { summary: "Replace a temporary secret before CRM access", responses: { "201": { description: "Secret replaced and sessions revoked" }, "401": { description: "Authenticated session required" }, "403": { description: "Temporary credential or policy refused" } } } },
