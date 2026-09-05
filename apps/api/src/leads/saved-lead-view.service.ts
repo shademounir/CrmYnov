@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { persistViewAudit } from "./saved-view-audit.js";
 
 const allowedKeys = ["search", "assignedToId", "status", "source", "program", "campaign", "campus", "assignmentMode", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize"] as const;
 type FilterKey = typeof allowedKeys[number];
@@ -16,7 +17,7 @@ export class SavedLeadViewService {
 
   async list(principal: Principal): Promise<SavedLeadView[]> {
     if (!this.readAllowed(principal)) throw new ForbiddenException({ code: "saved_view_role_forbidden" });
-    if (this.prisma?.client) return (await this.prisma.client.savedLeadView.findMany({ where: { ownerId: principal.userId }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }] })).map((row) => this.public(row));
+    if (this.prisma?.client) return (await this.prisma.client.savedLeadView.findMany({ where: { ownerId: principal.userId, archivedAt: null }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }] })).map((row) => this.public(row));
     return [...this.views.values()].filter((view) => view.ownerId === principal.userId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)).map((view) => this.strip(view));
   }
 
@@ -24,7 +25,10 @@ export class SavedLeadViewService {
     this.assertWrite(principal); const name = this.name(input.name); const filters = this.filters(input.filters, principal);
     if ((await this.list(principal)).length >= 25) throw new BadRequestException({ code: "saved_view_limit_reached" });
     if (this.prisma?.client) {
-      try { const row = await this.prisma.client.$transaction((tx) => tx.savedLeadView.create({ data: { ownerId: principal.userId, name, filters } }), { isolationLevel: "Serializable" }); const result = this.public(row); this.audited("SAVED_LEAD_VIEW_CREATED", result, principal, correlationId); return result; }
+      try { const row = await this.prisma.client.$transaction(async (tx) => {
+        const created = await tx.savedLeadView.create({ data: { ownerId: principal.userId, name, filters } });
+        await persistViewAudit(tx, principal, created, "SAVED_LEAD_VIEW_CREATED", correlationId); return created;
+      }, { isolationLevel: "Serializable" }); return this.public(row); }
       catch (error) { if (this.duplicate(error)) throw new ConflictException({ code: "saved_view_name_conflict" }); throw error; }
     }
     if ([...this.views.values()].some((view) => view.ownerId === principal.userId && view.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new ConflictException({ code: "saved_view_name_conflict" });
@@ -35,18 +39,31 @@ export class SavedLeadViewService {
     this.assertWrite(principal); const current = await this.owned(id, principal); if (input.expectedVersion !== undefined && input.expectedVersion !== current.version) throw new ConflictException({ code: "saved_view_version_conflict" });
     const name = this.name(input.name); const filters = this.filters(input.filters, principal);
     if (this.prisma?.client) {
-      try { const row = await this.prisma.client.$transaction((tx) => tx.savedLeadView.update({ where: { id }, data: { name, filters, version: { increment: 1 } } }), { isolationLevel: "Serializable" }); const result = this.public(row); this.audited("SAVED_LEAD_VIEW_UPDATED", result, principal, correlationId); return result; }
+      try { const row = await this.prisma.client.$transaction(async (tx) => {
+        // Shared definitions always require an explicit optimistic version.
+        if (input.expectedVersion === undefined && await tx.savedLeadViewShare.count({ where: { viewId: id } })) throw new ConflictException({ code: "saved_view_version_required" });
+        const updated = await tx.savedLeadView.update({ where: { id, ownerId: principal.userId, archivedAt: null, version: current.version }, data: { name, filters, version: { increment: 1 } } });
+        await persistViewAudit(tx, principal, updated, "SAVED_LEAD_VIEW_UPDATED", correlationId); return updated;
+      }, { isolationLevel: "Serializable" }); return this.public(row); }
       catch (error) { if (this.duplicate(error)) throw new ConflictException({ code: "saved_view_name_conflict" }); throw error; }
     }
     const next = { ...current, name, filters, version: current.version + 1, updatedAt: new Date().toISOString() }; this.views.set(id, next); this.audited("SAVED_LEAD_VIEW_UPDATED", next, principal, correlationId); return this.strip(next);
   }
 
   async remove(id: string, principal: Principal, correlationId: string): Promise<void> {
-    this.assertWrite(principal); const current = await this.owned(id, principal); if (this.prisma?.client) await this.prisma.client.$transaction((tx) => tx.savedLeadView.delete({ where: { id } }), { isolationLevel: "Serializable" }); else this.views.delete(id); this.audited("SAVED_LEAD_VIEW_DELETED", current, principal, correlationId);
+    this.assertWrite(principal); const current = await this.owned(id, principal);
+    if (this.prisma?.client) {
+      await this.prisma.client.$transaction(async (tx) => {
+        // Legacy DELETE may delete a never-shared private view, but must not erase sharing history.
+        if (await tx.savedLeadViewShare.count({ where: { viewId: id } })) throw new ConflictException({ code: "saved_view_archive_required" });
+        await tx.savedLeadView.delete({ where: { id, ownerId: principal.userId, version: current.version } });
+        await persistViewAudit(tx, principal, { ...current, version: current.version + 1 }, "SAVED_LEAD_VIEW_DELETED", correlationId);
+      }, { isolationLevel: "Serializable" });
+    } else { this.views.delete(id); this.audited("SAVED_LEAD_VIEW_DELETED", current, principal, correlationId); }
   }
 
   private async owned(id: string, principal: Principal): Promise<SavedLeadView & { ownerId: string }> {
-    const view = this.prisma?.client ? await this.prisma.client.savedLeadView.findUnique({ where: { id } }).then((row) => row ? { ...this.public(row), ownerId: row.ownerId } : undefined) : this.views.get(id);
+    const view = this.prisma?.client ? await this.prisma.client.savedLeadView.findUnique({ where: { id } }).then((row) => row && !row.archivedAt ? { ...this.public(row), ownerId: row.ownerId } : undefined) : this.views.get(id);
     if (!view) throw new NotFoundException({ code: "saved_view_not_found" }); if (view.ownerId !== principal.userId) throw new ForbiddenException({ code: "saved_view_owner_forbidden" }); return view;
   }
   private filters(value: Record<string, unknown>, principal: Principal): Partial<Record<FilterKey, string>> {

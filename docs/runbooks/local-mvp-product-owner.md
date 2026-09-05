@@ -25,8 +25,11 @@ Le fichier `.env.example` contient volontairement un placeholder vide. Ne le com
 Depuis la racine du dépôt :
 
 ```powershell
-# Démarrage, migration additive et seed idempotent
+# Démarrage et migration additive (aucun seed automatique)
 .\apps\api\scripts\local-mvp.ps1 -Action Start
+
+# Seed synthétique explicite, rejouable sans doublon
+.\apps\api\scripts\local-mvp.ps1 -Action Seed
 
 # Santé et preuves de deux instances, persistance, seed et concurrence outbox
 .\apps\api\scripts\local-mvp.ps1 -Action Verify
@@ -37,7 +40,7 @@ Depuis la racine du dépôt :
 # Arrêt puis redémarrage sans perte
 .\apps\api\scripts\local-mvp.ps1 -Action Restart
 
-# Scénario consolidé : démarrage, preuve, arrêt, redémarrage et nouvelle preuve
+# Scénario local explicite : démarrage, seed, preuve, arrêt et redémarrage
 .\apps\api\scripts\local-mvp.ps1 -Action Validate
 
 # Nettoyage volontaire du seul volume CRM, avec double confirmation explicite
@@ -70,7 +73,7 @@ Le seed est rejouable : il réconcilie ces identités et leurs condensats sans c
 6. Vérifier la notification interne et le reporting Manager.
 7. Demander une clôture avec le Conseiller, puis la décider avec un Manager/Admin distinct.
 8. Exécuter `Stop`, puis `Start` et vérifier que les utilisateurs, le lead et son historique sont toujours présents.
-9. Rejouer le démarrage/seed et vérifier l'absence de doublon.
+9. Rejouer explicitement `Seed` et vérifier l'absence de doublon. `Start` et `Restart` ne lancent jamais le seed.
 10. Exécuter `Verify` et conserver son résultat JSON expurgé comme preuve de deux instances et de concurrence outbox.
 
 ## Fiche de remontée

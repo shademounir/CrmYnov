@@ -1,6 +1,7 @@
 import type { Principal, Role } from "../auth/auth.types.js";
 import { configurationKey, definition, GLOBAL_CAMPUS, permissionCatalogue, type ConfigurationSnapshot, type ConfigurationTarget, type Grants, type PermissionScope } from "./dynamic-contract.js";
 import { auditDecision, auditRoles } from "./audit-access.js";
+import { viewDefaultScope } from "./view-grants.js";
 
 export interface EvaluationContext { campus: string; active: boolean; own: boolean; team: boolean; managedTeam?: boolean; campusAllowed: boolean; globalAllowed: boolean; restriction?: string }
 export interface GrantExplanation { role: Role; sourceScope: PermissionScope; globalCeiling: PermissionScope; campusCeiling: PermissionScope; campusGrant: PermissionScope; allowed: boolean; restriction: string | null }
@@ -23,6 +24,8 @@ const defaultRoles: Record<string, readonly Role[]> = {
 export function defaultRoleScope(role: Role, permission: string): PermissionScope {
   const item = definition(permission);
   if (!item?.available || role === "AUDITOR" && item.mutation) return "NONE";
+  const viewScope = viewDefaultScope(role, permission);
+  if (viewScope !== undefined) return viewScope;
   if (role === "SUPER_ADMIN") return "GLOBAL";
   if (item.reserved || permission.startsWith("users.")) return "NONE";
   const allowed = defaultRoles[permission] ?? (item.mutation ? [] : readRoles);

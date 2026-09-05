@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { isRole, type Role } from "../auth/auth.types.js";
+import { viewGrantKeys } from "./view-grants.js";
 
 export const scopes = ["NONE", "OWN", "TEAM", "CAMPUS", "GLOBAL"] as const;
 export type PermissionScope = typeof scopes[number];
@@ -11,6 +12,7 @@ const keys = [
   "import.view", "import.execute", "import.confirm", "import.review.resolve", "import.report.export", "reporting.view", "reporting.export", "reporting.global.view",
   "users.view", "users.create", "users.edit", "users.disable", "users.roles.assign", "roles.permissions.view", "roles.permissions.manage", "settings.campus.manage", "settings.global.manage",
   "audit.view", "audit.export", "chat.use", "chat.broadcast", "notification.manage",
+  ...viewGrantKeys,
 ] as const;
 const readOnly = new Set<string>(keys.filter((key) => key.endsWith(".view") || key.endsWith(".export")));
 const globalOnly = new Set(["settings.global.manage", "reporting.global.view"]);
@@ -22,6 +24,18 @@ export const permissionCatalogue: readonly PermissionDefinition[] = keys.map((ke
   scopes: unavailable.has(key) ? ["NONE"] : globalOnly.has(key) ? ["NONE", "GLOBAL"] : key.startsWith("lead.") || key.startsWith("interaction.") ? scopes : ["NONE", "CAMPUS", "GLOBAL"],
 }));
 export type Grants = Record<string, PermissionScope>;
+
+/** Historical catalogue v1 stays immutable: new capabilities default to NONE.
+ * Only a complete old catalogue is upgradeable; malformed/partial grants fail closed.
+ */
+export function historicalGrants(value: Record<string, string>, target: ConfigurationTarget): Grants {
+  const oldKeys = keys.filter((key) => !(viewGrantKeys as readonly string[]).includes(key));
+  const names = Object.keys(value);
+  const legacy = names.length === oldKeys.length && oldKeys.every((key) => Object.hasOwn(value, key));
+  const expanded = legacy ? { ...Object.fromEntries(viewGrantKeys.map((key) => [key, "NONE"])), ...value } : value;
+  validateGrants(expanded, target);
+  return expanded;
+}
 export interface ConfigurationTarget { kind: ConfigurationKind; role: Role | "*"; campus: string }
 export interface ConfigurationInput extends ConfigurationTarget { expectedVersion: number; grants: Grants; reason: string; confirmed: boolean }
 export interface ConfigurationSnapshot extends ConfigurationTarget { id: string; version: number; grants: Grants }

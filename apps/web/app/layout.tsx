@@ -7,6 +7,7 @@ import { AppShell } from "./_components/app-shell";
 import "./styles.css";
 import "./ynov-v2.css";
 import "./references.css";
+import "./leads/shared-views.css";
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
   return <html lang="fr"><body><AppShell>{children}</AppShell></body></html>;

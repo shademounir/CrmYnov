@@ -195,6 +195,7 @@ model AuditEvent {
 
 model Collaborator {
   id                    String                   @id @default(uuid()) @db.Uuid
+  professionalDisplayName String?                 @map("professional_display_name") @db.VarChar(120)
   professionalEmail     String                   @unique @map("professional_email") @db.VarChar(254)
   secondaryEmail        String?                  @map("secondary_email") @db.VarChar(254)
   roles                 String[]
@@ -444,10 +445,42 @@ model SavedLeadView {
   version   Int      @default(1)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+  shares SavedLeadViewShare[]
 
   @@unique([ownerId, name])
   @@index([ownerId, updatedAt(sort: Desc)])
   @@map("saved_lead_views")
+}
+
+model SavedLeadViewShare {
+  id String @id @default(uuid()) @db.Uuid
+  viewId String @map("view_id") @db.Uuid
+  audienceKey String @map("audience_key") @db.VarChar(80)
+  kind String @db.VarChar(10)
+  campusId String @map("campus_id") @db.Uuid
+  responsibilityId String? @map("responsibility_id") @db.Uuid
+  active Boolean @default(true)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  view SavedLeadView @relation(fields: [viewId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([viewId, audienceKey])
+  @@index([campusId, active])
+  @@map("saved_lead_view_shares")
+}
+
+model SavedViewMutation {
+  id String @id @default(uuid()) @db.Uuid
+  actorId String @map("actor_id") @db.VarChar(64)
+  key String @db.VarChar(64)
+  fingerprint String @db.VarChar(64)
+  response Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([actorId, key])
+  @@map("saved_view_mutations")
 }
 
 model Appointment {

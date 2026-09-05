@@ -76,12 +76,13 @@ test("proxy stores a successful login token only in a secure server cookie", asy
   assert.match(cookie, /Secure/u);
 });
 
-test("proxy fails closed for oversized bodies, invalid API JSON and upstream errors", async () => {
+test("proxy refuses oversized bodies and transport failures, but preserves upstream error bodies", async () => {
   const oversized = await proxyWith()(jsonRequest("leads", "POST", "x".repeat(MAX_BODY_BYTES + 1)), context("leads"));
   assert.equal(oversized.status, 413);
   const invalidJson = await proxyWith({ fetch: () => Promise.resolve(new Response("not-json", { status: 502 })) })(jsonRequest("leads"), context("leads"));
   assert.equal(invalidJson.status, 502);
-  assert.deepEqual(await invalidJson.json(), { code: "invalid_api_response" });
+  assert.equal(await invalidJson.text(), "not-json");
+  assert.equal(invalidJson.headers.get("content-type"), "text/plain;charset=UTF-8");
   const unavailable = await proxyWith({ apiOrigin: () => { throw new Error("unavailable"); } })(jsonRequest("leads"), context("leads"));
   assert.equal(unavailable.status, 503);
   assert.deepEqual(await unavailable.json(), { code: "api_proxy_unavailable" });

@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import { roles, type Principal, type Role } from "../auth/auth.types.js";
 import { businessRoleLabels, type ResourceContext } from "./permission.service.js";
-import { configurationKey, definition, GLOBAL_CAMPUS, permissionCatalogue, scopeWithin, validateGrants, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
+import { configurationKey, definition, GLOBAL_CAMPUS, historicalGrants, permissionCatalogue, scopeWithin, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
 import { defaultConfiguration, evaluatePermission, resolveGrants, type PermissionDecision } from "./dynamic-evaluator.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "./dynamic-repository.js";
 import { campusContext, currentPrincipal, permissionDenied, resourceEvaluationContext } from "./dynamic-context.js";
@@ -52,12 +52,14 @@ function assertCeilings(input: ConfigurationInput, rows: ConfigurationSnapshot[]
 }
 function assertAdminGrantBounds(actor: Principal, input: ConfigurationInput, rows: ConfigurationSnapshot[]): void {
   if (actor.roles.includes("SUPER_ADMIN")) return;
+  // Configuring a scope uses administrative authority, not ownership of a business resource.
+  // The closed registry calls this capability roles.permissions.manage (settings management).
+  const authority = evaluatePermission(actor, "roles.permissions.manage", rows, campusContext(actor, input.campus));
   for (const [key, scope] of Object.entries(input.grants)) {
     if (scope === "NONE") continue;
-    const decision = evaluatePermission(actor, key, rows, campusContext(actor, input.campus));
-    if (definition(key)?.reserved || !decision.allowed) permissionDenied();
-    // A personal or team-only grant cannot safely delegate a different user's resource set.
-    if (!decision.sources.some((source) => source.allowed && scopeWithin(scope, source.sourceScope))) permissionDenied();
+    if (scope === "GLOBAL" || definition(key)?.reserved) permissionDenied();
+    if (!authority.sources.some((source) => source.role === "ADMIN" && source.allowed &&
+      [source.sourceScope, source.globalCeiling, source.campusCeiling, source.campusGrant].every((ceiling) => scopeWithin(scope, ceiling)))) permissionDenied();
   }
 }
 export function configurationChanges(before: Grants, after: Grants): ConfigurationChange[] {
@@ -71,7 +73,7 @@ export class DynamicPermissionService {
   constructor(@Inject(DynamicPermissionRepository) private readonly repository: DynamicPermissionRepository) {}
 
   async decision(actor: Principal, key: string, resource: ResourceContext): Promise<PermissionDecision> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor);
       const rows = await this.repository.snapshots(tx);
       const context = await resourceEvaluationContext(tx, principal, resource);
@@ -84,7 +86,7 @@ export class DynamicPermissionService {
     });
   }
   async list(actor: Principal, requestedCampus?: string): Promise<CatalogueResponse> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor);
       const ownCampuses = campusIds(principal);
       const firstCampus = await tx.crmReference.findFirst({ where: { kind: "CAMPUS", state: "ACTIVE", id: { in: ownCampuses } }, select: { id: true } });
@@ -103,7 +105,7 @@ export class DynamicPermissionService {
     });
   }
   async read(actor: Principal, target: ConfigurationTarget): Promise<ConfigurationResponse> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor); visibleTarget(principal, target);
       await knownCampus(tx, target.campus);
       const rows = await this.repository.snapshots(tx); requirePermission(principal, "roles.permissions.view", rows, target.campus);
@@ -113,7 +115,7 @@ export class DynamicPermissionService {
   }
   async preview(actor: Principal, input: ConfigurationInput): Promise<PreviewResponse> {
     validateInput(input);
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor), rows = await this.repository.snapshots(tx);
       await knownCampus(tx, input.campus);
       const before = this.validateChange(principal, input, rows);
@@ -155,7 +157,7 @@ export class DynamicPermissionService {
     if (!remains) throw new ConflictException({ code: "last_super_admin_required" });
   }
   async history(actor: Principal, target: ConfigurationTarget): Promise<HistoryVersion[]> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor); visibleTarget(principal, target);
       await knownCampus(tx, target.campus);
       requirePermission(principal, "roles.permissions.view", await this.repository.snapshots(tx), target.campus);
@@ -171,15 +173,14 @@ export class DynamicPermissionService {
       const principal = await currentPrincipal(tx, actor); editableTarget(principal, input);
       const version = await tx.rolePermissionVersion.findUnique({ where: { configurationId_number: { configurationId: configurationKey(input), number: input.restoreVersion } }, include: { grants: true } });
       if (!version) permissionDenied();
-      const grants = Object.fromEntries(version.grants.map((grant) => [grant.permission, grant.scope]));
-      validateGrants(grants, input);
+      const grants = historicalGrants(Object.fromEntries(version.grants.map((grant) => [grant.permission, grant.scope])), input);
       const restored: ConfigurationInput = { kind: input.kind, role: input.role, campus: input.campus, expectedVersion: input.expectedVersion, confirmed: input.confirmed, reason: "RESTORE_VERSION", grants };
       validateInput(restored);
       return this.saveInTransaction(tx, principal, restored);
     });
   }
   async explain(actor: Principal, campus: string, leadId?: string): Promise<EffectiveResponse> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor), rows = await this.repository.snapshots(tx);
       await knownCampus(tx, campus);
       const context = leadId ? await resourceEvaluationContext(tx, principal, await leadResource(tx, leadId)) : campusContext(principal, campus);
@@ -198,6 +199,6 @@ export class DynamicPermissionService {
       requirePermission(principal, input ? "roles.permissions.manage" : "roles.permissions.view", rows, GLOBAL_CAMPUS);
       if (input) await saveResponsibility(tx, principal, input);
       return { responsibilities: await tx.teamResponsibility.findMany({ select: { id: true, teamId: true, campusId: true, managerId: true, active: true, version: true }, orderBy: [{ teamId: "asc" }, { managerId: "asc" }] }) };
-    });
+    }, input ? "write" : "read");
   }
 }
