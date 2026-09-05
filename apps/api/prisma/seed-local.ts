@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createHash, randomBytes, scryptSync } from "node:crypto";
 import { basename } from "node:path";
+import { acquirePermissionFence } from "../src/permissions/permission-fence.js";
 
 export const LOCAL_SYNTHETIC_IDENTITIES = Object.freeze([
   { professionalEmail: "super-admin@example.invalid", roles: ["SUPER_ADMIN"], campusId: null, teamId: null },
@@ -41,7 +42,10 @@ export async function seedLocalIdentity(prisma: LocalSeedClient, password: strin
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
-    await seedLocalIdentity(prisma, process.env.CRM_LOCAL_SEED_PASSWORD ?? "");
+    await prisma.$transaction(async (tx) => {
+      await acquirePermissionFence(tx, "write");
+      await seedLocalIdentity(tx, process.env.CRM_LOCAL_SEED_PASSWORD ?? "");
+    }, { isolationLevel: "Serializable", timeout: 30_000, maxWait: 5_000 });
     process.stdout.write("Synthetic local Super Admin seed is ready.\n");
   } finally {
     await prisma.$disconnect();

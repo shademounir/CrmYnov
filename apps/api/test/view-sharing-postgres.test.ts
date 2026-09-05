@@ -10,6 +10,8 @@ import { prepareLeadAuditFixture } from "./helpers/audit-lead-cycle.test.js";
 import { assertSharingCycle, type SharingFixture } from "./helpers/view-sharing-cycle.test.js";
 import { assertViewMetadata } from "./helpers/view-sharing-metadata.test.js";
 import { sharingDatabase, verifySharingDatabase } from "./helpers/view-sharing-database.js";
+import { assertPermissionConcurrency } from "./helpers/permission-concurrency.test.js";
+import { assertFirstLoginAcrossApis } from "./helpers/permission-first-login.test.js";
 
 const loginWindowMs = 60_000; // RateLimitService: five attempts per IP in this real-time window.
 const loginMarginMs = 250;
@@ -130,4 +132,11 @@ test("CRMY-170 authenticated sharing / two compiled APIs / ephemeral PostgreSQL"
   t.diagnostic("Rate-limit gate passed: 5 x 201, then 429, actual window expiry, one retry returning 201; all six persisted identities, roles and campuses verified.");
   await assertSharingCycle(client, bases, fixture, (message) => t.diagnostic(message));
   await assertViewMetadata(client, bases, fixture, (message) => t.diagnostic(message));
+  await assertPermissionConcurrency(client, bases, fixture, async () => {
+    const reader = await account("ADMISSIONS", campusA, "SYNTHETIC-TEAM");
+    return token(reader, "ADMISSIONS", campusA);
+  }, (message) => t.diagnostic(message));
+  await assertFirstLoginAcrossApis(client, bases, fixture,
+    (response) => awaitLoginWindow(response, firstAttempt, (message) => t.diagnostic(message)),
+    (message) => t.diagnostic(message));
 });

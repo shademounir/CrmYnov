@@ -20,11 +20,11 @@ export class ViewSharingService {
     @Inject(PermissionService) private readonly permissions: PermissionService,
     @Inject(ViewSharingAudiences) private readonly audiences: ViewSharingAudiences) {}
 
-  private unit<T>(actor: Principal, operation: (tx: PermissionTransaction, principal: Principal) => Promise<T>): Promise<T> {
-    return this.repository.transaction(async (tx) => operation(tx, await currentPrincipal(tx, actor)));
+  private unit<T>(actor: Principal, operation: (tx: PermissionTransaction, principal: Principal) => Promise<T>, mode: "read" | "write" = "write"): Promise<T> {
+    return this.repository.transaction(async (tx) => operation(tx, await currentPrincipal(tx, actor)), mode);
   }
 
-  availableAudiences(actor: Principal): Promise<Audience[]> { return this.unit(actor, (tx, principal) => this.audiences.list(tx, principal)); }
+  availableAudiences(actor: Principal): Promise<Audience[]> { return this.unit(actor, (tx, principal) => this.audiences.list(tx, principal), "read"); }
 
   list(actor: Principal): Promise<ViewDetails[]> {
     return this.unit(actor, async (tx, principal) => {
@@ -32,11 +32,11 @@ export class ViewSharingService {
       const result: ViewDetails[] = [];
       for (const row of rows) if (row.ownerId !== principal.userId && await this.readable(tx, row, principal)) result.push(await this.details(tx, row, principal));
       return result;
-    });
+    }, "read");
   }
 
   read(id: string, actor: Principal): Promise<ViewDetails> {
-    return this.unit(actor, async (tx, principal) => this.details(tx, await this.authorized(tx, id, principal), principal));
+    return this.unit(actor, async (tx, principal) => this.details(tx, await this.authorized(tx, id, principal), principal), "read");
   }
 
   /** Presentation is recomputed on authorized reads, never stored in mutation receipts. */
@@ -95,7 +95,7 @@ export class ViewSharingService {
           audienceId: audience.id, active: share.active && !share.view.archivedAt, version: share.version, viewVersion: share.view.version, canRevoke });
       }
       return result;
-    });
+    }, "read");
   }
 
   share(id: string, input: SharingInput, actor: Principal, trace: string): Promise<ViewSummary> {

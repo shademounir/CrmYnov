@@ -41,6 +41,9 @@ export class SessionService implements OnModuleInit {
       where: { active: true, expiresAt: { gt: new Date() } },
       include: { collaborator: { select: { active: true, authenticationVersion: true, passwordHash: { select: { mustChange: true } } } } },
     });
+    this.sessions.clear();
+    this.authenticationVersions.clear();
+    this.activeUsers.clear();
     for (const row of rows) {
       this.authenticationVersions.set(row.collaboratorId, row.collaborator.authenticationVersion);
       this.activeUsers.set(row.collaboratorId, row.collaborator.active);

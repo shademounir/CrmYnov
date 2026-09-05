@@ -4,6 +4,7 @@ import { PrismaService } from "../persistence/prisma.service.js";
 import { configurationKey, historicalGrants, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
 import type { Principal } from "../auth/auth.types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { acquirePermissionFence, type PermissionTransactionMode } from "./permission-fence.js";
 
 export type PermissionTransaction = Prisma.TransactionClient;
 
@@ -12,7 +13,7 @@ function retryFenceOrThrow(error: unknown, handlerStarted: boolean, attempt: num
   if (error instanceof HttpException) throw error;
   const code = error && typeof error === "object" && "code" in error ? error.code : null;
   if (code === "P2034" && !handlerStarted && attempt < 4) return;
-  if (code === "P2034" || code === "P2002" || code === "P2025") {
+  if (handlerStarted && (code === "P2034" || code === "P2002" || code === "P2025")) {
     throw new ConflictException({ code: "permission_version_conflict" });
   }
   throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
@@ -20,25 +21,27 @@ function retryFenceOrThrow(error: unknown, handlerStarted: boolean, attempt: num
 
 @Injectable()
 export class DynamicPermissionRepository {
-  private readonly execution = new AsyncLocalStorage<PermissionTransaction>();
+  private readonly execution = new AsyncLocalStorage<{ tx: PermissionTransaction; mode: PermissionTransactionMode }>();
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
-  async transaction<T>(action: (tx: PermissionTransaction) => Promise<T>): Promise<T> {
+  readTransaction<T>(action: (tx: PermissionTransaction) => Promise<T>): Promise<T> {
+    return this.transaction(action, "read");
+  }
+  async transaction<T>(action: (tx: PermissionTransaction) => Promise<T>, mode: PermissionTransactionMode = "write"): Promise<T> {
     const current = this.execution.getStore();
-    if (current) return action(current);
+    if (current) {
+      if (current.mode !== "write" && mode !== "read" && current.mode !== mode) throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
+      return action(current.tx);
+    }
     const client = this.prisma.client;
     if (!client) throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
     for (let attempt = 0; ; attempt++) {
       let handlerStarted = false;
       try {
         return await client.$transaction(async (tx) => {
-          // One transaction-scoped local lock serializes changes to authorization state.
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(169, 1)`;
-          // A stale Serializable snapshot waiting behind a revocation must conflict,
-          // never execute using the old grants. Every protected unit advances this row.
-          await tx.rolePermissionEpoch.upsert({ where: { id: 1 }, create: { id: 1, version: 1 }, update: { version: { increment: 1 } } });
+          await acquirePermissionFence(tx, mode);
           handlerStarted = true;
-          return this.prisma.withTransaction(tx, () => this.execution.run(tx, () => action(tx)));
-        }, { isolationLevel: "Serializable", timeout: 30_000, maxWait: 5_000 });
+          return this.prisma.withTransaction(tx, () => this.execution.run({ tx, mode }, () => action(tx)));
+        }, { isolationLevel: mode === "write" ? "Serializable" : "ReadCommitted", timeout: 30_000, maxWait: 5_000 });
       } catch (error) {
         retryFenceOrThrow(error, handlerStarted, attempt);
       }

@@ -10,6 +10,9 @@ import { evaluatePermission } from "./dynamic-evaluator.js";
 import { leadResource, routeContexts } from "./dynamic-resources.js";
 import type { ConfigurationSnapshot } from "./dynamic-contract.js";
 import { DynamicResourceLocator } from "./dynamic-locator.js";
+import { lifecyclePermissionFence, permissionTransactionMode, type PermissionLifecycle } from "./permission-transaction-routes.js";
+import { SessionService } from "../auth/session.service.js";
+import { LocalCredentialAdapter, LocalRecoveryChallengeStore } from "../access-recovery/access-recovery.store.js";
 
 /**
  * Linearization fence, shared by all API instances through PostgreSQL. Business
@@ -23,10 +26,14 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
     @Inject(RbacGuard) private readonly rbac: RbacGuard,
     @Inject(UserService) private readonly users: UserService,
     @Inject(DynamicResourceLocator) private readonly locator: DynamicResourceLocator,
+    @Inject(SessionService) private readonly sessions: SessionService,
+    @Inject(LocalCredentialAdapter) private readonly credentials: LocalCredentialAdapter,
+    @Inject(LocalRecoveryChallengeStore) private readonly challenges: LocalRecoveryChallengeStore,
   ) {}
   intercept(context: ExecutionContext, next: CallHandler<unknown>): Observable<unknown> {
     const controller = context.getClass().name;
-    if (lifecycleControllers.has(controller)) return next.handle();
+    const handler = context.getHandler().name;
+    if (lifecycleControllers.has(controller)) return this.lifecycle(context, next, controller, handler);
     return from(this.repository.transaction(async (tx) => {
       const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
       if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
@@ -35,7 +42,10 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
       const keys = routePermissions(controller, context.getHandler().name);
       if (keys === null) permissionDenied();
       const rows = await this.repository.snapshots(tx);
-      if (controller === "UserController") await this.users.onModuleInit();
+      if (controller === "UserController") {
+        await this.users.onModuleInit();
+        await this.sessions.onModuleInit();
+      }
       const serverLeadIds = this.locator.leadIds(controller, context.getHandler().name, request);
       for (const key of contextualPermissions(controller, keys, request.body, request.query, request.principal.roles.includes("SUPER_ADMIN"))) {
         if (controller === "LeadController" && context.getHandler().name === "list") {
@@ -46,7 +56,30 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
         }
       }
       return lastValueFrom(next.handle());
+    }, permissionTransactionMode(controller, handler)));
+  }
+  private lifecycle(context: ExecutionContext, next: CallHandler<unknown>, controller: string, handler: string): Observable<unknown> {
+    const fence = lifecyclePermissionFence(controller, handler);
+    if (!fence) return next.handle();
+    return from(this.repository.transaction(async (tx) => {
+      const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+      if (fence === "session" || fence === "first-login") {
+        if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
+        request.principal = await currentPrincipal(tx, request.principal);
+        // First-login intentionally permits mustChangeSecret and retains its dedicated checks.
+        if (fence === "session") this.rbac.canActivate(context);
+      }
+      await this.refreshLifecycle(fence);
+      return lastValueFrom(next.handle());
     }));
+  }
+  private async refreshLifecycle(fence: PermissionLifecycle): Promise<void> {
+    // Refresh the existing adapters only after the fence: another API may have
+    // committed identity/session changes since this instance last used them.
+    if (fence === "first-login" || fence === "session-create") await this.users.onModuleInit();
+    if (fence !== "session") await this.credentials.onModuleInit();
+    if (fence === "recovery") await this.challenges.onModuleInit();
+    else await this.sessions.onModuleInit();
   }
   private async filterLeadCollection(tx: PermissionTransaction, request: AuthenticatedRequest, rows: ConfigurationSnapshot[]): Promise<void> {
     const principal = request.principal as Principal;

@@ -73,7 +73,7 @@ export class DynamicPermissionService {
   constructor(@Inject(DynamicPermissionRepository) private readonly repository: DynamicPermissionRepository) {}
 
   async decision(actor: Principal, key: string, resource: ResourceContext): Promise<PermissionDecision> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor);
       const rows = await this.repository.snapshots(tx);
       const context = await resourceEvaluationContext(tx, principal, resource);
@@ -86,7 +86,7 @@ export class DynamicPermissionService {
     });
   }
   async list(actor: Principal, requestedCampus?: string): Promise<CatalogueResponse> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor);
       const ownCampuses = campusIds(principal);
       const firstCampus = await tx.crmReference.findFirst({ where: { kind: "CAMPUS", state: "ACTIVE", id: { in: ownCampuses } }, select: { id: true } });
@@ -105,7 +105,7 @@ export class DynamicPermissionService {
     });
   }
   async read(actor: Principal, target: ConfigurationTarget): Promise<ConfigurationResponse> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor); visibleTarget(principal, target);
       await knownCampus(tx, target.campus);
       const rows = await this.repository.snapshots(tx); requirePermission(principal, "roles.permissions.view", rows, target.campus);
@@ -115,7 +115,7 @@ export class DynamicPermissionService {
   }
   async preview(actor: Principal, input: ConfigurationInput): Promise<PreviewResponse> {
     validateInput(input);
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor), rows = await this.repository.snapshots(tx);
       await knownCampus(tx, input.campus);
       const before = this.validateChange(principal, input, rows);
@@ -157,7 +157,7 @@ export class DynamicPermissionService {
     if (!remains) throw new ConflictException({ code: "last_super_admin_required" });
   }
   async history(actor: Principal, target: ConfigurationTarget): Promise<HistoryVersion[]> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor); visibleTarget(principal, target);
       await knownCampus(tx, target.campus);
       requirePermission(principal, "roles.permissions.view", await this.repository.snapshots(tx), target.campus);
@@ -180,7 +180,7 @@ export class DynamicPermissionService {
     });
   }
   async explain(actor: Principal, campus: string, leadId?: string): Promise<EffectiveResponse> {
-    return this.repository.transaction(async (tx) => {
+    return this.repository.readTransaction(async (tx) => {
       const principal = await currentPrincipal(tx, actor), rows = await this.repository.snapshots(tx);
       await knownCampus(tx, campus);
       const context = leadId ? await resourceEvaluationContext(tx, principal, await leadResource(tx, leadId)) : campusContext(principal, campus);
@@ -199,6 +199,6 @@ export class DynamicPermissionService {
       requirePermission(principal, input ? "roles.permissions.manage" : "roles.permissions.view", rows, GLOBAL_CAMPUS);
       if (input) await saveResponsibility(tx, principal, input);
       return { responsibilities: await tx.teamResponsibility.findMany({ select: { id: true, teamId: true, campusId: true, managerId: true, active: true, version: true }, orderBy: [{ teamId: "asc" }, { managerId: "asc" }] }) };
-    });
+    }, input ? "write" : "read");
   }
 }

@@ -34,8 +34,11 @@ export class LocalRecoveryChallengeStore implements OnModuleInit {
   constructor(@Optional() @Inject(PrismaService) private readonly prisma?: PrismaService) {}
 
   async onModuleInit(): Promise<void> {
-    const rows = await this.prisma?.client?.localRecoveryChallenge.findMany({ where: { usedAt: null, expiresAt: { gt: new Date() } } });
-    for (const row of rows ?? []) this.challenges.set(row.tokenDigest, { id: row.id, subjectId: row.collaboratorId, returnPath: row.returnPath, expiresAt: row.expiresAt.getTime(), used: false });
+    const client = this.prisma?.client;
+    if (!client) return;
+    const rows = await client.localRecoveryChallenge.findMany({ where: { usedAt: null, expiresAt: { gt: new Date() } } });
+    this.challenges.clear();
+    for (const row of rows) this.challenges.set(row.tokenDigest, { id: row.id, subjectId: row.collaboratorId, returnPath: row.returnPath, expiresAt: row.expiresAt.getTime(), used: false });
   }
 
   issue(subjectId: string, returnPath: string, now = Date.now(), lifetimeMs = 15 * 60_000): string {
@@ -91,8 +94,12 @@ export class LocalCredentialAdapter implements OnModuleInit {
   constructor(@Optional() @Inject(PrismaService) private readonly prisma?: PrismaService) {}
 
   async onModuleInit(): Promise<void> {
-    const rows = await this.prisma?.client?.localPasswordHash.findMany();
-    for (const row of rows ?? []) this.store({ subjectId: row.collaboratorId, identityDigest: row.identityDigest, salt: row.passwordSalt, digest: row.passwordDigest, mustChange: row.mustChange });
+    const client = this.prisma?.client;
+    if (!client) return;
+    const rows = await client.localPasswordHash.findMany();
+    this.credentials.clear();
+    this.identityToSubject.clear();
+    for (const row of rows) this.store({ subjectId: row.collaboratorId, identityDigest: row.identityDigest, salt: row.passwordSalt, digest: row.passwordDigest, mustChange: row.mustChange });
   }
 
   replace(subjectKey: string, nextSecret: string): void {

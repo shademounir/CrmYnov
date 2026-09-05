@@ -30,8 +30,11 @@ export class UserService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const rows = await this.prisma?.client?.collaborator.findMany();
-    for (const row of rows ?? []) {
+    const client = this.prisma?.client;
+    if (!client) return;
+    const rows = await client.collaborator.findMany();
+    this.users.clear();
+    for (const row of rows) {
       const user: Collaborator = {
         id: row.id,
         professionalEmail: row.professionalEmail,
