@@ -10,8 +10,8 @@ import { ReportingPersistenceGuard } from "./reporting-persistence.guard.js";
 export class OperationalRiskController {
   constructor(@Inject(OperationalRiskService) private readonly service: OperationalRiskService) {}
   @Get()
-  read(@Query() query: OperationalRiskQuery, @Req() request: AuthenticatedRequest): OperationalRiskReport {
+  read(@Query() query: OperationalRiskQuery, @Req() request: AuthenticatedRequest): Promise<OperationalRiskReport> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.service.read(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.service.readForApi(query, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 }

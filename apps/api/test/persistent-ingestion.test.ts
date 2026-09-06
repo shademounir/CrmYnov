@@ -6,7 +6,7 @@ import { AuditService } from "../src/audit/audit.service.js";
 import { PersistentIngestionService, type ConfirmPersistentImportInput } from "../src/ingestion/persistent-ingestion.service.js";
 
 type Row = Record<string, unknown>;
-type State = { batches: Row[]; reports: Row[]; leads: Row[]; provenances: Row[]; activities: Row[]; reviews: Row[]; rejections: Row[] };
+type State = { batches: Row[]; reports: Row[]; leads: Row[]; provenances: Row[]; activities: Row[]; reviews: Row[]; rejections: Row[]; audits: Row[] };
 const principal = { userId: "00000000-0000-4000-8000-000000000401", roles: ["MANAGER" as const], scopes: [{ kind: "CAMPUS" as const, id: "SYNTHETIC" }], sessionId: "synthetic-import-session" };
 const base = (): ConfirmPersistentImportInput => ({ idempotencyKey: "synthetic-import-001", confirmed: true, profile: "FORMINATOR_ZAPIER",
   mappingId: "mapping-1234567890abcdef12345678", mappingVersion: 1, sourceFileSha256: "a".repeat(64), assignment: { strategy: "UNASSIGNED" },
@@ -14,10 +14,21 @@ const base = (): ConfirmPersistentImportInput => ({ idempotencyKey: "synthetic-i
     phone: "+212600000401", campus: "SYNTHETIC", campaign: "SYNTHETIC_CAMPAIGN", educationLevel: "BAC", program: "SYNTHETIC_PROGRAM",
     source: "WEB_FORM", technicalSystem: "SYNTHETIC_FORM", originalSource: "SYNTHETIC", externalId: "synthetic-401", historicalStatus: "À contacter" }] });
 
-function setup() {
-  const state: State = { batches: [], reports: [], leads: [], provenances: [], activities: [], reviews: [], rejections: [] };
+function setup(configured = false) {
+  const state: State = { batches: [], reports: [], leads: [], provenances: [], activities: [], reviews: [], rejections: [], audits: [] };
+  const campus = { id: "00000000-0000-4000-8000-000000000499", kind: "CAMPUS", code: "SYNTHETIC", label: "Campus synthétique", state: "ACTIVE" };
+  const target = "00000000-0000-4000-8000-000000000409";
   const client = {
-    crmReferenceKey: { findMany: async ({ where }: { where: { kind: string; key: string } }) => ["SYNTHETIC", "SYNTHETIC_CAMPAIGN", "SYNTHETIC_PROGRAM"].includes(where.key) ? [{ reference: { id: `${where.kind}-synthetic`, code: where.key, state: "ACTIVE" } }] : [] },
+    crmReference: { findUnique: async () => campus },
+    crmReferenceKey: { findMany: async ({ where }: { where: { kind?: string; key?: string; referenceId?: string } }) => where.referenceId ? [{ key: campus.code }] : where.key === campus.code ? [{ reference: campus }] : ["SYNTHETIC_CAMPAIGN", "SYNTHETIC_PROGRAM"].includes(where.key ?? "") ? [{ reference: { id: `${where.kind}-synthetic`, code: where.key, state: "ACTIVE" } }] : [] },
+    collaborator: { findUnique: async ({ where }: { where: { id: string } }) => ({ id: where.id, active: true, campusId: campus.id,
+      roles: where.id === principal.userId ? principal.roles : ["ADMISSIONS"], authenticationVersion: 1, firstLoginRequired: false }) },
+    localSession: { findUnique: async () => ({ active: true, collaboratorId: principal.userId, expiresAt: new Date(Date.now() + 60_000), authenticationVersion: 1 }) },
+    campusAssignmentConfiguration: { findUnique: async () => configured ? { version: 1 } : null },
+    campusAssignmentVersion: { findUniqueOrThrow: async () => ({ version: 1, rules: [{ id: "synthetic-fallback", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true,
+      candidates: [{ userId: target, active: true, capacity: 10, activeLeadCount: 0 }] }] }) },
+    auditEvent: { create: async ({ data }: { data: Row }) => { state.audits.push(data); return data; } },
+    $executeRaw: async () => 1,
     crmProgramAvailability: { findUnique: async () => ({ active: true }) },
     ingestionBatch: {
       findUnique: async ({ where }: { where: { idempotencyKey: string } }) => { const row = state.batches.find((item) => item.idempotencyKey === where.idempotencyKey); return row ? { ...row, report: state.reports.find((report) => report.batchId === row.id) ?? null } : null; },
@@ -26,6 +37,7 @@ function setup() {
     },
     importReport: { create: async ({ data }: { data: Row & { rejections?: { create?: Row[] } } }) => { state.reports.push({ ...data, rejections: undefined }); state.rejections.push(...(data.rejections?.create ?? [])); return data; } },
     lead: {
+      count: async () => state.leads.filter((lead) => lead.assignedToId === target).length,
       findMany: async ({ where }: { where: { OR: Array<{ email?: string; phone?: string }> } }) => state.leads.filter((lead) => where.OR.some((item) => item.email === lead.email || item.phone === lead.phone)).map((lead) => ({ id: lead.id })),
       create: async ({ data }: { data: Row }) => { state.leads.push({ ...data, createdAt: new Date(), updatedAt: new Date(), version: 1 }); return data; },
     },
@@ -35,9 +47,12 @@ function setup() {
     },
     leadActivity: { create: async ({ data }: { data: Row }) => { state.activities.push(data); return data; } },
     ingestionReviewItem: { create: async ({ data }: { data: Row }) => { state.reviews.push(data); return data; } },
-    $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(client),
+    $transaction: async (callback: (tx: unknown) => Promise<unknown>) => {
+      const before = structuredClone(state);
+      try { return await callback(client); } catch (error) { Object.assign(state, before); throw error; }
+    },
   };
-  const service = new PersistentIngestionService({ enabled: true, client } as unknown as PrismaService, new AuditService());
+  const service = new PersistentIngestionService({ enabled: true, client } as unknown as PrismaService, new AuditService(), { snapshots: async () => [] });
   return { service, state };
 }
 
@@ -101,7 +116,7 @@ test("persists every approved historical status and only structured historical a
   assert.equal(state.activities.filter((activity) => activity.authorId === "LEGACY_IMPORT").length, 1);
 });
 
-test("routes unknown programs, incomplete mappings, collisions and unresolved assignment to review", async () => {
+test("reviews invalid mappings and collisions, and explicitly leaves imports unassigned without campus configuration", async () => {
   const program = setup(); const unknownProgram = base(); unknownProgram.records = [{ ...unknownProgram.records[0]!, program: "UNKNOWN" }];
   assert.equal((await program.service.confirm(unknownProgram, principal, "unknown-program")).manualReview, 1);
   assert.equal(program.state.reviews[0]?.reasonCode, "PROGRAM_UNKNOWN");
@@ -118,12 +133,13 @@ test("routes unknown programs, incomplete mappings, collisions and unresolved as
   assert.equal(collision.state.reviews[0]?.reasonCode, "IDENTITY_COLLISION");
 
   const assignment = setup(); const unresolved = base(); unresolved.assignment = { strategy: "FIXED", targetUserId: "00000000-0000-4000-8000-000000000408" };
-  assert.equal((await assignment.service.confirm(unresolved, principal, "assignment-unresolved")).manualReview, 1);
-  assert.equal(assignment.state.reviews[0]?.reasonCode, "ASSIGNMENT_UNRESOLVED");
+  assert.equal((await assignment.service.confirm(unresolved, principal, "assignment-unresolved")).created, 1);
+  assert.equal(assignment.state.leads[0]?.assignedToId, null);
+  assert.deepEqual(assignment.state.audits[0]?.after, { configurationVersion: 0, reason: "assignment_configuration_absent", ruleId: null, assignedToId: null });
 });
 
 test("persists a resolved fixed assignment and rejects malformed contracts before mutation", async () => {
-  const { service, state } = setup(); const assigned = base(); const target = "00000000-0000-4000-8000-000000000409";
+  const { service, state } = setup(true); const assigned = base(); const target = "00000000-0000-4000-8000-000000000409";
   assigned.assignment = { strategy: "FIXED", targetUserId: target }; assigned.resolvedAssignments = { "1": target };
   assert.equal((await service.confirm(assigned, principal, "fixed-assignment")).created, 1);
   assert.equal(state.leads[0]?.assignedToId, target);

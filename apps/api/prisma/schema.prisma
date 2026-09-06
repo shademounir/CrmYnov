@@ -767,6 +767,7 @@ model LeadProvenance {
   recentSource    String         @map("recent_source") @db.VarChar(120)
   campaign        String?        @db.VarChar(120)
   externalId      String?        @map("external_id") @db.VarChar(160)
+  submissionFingerprint String?  @map("submission_fingerprint") @db.VarChar(64)
   rawStatus       String?        @map("raw_status") @db.VarChar(120)
   occurredAt      DateTime?      @map("occurred_at") @db.Timestamptz(6)
   importedAt      DateTime       @default(now()) @map("imported_at") @db.Timestamptz(6)
@@ -934,6 +935,119 @@ model LeadActivity {
 
   @@index([leadId, occurredAt(sort: Desc), id])
   @@map("lead_activities")
+}
+
+model SheetImportConnector {
+  id              String   @id @default(uuid()) @db.Uuid
+  campusId        String   @map("campus_id") @db.Uuid
+  workbookId      String   @map("workbook_id") @db.VarChar(200)
+  tab             String   @db.VarChar(100)
+  configuration   Json
+  enabled         Boolean  @default(false)
+  intervalMinutes Int      @default(15) @map("interval_minutes")
+  manualRequested Boolean @default(false) @map("manual_requested")
+  version         Int      @default(1)
+  epoch           Int      @default(0)
+  leaseUntil      DateTime? @map("lease_until") @db.Timestamptz(6)
+  activeRunId     String?   @map("active_run_id") @db.Uuid
+  nextRunAt       DateTime  @default(now()) @map("next_run_at") @db.Timestamptz(6)
+  updatedBy       String   @map("updated_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  runs            SheetImportRun[]
+  submissions     SheetImportSubmission[]
+  versions        SheetImportConfigurationVersion[]
+
+  @@unique([workbookId, tab])
+  @@index([enabled, nextRunAt])
+  @@map("sheet_import_connectors")
+}
+
+model SheetImportRun {
+  id             String   @id @default(uuid()) @db.Uuid
+  connectorId    String   @map("connector_id") @db.Uuid
+  status         String   @db.VarChar(24)
+  trigger        String   @db.VarChar(16)
+  configurationSnapshot Json? @map("configuration_snapshot")
+  configurationVersion Int? @map("configuration_version")
+  sourceFailures Int @default(0) @map("source_failures")
+  createdCount   Int      @default(0) @map("created_count")
+  duplicateCount Int      @default(0) @map("duplicate_count")
+  ignoredCount   Int      @default(0) @map("ignored_count")
+  reviewCount    Int      @default(0) @map("review_count")
+  errorCode      String?  @map("error_code") @db.VarChar(80)
+  startedAt      DateTime @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+  connector      SheetImportConnector @relation(fields: [connectorId], references: [id], onDelete: Restrict)
+  receipts       SheetImportRunReceipt[]
+
+  @@index([connectorId, startedAt(sort: Desc)])
+  @@map("sheet_import_runs")
+}
+
+model SheetImportConfigurationVersion {
+  id            String @id @default(uuid()) @db.Uuid
+  connectorId   String @map("connector_id") @db.Uuid
+  version       Int
+  snapshot      Json
+  actorId       String @map("actor_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  connector     SheetImportConnector @relation(fields: [connectorId], references: [id], onDelete: Restrict)
+
+  @@unique([connectorId, version])
+  @@map("sheet_import_configuration_versions")
+}
+
+model SheetImportRunReceipt {
+  id           String @id @default(uuid()) @db.Uuid
+  runId        String @map("run_id") @db.Uuid
+  rowKey       String @map("row_key") @db.VarChar(64)
+  outcome      String @db.VarChar(24)
+  errorCode    String? @map("error_code") @db.VarChar(80)
+  processedAt  DateTime @default(now()) @map("processed_at") @db.Timestamptz(6)
+  run          SheetImportRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, rowKey])
+  @@map("sheet_import_run_receipts")
+}
+
+model SheetImportSubmission {
+  id           String   @id @default(uuid()) @db.Uuid
+  connectorId  String   @map("connector_id") @db.Uuid
+  externalId   String   @map("external_id") @db.VarChar(128)
+  fingerprint  String   @db.VarChar(64)
+  outcome      String   @db.VarChar(24)
+  batchId      String?  @map("batch_id") @db.Uuid
+  processedAt  DateTime @default(now()) @map("processed_at") @db.Timestamptz(6)
+  connector    SheetImportConnector @relation(fields: [connectorId], references: [id], onDelete: Restrict)
+
+  @@unique([connectorId, externalId])
+  @@map("sheet_import_submissions")
+}
+
+model CampusAssignmentConfiguration {
+  campusId String @id @map("campus_id") @db.Uuid
+  version Int
+  @@map("campus_assignment_configurations")
+}
+
+model CampusAssignmentVersion {
+  campusId String @map("campus_id") @db.Uuid
+  version Int
+  rules Json
+  actorId String @map("actor_id") @db.VarChar(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@id([campusId, version])
+  @@map("campus_assignment_versions")
+}
+
+model CampusAssignmentCursor {
+  campusId String @map("campus_id") @db.Uuid
+  version Int
+  ruleId String @map("rule_id") @db.VarChar(64)
+  cursor Int @default(0)
+  @@id([campusId, version, ruleId])
+  @@map("campus_assignment_cursors")
 }
 
 model AssignmentRule {

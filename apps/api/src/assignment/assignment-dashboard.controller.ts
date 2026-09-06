@@ -9,7 +9,7 @@ import { AssignmentDashboardService, type AssignmentDashboard } from "./assignme
 export class AssignmentDashboardController {
   constructor(@Inject(AssignmentDashboardService) private readonly dashboard: AssignmentDashboardService) {}
   @Get()
-  read(@Req() request: AuthenticatedRequest): AssignmentDashboard { return this.dashboard.read(this.principal(request)); }
+  read(@Req() request: AuthenticatedRequest): Promise<AssignmentDashboard> { return this.dashboard.readForApi(this.principal(request)); }
   private principal(request: AuthenticatedRequest): Principal {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return request.principal;

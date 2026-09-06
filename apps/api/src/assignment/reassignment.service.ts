@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadService, type LeadRecord } from "../leads/lead.service.js";
 import { LeadWorkflowPersistenceRepository } from "../leads/lead-workflow-persistence.repository.js";
 import { AssignmentService } from "./assignment.service.js";
+import { PersistentAssignmentService } from "./persistent-assignment.service.js";
 
 export type ReassignmentStatus = "PENDING" | "APPROVED" | "REJECTED";
 export interface ReassignmentRequest {
@@ -25,6 +26,7 @@ export class ReassignmentService implements OnModuleInit {
     @Inject(AssignmentService) private readonly engine: AssignmentService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(LeadWorkflowPersistenceRepository) private readonly persistence?: LeadWorkflowPersistenceRepository,
+    @Optional() @Inject(PersistentAssignmentService) private readonly campusAssignments?: PersistentAssignmentService,
   ) {}
 
   async onModuleInit(): Promise<void> { await this.refreshPersistentState(); }
@@ -33,12 +35,19 @@ export class ReassignmentService implements OnModuleInit {
 
   async requestForApi(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string): Promise<ReassignmentRequest> {
     if (!this.persistence?.enabled) return this.request(leadId, input, principal, correlationId);
+    if (!this.campusAssignments) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    return this.campusAssignments.withReassignmentTarget(leadId, input.targetUserId, principal, "lead.reassign.request",
+      (target) => this.persistRequest(leadId, input, principal, correlationId, target));
+  }
+
+  private async persistRequest(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string, eligibleTarget: string): Promise<ReassignmentRequest> {
+    if (!this.persistence) throw new ConflictException({ code: "persistent_assignment_unavailable" });
     const replay = await this.persistence.findReassignment(input.idempotencyKey);
     if (replay) return replay;
     await this.refreshPersistentState();
     const record = await this.leads.persistWorkflowMutationForApi(
       leadId, `reassignment-request:${input.idempotencyKey}`, "REASSIGNMENT_REQUEST", input,
-      () => this.request(leadId, input, principal, correlationId),
+      () => this.requestValidated(leadId, input, principal, correlationId, eligibleTarget),
       principal, correlationId,
     );
     const stored = await this.persistence.createReassignment(record, input.idempotencyKey);
@@ -51,9 +60,18 @@ export class ReassignmentService implements OnModuleInit {
     await this.refreshPersistentState();
     const current = this.requests.get(requestId);
     if (!current) throw new NotFoundException({ code: "reassignment_request_not_found" });
+    if (!input.approved) return this.persistDecision(current, input, principal, correlationId);
+    if (!this.campusAssignments) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    return this.campusAssignments.withReassignmentTarget(current.leadId, current.targetUserId, principal, "lead.reassign.approve",
+      (target) => this.persistDecision(current, input, principal, correlationId, target));
+  }
+
+  private async persistDecision(current: Readonly<ReassignmentRequest>, input: DecideReassignmentInput, principal: Principal, correlationId: string, eligibleTarget?: string): Promise<{ request: ReassignmentRequest; lead?: LeadRecord }> {
+    if (!this.persistence) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    const requestId = current.id;
     const result = await this.leads.persistWorkflowMutationForApi(
       current.leadId, `reassignment-decision:${requestId}`, "REASSIGNMENT_DECISION", input,
-      () => this.decide(requestId, input, principal, correlationId),
+      () => this.decideValidated(requestId, input, principal, correlationId, eligibleTarget),
       principal, correlationId,
     );
     const stored = await this.persistence.decideReassignment(result.request, 1);
@@ -67,6 +85,10 @@ export class ReassignmentService implements OnModuleInit {
   }
 
   request(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string): ReassignmentRequest {
+    return this.requestValidated(leadId, input, principal, correlationId);
+  }
+
+  private requestValidated(leadId: string, input: CreateReassignmentInput, principal: Principal, correlationId: string, eligibleTarget?: string): ReassignmentRequest {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "reassignment_request_role_forbidden" });
     if (!IDEMPOTENCY_KEY.test(input.idempotencyKey) || input.reason.trim().length < 4 || typeof input.moveOpenTasks !== "boolean") throw new BadRequestException({ code: "reassignment_request_invalid" });
     const replay = this.idempotency.get(input.idempotencyKey); if (replay) return this.copy(this.requests.get(replay)!);
@@ -74,7 +96,7 @@ export class ReassignmentService implements OnModuleInit {
     if (!lead.assignedToId) throw new ConflictException({ code: "reassignment_current_owner_missing" });
     if (principal.roles.includes("ADMISSIONS") && lead.assignedToId !== principal.userId) throw new ForbiddenException({ code: "reassignment_owner_required" });
     if (lead.assignedToId === input.targetUserId) throw new BadRequestException({ code: "reassignment_target_unchanged" });
-    this.engine.assertEligibleTarget(input.targetUserId);
+    this.assertEligibleTarget(input.targetUserId, eligibleTarget);
     if ([...this.requests.values()].some((item) => item.leadId === leadId && item.status === "PENDING")) throw new ConflictException({ code: "reassignment_pending_exists" });
     const request: Readonly<ReassignmentRequest> = Object.freeze({ id: randomUUID(), leadId, currentOwnerId: lead.assignedToId,
       targetUserId: input.targetUserId, reason: input.reason.trim(), moveOpenTasks: input.moveOpenTasks,
@@ -88,6 +110,10 @@ export class ReassignmentService implements OnModuleInit {
   }
 
   decide(requestId: string, input: DecideReassignmentInput, principal: Principal, correlationId: string): { request: ReassignmentRequest; lead?: LeadRecord } {
+    return this.decideValidated(requestId, input, principal, correlationId);
+  }
+
+  private decideValidated(requestId: string, input: DecideReassignmentInput, principal: Principal, correlationId: string, eligibleTarget?: string): { request: ReassignmentRequest; lead?: LeadRecord } {
     this.assertApprover(principal);
     if (input.reason.trim().length < 4) throw new BadRequestException({ code: "reassignment_decision_reason_required" });
     const current = this.requests.get(requestId); if (!current) throw new NotFoundException({ code: "reassignment_request_not_found" });
@@ -95,7 +121,7 @@ export class ReassignmentService implements OnModuleInit {
     if (current.requestedBy === principal.userId) throw new ForbiddenException({ code: "reassignment_separation_of_duties" });
     let lead: LeadRecord | undefined;
     if (input.approved) {
-      this.engine.assertEligibleTarget(current.targetUserId);
+      this.assertEligibleTarget(current.targetUserId, eligibleTarget);
       lead = this.leads.reassignLocalLead(current.leadId, current.currentOwnerId, current.targetUserId, principal, correlationId, current.reason);
     } else {
       this.leads.addActivity(current.leadId, { type: "REASSIGNMENT_REJECTED", result: requestId, note: input.reason.trim() }, principal, correlationId);
@@ -128,6 +154,10 @@ export class ReassignmentService implements OnModuleInit {
       .map((item) => this.copy(item));
   }
   private assertApprover(principal: Principal): void { if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "reassignment_approval_role_required" }); }
+  private assertEligibleTarget(target: string, eligibleTarget?: string): void {
+    if (!this.persistenceEnabled()) { this.engine.assertEligibleTarget(target); return; }
+    if (!eligibleTarget || target !== eligibleTarget) throw new ConflictException({ code: "assignment_target_ineligible" });
+  }
   private copy(request: Readonly<ReassignmentRequest>): ReassignmentRequest { return { ...request }; }
   private async refreshPersistentState(): Promise<void> {
     if (!this.persistence?.enabled) return;

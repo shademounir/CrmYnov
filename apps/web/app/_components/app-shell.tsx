@@ -48,6 +48,7 @@ const navigation = [
   { href: "/admin/references", label: "Référentiels", icon: Gear },
   { href: "/admin/roles", label: "Rôles et permissions", icon: Gear },
   { href: "/admin/audit", label: "Journal d’audit", icon: List },
+  { href: "/admin/scheduled-sheets", label: "Sheets planifié", icon: UploadSimple },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {

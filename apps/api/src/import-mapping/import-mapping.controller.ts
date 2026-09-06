@@ -30,9 +30,9 @@ export class ImportMappingController {
   }
 
   @Post("dry-runs")
-  dryRun(@Body() body: ImportDryRunInput, @Req() request: AuthenticatedRequest): IngestionDryRunResult & { mappingId: string; mappingVersion: number } {
+  dryRun(@Body() body: ImportDryRunInput, @Req() request: AuthenticatedRequest): Promise<IngestionDryRunResult & { mappingId: string; mappingVersion: number }> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.mappings.dryRun(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    return this.mappings.dryRunForApi(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 
   @Post("confirmations")

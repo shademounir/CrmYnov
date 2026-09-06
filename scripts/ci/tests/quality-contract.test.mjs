@@ -51,7 +51,10 @@ test("Sonar gate fails closed and consumes only named repository configuration",
 test("coverage is reproducible, fail-closed, and imported by Sonar", async () => {
   const pkg = JSON.parse(await readFile(packageUrl, "utf8"));
   const sonar = await readFile(sonarUrl, "utf8");
-  assert.match(pkg.scripts["test:coverage"], /^c8 .*--reporter=lcov npm test$/);
+  assert.match(pkg.scripts["test:coverage"], /^c8 .*--reporter=lcov node scripts\/ci\/coverage-runner\.mjs$/);
+  const runner = await readFile(new URL("../coverage-runner.mjs", import.meta.url), "utf8");
+  assert.match(runner, /npm\(\["test"\]\)/, "canonical coverage still runs the complete official test suite");
+  assert.match(runner, /await postgresProofs\(\)/, "PostgreSQL execution participates in the same native counters");
   assert.equal(pkg.devDependencies.c8, "10.1.3");
   assert.match(sonar, /^sonar\.javascript\.lcov\.reportPaths=coverage\/lcov\.info$/m);
   assert.doesNotMatch(sonar, /container-readiness/);

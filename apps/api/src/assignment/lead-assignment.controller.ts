@@ -15,8 +15,8 @@ export class LeadAssignmentController {
     return this.assignments.assignOneForApi(leadId, body.targetUserId, body.confirmed === true, body.idempotencyKey, this.principal(request), this.correlation(request));
   }
   @Post("lead-assignments/preview")
-  preview(@Body() body: BatchAssignmentInput, @Req() request: AuthenticatedRequest): { items: AssignmentPreviewItem[]; mutated: false } {
-    return { items: this.assignments.preview(body, this.principal(request)), mutated: false };
+  async preview(@Body() body: BatchAssignmentInput, @Req() request: AuthenticatedRequest): Promise<{ items: AssignmentPreviewItem[]; mutated: false }> {
+    return { items: await this.assignments.previewForApi(body, this.principal(request)), mutated: false };
   }
   @Post("lead-assignments")
   async assignBatch(@Body() body: BatchAssignmentInput, @Req() request: AuthenticatedRequest): Promise<AssignmentBatchResult> {

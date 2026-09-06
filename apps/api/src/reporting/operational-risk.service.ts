@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
-import { AssignmentService } from "../assignment/assignment.service.js";
+import { AssignmentService, type AssignmentRule } from "../assignment/assignment.service.js";
+import { CampusAssignmentService } from "../assignment/campus-assignment.service.js";
 import { ReassignmentService } from "../assignment/reassignment.service.js";
 import { AuditService } from "../audit/audit.service.js";
 import { ClosureService } from "../closure/closure.service.js";
@@ -30,12 +31,20 @@ export interface OperationalRiskReport {
 @Injectable()
 export class OperationalRiskService {
   constructor(
-    private readonly leads: LeadService, private readonly followUps: FollowUpService, private readonly closures: ClosureService,
-    private readonly reassignments: ReassignmentService, private readonly assignments: AssignmentService,
-    private readonly ingestion: IngestionService, private readonly audit: AuditService,
+    @Inject(LeadService) private readonly leads: LeadService, @Inject(FollowUpService) private readonly followUps: FollowUpService, @Inject(ClosureService) private readonly closures: ClosureService,
+    @Inject(ReassignmentService) private readonly reassignments: ReassignmentService, @Inject(AssignmentService) private readonly assignments: AssignmentService,
+    @Inject(IngestionService) private readonly ingestion: IngestionService, @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(CampusAssignmentService) private readonly campusAssignments?: CampusAssignmentService,
   ) {}
 
-  read(query: OperationalRiskQuery, principal: Principal, correlationId: string, now = new Date()): OperationalRiskReport {
+  async readForApi(query: OperationalRiskQuery, principal: Principal, correlationId: string): Promise<OperationalRiskReport> {
+    if (!this.leads.persistenceEnabled()) return this.read(query, principal, correlationId);
+    if (!this.campusAssignments) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    const { rules } = await this.campusAssignments.reporting(principal);
+    return this.read(query, principal, correlationId, new Date(), rules);
+  }
+
+  read(query: OperationalRiskQuery, principal: Principal, correlationId: string, now = new Date(), rules: AssignmentRule[] = this.assignments.listRules()): OperationalRiskReport {
     this.assertManager(principal);
     const from = this.boundary(query.from, "operational_from_invalid");
     const to = this.boundary(query.to, "operational_to_invalid");
@@ -60,7 +69,7 @@ export class OperationalRiskService {
     const pendingReassignments = this.reassignments.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.status === "PENDING").length;
     const visibleOwners = new Set(active.flatMap((row) => row.assignedToId ? [row.assignedToId] : []));
     const candidateCapacity = new Map<string, number>();
-    for (const rule of this.assignments.listRules().filter((item) => item.enabled)) for (const candidate of rule.candidates) {
+    for (const rule of rules.filter((item) => item.enabled)) for (const candidate of rule.candidates) {
       if (visibleOwners.has(candidate.userId)) candidateCapacity.set(candidate.userId, Math.max(candidateCapacity.get(candidate.userId) ?? 0, candidate.capacity));
     }
     const capacity = [...visibleOwners].sort((a, b) => a.localeCompare(b, "en")).map((adviserId) => {

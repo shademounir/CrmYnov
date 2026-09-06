@@ -55,7 +55,7 @@ test("excludes inactive, suspended, excluded and over-capacity candidates", () =
   assert.throws(() => service.assign(context("no-candidate"), adviser, "corr"), hasCode("assignment_candidate_unavailable"));
 });
 
-test("validates configuration and protects management endpoints", () => {
+test("validates configuration and protects management endpoints", async () => {
   const service = new AssignmentService(new AuditService());
   assert.throws(() => service.configure([globalRule()], adviser, "corr"), hasCode("assignment_manager_required"));
   assert.throws(() => service.configure([{ ...globalRule(), candidates: [] }], manager, "corr"), hasCode("assignment_candidate_invalid"));
@@ -63,8 +63,8 @@ test("validates configuration and protects management endpoints", () => {
   assert.throws(() => service.configure([missingMatch], manager, "corr"), hasCode("assignment_rule_match_invalid"));
   const controller = new AssignmentController(service);
   const request = { principal: manager, header: () => "controller-corr" } as never;
-  assert.equal(controller.configure({ rules: [globalRule()] }, request).rules.length, 1);
-  assert.equal(controller.simulate(context("controller-event"), request).mutated, false);
-  assert.equal(controller.history(request).decisions.length, 0);
+  assert.equal((await controller.configure({ rules: [globalRule()] }, request)).rules.length, 1);
+  assert.equal((await controller.simulate(context("controller-event"), request)).mutated, false);
+  assert.equal((await controller.history(request)).decisions.length, 0);
   assert.throws(() => controller.history({ header: () => undefined } as never), hasCode("principal_missing"));
 });
