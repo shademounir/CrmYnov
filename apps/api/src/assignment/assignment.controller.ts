@@ -25,9 +25,9 @@ export class AssignmentController {
   }
 
   @Put("config")
-  configure(@Body() body: { rules?: AssignmentRuleInput[]; campusId?: string; expectedVersion?: number }, @Req() request: AuthenticatedRequest): { rules: AssignmentRule[] } | Promise<CampusRules> {
+  configure(@Body() body: { rules?: AssignmentRuleInput[]; campusId?: string; expectedVersion?: number; automaticEnabled?: boolean }, @Req() request: AuthenticatedRequest): { rules: AssignmentRule[] } | Promise<CampusRules> {
     const principal = this.principal(request);
-    if (this.campusAssignment) return this.campusAssignment.configure(principal, body.campusId ?? "", body.expectedVersion ?? -1, body.rules, request.header("x-correlation-id") ?? "missing-correlation");
+    if (this.campusAssignment) return this.campusAssignment.configure(principal, body.campusId ?? "", body.expectedVersion ?? -1, body.rules, request.header("x-correlation-id") ?? "missing-correlation", body.automaticEnabled);
     return { rules: this.assignment.configure(body.rules ?? [], principal, request.header("x-correlation-id") ?? "missing-correlation") };
   }
 

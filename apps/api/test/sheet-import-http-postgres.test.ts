@@ -254,14 +254,14 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   assert.equal(manualReport.created, 1);
   const manuallyImported = await client.lead.findFirstOrThrow({ where: { importBatchId: String(manualReport.batchId) } });
   assert.equal(manuallyImported.assignedToId, adviser.id, "manual imports use the same persisted campus rule, never client-selected recipients");
-  const manualEvidence = await client.auditEvent.findFirstOrThrow({ where: { eventType: "IMPORT_ASSIGNMENT_RESOLVED", resourceId: manuallyImported.id } });
+  const manualEvidence = await client.auditEvent.findFirstOrThrow({ where: { eventType: "LEAD_ASSIGNED", resourceId: manuallyImported.id } });
   assert.equal(object(manualEvidence.after).configurationVersion, 1);
   assert.equal(object(manualEvidence.after).ruleId, "synthetic-fallback");
   assert.equal(await client.campusAssignmentCursor.count({ where: { campusId: campus.id, version: 1, cursor: 3 } }), 1);
   const decisionInput = { leadId: manualLead.id, eventKey: "synthetic-decision-only-171", source: "UNTRUSTED", campaign: "UNTRUSTED" };
   const leadBeforeDecision = await client.lead.findUniqueOrThrow({ where: { id: manualLead.id } });
   const activitiesBeforeDecision = await client.leadActivity.count({ where: { leadId: manualLead.id } });
-  const assignmentAuditsBeforeDecision = await client.auditEvent.count({ where: { eventType: "LEAD_AUTO_ASSIGNED" } });
+  const assignmentAuditsBeforeDecision = await client.auditEvent.count({ where: { eventType: "LEAD_ASSIGNED" } });
   const decide = (base: string, body = decisionInput, correlation = "synthetic-decision"): Promise<Response> => fetch(`${base}/assignment/auto`, {
     method: "POST", headers: { ...headers, "x-correlation-id": correlation }, body: JSON.stringify(body),
   });
@@ -274,7 +274,7 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   assert.deepEqual(await decisionReplay.json(), decision);
   assert.equal(await client.campusAssignmentCursor.count({ where: { campusId: campus.id, version: 1, cursor: 4 } }), 1);
   assert.equal(await client.auditEvent.count({ where: { eventType: "ASSIGNMENT_DECISION_CREATED" } }), 1);
-  assert.equal(await client.auditEvent.count({ where: { eventType: "LEAD_AUTO_ASSIGNED" } }), assignmentAuditsBeforeDecision);
+  assert.equal(await client.auditEvent.count({ where: { eventType: "LEAD_ASSIGNED" } }), assignmentAuditsBeforeDecision);
   assert.deepEqual(await client.lead.findUniqueOrThrow({ where: { id: manualLead.id } }), leadBeforeDecision);
   assert.equal(await client.leadActivity.count({ where: { leadId: manualLead.id } }), activitiesBeforeDecision);
   // A deliberately overlong correlation fails the actual audit write (varchar(64)) in this ephemeral database.
@@ -412,5 +412,61 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   await client.collaborator.update({ where: { id: user.id }, data: { campusId: campus.id } });
   await client.collaborator.update({ where: { id: user.id }, data: { roles: ["MANAGER"] } });
   assert.equal((await fetch(`${second}/scheduled-sheets?campus=${campus.id}`, { headers })).status, 403, "current role invariant is checked across instances");
+  await client.collaborator.update({ where: { id: user.id }, data: { roles: ["ADMIN"] } });
+  const closeReviewConnector = await fetch(`${first}/scheduled-sheets/${id}`, { method: "PUT", headers, body: JSON.stringify({ ...input, mapping: noIdMapping, expectedVersion: 4, enabled: false }) });
+  assert.equal(closeReviewConnector.status, 200);
+  for (const scenario of [{ enabled: false, fixed: false }, { enabled: true, fixed: false }, { enabled: false, fixed: true }, { enabled: true, fixed: true }]) {
+    const automaticEnabled = scenario.enabled;
+    const storedResponse: Response = await fetch(`${first}/assignment/config?campusId=${campus.id}`, { headers }); assert.equal(storedResponse.status, 200);
+    const stored = object(await storedResponse.json());
+    const toggle: Response = await fetch(`${second}/assignment/config`, { method: "PUT", headers, body: JSON.stringify({ campusId: campus.id, expectedVersion: stored.version, rules: stored.rules, automaticEnabled }) });
+    assert.equal(toggle.status, 200);
+    const toggleVersion = Number(object(await toggle.json()).version);
+    const reread: Response = await fetch(`${first}/assignment/config?campusId=${campus.code}`, { headers }); assert.equal(reread.status, 200);
+    assert.equal(object(await reread.json()).automaticEnabled, automaticEnabled, "Admin toggle is persisted and seen by the other API");
+    const workbook = `synthetic_toggle_${automaticEnabled ? "on" : "off"}_${scenario.fixed ? "fixed" : "round"}`;
+    const connectorInput = { ...input, enabled: true, workbookLink: `https://docs.google.com/spreadsheets/d/${workbook}/edit`, tab: "Toggle synthétique",
+      assignment: scenario.fixed ? { strategy: "FIXED", targetUserId: newAdviser.id } : input.assignment };
+    const createdConnector = await fetch(`${first}/scheduled-sheets`, { method: "POST", headers, body: JSON.stringify(connectorInput) });
+    assert.equal(createdConnector.status, 201, JSON.stringify(await createdConnector.clone().json()));
+    const connectorId = String(object(await createdConnector.json()).id);
+    const until = Date.now() + 8000;
+    while (Date.now() < until && await client.sheetImportRun.count({ where: { connectorId, status: "COMPLETED" } }) === 0) await new Promise<void>((done) => setTimeout(done, 100));
+    assert.equal(await client.sheetImportRun.count({ where: { connectorId, status: "COMPLETED" } }), 1);
+    const provenance = await client.leadProvenance.findUniqueOrThrow({ where: { technicalSystem_externalId: { technicalSystem: "FORMINATOR_ZAPIER", externalId: `submission-${workbook}` } } });
+    const imported = await client.lead.findUniqueOrThrow({ where: { id: provenance.leadId } });
+    assert.equal(Boolean(imported.assignedToId), automaticEnabled, "connector activation never overrides disabled assignment automation");
+    const assignments = await client.auditEvent.findMany({ where: { resourceId: imported.id, eventType: "LEAD_ASSIGNED" } });
+    assert.equal(assignments.length, automaticEnabled ? 1 : 0);
+    assert.equal(await client.auditEvent.count({ where: { eventType: "LEAD_AUTO_ASSIGNED" } }), 0, "no second assignment event emitted");
+    if (automaticEnabled) {
+      assert.equal(object(assignments[0]?.after).origin, "AUTOMATIC"); assert.equal(object(assignments[0]?.after).configurationVersion, toggleVersion);
+      assert.ok(typeof object(assignments[0]?.after).decisionRef === "string");
+    } else {
+      const receipt = await client.sheetImportRunReceipt.findFirstOrThrow({ where: { run: { connectorId } } });
+      assert.equal(receipt.errorCode, "assignment_automation_disabled");
+      const before = await client.lead.findUniqueOrThrow({ where: { id: imported.id } });
+      const body = { confirmed: true, targetUserId: newAdviser.id, idempotencyKey: `toggle-manual-${scenario.fixed ? "fixed" : "round"}` };
+      await client.$executeRawUnsafe("CREATE FUNCTION crmy171_assignment_fault() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = 'LEAD_ASSIGNED' THEN RAISE EXCEPTION 'synthetic_assignment_audit_failure'; END IF; RETURN NEW; END $$");
+      await client.$executeRawUnsafe("CREATE TRIGGER crmy171_assignment_fault BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION crmy171_assignment_fault()");
+      try {
+        const failed = await fetch(`${first}/leads/${imported.id}/assignment`, { method: "POST", headers, body: JSON.stringify(body) });
+        assert.equal(failed.status, 409, JSON.stringify(await failed.clone().json()));
+        assert.equal(object(await failed.json()).code, "assignment_failed", "existing single-assignment contract expurgates transaction errors");
+        assert.deepEqual(await client.lead.findUniqueOrThrow({ where: { id: imported.id } }), before);
+        assert.equal(await client.auditEvent.count({ where: { resourceId: imported.id, eventType: "LEAD_ASSIGNED" } }), 0);
+      } finally {
+        await client.$executeRawUnsafe("DROP TRIGGER crmy171_assignment_fault ON audit_events");
+        await client.$executeRawUnsafe("DROP FUNCTION crmy171_assignment_fault()");
+      }
+      for (const api of [first, second]) assert.equal((await fetch(`${api}/leads/${imported.id}/assignment`, { method: "POST", headers, body: JSON.stringify(body) })).status, 201);
+      assert.equal((await client.lead.findUniqueOrThrow({ where: { id: imported.id } })).assignedToId, newAdviser.id);
+      const audit = await client.auditEvent.findMany({ where: { resourceId: imported.id, eventType: "LEAD_ASSIGNED" } });
+      assert.equal(audit.length, 1); assert.equal(object(audit[0]?.after).origin, "MANUAL");
+      assert.equal(object(audit[0]?.after).configurationVersion, toggleVersion);
+    }
+    const stop = await fetch(`${second}/scheduled-sheets/${connectorId}`, { method: "PUT", headers, body: JSON.stringify({ ...connectorInput, expectedVersion: 1, enabled: false }) }); assert.equal(stop.status, 200);
+  }
+  t.diagnostic("Admin assignment toggle persisted across APIs: active connector imports with/without effective assignment, unique LEAD_ASSIGNED, manual assignment while disabled, audit rollback and cross-instance replay.");
   t.diagnostic("Real authenticated HTTP: disabled creation, immutable versions, simulation without Lead writes, two autonomous API instances, scheduled import, manual replay and one business audit.");
 });

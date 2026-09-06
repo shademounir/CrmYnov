@@ -123,12 +123,10 @@ export class PersistentAssignmentService {
         if (!visible) throw new NotFoundException({ code: "lead_not_found" });
         return { outcome: "UNASSIGNED", assignment: selection, lead: visible, replayed: false };
       }
-      const updated = await this.leads.assignLocalLeadForApi(lead.id, selection.targetUserId, current, correlationId, `BATCH:${input.eventKey}`, input.assignment.strategy);
+      const updated = await this.leads.assignLocalLeadForApi(lead.id, selection.targetUserId, current, correlationId, `BATCH:${input.eventKey}`, input.assignment.strategy,
+        { origin: input.assignment.strategy === "FIXED" ? "MANUAL" : "AUTOMATIC", decisionRef: key, requestHash,
+          configurationVersion: selection.configurationVersion ?? null, selectedUserId: selection.targetUserId, ruleId: selection.selection?.ruleId ?? null });
       await commitSheetAssignment(tx, selection, lead.id);
-      await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId, resourceType: "LEAD", resourceId: lead.id,
-        eventType: "LEAD_AUTO_ASSIGNED", result: "SUCCESS", correlationId, idempotencyKey: key,
-        after: { requestHash, configurationVersion: selection.configurationVersion ?? null, selectedUserId: selection.targetUserId,
-          ruleId: selection.selection?.ruleId ?? null, candidateFingerprint: selection.selection?.candidateFingerprint ?? null, strategy: input.assignment.strategy } } });
       return { outcome: "ASSIGNED", assignment: selection, lead: updated, replayed: false };
     });
   }

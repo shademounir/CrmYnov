@@ -20,11 +20,13 @@ async function eligible(tx: Prisma.TransactionClient, candidate: AssignmentCandi
 
 /** Selection and cursor movement stay inside the caller's fenced business transaction. */
 export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input: IngestionBatchInput["assignment"], record: { source: string; campaign?: string | undefined },
-  campusId: string, eventKey: string, previewOffset = 0): Promise<SheetAssignment> {
+  campusId: string, eventKey: string, previewOffset = 0, automatic = input.strategy !== "FIXED"): Promise<SheetAssignment> {
   if (input.strategy === "UNASSIGNED") return { eventKey, reason: "assignment_explicitly_unassigned" };
   await canonicalCampus(tx, campusId);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, hashtext(${campusId}))`;
   const configuration = await readCampusRules(tx, campusId);
+  if (automatic && !configuration.automaticEnabled) return { eventKey, campusId, configurationVersion: configuration.version,
+    reason: configuration.version ? "assignment_automation_disabled" : "assignment_configuration_absent" };
   const rule = applicableCampusRule(configuration.rules, record.source, record.campaign ?? "");
   const evidence = { eventKey, campusId, configurationVersion: configuration.version };
   if (!rule) return { ...evidence, reason: "assignment_configuration_absent" };

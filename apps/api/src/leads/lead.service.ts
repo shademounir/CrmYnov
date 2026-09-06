@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadPersistenceRepository } from "./lead-persistence.repository.js";
+import type { AssignmentAudit } from "../assignment/assignment-audit.js";
 import { ReferenceService } from "../references/reference.service.js";
 import { strictBody } from "../references/reference.contract.js";
 
@@ -200,8 +201,8 @@ export class LeadService implements OnModuleInit {
     return this.persistApiMutation(leadId, `lead:status:${leadId}:${correlationId}`, "CHANGE_STATUS", input, () => this.changeStatus(leadId, input, principal, correlationId), principal, correlationId);
   }
 
-  async assignLocalLeadForApi(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED"): Promise<LeadRecord> {
-    return this.persistApiMutation(leadId, `lead:assignment:${leadId}:${correlationId}`, "ASSIGN", { assignedToId, reason, assignmentMode }, () => this.assignLocalLead(leadId, assignedToId, principal, correlationId, reason, assignmentMode), principal, correlationId);
+  async assignLocalLeadForApi(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED", assignmentAudit?: AssignmentAudit): Promise<LeadRecord> {
+    return this.persistApiMutation(leadId, `lead:assignment:${leadId}:${correlationId}`, "ASSIGN", { assignedToId, reason, assignmentMode }, () => this.assignLocalLead(leadId, assignedToId, principal, correlationId, reason, assignmentMode), principal, correlationId, assignmentAudit);
   }
 
   async reassignLocalLeadForApi(leadId: string, expectedOwnerId: string, targetUserId: string, principal: Principal, correlationId: string, reason: string): Promise<LeadRecord> {
@@ -246,6 +247,7 @@ export class LeadService implements OnModuleInit {
     mutate: () => T,
     auditActor: Principal,
     correlationId: string,
+    assignmentAudit?: AssignmentAudit,
   ): Promise<T> {
     if (!this.persistence?.enabled) return mutate();
     await this.refreshPersistentState();
@@ -268,6 +270,7 @@ export class LeadService implements OnModuleInit {
         fingerprint,
         auditActor,
         correlationId,
+        assignmentAudit,
       );
       await this.refreshPersistentState();
       if (typeof result === "object" && result !== null && "leadCode" in result) return this.visibleLead(this.leads.get(leadId)!, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;

@@ -123,14 +123,14 @@ export class PersistentIngestionService {
       if (matchedCampus?.id !== campus.id) throw new ForbiddenException({ code: "sheet_identity_scope_refused" });
     }
     const selected: SheetAssignment = matches.size ? { eventKey: key, reason: "assignment_existing_preserved" }
-      : await prepareSheetAssignment(tx, assignment, record, campus.id, key);
+      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, true);
     const input: ConfirmPersistentImportInput = { confirmed: true, profile: "FORMINATOR_ZAPIER", idempotencyKey: key,
       mappingId: mapping.id, mappingVersion: mapping.version, sourceFileSha256: this.fingerprintRecord(record),
       assignment: selected.reason === "assignment_configuration_absent" ? { strategy: "UNASSIGNED" } : assignment,
       records: [record] };
     await tx.ingestionBatch.create({ data: { id: batchId, idempotencyKey: key, fingerprint: this.fingerprint(input), profile: input.profile,
       assignmentMode: input.assignment.strategy, actorId, totalCount: 1, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
-    const line = await this.persistLine(tx, batchId, record, input, { userId: actorId }, correlationId, selected);
+    const line = await this.persistLine(tx, batchId, record, input, { userId: actorId, roles: ["SYSTEM"] }, correlationId, selected);
     if (line.outcome === "CREATED" && line.leadId) await commitSheetAssignment(tx, selected, line.leadId);
     await tx.ingestionBatch.update({ where: { id: batchId }, data: { createdCount: Number(line.outcome === "CREATED"), attachedCount: Number(line.outcome === "ATTACHED"),
       reviewCount: Number(line.outcome === "MANUAL_REVIEW"), invalidCount: Number(line.outcome === "INVALID") } });
@@ -159,7 +159,7 @@ export class PersistentIngestionService {
     if (!evaluatePermission(current, "lead.assign", await this.permissions.snapshots(tx), context).allowed) permissionDenied();
   }
 
-  private async persistLine(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, principal: Pick<Principal, "userId"> & Partial<Pick<Principal, "roles">>, correlationId: string, selected?: SheetAssignment): Promise<Line> {
+  private async persistLine(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, principal: Pick<Principal, "userId"> & { roles: Principal["roles"] | readonly ["SYSTEM"] }, correlationId: string, selected?: SheetAssignment): Promise<Line> {
     const invalid = this.validateRecord(record);
     if (invalid) return { lineNumber: record.lineNumber, outcome: "INVALID", reason: invalid };
     const mappedStatus = this.mapStatus(record.historicalStatus, record.structuredPriorContact === true);
@@ -219,11 +219,12 @@ export class PersistentIngestionService {
     for (const [index, historical] of (record.historicalActivities ?? []).entries()) {
       await tx.leadActivity.create({ data: { id: randomUUID(), leadId, type: historical.type, result: historical.result.slice(0, 240), authorId: "LEGACY_IMPORT", correlationId: `${correlationId}:${record.lineNumber}:historical:${index}`, occurredAt: new Date(historical.occurredAt) } });
     }
-    if (!selected) {
-      await commitSheetAssignment(tx, selection, leadId);
+    if (!selected) await commitSheetAssignment(tx, selection, leadId);
+    if (!selected || assignedToId) {
       await tx.auditEvent.create({ data: { actorId, actorRoles: [...actorRoles], campusId: campus.id, resourceType: "LEAD", resourceId: leadId,
-        eventType: "IMPORT_ASSIGNMENT_RESOLVED", result: "SUCCESS", correlationId, idempotencyKey: `import-assignment:${batchId}:${record.lineNumber}`,
+        eventType: assignedToId ? "LEAD_ASSIGNED" : "IMPORT_ASSIGNMENT_RESOLVED", result: "SUCCESS", correlationId, idempotencyKey: `import-assignment:${batchId}:${record.lineNumber}`,
         after: { configurationVersion: selection.configurationVersion ?? null, reason: selection.reason ?? "assignment_selected",
+          ...(assignedToId ? { origin: actorRoles.includes("SYSTEM") || input.assignment.strategy !== "FIXED" ? "AUTOMATIC" : "MANUAL", decisionRef: `import-assignment:${batchId}:${record.lineNumber}` } : {}),
           ruleId: selection.selection?.ruleId ?? null, assignedToId: assignedToId ?? null } } });
     }
     return { lineNumber: record.lineNumber, outcome: "CREATED", leadId, ...(selection.reason ? { reason: selection.reason } : {}) };

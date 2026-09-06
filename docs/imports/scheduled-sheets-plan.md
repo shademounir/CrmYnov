@@ -134,6 +134,20 @@ Le PO a autorisé la reconnaissance structurée des FK de nouvelles tables (ON D
 
 Les rapports natifs, données V8 et captures restent hors Git ou sous `coverage/` ignoré. Le diff final est classé manual-po, notamment en raison du changement de gouvernance du validateur. Publication Draft, checks distants et audits SHA-bound restent à terminer. Aucune approbation PO, Ready ni fusion par l'agent. CRMY-171 reste In Progress ; CRMY-65/66 non démarrés.
 
+## Remédiation PR 92 — affectation configurable et audit unique
+
+L'arbitrage PO distingue le connecteur actif de l'affectation automatique active. Le contrôle Admin `/admin/assignment` lit et modifie le drapeau persistant `automaticEnabled` par campus avec la version attendue, sans remplacer les règles/destinataires. Le worker relit le même snapshot Prisma, y compris pour une stratégie FIXED planifiée. Une désactivation laisse l'import créer un Lead non affecté avec le résultat explicite `assignment_automation_disabled` ; l'affectation manuelle autorisée reste possible. Aucun rôle administratif n'est fabriqué pour SYSTEM.
+
+Une affectation effective émet désormais un seul `LEAD_ASSIGNED`, enrichi à l'insertion (origine, référence de décision, version/règle). Aucune seconde émission `LEAD_AUTO_ASSIGNED` et aucune réécriture historique. Les événements d'import sans affectation conservent leurs métadonnées antérieures. `/assignment/auto` ne modifie toujours pas le Lead : décision, curseur et audit de décision atomiques ; les imports serveur autorisés n'exigent pas une confirmation humaine pour chaque ligne.
+
+Preuves locales après correction : cycle HTTP réel sur deux API, quatre combinaisons toggle activé/désactivé et stratégie automatique/FIXED ; affectation manuelle avec toggle désactivé, faute d'audit avec rollback, rejeu sur l'autre instance sans doublon. CRMY-54 conserve les sept mutations/sept audits, acteurs et assertions métier ; seule sa fixture de configuration obsolète et le destinataire synthétique éligible ont été corrigés. Suite API avec CI=true : 375 réussis, cinq conditionnels ignorés ; Web : 128 réussis ; E2E isolés : 12 contrats et neuf scénarios API ; Playwright : 13 réussis, un conditionnel ignoré. Lint/types/builds verts.
+
+Couverture canonique Linux, incluant PostgreSQL et deux API instrumentées : 87,56712 % lignes globales, 88,80309 % branches ; estimation sur le diff complet contre develop 93,32964 %. La mesure précédente 93,52179 % reste historique. Aucun fichier non couvert retiré, aucun seuil/exclusion changé ; confirmation Sonar requise sur le nouveau SHA. Les avertissements d'hydratation observés sur le dashboard Reporting dans la suite Playwright restent distincts du parcours Admin concerné.
+
+Images de cette remédiation réellement testées via HTTP/PostgreSQL : API `sha256:42815e82d266e8466dc967f990c503844ef9cb20e29f3e560e88618a99408198`, Web `sha256:6d13de5a1a3c772f1b1a0f2d5a42e31b7952f799b6b0a224de05abf5d5212ce4`. Chacune : zéro High/Critical/secret détecté, 20 constats inférieurs conservés dans les JSON Trivy natifs. Base Trivy figée du 6 septembre, 07:00 UTC. Les preuves des anciennes images restent conservées et ne valident pas ces reconstructions.
+
+La PR 92 reste Draft/manual-po ; les cinq échecs du head 846a1a9 étaient trois suites arrêtées sur la fixture CRMY-54, une analyse Sonar non exécutée après échec de son prérequis de couverture, et l'agrégat rouge. Les résultats distants du nouveau head doivent tous être relus avant revue PO. Aucun label d'approbation, Ready ou fusion automatique.
+
 ## Désactivation et rollback
 
 Le chemin serveur est branché, mais toute configuration est désactivée initialement et le fournisseur refuse les classeurs non synthétiques. Passer `enabled=false` annule le run actif et invalide son bail : une ligne déjà validée reste conservée, un worker périmé ne peut plus valider une nouvelle ligne. Conserver configurations, suivis, provenance, audits, images et volumes. Un rollback applicatif doit refuser de lancer le connecteur s'il ne comprend plus sa version de configuration ; ne pas supprimer les tables ou restaurer silencieusement des données.
