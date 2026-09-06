@@ -12,11 +12,13 @@ test("CRMY-170 additive display name: empty database and populated N-1 keep exis
   execFileSync("docker", ["run", "-d", "--name", container, "--label", "crmy.ticket=CRMY-170", "--tmpfs", "/var/lib/postgresql/data:rw", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17.6-bookworm"], { stdio: "pipe", timeout: 60_000 });
   t.after(() => execFileSync("docker", ["rm", "-f", container], { stdio: "pipe", timeout: 30_000 }));
   for (let attempt = 0; ; attempt++) {
-    try { execFileSync("docker", ["exec", container, "pg_isready", "-U", "postgres"], { stdio: "pipe" }); break; }
+    // The entrypoint's temporary init server accepts Unix sockets only and stops
+    // before the final server starts. Wait for the TCP endpoint used by the test.
+    try { execFileSync("docker", ["exec", container, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"], { stdio: "pipe", timeout: 5_000 }); break; }
     catch { if (attempt >= 30) throw new Error("ephemeral_postgres_unavailable"); await new Promise((done) => setTimeout(done, 500)); }
   }
   function sql(database: string, input: string): string {
-    return execFileSync("docker", ["exec", "-i", container, "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-Atq"], { input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 60_000 }).trim();
+    return execFileSync("docker", ["exec", "-i", container, "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-Atq"], { input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 60_000 }).trim();
   }
   const root = resolve("prisma/migrations"), current = "20260903200000_collaborator_display_name";
   const previous = readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name < current).map((entry) => entry.name).sort();
