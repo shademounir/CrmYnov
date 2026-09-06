@@ -19,6 +19,13 @@ async function verifyDatabase(url, nonce) {
   } finally { await client.$disconnect(); }
 }
 
+async function waitForPostgres(container) {
+  for (let n = 0; ; n++) {
+    try { docker(["exec", container, "pg_isready", "-U", "postgres"]); return; }
+    catch { if (n >= 60) throw Error("coverage_postgres_not_ready"); await delay(250); }
+  }
+}
+
 async function postgresProofs() {
   let container;
   const precreated = process.env.CRMY171_COVERAGE_PRECREATED === "true";
@@ -29,7 +36,7 @@ async function postgresProofs() {
     if (!precreated) {
       container = `crmy171-coverage-${randomUUID()}`;
       docker(["run", "-d", "--name", container, "--publish", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data:rw", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17.6-bookworm"]);
-      for (let n = 0; ; n++) { try { docker(["exec", container, "pg_isready", "-U", "postgres"]); break; } catch { if (n >= 60) throw Error("coverage_postgres_not_ready"); await delay(250); } }
+      await waitForPostgres(container);
       port = docker(["port", container, "5432"]).trim().split(":").at(-1);
       if (!/^\d+$/u.test(port ?? "")) throw Error("coverage_postgres_port_invalid");
       for (const database of ["crmy171_synthetic", "crmy171_http_synthetic"]) {

@@ -1,35 +1,45 @@
 // Deliberately bounded lexical/structural recognition, not a PostgreSQL parser.
 // Anything outside the new FK / ADD COLUMN grammar remains fail-closed.
+function quotedToken(source, start) {
+  const quote = source[start]; let value = ""; let at = start + 1;
+  while (at < source.length) {
+    if (source[at] === quote) {
+      if (source[at + 1] === quote) { value += quote; at += 2; continue; }
+      return { token: { kind: quote === "'" ? "string" : "identifier", value }, at: at + 1 };
+    }
+    if (source[at] === "\\") throw new Error("ambiguous_sql_escape");
+    value += source[at]; at += 1;
+  }
+  throw new Error("unterminated_sql_quote");
+}
+
+function unquotedToken(source, at) {
+  const rest = source.slice(at);
+  const word = /^[A-Za-z_][A-Za-z_0-9]*/u.exec(rest);
+  const number = /^\d+(?:\.\d+)?/u.exec(rest);
+  if (word || number) {
+    const value = (word ?? number)[0];
+    return { token: { kind: word ? "word" : "number", value }, at: at + value.length };
+  }
+  const operator = [">=", "<=", "<>", "!=", "(", ")", ",", ">", "<", "=", "+", "-", ".", "[", "]"].find(value => rest.startsWith(value));
+  if (!operator) throw new Error("unknown_sql_token");
+  return { token: { kind: "symbol", value: operator }, at: at + operator.length };
+}
+
+function nextSqlToken(source, at) {
+  if (source.startsWith("/*", at) || source.startsWith("*/", at)) throw new Error("ambiguous_sql_comment");
+  if (source[at] === "'" || source[at] === '"') return quotedToken(source, at);
+  return unquotedToken(source, at);
+}
+
 export function sqlStatements(source) {
   const statements = []; let tokens = []; let at = 0;
   while (at < source.length) {
     if (/\s/u.test(source[at])) { at += 1; continue; }
     if (source.startsWith("--", at)) { const end = source.indexOf("\n", at); at = end < 0 ? source.length : end + 1; continue; }
-    if (source.startsWith("/*", at) || source.startsWith("*/", at)) throw new Error("ambiguous_sql_comment");
-    const quote = source[at];
-    if (quote === "'" || quote === '"') {
-      let value = ""; let closed = false; at += 1;
-      while (at < source.length) {
-        if (source[at] === quote) {
-          if (source[at + 1] === quote) { value += quote; at += 2; continue; }
-          at += 1; closed = true; break;
-        }
-        if (source[at] === "\\") throw new Error("ambiguous_sql_escape");
-        value += source[at]; at += 1;
-      }
-      if (!closed) throw new Error("unterminated_sql_quote");
-      tokens.push({ kind: quote === "'" ? "string" : "identifier", value }); continue;
-    }
-    const rest = source.slice(at);
-    const word = /^[A-Za-z_][A-Za-z_0-9]*/u.exec(rest);
-    const number = /^\d+(?:\.\d+)?/u.exec(rest);
-    if (word || number) {
-      const value = (word ?? number)[0]; tokens.push({ kind: word ? "word" : "number", value }); at += value.length; continue;
-    }
-    if (quote === ";") { if (tokens.length) statements.push(tokens); tokens = []; at += 1; continue; }
-    const operator = [">=", "<=", "<>", "!=", "(", ")", ",", ">", "<", "=", "+", "-", ".", "[", "]"].find(value => rest.startsWith(value));
-    if (!operator) throw new Error("unknown_sql_token");
-    tokens.push({ kind: "symbol", value: operator }); at += operator.length;
+    if (source[at] === ";") { if (tokens.length) statements.push(tokens); tokens = []; at += 1; continue; }
+    const next = nextSqlToken(source, at);
+    tokens.push(next.token); at = next.at;
   }
   if (tokens.length) statements.push(tokens);
   return statements;
@@ -73,21 +83,28 @@ function foreignKeyActions(tokens) {
 
 // Only complete table-level FK definitions inside a plain CREATE TABLE may
 // contribute these two action keywords. Never strip keywords globally.
-export function recognizedForeignKeyWords(tokens) {
-  if (!keyword(tokens[0], "CREATE") || !keyword(tokens[1], "TABLE") || !identifier(tokens[2]) || !symbol(tokens[3], "(")) return new Set();
+function completedTableParts(tokens, at, start, parts) {
+  if (at !== tokens.length - 1) return [];
+  parts.push(tokens.slice(start, at));
+  return parts.some(part => part.length === 0) ? [] : parts;
+}
+
+function tableDefinitionParts(tokens) {
   let depth = 1; let start = 4; const parts = [];
   for (let at = 4; at < tokens.length; at += 1) {
     if (symbol(tokens[at], "(")) depth += 1;
     if (symbol(tokens[at], ")")) {
       depth -= 1;
-      if (depth === 0) {
-        if (at !== tokens.length - 1) return new Set();
-        parts.push(tokens.slice(start, at)); break;
-      }
+      if (depth === 0) return completedTableParts(tokens, at, start, parts);
     }
     if (depth === 1 && symbol(tokens[at], ",")) { parts.push(tokens.slice(start, at)); start = at + 1; }
   }
-  if (depth !== 0 || parts.some(part => part.length === 0)) return new Set();
+  return [];
+}
+
+export function recognizedForeignKeyWords(tokens) {
+  if (!keyword(tokens[0], "CREATE") || !keyword(tokens[1], "TABLE") || !identifier(tokens[2]) || !symbol(tokens[3], "(")) return new Set();
+  const parts = tableDefinitionParts(tokens);
   return new Set(parts.filter(foreignKeyActions).flat().filter(token => keyword(token, "DELETE") || keyword(token, "UPDATE")));
 }
 
@@ -122,16 +139,29 @@ function columnType(input) {
   return true;
 }
 
+function columnConstraint(input, column, seen) {
+  if (input.word("NOT")) {
+    if (seen.has("NOT") || !input.word("NULL")) return false;
+    seen.add("NOT"); return true;
+  }
+  if (input.word("DEFAULT")) {
+    if (seen.has("DEFAULT") || !defaultLiteral(input)) return false;
+    seen.add("DEFAULT"); return true;
+  }
+  if (input.word("CHECK")) {
+    if (seen.has("CHECK") || !boundedCheck(input, column)) return false;
+    seen.add("CHECK"); return true;
+  }
+  return false;
+}
+
 function columnDefinition(input) {
   const column = input.id(); if (column === undefined || !columnType(input)) return false;
-  let notNull = false; let hasDefault = false; let hasCheck = false;
+  const seen = new Set();
   while (!input.done() && !symbol(input.peek(), ",")) {
-    if (input.word("NOT")) { if (notNull || !input.word("NULL")) return false; notNull = true; }
-    else if (input.word("DEFAULT")) { if (hasDefault || !defaultLiteral(input)) return false; hasDefault = true; }
-    else if (input.word("CHECK")) { if (hasCheck || !boundedCheck(input, column)) return false; hasCheck = true; }
-    else return false;
+    if (!columnConstraint(input, column, seen)) return false;
   }
-  return !notNull || hasDefault;
+  return !seen.has("NOT") || seen.has("DEFAULT");
 }
 
 export function structuredAddColumn(tokens) {

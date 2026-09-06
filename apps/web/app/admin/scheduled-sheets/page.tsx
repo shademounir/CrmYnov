@@ -10,6 +10,13 @@ type Feedback = { kind: "neutral" | "loading" } | { kind: "success" | "error"; m
 const targets = ["firstName", "lastName", "email", "phone", "externalId", "educationLevel", "program", "campus", "campaign", "historicalStatus", "occurredAt"];
 const actions = ["DIRECT", "TRIM", "LOWERCASE", "PHONE", "DATE", "METADATA", "IGNORE"];
 
+function ExecutionFeedback({ feedback }: { feedback: Feedback }): React.JSX.Element {
+  const busy = feedback.kind === "loading";
+  return <div aria-busy={busy}>{busy ? <p role="status">Traitement en cours…</p> : null}
+    {feedback.kind === "error" ? <p role="alert" className="sheets-error">{feedback.message}</p> : null}
+    {feedback.kind === "success" ? <p role="status" className="sheets-success">{feedback.message}</p> : null}</div>;
+}
+
 export default function ScheduledSheetsPage(): React.JSX.Element {
   const [campuses, setCampuses] = useState<ReferenceOption[]>([]), [campus, setCampus] = useState("");
   const [connectors, setConnectors] = useState<ApiObject[]>([]), [selected, setSelected] = useState<ApiObject>({});
@@ -79,9 +86,7 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
     <section className="sheets-panel sheets-controls"><ReferenceSelect name="consultedCampus" label="Campus à consulter" options={campuses} value={campus} disabled={busy} onChange={(value) => { revision.current++; setCampus(value); setLoaded(false); setSelected({}); setConnectors([]); setRuns([]); setHistoryPage(0); setFeedback({ kind: "neutral" }); }} />
       <button type="button" disabled={!campus || busy} onClick={() => { void refresh(); }}>Charger / actualiser</button>
       {refreshed ? <small>Données actualisées à {refreshed}</small> : null}</section>
-    <div aria-busy={busy}>{busy ? <p role="status">Traitement en cours…</p> : null}
-      {feedback.kind === "error" ? <p role="alert" className="sheets-error">{feedback.message}</p> : null}
-      {feedback.kind === "success" ? <p role="status" className="sheets-success">{feedback.message}</p> : null}</div>
+    <ExecutionFeedback feedback={feedback} />
     {loaded ? <>
       <nav aria-label="Configurations Sheets" className="sheets-controls">{connectors.map((row) => <button key={apiString(row, "id")} type="button" disabled={busy} aria-pressed={apiString(row, "id") === id} onClick={() => { choose(row); setFeedback({ kind: "neutral" }); }}>{apiString(row, "tab")} · v{apiString(row, "version")} · {row.enabled ? "Actif" : "Désactivé"}</button>)}
         <button type="button" disabled={busy} onClick={() => { choose({}); setFeedback({ kind: "neutral" }); }}>Nouvelle configuration</button></nav>

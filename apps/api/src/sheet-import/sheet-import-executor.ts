@@ -16,6 +16,13 @@ import { SheetsSourceError } from "./google-sheets-adapter.js";
 
 type RunContext = { lease: SheetLease; configuration: SheetConfiguration; authorizedBy: string; campusId: string; workbookId: string; tab: string };
 
+function receiptOutcome(outcome: string): "CREATED" | "DUPLICATE" | "IGNORED" | "REVIEW" {
+  if (outcome === "CREATED") return "CREATED";
+  if (outcome === "ATTACHED") return "DUPLICATE";
+  if (outcome === "IGNORED") return "IGNORED";
+  return "REVIEW";
+}
+
 @Injectable()
 export class SheetImportExecutor extends ScheduledSheetExecutor {
   private readonly coordinator: SheetImportCoordinator;
@@ -91,7 +98,7 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     const result = await this.ingestion.persistSheetRecord(tx, context.lease.connectorId, record, mapping, context.lease.runId, context.configuration.assignment);
     await tx.sheetImportSubmission.create({ data: { connectorId: context.lease.connectorId, externalId: decision.externalId,
       fingerprint, outcome: result.outcome, batchId: result.batchId } });
-    const outcome = result.outcome === "CREATED" ? "CREATED" : result.outcome === "ATTACHED" ? "DUPLICATE" : result.outcome === "IGNORED" ? "IGNORED" : "REVIEW";
+    const outcome = receiptOutcome(result.outcome);
     await this.receipt(tx, context, rowKey, outcome, result.assignmentReason);
   }
 

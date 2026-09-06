@@ -65,12 +65,7 @@ export class SheetImportAdminService {
       const reference = await tx.crmReference.findUniqueOrThrow({ where: { id: campus.id } });
       if (configuration.context.campus !== reference.code) throw new BadRequestException({ code: "sheet_campus_mapping_invalid" });
       const enabled = body.enabled === true;
-      if (enabled) {
-        if (process.env.FORMINATOR_WEBHOOK_ENABLED === "true") throw new ConflictException({ code: "sheet_automatic_channel_active" });
-        await assertSheetAuthority(tx, this.repository, current.userId, campus.id, configuration.assignment.strategy !== "UNASSIGNED");
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, 1)`;
-        if (await tx.sheetImportConnector.count({ where: { enabled: true, ...(id ? { id: { not: id } } : {}) } })) throw new ConflictException({ code: "sheet_automatic_channel_active" });
-      }
+      if (enabled) await this.authorizeActivation(tx, current.userId, campus.id, configuration, id);
       const data = { campusId: campus.id, workbookId: workbook, tab: sheetText(body.tab, 100), enabled, intervalMinutes: interval,
         version: expected + 1, updatedBy: current.userId, configuration: configurationJson(configuration), nextRunAt: new Date() };
       if (!enabled && previous?.activeRunId) {
@@ -82,6 +77,13 @@ export class SheetImportAdminService {
       await this.audit(tx, current, row, "SHEET_IMPORT_CONFIGURED", { version: row.version, enabled, intervalMinutes: interval });
       return view(row);
     });
+  }
+
+  private async authorizeActivation(tx: Prisma.TransactionClient, userId: string, campusId: string, configuration: SheetConfiguration, id?: string): Promise<void> {
+    if (process.env.FORMINATOR_WEBHOOK_ENABLED === "true") throw new ConflictException({ code: "sheet_automatic_channel_active" });
+    await assertSheetAuthority(tx, this.repository, userId, campusId, configuration.assignment.strategy !== "UNASSIGNED");
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, 1)`;
+    if (await tx.sheetImportConnector.count({ where: { enabled: true, ...(id ? { id: { not: id } } : {}) } })) throw new ConflictException({ code: "sheet_automatic_channel_active" });
   }
 
   async requestRun(actor: Principal, id: string, expectedVersion: number): Promise<{ queued: true; version: number }> {

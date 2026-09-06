@@ -147,6 +147,14 @@ export class PersistentIngestionService {
     return { batchId, outcome: line.outcome, ...(selected.reason ? { assignmentReason: selected.reason } : {}) };
   }
 
+  private programOutsideAllowedMapping(record: IngestionRecordInput, input: ConfirmPersistentImportInput): boolean {
+    return Boolean(record.program && input.allowedPrograms?.length && !input.allowedPrograms.includes(record.program.trim()));
+  }
+
+  private hasRequiredMapping(record: IngestionRecordInput): record is IngestionRecordInput & { campus: string; campaign: string; educationLevel: string; program: string } {
+    return Boolean(record.campus?.trim() && record.campaign?.trim() && record.educationLevel?.trim() && record.program?.trim());
+  }
+
   private fingerprintRecord(record: IngestionRecordInput): string {
     return createHash("sha256").update(JSON.stringify(this.canonical(record))).digest("hex");
   }
@@ -170,15 +178,14 @@ export class PersistentIngestionService {
     if (matches.size > 1) return this.review(tx, batchId, record.lineNumber, "IDENTITY_COLLISION");
     const matchedLeadId = [...matches][0];
     if (external && record.technicalSystem.trim() === "FORMINATOR_ZAPIER") {
-      if (external.submissionFingerprint !== submissionFingerprint(record)) return this.review(tx, batchId, record.lineNumber, "SUBMISSION_CONTENT_DIVERGENT", external.leadId);
-      return { lineNumber: record.lineNumber, outcome: "ATTACHED", leadId: external.leadId };
+      return this.replayCanonicalSubmission(tx, batchId, record, external);
     }
     if (mappedStatus === "DUPLICATE" && !matchedLeadId) return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
     if (mappedStatus === "UNKNOWN") return this.review(tx, batchId, record.lineNumber, "STATUS_UNKNOWN", matchedLeadId);
-    if (record.program && input.allowedPrograms?.length && !input.allowedPrograms.includes(record.program.trim())) return this.review(tx, batchId, record.lineNumber, "PROGRAM_UNKNOWN", matchedLeadId);
+    if (this.programOutsideAllowedMapping(record, input)) return this.review(tx, batchId, record.lineNumber, "PROGRAM_UNKNOWN", matchedLeadId);
     if (matchedLeadId) return this.attachMatch(tx, batchId, matchedLeadId, record, mappedStatus === "DUPLICATE", Boolean(external), principal.userId, correlationId);
     if (mappedStatus === "DUPLICATE") return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
-    if (!record.campus?.trim() || !record.campaign?.trim() || !record.educationLevel?.trim() || !record.program?.trim()) return this.review(tx, batchId, record.lineNumber, "REQUIRED_MAPPING_MISSING");
+    if (!this.hasRequiredMapping(record)) return this.review(tx, batchId, record.lineNumber, "REQUIRED_MAPPING_MISSING");
     try {
       const references = await validateLeadReferences(tx, { campus: record.campus, campaign: record.campaign, program: record.program });
       return await this.createLead(tx, batchId, { ...record, ...references }, input, mappedStatus, email, phone, principal.userId, correlationId, selected, principal.roles ?? []);
@@ -186,6 +193,11 @@ export class PersistentIngestionService {
       if (!(error instanceof UnprocessableEntityException)) throw error;
       return this.review(tx, batchId, record.lineNumber, "REFERENCE_VALUE_UNKNOWN");
     }
+  }
+
+  private async replayCanonicalSubmission(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, external: { leadId: string; submissionFingerprint: string | null }): Promise<Line> {
+    if (external.submissionFingerprint !== submissionFingerprint(record)) return this.review(tx, batchId, record.lineNumber, "SUBMISSION_CONTENT_DIVERGENT", external.leadId);
+    return { lineNumber: record.lineNumber, outcome: "ATTACHED", leadId: external.leadId };
   }
 
   private async findMatches(tx: Prisma.TransactionClient, technicalSystem: string, externalId: string | undefined, email: string | undefined, phone: string | undefined): Promise<{ external: { leadId: string; submissionFingerprint: string | null } | null; matches: Set<string> }> {
