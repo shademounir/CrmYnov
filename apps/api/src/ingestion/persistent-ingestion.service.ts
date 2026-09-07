@@ -104,11 +104,17 @@ export class PersistentIngestionService {
     assignment: IngestionBatchInput["assignment"] = { strategy: "UNASSIGNED" }): Promise<{ batchId: string; outcome: LineOutcome; assignmentReason?: string }> {
     if (!SAFE_MAPPING.test(mapping.id) || !Number.isInteger(mapping.version) || mapping.version < 1) throw new BadRequestException({ code: "sheet_mapping_invalid" });
     const connector = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
-    if (!connector?.enabled) throw new ForbiddenException({ code: "sheet_connector_disabled" });
+    if (!connector) throw new ForbiddenException({ code: "sheet_connector_disabled" });
+    if (!connector.enabled) {
+      const run = connector.activeRunId ? await tx.sheetImportRun.findUnique({ where: { id: connector.activeRunId } }) : null;
+      if (record.technicalSystem !== "GOOGLE_SHEETS_LOCAL" || run?.trigger !== "MANUAL" || run.status !== "RUNNING") throw new ForbiddenException({ code: "sheet_connector_disabled" });
+    }
     const campus = await tx.crmReference.findUnique({ where: { id: connector.campusId } });
-    if (campus?.kind !== "CAMPUS" || campus.state !== "ACTIVE" || record.campus !== campus.code || record.technicalSystem !== "FORMINATOR_ZAPIER" || !record.externalId?.trim()) {
+    const local = record.technicalSystem === "GOOGLE_SHEETS_LOCAL";
+    if (campus?.kind !== "CAMPUS" || campus.state !== "ACTIVE" || record.campus !== campus.code || (!local && record.technicalSystem !== "FORMINATOR_ZAPIER") || !record.externalId?.trim()) {
       throw new ForbiddenException({ code: "sheet_connector_scope_refused" });
     }
+    if (local) await this.validateLocalSheetIdentity(tx, connector, record.externalId);
     const actorId = `SYSTEM:SHEETS:${connector.id}`;
     const batchId = randomUUID();
     const key = `sheet:${connector.id}:${createHash("sha256").update(record.externalId.trim()).digest("hex").slice(0, 48)}`;
@@ -124,13 +130,15 @@ export class PersistentIngestionService {
     }
     const selected: SheetAssignment = matches.size ? { eventKey: key, reason: "assignment_existing_preserved" }
       : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, true);
-    const input: ConfirmPersistentImportInput = { confirmed: true, profile: "FORMINATOR_ZAPIER", idempotencyKey: key,
+    const input: ConfirmPersistentImportInput = { confirmed: true, profile: local ? "CUSTOM" : "FORMINATOR_ZAPIER", idempotencyKey: key,
       mappingId: mapping.id, mappingVersion: mapping.version, sourceFileSha256: this.fingerprintRecord(record),
       assignment: selected.reason === "assignment_configuration_absent" ? { strategy: "UNASSIGNED" } : assignment,
       records: [record] };
     await tx.ingestionBatch.create({ data: { id: batchId, idempotencyKey: key, fingerprint: this.fingerprint(input), profile: input.profile,
       assignmentMode: input.assignment.strategy, actorId, totalCount: 1, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
-    const line = await this.persistLine(tx, batchId, record, input, { userId: actorId, roles: ["SYSTEM"] }, correlationId, selected);
+    const localReason = local ? await this.localSheetReviewReason(tx, record, matches) : undefined;
+    const line = localReason ? await this.review(tx, batchId, record.lineNumber, localReason)
+      : await this.persistLine(tx, batchId, record, input, { userId: actorId, roles: ["SYSTEM"] }, correlationId, selected);
     if (line.outcome === "CREATED" && line.leadId) await commitSheetAssignment(tx, selected, line.leadId);
     await tx.ingestionBatch.update({ where: { id: batchId }, data: { createdCount: Number(line.outcome === "CREATED"), attachedCount: Number(line.outcome === "ATTACHED"),
       reviewCount: Number(line.outcome === "MANUAL_REVIEW"), invalidCount: Number(line.outcome === "INVALID") } });
@@ -145,6 +153,35 @@ export class PersistentIngestionService {
       ignoredCount: Number(line.outcome === "IGNORED"), duplicateCount: Number(line.outcome === "ATTACHED"), errorCount: Number(line.outcome === "INVALID" || line.outcome === "MANUAL_REVIEW"),
       ...(line.reason ? { rejections: { create: { lineNumber: record.lineNumber, category: line.outcome, reasonCode: line.reason } } } : {}) } });
     return { batchId, outcome: line.outcome, ...(selected.reason ? { assignmentReason: selected.reason } : {}) };
+  }
+
+  private async validateLocalSheetIdentity(tx: Prisma.TransactionClient, connector: { campusId: string; workbookId: string; configuration: Prisma.JsonValue }, id: string): Promise<void> {
+    const tracked = await tx.sheetLocalRow.findUnique({ where: { id }, include: { stream: true } });
+    const config = connector.configuration;
+    const source = config && typeof config === "object" && !Array.isArray(config) ? config.source : null;
+    if (!source || typeof source !== "object" || Array.isArray(source) || source.identityMode !== "LOCAL_ROW"
+      || !tracked || tracked.stream.suspended || tracked.stream.campusId !== connector.campusId
+      || tracked.stream.workbookId !== connector.workbookId || tracked.stream.sheetId !== source.sheetId || tracked.status !== "PENDING") {
+      throw new ForbiddenException({ code: "sheet_local_identity_refused" });
+    }
+  }
+
+  private async localSheetReviewReason(tx: Prisma.TransactionClient, record: IngestionRecordInput, matches: Set<string>): Promise<string | undefined> {
+    if (!record.campus) return "REQUIRED_MAPPING_MISSING";
+    if (!record.email?.trim() && !record.phone?.trim()) return "CONTACT_IDENTITY_MISSING";
+    if (matches.size > 1) return "IDENTITY_COLLISION";
+    const matched = [...matches][0];
+    if (matched) {
+      const lead = await tx.lead.findUniqueOrThrow({ where: { id: matched } });
+      const name = (value: string): string => value.trim().toLowerCase();
+      if (name(lead.firstName) !== name(record.firstName) || name(lead.lastName) !== name(record.lastName)
+        || (lead.email && record.email && name(lead.email) !== name(record.email))
+        || (lead.phone && record.phone && lead.phone !== record.phone.replace(/[^+\d]/gu, ""))) return "CONTACT_VALUES_CONTRADICTORY";
+      return undefined;
+    }
+    const names = await tx.lead.count({ where: { campus: record.campus, firstName: { equals: record.firstName.trim(), mode: "insensitive" },
+      lastName: { equals: record.lastName.trim(), mode: "insensitive" } } });
+    return names ? "NAME_ONLY_MATCH" : undefined;
   }
 
   private programOutsideAllowedMapping(record: IngestionRecordInput, input: ConfirmPersistentImportInput): boolean {

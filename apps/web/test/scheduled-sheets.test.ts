@@ -3,11 +3,30 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Page from "../app/admin/scheduled-sheets/page";
-import { sheetApiObject, sheetApiValue, sheetError, sheetRequest } from "../app/admin/scheduled-sheets/sheets-client";
+import { sheetApiObject, sheetApiValue, sheetError, sheetRequest, sheetSimulation } from "../app/admin/scheduled-sheets/sheets-client";
 
-test("scheduled Sheets advertises synthetic-only mode, disabled defaults and existing manual imports", () => {
+test("simulation counters preserve real, simulated, empty and review results without inventing import outcomes", () => {
+  for (const simulated of [true, false]) {
+    for (const { rows, mapped, review } of [{ rows: 0, mapped: 0, review: 0 }, { rows: 5, mapped: 3, review: 2 }, { rows: 4, mapped: 0, review: 4 }]) {
+      const expected = { rows, mapped, review, simulated, reconciliationRequired: mapped === 0 && rows !== 0 };
+      assert.deepEqual(sheetSimulation({ ...expected, mutated: false }), expected);
+    }
+  }
+});
+
+test("missing, malformed or inconsistent simulation results fail closed, never default to zero", () => {
+  const valid = { rows: 5, mapped: 3, review: 2, mutated: false, simulated: true, reconciliationRequired: false };
+  for (const invalid of [null, {}, { ...valid, rows: null }, { ...valid, mapped: "3" }, { ...valid, review: -1 },
+    { ...valid, mapped: 1.5 }, { ...valid, rows: 7 }, { ...valid, mutated: true }, { ...valid, simulated: null },
+    { ...valid, reconciliationRequired: null }]) {
+    assert.throws(() => sheetSimulation(invalid), /incomplet ou incohérent/u);
+  }
+});
+
+test("scheduled Sheets defaults to clearly identified simulation, disabled imports and no browser credentials", () => {
   const html = renderToStaticMarkup(createElement(Page));
-  assert.match(html, /Mode synthétique uniquement/u);
+  assert.match(html, /Source simulée — aucun accès Google/u);
+  assert.match(html, /Mode simulé/u);
   assert.match(html, /désactivé par défaut/u);
   assert.match(html, /\/imports\/wizard/u);
   assert.match(html, /Campus à consulter/u);

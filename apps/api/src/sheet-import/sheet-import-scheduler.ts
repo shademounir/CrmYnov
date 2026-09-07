@@ -28,7 +28,7 @@ export class SheetImportScheduler implements OnModuleInit, OnModuleDestroy {
     const client = this.prisma.client;
     if (!client || this.stopped) return;
     const connectors = await client.sheetImportConnector.findMany({
-      where: { enabled: true, nextRunAt: { lte: new Date() } },
+      where: { OR: [{ enabled: true }, { manualRequested: true }, { activeRunId: { not: null }, runs: { some: { trigger: "MANUAL", status: "RUNNING" } } }], nextRunAt: { lte: new Date() } },
       orderBy: [{ nextRunAt: "asc" }, { id: "asc" }], take: 20, select: { id: true },
     });
     for (const connector of connectors) {

@@ -4,17 +4,22 @@ import type { PrismaService } from "../persistence/prisma.service.js";
 
 export interface SheetLease { connectorId: string; runId: string; epoch: number; version: number }
 export type SheetClaim = { lease: SheetLease; connector: SheetImportConnector; run: SheetImportRun } | undefined;
+type SheetEligibility = (connector: SheetImportConnector) => boolean;
 
 /** Short database transactions only. Callers perform remote reads and retry waits outside this coordinator. */
 export class SheetImportCoordinator {
   constructor(private readonly prisma: PrismaService, private readonly clock: () => Date = () => new Date()) {}
 
-  async claim(connectorId: string, trigger: "MANUAL" | "SCHEDULED"): Promise<SheetClaim> {
+  async claim(connectorId: string, trigger: "MANUAL" | "SCHEDULED", eligible: SheetEligibility = (): boolean => true): Promise<SheetClaim> {
     const now = this.clock();
     return this.client.$transaction(async (tx): Promise<SheetClaim> => {
+      const candidate = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
+      if (!candidate || !eligible(candidate)) return undefined;
+      const active = candidate?.activeRunId ? await tx.sheetImportRun.findUnique({ where: { id: candidate.activeRunId } }) : null;
+      const manualResume = active?.trigger === "MANUAL" && active.status === "RUNNING" ? [{ activeRunId: active.id }] : [];
       const claimed = await tx.sheetImportConnector.updateMany({
-        where: { id: connectorId, enabled: true, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
-          AND: [{ OR: [{ activeRunId: null }, { nextRunAt: { lte: now } }] }],
+        where: { id: connectorId, version: candidate.version, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+          AND: [{ OR: [{ enabled: true }, { manualRequested: true }, ...manualResume] }, { OR: [{ activeRunId: null }, { nextRunAt: { lte: now } }] }],
           ...(trigger === "SCHEDULED" ? { nextRunAt: { lte: now } } : {}) },
         data: { epoch: { increment: 1 }, leaseUntil: new Date(now.valueOf() + 30_000) },
       });
@@ -81,9 +86,11 @@ export class SheetImportCoordinator {
   }
 
   private async fence(tx: Prisma.TransactionClient, lease: SheetLease): Promise<void> {
+    const run = await tx.sheetImportRun.findUnique({ where: { id: lease.runId }, select: { trigger: true, status: true } });
+    if (run?.status !== "RUNNING") throw new Error("sheet_lease_lost");
     // UPDATE locks this row until commit; a takeover, edit or disable cannot race a business commit.
     const guarded = await tx.sheetImportConnector.updateMany({
-      where: { id: lease.connectorId, enabled: true, epoch: lease.epoch, version: lease.version, activeRunId: lease.runId, leaseUntil: { gt: this.clock() } },
+      where: { id: lease.connectorId, ...(run.trigger === "MANUAL" ? {} : { enabled: true }), epoch: lease.epoch, version: lease.version, activeRunId: lease.runId, leaseUntil: { gt: this.clock() } },
       data: { epoch: { increment: 0 } },
     });
     if (guarded.count !== 1) throw new Error("sheet_lease_lost");

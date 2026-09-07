@@ -1025,6 +1025,37 @@ model SheetImportSubmission {
   @@map("sheet_import_submissions")
 }
 
+// Local Sheets identity is not an upstream submission identity.
+model SheetLocalStream {
+  id String @id @db.VarChar(64)
+  workbookId String @map("workbook_id") @db.VarChar(200)
+  sheetId Int @map("sheet_id")
+  campusId String @map("campus_id") @db.Uuid
+  range String @db.VarChar(64)
+  headerFingerprint String @map("header_fingerprint") @db.VarChar(64)
+  suspended Boolean @default(false)
+  errorCode String? @map("error_code") @db.VarChar(80)
+  lastObservedRow Int @map("last_observed_row")
+  rows SheetLocalRow[]
+  @@unique([workbookId, sheetId])
+  @@map("sheet_local_streams")
+}
+
+model SheetLocalRow {
+  id String @id @default(uuid()) @db.Uuid
+  streamId String @map("stream_id") @db.VarChar(64)
+  rowNumber Int @map("row_number")
+  fingerprint String @db.VarChar(64)
+  status String @db.VarChar(24)
+  errorCode String? @map("error_code") @db.VarChar(80)
+  batchId String? @map("batch_id") @db.Uuid
+  firstObservedAt DateTime @default(now()) @map("first_observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime @default(now()) @map("last_observed_at") @db.Timestamptz(6)
+  stream SheetLocalStream @relation(fields:[streamId], references:[id], onDelete:Restrict)
+  @@unique([streamId,rowNumber])
+  @@map("sheet_local_rows")
+}
+
 model CampusAssignmentConfiguration {
   campusId String @id @map("campus_id") @db.Uuid
   version Int

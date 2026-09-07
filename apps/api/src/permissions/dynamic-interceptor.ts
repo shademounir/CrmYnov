@@ -61,7 +61,7 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
   }
   private sheetAdministration(context: ExecutionContext, next: CallHandler<unknown>, handler: string): Observable<unknown> {
     // Split-phase service releases its transaction before source I/O, then reauthorizes.
-    if (!["list", "create", "update", "run", "simulate", "history"].includes(handler)) permissionDenied();
+    if (!["list", "create", "update", "run", "simulate", "history", "reconciliation"].includes(handler)) permissionDenied();
     const check = this.repository.readTransaction(async (tx): Promise<void> => {
       const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
       if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });

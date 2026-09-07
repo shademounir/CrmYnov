@@ -49,6 +49,9 @@ async function postgresProofs() {
     await verifyDatabase(direct, nonce); await verifyDatabase(http, nonce);
     run(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", "apps/api/prisma/schema.prisma"], { env: { ...process.env, DATABASE_URL: direct } });
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });
+    for (const testFile of ["sheet-local-postgres.test.ts", "sheet-local-executor-postgres.test.ts", "sheet-local-admin-postgres.test.ts"]) {
+      run(process.execPath, ["--import", "tsx", "--test", `test/${testFile}`], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });
+    }
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-http-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, CRMY171_HTTP_TEST: "true", CRMY171_HTTP_PRECREATED_URL: http, CRMY171_DATABASE_NONCE: nonce } });
   } finally { if (container) docker(["rm", "-f", container]); }
 }

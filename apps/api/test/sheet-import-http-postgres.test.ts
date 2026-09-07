@@ -4,6 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { readdir } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
 import { referenceKey } from "../src/references/reference.contract.js";
@@ -24,17 +25,25 @@ async function startApi(t: TestContext, database: string): Promise<string> {
     return imageRuntime(t, "api", url.toString());
   }
   const port = await freePort();
-  const instrumentation = process.env.NODE_V8_COVERAGE ? ["--import", resolve("../../scripts/ci/tests/coverage-shutdown.mjs")] : [];
-  const child = spawn(process.execPath, [...instrumentation, resolve("dist/main.js")], { windowsHide: true, stdio: "ignore", env: {
+  const coverageDirectory = process.env.NODE_V8_COVERAGE;
+  const instrumented = Boolean(coverageDirectory);
+  const instrumentation = instrumented
+    ? ["--import", pathToFileURL(resolve("../../scripts/ci/tests/coverage-shutdown.mjs")).href]
+    : [];
+  const child = spawn(process.execPath, [...instrumentation, resolve("dist/main.js")], { windowsHide: true,
+    stdio: instrumented ? ["ignore", "ignore", "ignore", "ipc"] : "ignore", env: {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP,
-    NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE,
+    NODE_V8_COVERAGE: coverageDirectory,
     DATABASE_URL: database, API_PORT: String(port), LOG_LEVEL: "error",
   } });
   t.after(async (): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) return;
-    const closed = new Promise<void>((done) => child.once("exit", () => done())); child.kill(); await closed;
-    if (process.env.NODE_V8_COVERAGE) {
-      const reports = await readdir(process.env.NODE_V8_COVERAGE);
+    const closed = new Promise<void>((done) => child.once("exit", () => done()));
+    if (instrumented) child.send("flush-coverage");
+    else child.kill();
+    await closed;
+    if (coverageDirectory) {
+      const reports = await readdir(coverageDirectory);
       assert.ok(reports.some((file) => file.startsWith(`coverage-${String(child.pid)}-`)), "each compiled API must flush its own native V8 counters");
     }
   });
@@ -148,7 +157,7 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   assert.equal(await client.sheetImportConfigurationVersion.count({ where: { connectorId: id } }), 1, "invalid and stale changes never append a revision");
   const simulated = await fetch(`${second}/scheduled-sheets/${id}/simulations`, { method: "POST", headers });
   assert.equal(simulated.status, 201, JSON.stringify(await simulated.clone().json()));
-  assert.deepEqual(await simulated.json(), { rows: 1, mapped: 1, review: 0, mutated: false, simulated: true });
+  assert.deepEqual(await simulated.json(), { rows: 1, mapped: 1, review: 0, mutated: false, simulated: true, reconciliationRequired: false, reason: null });
   assert.equal(await client.lead.count(), 0);
   const enabled = await fetch(`${second}/scheduled-sheets/${id}`, { method: "PUT", headers, body: JSON.stringify({ ...input, expectedVersion: 1, enabled: true }) });
   assert.equal(enabled.status, 200, JSON.stringify(await enabled.clone().json()));
@@ -197,7 +206,7 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   await client.collaborator.update({ where: { id: user.id }, data: { campusId: campus.id } });
   const disabled = await fetch(`${first}/scheduled-sheets/${id}`, { method: "PUT", headers, body: JSON.stringify({ ...input, expectedVersion: 2, enabled: false }) });
   assert.equal(disabled.status, 200);
-  assert.equal((await fetch(`${second}/scheduled-sheets/${id}/runs`, { method: "POST", headers, body: JSON.stringify({ expectedVersion: 3 }) })).status, 409);
+  assert.equal((await fetch(`${second}/scheduled-sheets/${id}/runs`, { method: "POST", headers, body: JSON.stringify({ expectedVersion: 3 }) })).status, 409, "legacy EXTERNAL_ID manual import remains refused while disabled");
   assert.equal(await client.sheetImportConfigurationVersion.count({ where: { connectorId: id } }), 3);
   assert.equal(await client.lead.count(), 1, "disable retains business data and receipts");
   await webImageProof(t, first, String(session.token), campus.id, id);
@@ -467,6 +476,90 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
     }
     const stop = await fetch(`${second}/scheduled-sheets/${connectorId}`, { method: "PUT", headers, body: JSON.stringify({ ...connectorInput, expectedVersion: 1, enabled: false }) }); assert.equal(stop.status, 200);
   }
+  // A dedicated campus avoids a same-name-only collision with the earlier legacy
+  // fixture (the simulated source deliberately uses the same synthetic names).
+  const localCampusCode = "SYNTHETIC-HTTP-LOCAL-CAMPUS";
+  const localCampus = await client.crmReference.create({ data: { kind: "CAMPUS", code: localCampusCode, label: localCampusCode, scope: "GLOBAL", scopeKey: "GLOBAL",
+    keys: { create: { kind: "CAMPUS", scopeKey: "GLOBAL", key: referenceKey(localCampusCode) } } } });
+  await client.crmProgramAvailability.create({ data: { campusId: localCampus.id, programId: program.id } });
+  await client.collaborator.update({ where: { id: user.id }, data: { campusId: localCampus.id } });
+  const localInput = { ...input, campusId: localCampus.id, workbookLink: "https://docs.google.com/spreadsheets/d/synthetic_http_local_171/edit", enabled: false, expectedVersion: 0,
+    source: { mode: "SIMULATED", identityMode: "LOCAL_ROW", sheetId: 0, range: "A1:G6" }, assignment: { strategy: "UNASSIGNED" },
+    mapping: { mappingKey: "synthetic-http-local", name: "Mapping local synthétique", profile: "CUSTOM", columns: [
+      { sourceColumn: "First", targetField: "firstName", action: "TRIM", required: true }, { sourceColumn: "Last", targetField: "lastName", action: "TRIM", required: true },
+      { sourceColumn: "Email", targetField: "email", action: "LOWERCASE" }, { sourceColumn: "Campus", targetField: "campus", action: "TRIM", required: true },
+      { sourceColumn: "Program", targetField: "program", action: "TRIM", required: true }, { sourceColumn: "Education", targetField: "educationLevel", action: "TRIM", required: true },
+      { sourceColumn: "Campaign", targetField: "campaign", action: "TRIM", required: true },
+    ] }, context: { ...input.context, campus: localCampus.code, source: "OTHER_CONTROLLED", technicalSystem: "GOOGLE_SHEETS_LOCAL", originalSource: "Synthetic controlled origin" } };
+  // Demonstrate the refusal observed during the first HTTP run instead of
+  // weakening name-only collision detection to make this test create a Lead.
+  await client.collaborator.update({ where: { id: user.id }, data: { campusId: campus.id } });
+  const collisionInput = { ...localInput, campusId: campus.id, workbookLink: "https://docs.google.com/spreadsheets/d/synthetic_http_local_collision/edit",
+    mapping: { ...localInput.mapping, mappingKey: "synthetic-http-local-collision" }, context: { ...localInput.context, campus: campus.code } };
+  const collisionSaved = await fetch(`${first}/scheduled-sheets`, { method: "POST", headers, body: JSON.stringify(collisionInput) });
+  assert.equal(collisionSaved.status, 201, JSON.stringify(await collisionSaved.clone().json()));
+  const collisionId = String(object(await collisionSaved.json()).id);
+  const leadsBeforeCollision = await client.lead.findMany({ orderBy: { id: "asc" } });
+  assert.equal((await fetch(`${second}/scheduled-sheets/${collisionId}/runs`, { method: "POST", headers, body: JSON.stringify({ expectedVersion: 1 }) })).status, 201);
+  const collisionDeadline = Date.now() + 8_000;
+  while (Date.now() < collisionDeadline && await client.sheetImportRun.count({ where: { connectorId: collisionId, status: "COMPLETED" } }) === 0) await new Promise<void>((done) => setTimeout(done, 100));
+  assert.equal(await client.sheetImportRun.count({ where: { connectorId: collisionId, status: "COMPLETED", createdCount: 0, reviewCount: 1 } }), 1);
+  assert.equal(await client.ingestionReviewItem.count({ where: { batch: { actorId: `SYSTEM:SHEETS:${collisionId}` }, reasonCode: "NAME_ONLY_MATCH" } }), 1);
+  assert.deepEqual(await client.lead.findMany({ orderBy: { id: "asc" } }), leadsBeforeCollision, "name-only candidate is reviewed without modifying any existing Lead");
+  await client.collaborator.update({ where: { id: user.id }, data: { campusId: localCampus.id } });
+  const localSaved = await fetch(`${first}/scheduled-sheets`, { method: "POST", headers, body: JSON.stringify(localInput) });
+  assert.equal(localSaved.status, 201, JSON.stringify(await localSaved.clone().json()));
+  const localConfiguration = object(await localSaved.json()); assert.equal(typeof localConfiguration.id, "string");
+  const localId = String(localConfiguration.id);
+  assert.equal(localConfiguration.enabled, false);
+  assert.equal(object(object(localConfiguration.configuration).source).identityMode, "LOCAL_ROW");
+  const leadsBeforeLocal = await client.lead.count();
+  const rowsBeforeLocal = await client.sheetLocalRow.count();
+  const localSimulation = await fetch(`${second}/scheduled-sheets/${localId}/simulations`, { method: "POST", headers });
+  assert.equal(localSimulation.status, 201, JSON.stringify(await localSimulation.clone().json()));
+  const localSimulationResult = object(await localSimulation.json());
+  assert.equal(localSimulationResult.mutated, false); assert.equal(localSimulationResult.simulated, true);
+  assert.equal(localSimulationResult.rows, 1); assert.equal(localSimulationResult.mapped, 1); assert.equal(localSimulationResult.review, 0);
+  assert.equal(await client.lead.count(), leadsBeforeLocal);
+  assert.equal(await client.sheetLocalRow.count(), rowsBeforeLocal, "simulation does not create local identities");
+  const emptyReconciliation = await fetch(`${first}/scheduled-sheets/${localId}/reconciliation`, { headers });
+  assert.equal(emptyReconciliation.status, 200, JSON.stringify(await emptyReconciliation.clone().json()));
+  assert.deepEqual(await emptyReconciliation.json(), { suspended: false, reason: null, page: 1, rows: [] });
+  const queuedLocal = await fetch(`${second}/scheduled-sheets/${localId}/runs`, { method: "POST", headers, body: JSON.stringify({ expectedVersion: 1 }) });
+  assert.equal(queuedLocal.status, 201, JSON.stringify(await queuedLocal.clone().json()));
+  const localDeadline = Date.now() + 8_000;
+  while (Date.now() < localDeadline && await client.sheetImportRun.count({ where: { connectorId: localId, status: "COMPLETED" } }) === 0) await new Promise<void>((done) => setTimeout(done, 100));
+  const localRunEvidence = await client.sheetImportRun.findMany({ where: { connectorId: localId }, select: { trigger: true, status: true, createdCount: true, duplicateCount: true, reviewCount: true, errorCode: true } });
+  assert.equal(await client.sheetImportRun.count({ where: { connectorId: localId, trigger: "MANUAL", status: "COMPLETED", createdCount: 1 } }), 1, JSON.stringify(localRunEvidence));
+  assert.equal((await client.sheetImportConnector.findUniqueOrThrow({ where: { id: localId } })).enabled, false);
+  assert.equal(await client.lead.count(), leadsBeforeLocal + 1);
+  const localLead = await client.lead.findFirstOrThrow({ where: { email: "synthetic_http_local_171@example.invalid" } });
+  assert.equal(localLead.assignedToId, null);
+  const localAudit = await client.auditEvent.findMany({ where: { resourceId: localId, eventType: "SHEET_IMPORT_ROW_PROCESSED" } });
+  assert.equal(localAudit.length, 1); assert.equal(localAudit[0]?.actorId, `SYSTEM:SHEETS:${localId}`);
+  assert.equal(JSON.stringify(localAudit).includes(localLead.email ?? "not-present"), false);
+  const historyCount = await client.auditEvent.count();
+  const state = await fetch(`${second}/scheduled-sheets/${localId}/reconciliation`, { headers });
+  assert.equal(state.status, 200);
+  const reconciliation = object(await state.json()); assert.equal(reconciliation.suspended, false); assert.ok(Array.isArray(reconciliation.rows));
+  assert.equal(reconciliation.rows.length, 1); const safeRow = object(reconciliation.rows[0]);
+  assert.equal(safeRow.rowNumber, 2); assert.equal(safeRow.status, "CREATED");
+  assert.deepEqual(Object.keys(safeRow).sort(), ["rowNumber", "status", "errorCode", "firstObservedAt", "lastObservedAt"].sort());
+  assert.equal(await client.auditEvent.count(), historyCount, "reconciliation inspection does not emit a business mutation audit");
+  assert.equal((await fetch(`${first}/scheduled-sheets/${localId}/reconciliation?page=0`, { headers })).status, 400);
+  await client.collaborator.update({ where: { id: user.id }, data: { campusId: outside.id } });
+  const hiddenLocal = await fetch(`${second}/scheduled-sheets/${localId}/reconciliation`, { headers });
+  const missingLocal = await fetch(`${second}/scheduled-sheets/${randomUUID()}/reconciliation`, { headers });
+  assert.equal(hiddenLocal.status, 404); assert.equal(missingLocal.status, 404); assert.deepEqual(await hiddenLocal.json(), await missingLocal.json());
+  await client.collaborator.update({ where: { id: user.id }, data: { campusId: localCampus.id } });
+  assert.equal((await fetch(`${first}/scheduled-sheets/${localId}/runs`, { method: "POST", headers, body: JSON.stringify({ expectedVersion: 1 }) })).status, 201);
+  const localReplayDeadline = Date.now() + 8_000;
+  while (Date.now() < localReplayDeadline && await client.sheetImportRun.count({ where: { connectorId: localId, status: "COMPLETED", duplicateCount: 1 } }) === 0) await new Promise<void>((done) => setTimeout(done, 100));
+  assert.equal(await client.sheetImportRun.count({ where: { connectorId: localId, status: "COMPLETED", duplicateCount: 1 } }), 1);
+  assert.equal(await client.lead.count(), leadsBeforeLocal + 1);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: localId, eventType: "SHEET_IMPORT_ROW_PROCESSED" } }), 1);
+  assert.equal((await client.sheetImportConnector.findUniqueOrThrow({ where: { id: localId } })).enabled, false);
+  t.diagnostic("LOCAL_ROW authenticated HTTP: save, non-mutating simulation, manual queue while disabled, persisted ingestion, redacted read-only reconciliation, cross-campus refusal and replay on two APIs.");
   t.diagnostic("Admin assignment toggle persisted across APIs: active connector imports with/without effective assignment, unique LEAD_ASSIGNED, manual assignment while disabled, audit rollback and cross-instance replay.");
   t.diagnostic("Real authenticated HTTP: disabled creation, immutable versions, simulation without Lead writes, two autonomous API instances, scheduled import, manual replay and one business audit.");
 });
