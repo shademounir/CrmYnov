@@ -73,17 +73,38 @@ export type LeadSavedView = typeof leadSavedViews[number];
 type ValidatedLeadListQuery = Readonly<{
   page: number;
   pageSize: number;
-  status?: LeadStatus;
-  temperature?: LeadTemperature;
+  status?: LeadStatus | undefined;
+  temperature?: LeadTemperature | undefined;
   sortBy: LeadSortField;
   sortDirection: "asc" | "desc";
-  createdFrom?: string;
-  createdTo?: string;
-  search?: string;
+  createdFrom?: string | undefined;
+  createdTo?: string | undefined;
+  search?: string | undefined;
   view: LeadWorkView;
-  savedView?: LeadSavedView;
-  channel?: string;
+  savedView?: LeadSavedView | undefined;
+  channel?: string | undefined;
 }>;
+
+function assertListPagination(page: number, pageSize: number): void {
+  const valid = [Number.isInteger(page), page >= 1, Number.isInteger(pageSize), pageSize >= 1, pageSize <= 100];
+  if (!valid.every(Boolean)) throw new BadRequestException({ code: "lead_pagination_invalid" });
+}
+
+function normalizedOptionalChoice<T extends string>(value: string | undefined, allowed: readonly string[], errorCode: string): T | undefined {
+  const normalized = value?.toUpperCase() as T | undefined;
+  if (normalized && !allowed.includes(normalized)) throw new BadRequestException({ code: errorCode });
+  return normalized;
+}
+
+function requiredChoice<T extends string>(value: T | undefined, fallback: T, allowed: readonly string[], errorCode: string): T {
+  const resolved = value ?? fallback;
+  if (!allowed.includes(resolved)) throw new BadRequestException({ code: errorCode });
+  return resolved;
+}
+
+function assertListDateRange(createdFrom: string | undefined, createdTo: string | undefined): void {
+  if (createdFrom && createdTo && createdFrom > createdTo) throw new BadRequestException({ code: "lead_date_range_invalid" });
+}
 
 @Injectable()
 export class LeadService implements OnModuleInit {
@@ -370,38 +391,31 @@ export class LeadService implements OnModuleInit {
 
   private validateListQuery(query: LeadListQuery): ValidatedLeadListQuery {
     const { page, pageSize } = query;
-    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "lead_pagination_invalid" });
-    const status = query.status?.toUpperCase();
-    if (status && !leadStatuses.includes(status as LeadStatus)) throw new BadRequestException({ code: "lead_status_filter_invalid" });
-    const temperature = query.temperature?.toUpperCase();
-    if (temperature && !leadTemperatures.includes(temperature as LeadTemperature)) throw new BadRequestException({ code: "lead_temperature_filter_invalid" });
-    const sortBy = (query.sortBy ?? "createdAt") as LeadSortField;
-    if (!["createdAt", "leadCode", "lastName", "status"].includes(sortBy)) throw new BadRequestException({ code: "lead_sort_invalid" });
-    const sortDirection = query.sortDirection ?? "desc";
-    if (sortDirection !== "asc" && sortDirection !== "desc") throw new BadRequestException({ code: "lead_sort_direction_invalid" });
+    assertListPagination(page, pageSize);
+    const status = normalizedOptionalChoice<LeadStatus>(query.status, leadStatuses, "lead_status_filter_invalid");
+    const temperature = normalizedOptionalChoice<LeadTemperature>(query.temperature, leadTemperatures, "lead_temperature_filter_invalid");
+    const sortBy = requiredChoice<LeadSortField>(query.sortBy as LeadSortField | undefined, "createdAt", ["createdAt", "leadCode", "lastName", "status"], "lead_sort_invalid");
+    const sortDirection = requiredChoice<"asc" | "desc">(query.sortDirection as "asc" | "desc" | undefined, "desc", ["asc", "desc"], "lead_sort_direction_invalid");
     const createdFrom = this.parseBoundary(query.createdFrom, "lead_created_from_invalid");
     const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
-    if (createdFrom && createdTo && createdFrom > createdTo) throw new BadRequestException({ code: "lead_date_range_invalid" });
+    assertListDateRange(createdFrom, createdTo);
     const search = query.search?.trim().toLocaleLowerCase("fr");
-    const view = (query.view ?? "ALL").toUpperCase() as LeadWorkView;
-    if (!["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"].includes(view)) throw new BadRequestException({ code: "lead_view_invalid" });
-    const savedView = query.savedView?.toUpperCase() as LeadSavedView | undefined;
-    if (savedView && !leadSavedViews.includes(savedView)) throw new BadRequestException({ code: "lead_saved_view_invalid" });
-    const channel = query.channel?.toUpperCase();
-    if (channel && !["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"].includes(channel)) throw new BadRequestException({ code: "lead_channel_filter_invalid" });
+    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"], "lead_view_invalid");
+    const savedView = normalizedOptionalChoice<LeadSavedView>(query.savedView, leadSavedViews, "lead_saved_view_invalid");
+    const channel = normalizedOptionalChoice<string>(query.channel, ["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"], "lead_channel_filter_invalid");
     return {
       page,
       pageSize,
       sortBy,
       sortDirection,
       view,
-      ...(status ? { status: status as LeadStatus } : {}),
-      ...(temperature ? { temperature: temperature as LeadTemperature } : {}),
-      ...(createdFrom ? { createdFrom } : {}),
-      ...(createdTo ? { createdTo } : {}),
-      ...(search ? { search } : {}),
-      ...(savedView ? { savedView } : {}),
-      ...(channel ? { channel } : {}),
+      status,
+      temperature,
+      createdFrom,
+      createdTo,
+      search,
+      savedView,
+      channel,
     };
   }
 
