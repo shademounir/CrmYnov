@@ -20,10 +20,11 @@ test("blocks repeated follow-up submissions and sends a stable idempotency key",
   const host = dom.window.document.getElementById("root"); assert.ok(host); const root = createRoot(host);
   t.after(async () => { await act<void>(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
   let release: ((response: Response) => void) | undefined; const requests: RequestInit[] = [];
+  let completions = 0;
   t.mock.method(globalThis, "fetch", (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     requests.push(init ?? {}); return new Promise<Response>((resolve) => { release = resolve; });
   });
-  await act(async () => { root.render(createElement(FollowUpWorkflowForm, { leadId: "synthetic-lead" })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  await act(async () => { root.render(createElement(FollowUpWorkflowForm, { leadId: "synthetic-lead", onCompleted: () => { completions++; } })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   const form = host.querySelector<HTMLFormElement>("form"); const dueAt = host.querySelector<HTMLInputElement>('input[name="dueAt"]'); const reason = host.querySelector<HTMLTextAreaElement>('textarea[name="reason"]'); assert.ok(form && dueAt && reason);
   dueAt.value = "2099-09-10T10:30"; reason.value = "Rappeler après réception du dossier";
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
@@ -31,6 +32,7 @@ test("blocks repeated follow-up submissions and sends a stable idempotency key",
   assert.match(String(submitted.idempotencyKey), /^[a-f\d-]{36}$/u); assert.equal(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.textContent, "Enregistrement…");
   await act(async () => { assert.ok(release); release(Response.json({ id: "follow-up-1" })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.match(host.textContent ?? "", /Relance planifiée/u);
+  assert.equal(completions, 1);
 });
 
 test("loads a persisted follow-up and blocks repeated completion submissions", async (t) => {

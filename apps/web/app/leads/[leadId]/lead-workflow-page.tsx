@@ -30,15 +30,15 @@ function parseLeadContext(value: unknown): LeadContext | undefined {
   };
 }
 
-function ResourceForSurface({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element | null {
-  if (surface === "interaction") return <ConnectedResource endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} />;
-  if (surface === "follow-up") return <FollowUpHistory leadId={leadId} />;
-  if (surface === "assignment") return <ConnectedResource endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/reassignment-requests`} ariaLabel="Historique des demandes de réaffectation" emptyMessage="Aucune demande de réaffectation." fields={[{ key: "status", label: "État" }, { key: "reason", label: "Motif" }, { key: "requestedAt", label: "Demandée le" }, { key: "decisionReason", label: "Décision" }]} />;
-  if (surface === "closure") return <ConnectedResource endpoint="/api/crm/closure-requests" ariaLabel="Demandes de clôture autorisées" emptyMessage="Aucune demande de clôture." fields={[{ key: "target", label: "Résultat visé" }, { key: "reason", label: "Motif" }, { key: "state", label: "État" }, { key: "createdAt", label: "Demandée le" }]} />;
+function ResourceForSurface({ leadId, surface, refreshKey }: Readonly<{ leadId: string; surface: Surface; refreshKey: number }>): React.JSX.Element | null {
+  if (surface === "interaction") return <ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} />;
+  if (surface === "follow-up") return <FollowUpHistory key={`${leadId}:${refreshKey}`} leadId={leadId} />;
+  if (surface === "assignment") return <ConnectedResource key={`${leadId}:${refreshKey}:assignment`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/reassignment-requests`} ariaLabel="Historique des demandes de réaffectation" emptyMessage="Aucune demande de réaffectation." fields={[{ key: "status", label: "État" }, { key: "reason", label: "Motif" }, { key: "requestedAt", label: "Demandée le" }, { key: "decisionReason", label: "Décision" }]} />;
+  if (surface === "closure") return <ConnectedResource key={`${leadId}:${refreshKey}:closure`} endpoint="/api/crm/closure-requests" ariaLabel="Demandes de clôture autorisées" emptyMessage="Aucune demande de clôture." fields={[{ key: "target", label: "Résultat visé" }, { key: "reason", label: "Motif" }, { key: "state", label: "État" }, { key: "createdAt", label: "Demandée le" }]} />;
   return null;
 }
 
-function useLeadContext(leadId: string): Readonly<{ context?: LeadContext; state: "loading" | "ready" | "error" }> {
+function useLeadContext(leadId: string, refreshKey: number): Readonly<{ context?: LeadContext; state: "loading" | "ready" | "error" }> {
   const [context, setContext] = useState<LeadContext | undefined>();
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   useEffect(() => {
@@ -55,7 +55,7 @@ function useLeadContext(leadId: string): Readonly<{ context?: LeadContext; state
         if (!(error instanceof DOMException && error.name === "AbortError")) setState("error");
       });
     return (): void => controller.abort();
-  }, [leadId]);
+  }, [leadId, refreshKey]);
   return { ...(context ? { context } : {}), state };
 }
 
@@ -78,32 +78,35 @@ function workflowActionTitle(surface: Surface, assigned: boolean): string {
   return surface === "assignment" ? assigned ? "Demander une réaffectation" : "Affecter le Lead" : titles[surface];
 }
 
-function WorkflowAction({ leadId, surface, context, contextState }: Readonly<{
+function WorkflowAction({ leadId, surface, context, contextState, onCompleted }: Readonly<{
   leadId: string;
   surface: Surface;
   context?: LeadContext;
   contextState: "loading" | "ready" | "error";
+  onCompleted: () => void;
 }>): React.JSX.Element | null {
-  if (surface === "assignment") return <AssignmentWorkflowForm leadId={leadId} assigned={Boolean(context?.assignedToId)} />;
-  if (surface === "interaction") return <InteractionWorkflowForm leadId={leadId} />;
-  if (surface === "closure") return <ClosureWorkflowForm leadId={leadId} />;
+  if (surface === "assignment") return <AssignmentWorkflowForm leadId={leadId} assigned={Boolean(context?.assignedToId)} onCompleted={onCompleted} />;
+  if (surface === "interaction") return <InteractionWorkflowForm leadId={leadId} onCompleted={onCompleted} />;
+  if (surface === "closure") return <ClosureWorkflowForm leadId={leadId} onCompleted={onCompleted} />;
   if (surface === "status") {
     return context
-      ? <StatusWorkflowForm leadId={leadId} currentStatus={context.status} />
+      ? <StatusWorkflowForm leadId={leadId} currentStatus={context.status} onCompleted={onCompleted} />
       : <p role="status">{contextState === "error" ? "Le statut actuel est indisponible. Aucun changement ne peut être proposé." : "Chargement de l’étape actuelle…"}</p>;
   }
-  if (context?.assignedToId) return <FollowUpWorkflowForm leadId={leadId} />;
+  if (context?.assignedToId) return <FollowUpWorkflowForm leadId={leadId} onCompleted={onCompleted} />;
   if (contextState === "ready") return <p className="lead-assignment-dialog__notice" role="status">Affectez d’abord le Lead à un conseiller. La relance pourra ensuite être enregistrée sous sa responsabilité.</p>;
   return null;
 }
 
-function WorkflowHistory({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element {
-  if (surface !== "status") return <ResourceForSurface leadId={leadId} surface={surface} />;
+function WorkflowHistory({ leadId, surface, refreshKey }: Readonly<{ leadId: string; surface: Surface; refreshKey: number }>): React.JSX.Element {
+  if (surface !== "status") return <ResourceForSurface leadId={leadId} surface={surface} refreshKey={refreshKey} />;
   return <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique. Une clôture reste soumise au parcours dédié.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></>;
 }
 
 export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element {
-  const { context, state: contextState } = useLeadContext(leadId);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { context, state: contextState } = useLeadContext(leadId, refreshKey);
+  const refresh = (): void => setRefreshKey((value) => value + 1);
   const copy = surfaceCopy[surface];
   return <main className="lead-workflow-page">
     <Link className="lead-profile__back" href={`/leads/${encodeURIComponent(leadId)}`}><ArrowLeft size={17} aria-hidden="true" /> Retour à la fiche</Link>
@@ -115,10 +118,10 @@ export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string;
     </section>
     <div className="lead-workflow-page__grid">
       <section className="panel lead-workflow-page__form-card" aria-labelledby="workflow-action-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Action</p><h2 id="workflow-action-title">{workflowActionTitle(surface, Boolean(context?.assignedToId))}</h2></div>
-        <WorkflowAction leadId={leadId} surface={surface} {...(context ? { context } : {})} contextState={contextState} />
+        <WorkflowAction leadId={leadId} surface={surface} {...(context ? { context } : {})} contextState={contextState} onCompleted={refresh} />
       </section>
       <section className="panel lead-workflow-page__history" aria-labelledby="workflow-history-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Traçabilité</p><h2 id="workflow-history-title">{surface === "status" ? "Règles de transition" : "Éléments enregistrés"}</h2></div>
-        <WorkflowHistory leadId={leadId} surface={surface} />
+        <WorkflowHistory leadId={leadId} surface={surface} refreshKey={refreshKey} />
       </section>
     </div>
   </main>;
