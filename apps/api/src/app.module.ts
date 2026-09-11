@@ -70,6 +70,7 @@ import { NotificationController } from "./notifications/notification.controller.
 import { NotificationService } from "./notifications/notification.service.js";
 import { FollowUpController } from "./follow-up/follow-up.controller.js";
 import { FollowUpService } from "./follow-up/follow-up.service.js";
+import { FollowUpPersistenceRepository } from "./follow-up/follow-up-persistence.repository.js";
 import { ClosureController } from "./closure/closure.controller.js";
 import { ClosureService } from "./closure/closure.service.js";
 import { LeadCollaborationController } from "./collaboration/lead-collaboration.controller.js";
@@ -108,9 +109,11 @@ import { SheetImportAdminService } from "./sheet-import/sheet-import-admin.servi
 import { SheetImportExecutor } from "./sheet-import/sheet-import-executor.js";
 import { SheetImportScheduler, ScheduledSheetExecutor } from "./sheet-import/sheet-import-scheduler.js";
 import { SheetSource, SyntheticSheetSource } from "./sheet-import/synthetic-sheet-source.js";
+import { LeadQualificationController } from "./qualification/lead-qualification.controller.js";
+import { LeadQualificationService } from "./qualification/lead-qualification.service.js";
 
 @Module({
-  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
     { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
@@ -140,6 +143,7 @@ import { SheetSource, SyntheticSheetSource } from "./sheet-import/synthetic-shee
     FirstLoginService,
     LeadService,
     LeadPersistenceRepository,
+    LeadQualificationService,
     SavedLeadViewService,
     LeadWorkflowPersistenceRepository,
     AssignmentService,
@@ -172,6 +176,7 @@ import { SheetSource, SyntheticSheetSource } from "./sheet-import/synthetic-shee
     TelephonyService,
     AppointmentService,
     FollowUpService,
+    FollowUpPersistenceRepository,
     ClosureService,
     LeadCollaborationService,
     CommercialFunnelService,

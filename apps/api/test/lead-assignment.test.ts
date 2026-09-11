@@ -63,6 +63,15 @@ test("controller requires a principal and exposes bounded preview", async () => 
   await assert.rejects(() => controller.preview({ idempotencyKey: "preview-002", strategy: "FIXED", targetUserId: firstUser, items: [] }, { header: () => undefined } as never), hasCode("principal_missing"));
 });
 
+test("controller exposes only server-provided eligible adviser options", async () => {
+  const { service } = setup();
+  const options = [{ id: firstUser, label: "Conseillère synthétique", activeLeadCount: 3, capacity: 10 }];
+  const persistent = { candidateOptions: (leadId: string, principal: typeof manager) => { assert.equal(leadId, "00000000-0000-4000-8000-000000000171"); assert.equal(principal, manager); return Promise.resolve(options); } } as unknown as PersistentAssignmentService;
+  const controller = new LeadAssignmentController(service, persistent);
+  const request = { principal: manager, header: () => "candidate-controller" } as never;
+  assert.deepEqual(await controller.candidates("00000000-0000-4000-8000-000000000171", request), { candidates: options });
+});
+
 test("delegates persistent API batches with replay, skip and refusal outcomes", async () => {
   const audit = new AuditService();
   const engine = new AssignmentService(audit);

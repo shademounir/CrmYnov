@@ -47,7 +47,7 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
         await this.users.onModuleInit();
         await this.sessions.onModuleInit();
       }
-      const serverLeadIds = this.locator.leadIds(controller, context.getHandler().name, request);
+      const serverLeadIds = await this.locator.leadIds(controller, context.getHandler().name, request);
       for (const key of contextualPermissions(controller, keys, request.body, request.query, request.principal.roles.includes("SUPER_ADMIN"))) {
         if (controller === "LeadController" && context.getHandler().name === "list") {
           await this.filterLeadCollection(tx, request, rows);

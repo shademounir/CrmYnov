@@ -6,6 +6,7 @@ import { LeadPersistenceRepository } from "./lead-persistence.repository.js";
 import type { AssignmentAudit } from "../assignment/assignment-audit.js";
 import { ReferenceService } from "../references/reference.service.js";
 import { strictBody } from "../references/reference.contract.js";
+import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -35,6 +36,8 @@ export interface LeadRecord {
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
   nextActionAt?: string; lastActivityAt?: string; createdAt: string; version?: number;
+  temperature?: LeadTemperature; temperatureLabel?: string; qualificationVersion?: number;
+  qualificationReason?: string; qualificationComment?: string; qualifiedAt?: string; qualifiedBy?: string;
 }
 
 export interface LeadActivityRecord {
@@ -54,6 +57,7 @@ export interface LeadReportingRow {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
   assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
   activities: Array<{ type: ActivityType; result: string; authorId: string; occurredAt: string }>;
+  temperature: LeadTemperature;
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
@@ -61,6 +65,7 @@ export interface LeadListQuery {
   program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
   assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
   savedView?: string;
+  temperature?: string;
 }
 export type LeadWorkView = "ALL" | "MINE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
@@ -125,7 +130,12 @@ export class LeadService implements OnModuleInit {
     strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "expectedVersion", "idempotencyKey"]);
     await this.references?.validateForLead(input, principal, leadId);
     if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "role_forbidden" });
-    const result = await this.persistApiMutation(leadId, `lead:update:${leadId}:${input.idempotencyKey}`, "UPDATE_LEAD", input, () => {
+    const receiptKey = `lead:update:${leadId}:${input.idempotencyKey}`;
+    if (this.persistence?.enabled) {
+      const replay = await this.persistence.findMutationReplay(receiptKey, this.persistence.fingerprint({ input, leadId, operation: "UPDATE_LEAD" }));
+      if (replay) return this.visibleLead(replay, principal);
+    }
+    const result = await this.persistApiMutation(leadId, receiptKey, "UPDATE_LEAD", input, () => {
       const current = this.leads.get(leadId); if (!current) throw new NotFoundException({ code: "lead_not_found" });
       const globalScope = principal.scopes.some((scope) => scope.kind === "GLOBAL");
       const campusScope = principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === current.campus);
@@ -134,6 +144,9 @@ export class LeadService implements OnModuleInit {
       if (!elevated && current.assignedToId !== principal.userId && !current.collaboratorIds?.includes(principal.userId)) throw new ForbiddenException({ code: "lead_collaboration_required" });
       if (input.expectedVersion !== undefined && current.version !== undefined && input.expectedVersion !== current.version) throw new ConflictException({ code: "lead_version_conflict" });
       const updated = Object.freeze(this.normalizeLeadUpdate(current, input));
+      const collision = this.findIdentityMatches(updated.email, updated.phone);
+      const fields = [collision.emailLeadId && collision.emailLeadId !== leadId ? "email" : null, collision.phoneLeadId && collision.phoneLeadId !== leadId ? "phone" : null].filter((field): field is string => Boolean(field));
+      if (fields.length) throw new ConflictException({ code: "lead_contact_collision", fields });
       this.leads.set(leadId, updated);
       return updated;
     }, principal, correlationId);
@@ -331,6 +344,8 @@ export class LeadService implements OnModuleInit {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "lead_pagination_invalid" });
     const status = query.status?.toUpperCase();
     if (status && !leadStatuses.includes(status as LeadStatus)) throw new BadRequestException({ code: "lead_status_filter_invalid" });
+    const temperature = query.temperature?.toUpperCase();
+    if (temperature && !leadTemperatures.includes(temperature as LeadTemperature)) throw new BadRequestException({ code: "lead_temperature_filter_invalid" });
     const sortBy = (query.sortBy ?? "createdAt") as LeadSortField;
     if (!["createdAt", "leadCode", "lastName", "status"].includes(sortBy)) throw new BadRequestException({ code: "lead_sort_invalid" });
     const sortDirection = query.sortDirection ?? "desc";
@@ -360,6 +375,7 @@ export class LeadService implements OnModuleInit {
         && (!query.assignedToId || lead.assignedToId === query.assignedToId)
         && (!query.collaboratorId || lead.collaboratorIds?.includes(query.collaboratorId))
         && (!status || lead.status === status)
+        && (!temperature || (lead.temperature ?? "UNEVALUATED") === temperature)
         && matches(lead.source, query.source) && (!channel || this.sourceChannel(lead.source) === channel) && matches(lead.program, query.program)
         && matches(lead.campaign, query.campaign) && matches(lead.campus, query.campus)
         && matches(lead.assignmentMode, query.assignmentMode) && matches(lead.importBatchId, query.importBatchId)
@@ -492,8 +508,9 @@ export class LeadService implements OnModuleInit {
     return [...this.leads.values()]
       .filter((lead) => (global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId }) => ({
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, temperature }) => ({
         id, status, campus, campaign, program, source, createdAt,
+        temperature: temperature ?? "UNEVALUATED",
         ...(assignedToId ? { assignedToId } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
         ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
         ...(importBatchId ? { importBatchId } : {}),
@@ -544,8 +561,9 @@ export class LeadService implements OnModuleInit {
   }
 
   private visibleLead(lead: Readonly<LeadRecord>, principal: Principal): LeadRecord {
-    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS" || role === "MANAGER")) return { ...lead };
-    return { ...lead, email: "***", phone: "***" };
+    const visible = { ...lead, temperature: lead.temperature ?? "UNEVALUATED", temperatureLabel: lead.temperatureLabel ?? leadTemperatureLabels[lead.temperature ?? "UNEVALUATED"], qualificationVersion: lead.qualificationVersion ?? 0 };
+    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS" || role === "MANAGER")) return visible;
+    return { ...visible, email: "***", phone: "***" };
   }
 
   addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {

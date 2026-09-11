@@ -4,6 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { readdir } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
 import { referenceKey } from "../src/references/reference.contract.js";
@@ -24,16 +25,22 @@ async function startApi(t: TestContext, database: string): Promise<string> {
     return imageRuntime(t, "api", url.toString());
   }
   const port = await freePort();
-  const instrumentation = process.env.NODE_V8_COVERAGE ? ["--import", resolve("../../scripts/ci/tests/coverage-shutdown.mjs")] : [];
-  const child = spawn(process.execPath, [...instrumentation, resolve("dist/main.js")], { windowsHide: true, stdio: "ignore", env: {
+  const instrumented = Boolean(process.env.NODE_V8_COVERAGE);
+  const instrumentation = instrumented
+    ? ["--import", pathToFileURL(resolve("../../scripts/ci/tests/coverage-shutdown.mjs")).href]
+    : [];
+  const child = spawn(process.execPath, [...instrumentation, resolve("dist/main.js")], { windowsHide: true, stdio: instrumented ? ["ignore", "ignore", "ignore", "ipc"] : "ignore", env: {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP,
     NODE_V8_COVERAGE: process.env.NODE_V8_COVERAGE,
     DATABASE_URL: database, API_PORT: String(port), LOG_LEVEL: "error",
   } });
   t.after(async (): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) return;
-    const closed = new Promise<void>((done) => child.once("exit", () => done())); child.kill(); await closed;
-    if (process.env.NODE_V8_COVERAGE) {
+    const closed = new Promise<void>((done) => child.once("exit", () => done()));
+    if (instrumented && child.connected) child.send({ type: "crmy-coverage-shutdown" });
+    else child.kill();
+    await closed;
+    if (instrumented && process.env.NODE_V8_COVERAGE) {
       const reports = await readdir(process.env.NODE_V8_COVERAGE);
       assert.ok(reports.some((file) => file.startsWith(`coverage-${String(child.pid)}-`)), "each compiled API must flush its own native V8 counters");
     }

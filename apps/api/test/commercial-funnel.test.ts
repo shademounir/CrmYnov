@@ -25,10 +25,12 @@ test("computes one current state per lead with versioned, explicit formulas", ()
   const result = service.read({ campus: "Casablanca synthétique", source: "FORMINATOR_ZAPIER" }, manager, "corr-funnel");
   assert.equal(result.cohort.totalUniqueLeads, 5);
   assert.deepEqual(result.currentState, { PROSPECT: 1, CONTACTED: 1, QUALIFIED: 1, ENROLLED: 1, CLOSED_LOST: 1 });
+  assert.deepEqual(result.temperatureDistribution, { UNEVALUATED: 5, COLD: 0, WARM: 0, HOT: 0 });
   assert.deepEqual(result.attainment, { contactedOrBeyond: 3, qualifiedOrBeyond: 2, enrolled: 1 });
   assert.deepEqual(result.rates, { contactedOrBeyond: 0.6, qualifiedOrBeyond: 0.4, enrolled: 0.2 });
   assert.equal(result.definitionVersion, "commercial-funnel-v1"); assert.equal(result.timezone, "Africa/Casablanca");
   assert.ok(result.definitions.every((definition) => definition.denominator && definition.formula));
+  assert.match(JSON.stringify(result.definitions), /latest human qualification/);
   const event = audit.list().find((item) => item.eventType === "COMMERCIAL_FUNNEL_VIEWED");
   assert.deepEqual(event?.after?.activeFilterNames, ["campus", "source"]); assert.equal(JSON.stringify(event).includes("FORMINATOR_ZAPIER"), false);
 });

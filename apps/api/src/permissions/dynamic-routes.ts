@@ -2,8 +2,9 @@
 const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
   LeadController: { create: ["lead.create"], list: ["lead.view"], detail: ["lead.view"], update: ["lead.edit"] },
   LeadStatusController: { update: ["lead.edit"] },
+  LeadQualificationController: { read: ["lead.view"], update: ["lead.qualification.update"] },
   LeadTimelineController: { list: ["interaction.view"], create: ["interaction.create"], correct: ["interaction.create"] },
-  LeadAssignmentController: { assignOne: ["lead.assign"], preview: ["lead.assign"], assignBatch: ["lead.assign"] },
+  LeadAssignmentController: { candidates: [], assignOne: ["lead.assign"], preview: ["lead.assign"], assignBatch: ["lead.assign"] },
   ReassignmentController: { create: ["lead.reassign.request"], list: ["lead.view"], decide: ["lead.reassign.approve"] },
   ClosureController: { request: ["lead.close.request"], list: ["lead.view"], decide: ["lead.close.approve"], cancel: ["lead.close.request"] },
   LeadCollaborationController: { request: ["lead.collaborators.manage"], list: ["lead.view"], decide: ["lead.collaborators.manage"] },

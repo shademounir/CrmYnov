@@ -36,11 +36,16 @@ export class LeadPersistenceRepository {
     const client = this.prisma.client;
     if (!client) return { leads: [], activities: [] };
     const [rows, activities] = await client.$transaction([
-      client.lead.findMany({ include: { collaborators: { where: { active: true }, orderBy: { userId: "asc" } } } }),
+      client.lead.findMany({ include: {
+        collaborators: { where: { active: true }, orderBy: { userId: "asc" } },
+        commercialQualifications: { orderBy: [{ version: "desc" }, { id: "desc" }], take: 1 },
+      } }),
       client.leadActivity.findMany({ orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
     ]);
     return {
-      leads: rows.map((row) => ({
+      leads: rows.map((row) => {
+        const qualification = row.commercialQualifications?.[0];
+        return ({
         id: row.id,
         leadCode: row.leadCode,
         firstName: row.firstName,
@@ -61,7 +66,14 @@ export class LeadPersistenceRepository {
         ...(row.lastActivityAt ? { lastActivityAt: row.lastActivityAt.toISOString() } : {}),
         createdAt: row.createdAt.toISOString(),
         version: row.version,
-      })),
+        temperature: (qualification?.temperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>,
+        temperatureLabel: qualification?.temperature === "COLD" ? "Froid" : qualification?.temperature === "WARM" ? "Tiède" : qualification?.temperature === "HOT" ? "Chaud" : "Non évalué",
+        qualificationVersion: qualification?.version ?? 0,
+        ...(qualification?.reason ? { qualificationReason: qualification.reason } : {}),
+        ...(qualification?.comment ? { qualificationComment: qualification.comment } : {}),
+        ...(qualification?.createdAt ? { qualifiedAt: qualification.createdAt.toISOString() } : {}),
+        ...(qualification?.authorId ? { qualifiedBy: qualification.authorId } : {}),
+      }); }),
       activities: activities.map((row): LeadActivityRecord => ({
         id: row.id,
         leadId: row.leadId,
@@ -128,6 +140,13 @@ export class LeadPersistenceRepository {
     return row ? this.mapActivity(row) : undefined;
   }
 
+  async findMutationReplay(idempotencyKey: string, fingerprint: string): Promise<StoredLead | undefined> {
+    const client = this.prisma.client;
+    if (!client) return undefined;
+    const receipt = await client.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
+    return receipt ? this.replay(receipt.fingerprint, fingerprint, receipt.result) : undefined;
+  }
+
   async persistMutation(
     before: StoredLead,
     after: StoredLead,
@@ -148,6 +167,20 @@ export class LeadPersistenceRepository {
       if (receipt) return this.replay(receipt.fingerprint, fingerprint, receipt.result);
       const references = await validateLeadReferences(tx, after, before);
       after = { ...after, ...references };
+      if (operation === "UPDATE_LEAD" && (after.email || after.phone)) {
+        const alternatives = [
+          ...(after.email ? [{ email: { equals: after.email, mode: "insensitive" as const } }] : []),
+          ...(after.phone ? [{ phone: after.phone }] : []),
+        ];
+        const collision = await tx.lead.findFirst({
+          where: { id: { not: after.id }, OR: alternatives },
+          select: { email: true, phone: true },
+        });
+        if (collision) {
+          const fields = [collision.email?.toLowerCase() === after.email?.toLowerCase() ? "email" : null, collision.phone === after.phone ? "phone" : null].filter((field): field is string => Boolean(field));
+          throw new ConflictException({ code: "lead_contact_collision", fields });
+        }
+      }
       const updated = await tx.lead.updateMany({
         where: { id: before.id, version: before.version },
         data: {

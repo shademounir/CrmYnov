@@ -14,7 +14,7 @@ import { TelephonyService } from "../src/telephony/telephony.service.js";
 import { DynamicResourceLocator } from "../src/permissions/dynamic-locator.js";
 import { routePermissions } from "../src/permissions/dynamic-routes.js";
 
-test("CRMY-169 indirect resource IDs come from owning services; cross-campus follow-ups are not disclosed", (t) => {
+test("CRMY-169 indirect resource IDs come from owning services; cross-campus follow-ups are not disclosed", async (t) => {
   const audit = new AuditService(), users = new UserService(new SessionService(), audit), leads = new LeadService(audit), notifications = new NotificationService(audit);
   const author = users.create({ professionalEmail: "author@example.invalid", roles: ["MANAGER"] }, "synthetic", "synthetic");
   const colleague = users.create({ professionalEmail: "colleague@example.invalid", roles: ["ADMISSIONS"] }, "synthetic", "synthetic");
@@ -24,17 +24,17 @@ test("CRMY-169 indirect resource IDs come from owning services; cross-campus fol
   const locator = new DynamicResourceLocator(appointments, chat, followUps, telephony);
   const request = (params: Record<string, string>, body: unknown = {}): AuthenticatedRequest => ({ params, body, principal } as AuthenticatedRequest);
   const followUp = followUps.schedule(lead.id, { dueAt: "2099-01-01T12:00:00Z", reason: "Synthétique" }, principal, "synthetic");
-  assert.deepEqual(locator.leadIds("FollowUpController", "decide", request({ id: followUp.id })), [lead.id]);
+  assert.deepEqual(await locator.leadIds("FollowUpController", "decide", request({ id: followUp.id })), [lead.id]);
   assert.deepEqual(followUps.list({ ...principal, scopes: [{ kind: "CAMPUS", id: "OTHER" }] }), []);
   assert.throws(() => followUps.decide(followUp.id, { action: "COMPLETE", reason: "Synthétique", expectedVersion: 1 }, { ...principal, scopes: [{ kind: "CAMPUS", id: "OTHER" }] }, "synthetic"));
   assert.equal(followUps.list(principal)[0]?.state, "SCHEDULED");
-  assert.throws(() => locator.leadIds("FollowUpController", "decide", request({ id: "missing" })));
+  await assert.rejects(locator.leadIds("FollowUpController", "decide", request({ id: "missing" })));
   const appointment = appointments.create(lead.id, { type: "APPEL_INFORMATION", mode: "DISTANCIEL_NON_CONNECTE", startsAt: "2099-01-02T12:00:00Z", durationMinutes: 30, idempotencyKey: "synthetic-locator" }, principal, "synthetic");
-  assert.deepEqual(locator.leadIds("AppointmentController", "detail", request({ id: appointment.id })), [lead.id]);
+  assert.deepEqual(await locator.leadIds("AppointmentController", "detail", request({ id: appointment.id })), [lead.id]);
   assert.throws(() => appointments.permissionLeadId("missing"));
   const conversation = chat.createConversation(principal, { type: "DIRECT", participantIds: [colleague.id], leadCode: lead.leadCode }, "synthetic");
   const message = chat.postMessage(conversation.id, principal, { content: "Message synthétique", clientMessageId: "synthetic-locator" }, "synthetic");
-  assert.deepEqual(locator.leadIds("ChatController", "convertToActivity", request({ messageId: message.id })), [lead.id]);
+  assert.deepEqual(await locator.leadIds("ChatController", "convertToActivity", request({ messageId: message.id })), [lead.id]);
   assert.deepEqual(routePermissions("ChatController", "convertToActivity"), ["chat.use", "interaction.create"]);
   assert.throws(() => chat.permissionLeadId(message.id, { ...principal, userId: "outsider" }));
   const unlinked = chat.createConversation(principal, { type: "DIRECT", participantIds: [colleague.id] }, "synthetic");
@@ -42,8 +42,8 @@ test("CRMY-169 indirect resource IDs come from owning services; cross-campus fol
   assert.throws(() => chat.permissionLeadId(unlinkedMessage.id, principal));
   assert.throws(() => telephony.permissionLeadId("missing"));
   t.mock.method(telephony, "permissionLeadId", () => lead.id);
-  assert.deepEqual(locator.leadIds("TelephonyController", "detail", request({ callId: "synthetic-call" })), [lead.id]);
-  assert.deepEqual(locator.leadIds("TelephonyController", "associate", request({ callId: "synthetic-call" }, { leadId: "target" })), [lead.id, "target"]);
-  assert.throws(() => locator.leadIds("TelephonyController", "associate", request({ callId: "synthetic-call" }, {})));
-  assert.deepEqual(locator.leadIds("LeadController", "list", request({})), []);
+  assert.deepEqual(await locator.leadIds("TelephonyController", "detail", request({ callId: "synthetic-call" })), [lead.id]);
+  assert.deepEqual(await locator.leadIds("TelephonyController", "associate", request({ callId: "synthetic-call" }, { leadId: "target" })), [lead.id, "target"]);
+  await assert.rejects(locator.leadIds("TelephonyController", "associate", request({ callId: "synthetic-call" }, {})));
+  assert.deepEqual(await locator.leadIds("LeadController", "list", request({})), []);
 });

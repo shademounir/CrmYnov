@@ -1,7 +1,7 @@
-import { ConflictException, Inject, Injectable } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, OnModuleInit } from "@nestjs/common";
 import { roles, type Principal, type Role } from "../auth/auth.types.js";
 import { businessRoleLabels, type ResourceContext } from "./permission.service.js";
-import { configurationKey, definition, GLOBAL_CAMPUS, historicalGrants, permissionCatalogue, scopeWithin, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
+import { configurationKey, definition, GLOBAL_CAMPUS, historicalGrants, permissionCatalogue, permissionCatalogueVersion, scopeWithin, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
 import { defaultConfiguration, evaluatePermission, resolveGrants, type PermissionDecision } from "./dynamic-evaluator.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "./dynamic-repository.js";
 import { campusContext, currentPrincipal, permissionDenied, resourceEvaluationContext } from "./dynamic-context.js";
@@ -69,8 +69,13 @@ export function configurationChanges(before: Grants, after: Grants): Configurati
   }));
 }
 @Injectable()
-export class DynamicPermissionService {
+export class DynamicPermissionService implements OnModuleInit {
   constructor(@Inject(DynamicPermissionRepository) private readonly repository: DynamicPermissionRepository) {}
+
+  async onModuleInit(): Promise<void> {
+    if (!this.repository.enabled) return;
+    await this.repository.upgradeQualificationCatalogue();
+  }
 
   async decision(actor: Principal, key: string, resource: ResourceContext): Promise<PermissionDecision> {
     return this.repository.readTransaction(async (tx) => {
@@ -98,7 +103,7 @@ export class DynamicPermissionService {
       const campusKeys = campus === GLOBAL_CAMPUS ? [] : (await canonicalCampus(tx, campus)).keys;
       const users = await tx.collaborator.findMany({ where: { active: true, ...(campus === GLOBAL_CAMPUS ? {} : { campusId: { in: campusKeys } }) }, select: { roles: true } });
       const campuses = await tx.crmReference.findMany({ where: { kind: "CAMPUS", state: "ACTIVE", ...(principal.roles.includes("SUPER_ADMIN") ? {} : { id: { in: campusIds(principal) } }) }, select: { id: true, code: true } });
-      return { campus, catalogueVersion: 1, catalogue: permissionCatalogue, roles: roles.map((role) => ({
+      return { campus, catalogueVersion: permissionCatalogueVersion, catalogue: permissionCatalogue, roles: roles.map((role) => ({
         role, label: businessRoleLabels[role], description: descriptions[role], users: users.filter((user) => user.roles.includes(role)).length,
         editable: principal.roles.includes("SUPER_ADMIN") || ["MANAGER", "ADMISSIONS", "AUDITOR"].includes(role) && !principal.roles.includes(role),
       })), campuses, global: principal.roles.includes("SUPER_ADMIN") };
@@ -186,7 +191,7 @@ export class DynamicPermissionService {
       const context = leadId ? await resourceEvaluationContext(tx, principal, await leadResource(tx, leadId)) : campusContext(principal, campus);
       if (!context.campusAllowed && !context.globalAllowed) permissionDenied();
       if (leadId && !evaluatePermission(principal, "lead.view", rows, context).allowed) permissionDenied();
-      return { catalogueVersion: 1, roles: principal.roles, permissions: permissionCatalogue.map((item) => evaluatePermission(principal, item.key, rows, context)), businessRules: "Les validations Manager, clôtures, archives et droits réservés restent applicables à chaque action." };
+      return { catalogueVersion: permissionCatalogueVersion, roles: principal.roles, permissions: permissionCatalogue.map((item) => evaluatePermission(principal, item.key, rows, context)), businessRules: "Les validations Manager, clôtures, archives et droits réservés restent applicables à chaque action." };
     });
   }
   async teamResponsibilities(actor: Principal, input?: TeamResponsibilityInput): Promise<{ responsibilities: TeamResponsibilityView[] }> {
