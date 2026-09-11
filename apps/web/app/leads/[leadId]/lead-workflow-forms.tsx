@@ -29,11 +29,17 @@ function formText(form: FormData, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function localDateTimeIso(value: string): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? value : parsed.toISOString();
+}
+
 export function interactionBody(form: FormData): InteractionBody {
   const type = formText(form, "type");
   const result = formText(form, "result");
   const note = formText(form, "note");
-  const nextActionAt = formText(form, "nextActionAt");
+  const nextActionAt = localDateTimeIso(formText(form, "nextActionAt"));
   return { type, result, ...(note ? { note } : {}), ...(nextActionAt ? { nextActionAt } : {}) };
 }
 
@@ -42,7 +48,7 @@ export function statusBody(form: FormData): StatusBody {
 }
 
 export function followUpBody(form: FormData): FollowUpBody {
-  return { dueAt: formText(form, "dueAt"), reason: formText(form, "reason") };
+  return { dueAt: localDateTimeIso(formText(form, "dueAt")), reason: formText(form, "reason") };
 }
 
 export function closureBody(form: FormData): ClosureBody {
@@ -301,7 +307,7 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
     const form = new FormData(event.currentTarget);
     const action = formText(form, "action") as "POSTPONE" | "COMPLETE" | "CANCEL";
     const reason = formText(form, "reason");
-    const dueAt = formText(form, "dueAt");
+    const dueAt = localDateTimeIso(formText(form, "dueAt"));
     const body = { action, reason, expectedVersion: item.version, ...(action === "POSTPONE" ? { dueAt } : {}) };
     const payload = JSON.stringify(body);
     const previous = attempts.current.get(item.id);

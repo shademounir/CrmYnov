@@ -122,7 +122,7 @@ test("builds the existing timeline contract from the contextual interaction pane
   form.set("result", "FOLLOW_UP_REQUIRED");
   form.set("note", " Note synthétique ");
   form.set("nextActionAt", "2026-09-10T10:30");
-  assert.deepEqual(interactionBody(form), { type: "MEETING", result: "FOLLOW_UP_REQUIRED", note: "Note synthétique", nextActionAt: "2026-09-10T10:30" });
+  assert.deepEqual(interactionBody(form), { type: "MEETING", result: "FOLLOW_UP_REQUIRED", note: "Note synthétique", nextActionAt: new Date("2026-09-10T10:30").toISOString() });
 });
 test("builds the existing status and follow-up contracts from contextual panels", () => {
   const status = new FormData();
@@ -133,7 +133,7 @@ test("builds the existing status and follow-up contracts from contextual panels"
   const followUp = new FormData();
   followUp.set("dueAt", "2026-09-12T10:30");
   followUp.set("reason", " Relance synthétique ");
-  assert.deepEqual(followUpBody(followUp), { dueAt: "2026-09-12T10:30", reason: "Relance synthétique" });
+  assert.deepEqual(followUpBody(followUp), { dueAt: new Date("2026-09-12T10:30").toISOString(), reason: "Relance synthétique" });
 });
 test("only proposes direct stage transitions and explains terminal validation", () => {
   assert.deepEqual(statusTransitionOptions("PROSPECT"), [{ value: "CONTACTED", label: "Contacté" }]);
