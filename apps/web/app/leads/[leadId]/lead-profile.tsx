@@ -281,92 +281,119 @@ function RelationRow({ icon, label, value, href }: Readonly<{ icon: React.ReactN
   return href ? <Link className="lead-profile__relation-row" href={href}>{content}</Link> : <div className="lead-profile__relation-row">{content}</div>;
 }
 
+function ContactShortcuts({ lead, name }: Readonly<{ lead: LeadProfileRecord; name: string }>): React.JSX.Element | null {
+  if (!lead.email && !lead.phone) return null;
+  return <nav className="lead-profile__contact-shortcuts" aria-label="Contacter le prospect">
+    <div className="lead-profile__contact-actions">
+      {lead.email ? <a href={`mailto:${lead.email}`} aria-label={`Envoyer un email à ${name}`}><EnvelopeSimple size={20} aria-hidden="true" /></a> : null}
+      {lead.phone ? <a href={`tel:${lead.phone}`} aria-label={`Appeler ${name}`}><Phone size={20} aria-hidden="true" /></a> : null}
+    </div>
+    <div className="lead-profile__contact-details">
+      {lead.email ? <a href={`mailto:${lead.email}`}><EnvelopeSimple size={15} aria-hidden="true" /><bdi dir="auto">{lead.email}</bdi></a> : null}
+      {lead.phone ? <a href={`tel:${lead.phone}`}><Phone size={15} aria-hidden="true" /><bdi dir="auto">{lead.phone}</bdi></a> : null}
+    </div>
+  </nav>;
+}
+
+function ProfileHeader({ lead, name, nameNeedsReview }: Readonly<{ lead: LeadProfileRecord; name: string; nameNeedsReview: boolean }>): React.JSX.Element {
+  return <header className="lead-profile__header">
+    <div>
+      <p className="eyebrow">Lead · {lead.leadCode}</p>
+      <h1 aria-label={name}><LeadDisplayName lead={lead} /></h1>
+      {nameNeedsReview ? <p className="lead-profile__name-warning">Une partie du nom source est à vérifier.</p> : null}
+      <p>Dossier prospect centralisé : informations, actions et historique dans une seule vue.</p>
+    </div>
+    <ContactShortcuts lead={lead} name={name} />
+  </header>;
+}
+
+function CommercialPanel({ lead, lastContact }: Readonly<{ lead: LeadProfileRecord; lastContact: string }>): React.JSX.Element {
+  return <section className="panel lead-profile__commercial" aria-label="Situation commerciale"><dl>
+    <ProfileFact icon={<MapPin size={20} />} label="Étape" value={leadStatusLabel(lead.status)} emphasized />
+    <ProfileFact icon={<PhoneCall size={20} />} label="Dernier résultat" value={lastContact} emphasized={lastContact.startsWith("Injoignable")} />
+    <ProfileFact icon={<UserCircle size={20} />} label="Conseiller principal" value={lead.assignedToId ? "Conseiller attribué" : "Non affecté"} />
+    <ProfileFact icon={<ThermometerSimple size={20} />} label="Température" value={lead.temperatureLabel} emphasized={lead.temperature === "HOT"} />
+    <ProfileFact icon={<CalendarBlank size={20} />} label="Prochaine action" value={formatDate(lead.nextActionAt)} />
+  </dl></section>;
+}
+
+function completionProps(onLeadChanged: ((message: string) => void) | undefined, message: string): Readonly<{ onCompleted: () => void }> | Record<string, never> {
+  return onLeadChanged ? { onCompleted: () => onLeadChanged(message) } : {};
+}
+
+function ProfileActions({ lead, onLeadChanged, onLeadEdited }: Readonly<{
+  lead: LeadProfileRecord;
+  onLeadChanged?: (message: string) => void;
+  onLeadEdited?: (lead: LeadProfileRecord) => void;
+}>): React.JSX.Element {
+  return <nav className="lead-profile__actions" aria-label="Actions principales du lead">
+    <LeadEditDrawer lead={lead} {...(onLeadEdited ? { onCompleted: onLeadEdited } : {})} />
+    <LeadInteractionDrawer leadId={lead.id} leadCode={lead.leadCode} {...completionProps(onLeadChanged, "Interaction enregistrée dans l’historique protégé.")} />
+    <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...completionProps(onLeadChanged, lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.")} />
+    <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...completionProps(onLeadChanged, "Étape commerciale enregistrée.")} />
+    <LeadQualificationDrawer leadId={lead.id} leadCode={lead.leadCode} temperatureLabel={lead.temperatureLabel} {...completionProps(onLeadChanged, "Qualification commerciale enregistrée.")} />
+    <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...completionProps(onLeadChanged, "Relance planifiée et enregistrée.")} />
+  </nav>;
+}
+
+function RelationPanel({ lead }: Readonly<{ lead: LeadProfileRecord }>): React.JSX.Element {
+  const contactVisible = Boolean(lead.email || lead.phone);
+  const collaboratorCount = lead.collaboratorIds.length;
+  const collaborators = collaboratorCount ? `${collaboratorCount} collaborateur${collaboratorCount > 1 ? "s" : ""}` : "Aucun collaborateur";
+  return <aside className="panel lead-profile__relation" aria-labelledby="lead-relation-title">
+    <div className="lead-profile__panel-heading"><div><p className="eyebrow">Dossier</p><h2 id="lead-relation-title">Relation & dossier</h2></div></div>
+    <dl className="lead-profile__relation-list">
+      <RelationRow icon={<MapPin size={20} />} label="Campus" value={lead.campus || "Campus à vérifier"} />
+      <RelationRow icon={<GraduationCap size={20} />} label="Formation" value={lead.program || "Formation à vérifier"} />
+      <RelationRow icon={<Megaphone size={20} />} label="Campagne" value={lead.campaign} />
+      <RelationRow icon={<LinkSimple size={20} />} label="Source" value={leadSourceLabel(lead.source)} />
+      <RelationRow icon={<FileText size={20} />} label="Candidature" value="Dossier à consulter" href={leadSectionHref(lead.id, "documents")} />
+      <RelationRow icon={<FileText size={20} />} label="Documents" value="Consulter les pièces" href={leadSectionHref(lead.id, "documents")} />
+      <RelationRow icon={<UsersThree size={20} />} label="Collaborateurs" value={collaborators} href={leadSectionHref(lead.id, "collaborators")} />
+    </dl>
+    <div className="lead-profile__contact" aria-label="Coordonnées autorisées">
+      <h3>Coordonnées</h3>
+      {contactVisible ? <div className="lead-profile__contact-list">
+        {lead.email ? <a href={`mailto:${lead.email}`}><EnvelopeSimple size={18} aria-hidden="true" /> {lead.email}</a> : null}
+        {lead.phone ? <a href={`tel:${lead.phone}`}><Phone size={18} aria-hidden="true" /> {lead.phone}</a> : null}
+      </div> : <p>Masquées ou indisponibles pour cette session.</p>}
+    </div>
+  </aside>;
+}
+
+function TimelinePanel({ leadId, events }: Readonly<{ leadId: string; events: readonly LeadTimelineEvent[] }>): React.JSX.Element {
+  return <section className="panel lead-profile__timeline" aria-labelledby="lead-timeline-title">
+    <div className="lead-profile__panel-heading">
+      <div><p className="eyebrow">Historique protégé</p><h2 id="lead-timeline-title">Historique des interactions</h2><p className="lead-profile__panel-description">Chaque événement reste traçable sans réécriture.</p></div>
+      <Link className="lead-profile__text-link" href={leadSectionHref(leadId, "timeline")}>Voir tout</Link>
+    </div>
+    <nav className="lead-profile__timeline-tabs" aria-label="Sections du suivi"><span aria-current="page">Historique</span><Link href={leadSectionHref(leadId, "follow-ups")}>Relances</Link><Link href={leadSectionHref(leadId, "documents")}>Documents</Link></nav>
+    {events.length ? <ol>{events.map((event) => <li key={event.id}>
+      <span className="lead-profile__timeline-marker" aria-hidden="true" />
+      <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
+      <h3>{timelineEventLabel(event.type)}</h3>
+      <ResultSummary result={event.result} />
+    </li>)}</ol> : <div className="lead-profile__empty"><Clock size={22} aria-hidden="true" /><p>Aucun événement visible pour ce lead.</p></div>}
+  </section>;
+}
+
 export function LeadProfileView({ lead, events, actionMessage, onLeadChanged, onLeadEdited }: Readonly<{ lead: LeadProfileRecord; events: LeadTimelineEvent[]; actionMessage?: string; onLeadChanged?: (message: string) => void; onLeadEdited?: (lead: LeadProfileRecord) => void }>): React.JSX.Element {
   const name = leadDisplayName(lead);
   const nameNeedsReview = [lead.firstName, lead.lastName].some((part) => part.trim() && !validNamePart(part));
   const recentEvents = events.slice(0, 6);
-  const contactVisible = Boolean(lead.email || lead.phone);
   const lastContact = lastContactSummary(events);
 
   return <main className="lead-profile">
     <Link className="lead-profile__back" href="/leads"><ArrowLeft size={17} aria-hidden="true" /> Retour aux leads</Link>
-
-    <header className="lead-profile__header">
-      <div>
-        <p className="eyebrow">Lead · {lead.leadCode}</p>
-        <h1 aria-label={name}><LeadDisplayName lead={lead} /></h1>
-        {nameNeedsReview ? <p className="lead-profile__name-warning">Une partie du nom source est à vérifier.</p> : null}
-        <p>Dossier prospect centralisé : informations, actions et historique dans une seule vue.</p>
-      </div>
-      {contactVisible ? <nav className="lead-profile__contact-shortcuts" aria-label="Contacter le prospect">
-        <div className="lead-profile__contact-actions">
-          {lead.email ? <a href={`mailto:${lead.email}`} aria-label={`Envoyer un email à ${name}`}><EnvelopeSimple size={20} aria-hidden="true" /></a> : null}
-          {lead.phone ? <a href={`tel:${lead.phone}`} aria-label={`Appeler ${name}`}><Phone size={20} aria-hidden="true" /></a> : null}
-        </div>
-        <div className="lead-profile__contact-details">
-          {lead.email ? <a href={`mailto:${lead.email}`}><EnvelopeSimple size={15} aria-hidden="true" /><bdi dir="auto">{lead.email}</bdi></a> : null}
-          {lead.phone ? <a href={`tel:${lead.phone}`}><Phone size={15} aria-hidden="true" /><bdi dir="auto">{lead.phone}</bdi></a> : null}
-        </div>
-      </nav> : null}
-    </header>
-
-    <section className="panel lead-profile__commercial" aria-label="Situation commerciale">
-      <dl>
-        <ProfileFact icon={<MapPin size={20} />} label="Étape" value={leadStatusLabel(lead.status)} emphasized />
-        <ProfileFact icon={<PhoneCall size={20} />} label="Dernier résultat" value={lastContact} emphasized={lastContact.startsWith("Injoignable")} />
-        <ProfileFact icon={<UserCircle size={20} />} label="Conseiller principal" value={lead.assignedToId ? "Conseiller attribué" : "Non affecté"} />
-        <ProfileFact icon={<ThermometerSimple size={20} />} label="Température" value={lead.temperatureLabel} emphasized={lead.temperature === "HOT"} />
-        <ProfileFact icon={<CalendarBlank size={20} />} label="Prochaine action" value={formatDate(lead.nextActionAt)} />
-      </dl>
-    </section>
-
-    <nav className="lead-profile__actions" aria-label="Actions principales du lead">
-      <LeadEditDrawer lead={lead} {...(onLeadEdited ? { onCompleted: onLeadEdited } : {})} />
-      <LeadInteractionDrawer leadId={lead.id} leadCode={lead.leadCode} {...(onLeadChanged ? { onCompleted: () => onLeadChanged("Interaction enregistrée dans l’historique protégé.") } : {})} />
-      <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...(onLeadChanged ? { onCompleted: () => onLeadChanged(lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.") } : {})} />
-      <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...(onLeadChanged ? { onCompleted: () => onLeadChanged("Étape commerciale enregistrée.") } : {})} />
-      <LeadQualificationDrawer leadId={lead.id} leadCode={lead.leadCode} temperatureLabel={lead.temperatureLabel} {...(onLeadChanged ? { onCompleted: () => onLeadChanged("Qualification commerciale enregistrée.") } : {})} />
-      <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...(onLeadChanged ? { onCompleted: () => onLeadChanged("Relance planifiée et enregistrée.") } : {})} />
-    </nav>
+    <ProfileHeader lead={lead} name={name} nameNeedsReview={nameNeedsReview} />
+    <CommercialPanel lead={lead} lastContact={lastContact} />
+    <ProfileActions lead={lead} {...(onLeadChanged ? { onLeadChanged } : {})} {...(onLeadEdited ? { onLeadEdited } : {})} />
 
     {actionMessage ? <p className="lead-profile__action-feedback" role="status">{actionMessage} Les informations affichées proviennent de la réponse serveur.</p> : null}
 
     <div className="lead-profile__content-grid">
-      <aside className="panel lead-profile__relation" aria-labelledby="lead-relation-title">
-        <div className="lead-profile__panel-heading"><div><p className="eyebrow">Dossier</p><h2 id="lead-relation-title">Relation & dossier</h2></div></div>
-        <dl className="lead-profile__relation-list">
-          <RelationRow icon={<MapPin size={20} />} label="Campus" value={lead.campus || "Campus à vérifier"} />
-          <RelationRow icon={<GraduationCap size={20} />} label="Formation" value={lead.program || "Formation à vérifier"} />
-          <RelationRow icon={<Megaphone size={20} />} label="Campagne" value={lead.campaign} />
-          <RelationRow icon={<LinkSimple size={20} />} label="Source" value={leadSourceLabel(lead.source)} />
-          <RelationRow icon={<FileText size={20} />} label="Candidature" value="Dossier à consulter" href={leadSectionHref(lead.id, "documents")} />
-          <RelationRow icon={<FileText size={20} />} label="Documents" value="Consulter les pièces" href={leadSectionHref(lead.id, "documents")} />
-          <RelationRow icon={<UsersThree size={20} />} label="Collaborateurs" value={lead.collaboratorIds.length ? `${lead.collaboratorIds.length} collaborateur${lead.collaboratorIds.length > 1 ? "s" : ""}` : "Aucun collaborateur"} href={leadSectionHref(lead.id, "collaborators")} />
-        </dl>
-        <div className="lead-profile__contact" aria-label="Coordonnées autorisées">
-          <h3>Coordonnées</h3>
-          {contactVisible ? <div className="lead-profile__contact-list">
-            {lead.email ? <a href={`mailto:${lead.email}`}><EnvelopeSimple size={18} aria-hidden="true" /> {lead.email}</a> : null}
-            {lead.phone ? <a href={`tel:${lead.phone}`}><Phone size={18} aria-hidden="true" /> {lead.phone}</a> : null}
-          </div> : <p>Masquées ou indisponibles pour cette session.</p>}
-        </div>
-      </aside>
-
-      <section className="panel lead-profile__timeline" aria-labelledby="lead-timeline-title">
-        <div className="lead-profile__panel-heading">
-          <div><p className="eyebrow">Historique protégé</p><h2 id="lead-timeline-title">Historique des interactions</h2><p className="lead-profile__panel-description">Chaque événement reste traçable sans réécriture.</p></div>
-          <Link className="lead-profile__text-link" href={leadSectionHref(lead.id, "timeline")}>Voir tout</Link>
-        </div>
-        <nav className="lead-profile__timeline-tabs" aria-label="Sections du suivi"><span aria-current="page">Historique</span><Link href={leadSectionHref(lead.id, "follow-ups")}>Relances</Link><Link href={leadSectionHref(lead.id, "documents")}>Documents</Link></nav>
-        {recentEvents.length ? <ol>
-          {recentEvents.map((event) => <li key={event.id}>
-            <span className="lead-profile__timeline-marker" aria-hidden="true" />
-            <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
-            <h3>{timelineEventLabel(event.type)}</h3>
-            <ResultSummary result={event.result} />
-          </li>)}
-        </ol> : <div className="lead-profile__empty"><Clock size={22} aria-hidden="true" /><p>Aucun événement visible pour ce lead.</p></div>}
-      </section>
+      <RelationPanel lead={lead} />
+      <TimelinePanel leadId={lead.id} events={recentEvents} />
     </div>
 
     <details className="panel lead-profile__secondary">

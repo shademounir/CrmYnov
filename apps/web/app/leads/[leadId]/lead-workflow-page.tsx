@@ -38,38 +38,87 @@ function ResourceForSurface({ leadId, surface }: Readonly<{ leadId: string; surf
   return null;
 }
 
-export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element {
+function useLeadContext(leadId: string): Readonly<{ context?: LeadContext; state: "loading" | "ready" | "error" }> {
   const [context, setContext] = useState<LeadContext | undefined>();
-  const [contextState, setContextState] = useState<"loading" | "ready" | "error">("loading");
-  const copy = surfaceCopy[surface];
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
-      .then(async (response) => { if (!response.ok) throw new Error(`lead_${response.status}`); const parsed = parseLeadContext(await response.json()); if (!parsed) throw new Error("lead_payload"); setContext(parsed); setContextState("ready"); })
-      .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setContextState("error"); });
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`lead_${response.status}`);
+        const parsed = parseLeadContext(await response.json());
+        if (!parsed) throw new Error("lead_payload");
+        setContext(parsed);
+        setState("ready");
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setState("error");
+      });
     return (): void => controller.abort();
   }, [leadId]);
-  const displayName = context ? [context.firstName, context.lastName].filter(Boolean).join(" ") || "Prospect" : "Prospect";
+  return { ...(context ? { context } : {}), state };
+}
+
+function contextLeadCode(context: LeadContext | undefined, state: "loading" | "ready" | "error"): string {
+  if (state === "ready") return context?.leadCode ?? "Contexte indisponible";
+  return state === "error" ? "Contexte indisponible" : "Chargement…";
+}
+
+function contextDisplayName(context: LeadContext | undefined): string {
+  return context ? [context.firstName, context.lastName].filter(Boolean).join(" ") || "Prospect" : "Prospect";
+}
+
+function workflowActionTitle(surface: Surface, assigned: boolean): string {
+  const titles: Readonly<Record<Exclude<Surface, "assignment">, string>> = {
+    interaction: "Nouvelle interaction",
+    status: "Modifier l’étape",
+    "follow-up": "Nouvelle relance",
+    closure: "Nouvelle demande",
+  };
+  return surface === "assignment" ? assigned ? "Demander une réaffectation" : "Affecter le Lead" : titles[surface];
+}
+
+function WorkflowAction({ leadId, surface, context, contextState }: Readonly<{
+  leadId: string;
+  surface: Surface;
+  context?: LeadContext;
+  contextState: "loading" | "ready" | "error";
+}>): React.JSX.Element | null {
+  if (surface === "assignment") return <AssignmentWorkflowForm leadId={leadId} assigned={Boolean(context?.assignedToId)} />;
+  if (surface === "interaction") return <InteractionWorkflowForm leadId={leadId} />;
+  if (surface === "closure") return <ClosureWorkflowForm leadId={leadId} />;
+  if (surface === "status") {
+    return context
+      ? <StatusWorkflowForm leadId={leadId} currentStatus={context.status} />
+      : <p role="status">{contextState === "error" ? "Le statut actuel est indisponible. Aucun changement ne peut être proposé." : "Chargement de l’étape actuelle…"}</p>;
+  }
+  if (context?.assignedToId) return <FollowUpWorkflowForm leadId={leadId} />;
+  if (contextState === "ready") return <p className="lead-assignment-dialog__notice" role="status">Affectez d’abord le Lead à un conseiller. La relance pourra ensuite être enregistrée sous sa responsabilité.</p>;
+  return null;
+}
+
+function WorkflowHistory({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element {
+  if (surface !== "status") return <ResourceForSurface leadId={leadId} surface={surface} />;
+  return <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique. Une clôture reste soumise au parcours dédié.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></>;
+}
+
+export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element {
+  const { context, state: contextState } = useLeadContext(leadId);
+  const copy = surfaceCopy[surface];
   return <main className="lead-workflow-page">
     <Link className="lead-profile__back" href={`/leads/${encodeURIComponent(leadId)}`}><ArrowLeft size={17} aria-hidden="true" /> Retour à la fiche</Link>
     <header className="lead-workflow-page__header"><span>{copy.icon}</span><div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.description}</p></div></header>
     <section className="panel lead-workflow-page__context" aria-live="polite">
-      <div><span>Dossier</span><strong>{contextState === "ready" ? context?.leadCode : contextState === "error" ? "Contexte indisponible" : "Chargement…"}</strong></div>
-      <div><span>Prospect</span><strong>{contextState === "ready" ? displayName : "—"}</strong></div>
+      <div><span>Dossier</span><strong>{contextLeadCode(context, contextState)}</strong></div>
+      <div><span>Prospect</span><strong>{contextState === "ready" ? contextDisplayName(context) : "—"}</strong></div>
       <div><span>Principe</span><strong>Contrôles serveur conservés</strong></div>
     </section>
     <div className="lead-workflow-page__grid">
-      <section className="panel lead-workflow-page__form-card" aria-labelledby="workflow-action-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Action</p><h2 id="workflow-action-title">{surface === "interaction" ? "Nouvelle interaction" : surface === "status" ? "Modifier l’étape" : surface === "follow-up" ? "Nouvelle relance" : surface === "closure" ? "Nouvelle demande" : context?.assignedToId ? "Demander une réaffectation" : "Affecter le Lead"}</h2></div>
-        {surface === "assignment" ? <AssignmentWorkflowForm leadId={leadId} assigned={Boolean(context?.assignedToId)} /> : null}
-        {surface === "interaction" ? <InteractionWorkflowForm leadId={leadId} /> : null}
-        {surface === "status" && context ? <StatusWorkflowForm leadId={leadId} currentStatus={context.status} /> : null}
-        {surface === "status" && !context ? <p role="status">{contextState === "error" ? "Le statut actuel est indisponible. Aucun changement ne peut être proposé." : "Chargement de l’étape actuelle…"}</p> : null}
-        {surface === "follow-up" && context?.assignedToId ? <FollowUpWorkflowForm leadId={leadId} /> : null}
-        {surface === "follow-up" && contextState === "ready" && !context?.assignedToId ? <p className="lead-assignment-dialog__notice" role="status">Affectez d’abord le Lead à un conseiller. La relance pourra ensuite être enregistrée sous sa responsabilité.</p> : null}
-        {surface === "closure" ? <ClosureWorkflowForm leadId={leadId} /> : null}
+      <section className="panel lead-workflow-page__form-card" aria-labelledby="workflow-action-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Action</p><h2 id="workflow-action-title">{workflowActionTitle(surface, Boolean(context?.assignedToId))}</h2></div>
+        <WorkflowAction leadId={leadId} surface={surface} {...(context ? { context } : {})} contextState={contextState} />
       </section>
       <section className="panel lead-workflow-page__history" aria-labelledby="workflow-history-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Traçabilité</p><h2 id="workflow-history-title">{surface === "status" ? "Règles de transition" : "Éléments enregistrés"}</h2></div>
-        {surface === "status" ? <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique. Une clôture reste soumise au parcours dédié.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></> : <ResourceForSurface leadId={leadId} surface={surface} />}
+        <WorkflowHistory leadId={leadId} surface={surface} />
       </section>
     </div>
   </main>;

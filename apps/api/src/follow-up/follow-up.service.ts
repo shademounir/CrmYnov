@@ -8,6 +8,14 @@ import { FollowUpPersistenceRepository } from "./follow-up-persistence.repositor
 
 export type FollowUpState = "SCHEDULED" | "DUE" | "COMPLETED" | "CANCELLED";
 export interface FollowUpRecord { id: string; leadId: string; ownerId: string; dueAt: string; state: FollowUpState; reason: string; version: number; createdAt: string; updatedAt: string }
+type FollowUpDecisionAction = "POSTPONE" | "COMPLETE" | "CANCEL";
+type FollowUpDecisionInput = { action?: FollowUpDecisionAction; dueAt?: string; reason?: string; expectedVersion?: number; idempotencyKey?: string };
+type ValidatedFollowUpDecision = Readonly<{ action: FollowUpDecisionAction; reason: string; due?: Date }>;
+const followUpDecisionStates: Readonly<Record<FollowUpDecisionAction, FollowUpState>> = {
+  POSTPONE: "SCHEDULED",
+  COMPLETE: "COMPLETED",
+  CANCEL: "CANCELLED",
+};
 
 @Injectable()
 export class FollowUpService implements OnModuleInit {
@@ -104,7 +112,7 @@ export class FollowUpService implements OnModuleInit {
 
   async decideForApi(
     id: string,
-    input: { action?: "POSTPONE" | "COMPLETE" | "CANCEL"; dueAt?: string; reason?: string; expectedVersion?: number; idempotencyKey?: string },
+    input: FollowUpDecisionInput,
     principal: Principal,
     correlationId: string,
   ): Promise<FollowUpRecord> {
@@ -112,21 +120,16 @@ export class FollowUpService implements OnModuleInit {
     await this.refreshPersistentState();
     const current = this.items.get(id);
     if (!current) throw new NotFoundException({ code: "follow_up_not_found" });
-    const action = input.action;
-    const reason = input.reason?.trim();
-    const due = action === "POSTPONE" ? new Date(input.dueAt ?? "") : undefined;
-    if (!action || !reason) throw new BadRequestException({ code: "follow_up_decision_invalid" });
-    if (due && (Number.isNaN(due.valueOf()) || due <= new Date())) throw new BadRequestException({ code: "follow_up_due_invalid" });
+    const { action, reason, due } = this.validateDecision(input);
     const idempotencyKey = this.mutationKey("decide", id, input.idempotencyKey ?? (correlationId === "missing-correlation" ? randomUUID() : correlationId));
     const fingerprint = this.persistence.fingerprint({ id, action, dueAt: due?.toISOString(), reason, expectedVersion: input.expectedVersion });
     const replay = await this.persistence.findReplay(idempotencyKey, fingerprint);
     if (replay) return replay;
-    if (current.ownerId !== principal.userId && !this.isManager(principal)) throw new ForbiddenException({ code: "follow_up_forbidden" });
+    this.assertDecisionAccess(current, principal);
     const lead = await this.leads.getLeadForApi(current.leadId, principal, correlationId);
-    if (input.expectedVersion !== current.version || current.state === "COMPLETED" || current.state === "CANCELLED") throw new ConflictException({ code: "follow_up_concurrent" });
-    const nextState: FollowUpState = action === "POSTPONE" ? "SCHEDULED" : action === "COMPLETE" ? "COMPLETED" : "CANCELLED";
+    this.assertDecisionVersion(current, input.expectedVersion);
     const updatedAt = new Date().toISOString();
-    const next: FollowUpRecord = { ...current, state: nextState, ...(due ? { dueAt: due.toISOString() } : {}), reason, version: current.version + 1, updatedAt };
+    const next: FollowUpRecord = { ...current, state: followUpDecisionStates[action], ...(due ? { dueAt: due.toISOString() } : {}), reason, version: current.version + 1, updatedAt };
     try {
       const stored = await this.persistence.decide(current, next, `FOLLOW_UP_${action}`, {
         idempotencyKey, fingerprint, principal, correlationId, expectedLeadVersion: lead.version ?? 1,
@@ -139,6 +142,24 @@ export class FollowUpService implements OnModuleInit {
       await this.refreshPersistentState();
       throw error;
     }
+  }
+
+  private validateDecision(input: FollowUpDecisionInput): ValidatedFollowUpDecision {
+    const action = input.action;
+    const reason = input.reason?.trim();
+    if (!action || !reason) throw new BadRequestException({ code: "follow_up_decision_invalid" });
+    const due = action === "POSTPONE" ? new Date(input.dueAt ?? "") : undefined;
+    if (due && (Number.isNaN(due.valueOf()) || due <= new Date())) throw new BadRequestException({ code: "follow_up_due_invalid" });
+    return { action, reason, ...(due ? { due } : {}) };
+  }
+
+  private assertDecisionAccess(current: Readonly<FollowUpRecord>, principal: Principal): void {
+    if (current.ownerId !== principal.userId && !this.isManager(principal)) throw new ForbiddenException({ code: "follow_up_forbidden" });
+  }
+
+  private assertDecisionVersion(current: Readonly<FollowUpRecord>, expectedVersion: number | undefined): void {
+    const terminal = current.state === "COMPLETED" || current.state === "CANCELLED";
+    if (expectedVersion !== current.version || terminal) throw new ConflictException({ code: "follow_up_concurrent" });
   }
 
   list(principal: Principal): FollowUpRecord[] {

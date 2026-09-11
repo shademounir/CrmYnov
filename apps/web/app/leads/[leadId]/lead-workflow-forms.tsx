@@ -50,6 +50,31 @@ export function closureBody(form: FormData): ClosureBody {
 }
 
 type Operation = "assignment" | "interaction" | "status" | "follow-up";
+const operationLabels: Readonly<Record<Operation, string>> = {
+  assignment: "L’affectation",
+  interaction: "L’interaction",
+  status: "Le changement de statut",
+  "follow-up": "La relance",
+};
+const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Record<string, string>>>>> = {
+  status: {
+    lead_status_transition_forbidden: "Cette étape n’est pas disponible depuis l’étape actuelle. Utilisez le parcours de clôture pour « Inscrit » ou « Sans suite ».",
+    lead_closure_approval_required: "Les étapes « Inscrit » et « Sans suite » nécessitent une demande de clôture validée.",
+    lead_closure_reason_required: "Un motif de clôture conforme est obligatoire.",
+  },
+  "follow-up": {
+    follow_up_pending: "Une relance active existe déjà pour ce Lead. Modifiez-la ou clôturez-la avant d’en créer une autre.",
+    follow_up_invalid: "La relance nécessite une date future, un motif et un conseiller responsable.",
+    follow_up_due_invalid: "Choisissez une nouvelle échéance située dans le futur.",
+    follow_up_concurrent: "Cette relance a changé depuis son affichage. Actualisez-la avant de réessayer.",
+  },
+};
+const httpFailureMessages: Readonly<Record<number, string>> = {
+  403: "Vous n’avez pas l’autorisation d’effectuer cette action.",
+  409: "La situation du Lead a changé. Actualisez la fiche avant de réessayer.",
+  422: "Les informations saisies ne respectent pas les règles métier de cette action.",
+  429: "Trop de demandes ont été envoyées. Réessayez dans quelques instants.",
+};
 
 function errorCode(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -65,19 +90,9 @@ export function statusTransitionOptions(currentStatus: string): ReadonlyArray<{ 
 }
 
 export function failureMessage(operation: Operation, status: number, code?: string): string {
-  if (operation === "status" && code === "lead_status_transition_forbidden") return "Cette étape n’est pas disponible depuis l’étape actuelle. Utilisez le parcours de clôture pour « Inscrit » ou « Sans suite ».";
-  if (operation === "status" && code === "lead_closure_approval_required") return "Les étapes « Inscrit » et « Sans suite » nécessitent une demande de clôture validée.";
-  if (operation === "status" && code === "lead_closure_reason_required") return "Un motif de clôture conforme est obligatoire.";
-  if (operation === "follow-up" && code === "follow_up_pending") return "Une relance active existe déjà pour ce Lead. Modifiez-la ou clôturez-la avant d’en créer une autre.";
-  if (operation === "follow-up" && code === "follow_up_invalid") return "La relance nécessite une date future, un motif et un conseiller responsable.";
-  if (operation === "follow-up" && code === "follow_up_due_invalid") return "Choisissez une nouvelle échéance située dans le futur.";
-  if (operation === "follow-up" && code === "follow_up_concurrent") return "Cette relance a changé depuis son affichage. Actualisez-la avant de réessayer.";
-  if (status === 403) return "Vous n’avez pas l’autorisation d’effectuer cette action.";
-  if (status === 409) return "La situation du Lead a changé. Actualisez la fiche avant de réessayer.";
-  if (status === 422) return "Les informations saisies ne respectent pas les règles métier de cette action.";
-  if (status === 429) return "Trop de demandes ont été envoyées. Réessayez dans quelques instants.";
-  const labels = { assignment: "L’affectation", interaction: "L’interaction", status: "Le changement de statut", "follow-up": "La relance" };
-  return `${labels[operation]} n’a pas pu être confirmé. Votre saisie est conservée.`;
+  const specificMessage = code ? operationFailureMessages[operation]?.[code] : undefined;
+  return specificMessage ?? httpFailureMessages[status]
+    ?? `${operationLabels[operation]} n’a pas pu être confirmé. Votre saisie est conservée.`;
 }
 
 async function responseMessage(operation: Operation, response: Response): Promise<string> {

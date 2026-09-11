@@ -70,6 +70,20 @@ export interface LeadListQuery {
 export type LeadWorkView = "ALL" | "MINE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
 export type LeadSavedView = typeof leadSavedViews[number];
+type ValidatedLeadListQuery = Readonly<{
+  page: number;
+  pageSize: number;
+  status?: LeadStatus;
+  temperature?: LeadTemperature;
+  sortBy: LeadSortField;
+  sortDirection: "asc" | "desc";
+  createdFrom?: string;
+  createdTo?: string;
+  search?: string;
+  view: LeadWorkView;
+  savedView?: LeadSavedView;
+  channel?: string;
+}>;
 
 @Injectable()
 export class LeadService implements OnModuleInit {
@@ -340,6 +354,21 @@ export class LeadService implements OnModuleInit {
 
   listLeads(query: LeadListQuery, principal: Principal, correlationId: string): LeadPage {
     this.assertReadRole(principal);
+    const validated = this.validateListQuery(query);
+    const { page, pageSize, sortBy, sortDirection } = validated;
+    const now = new Date().toISOString();
+    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
+    const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
+    const filtered = [...this.leads.values()].filter((lead) => this.matchesListFilters(lead, query, validated, principal, now, global, allowedCampuses));
+    const ordered = filtered.sort((left, right) => this.compareListedLeads(left, right, validated));
+    const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
+    this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
+      correlationId, after: { page, pageSize, resultCount: items.length, filterCount: Object.values(query).filter((value) => value !== undefined).length - 2,
+        sortBy, sortDirection }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
+    return { items, page, pageSize, total: ordered.length };
+  }
+
+  private validateListQuery(query: LeadListQuery): ValidatedLeadListQuery {
     const { page, pageSize } = query;
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "lead_pagination_invalid" });
     const status = query.status?.toUpperCase();
@@ -358,38 +387,62 @@ export class LeadService implements OnModuleInit {
     if (!["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"].includes(view)) throw new BadRequestException({ code: "lead_view_invalid" });
     const savedView = query.savedView?.toUpperCase() as LeadSavedView | undefined;
     if (savedView && !leadSavedViews.includes(savedView)) throw new BadRequestException({ code: "lead_saved_view_invalid" });
-    const now = new Date().toISOString();
-    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
-    const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
     const channel = query.channel?.toUpperCase();
     if (channel && !["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"].includes(channel)) throw new BadRequestException({ code: "lead_channel_filter_invalid" });
+    return {
+      page,
+      pageSize,
+      sortBy,
+      sortDirection,
+      view,
+      ...(status ? { status: status as LeadStatus } : {}),
+      ...(temperature ? { temperature: temperature as LeadTemperature } : {}),
+      ...(createdFrom ? { createdFrom } : {}),
+      ...(createdTo ? { createdTo } : {}),
+      ...(search ? { search } : {}),
+      ...(savedView ? { savedView } : {}),
+      ...(channel ? { channel } : {}),
+    };
+  }
+
+  private matchesListFilters(
+    lead: Readonly<LeadRecord>,
+    query: LeadListQuery,
+    validated: ValidatedLeadListQuery,
+    principal: Principal,
+    now: string,
+    global: boolean,
+    allowedCampuses: ReadonlySet<string>,
+  ): boolean {
     const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
-    const filtered = [...this.leads.values()].filter((lead) => {
-      const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
-        .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
-      return (global || allowedCampuses.has(lead.campus))
-        && (principal.permissionLeadIds === undefined || principal.permissionLeadIds.has(lead.id))
-        && (!search || searchable.some((value) => value.includes(search)))
-        && this.matchesView(lead, view, principal, now)
-        && this.matchesSavedView(lead, savedView)
-        && (!query.assignedToId || lead.assignedToId === query.assignedToId)
-        && (!query.collaboratorId || lead.collaboratorIds?.includes(query.collaboratorId))
-        && (!status || lead.status === status)
-        && (!temperature || (lead.temperature ?? "UNEVALUATED") === temperature)
-        && matches(lead.source, query.source) && (!channel || this.sourceChannel(lead.source) === channel) && matches(lead.program, query.program)
-        && matches(lead.campaign, query.campaign) && matches(lead.campus, query.campus)
-        && matches(lead.assignmentMode, query.assignmentMode) && matches(lead.importBatchId, query.importBatchId)
-        && (!createdFrom || lead.createdAt >= createdFrom) && (!createdTo || lead.createdAt <= createdTo);
-    });
-    const direction = sortDirection === "asc" ? 1 : -1;
-    const ordered = filtered.sort((left, right) => view === "FOLLOW_UP"
-      ? (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr")
-      : direction * left[sortBy].localeCompare(right[sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr"));
-    const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
-    this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
-      correlationId, after: { page, pageSize, resultCount: items.length, filterCount: Object.values(query).filter((value) => value !== undefined).length - 2,
-        sortBy, sortDirection }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
-    return { items, page, pageSize, total: ordered.length };
+    const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
+      .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
+    return (global || allowedCampuses.has(lead.campus))
+      && (principal.permissionLeadIds === undefined || principal.permissionLeadIds.has(lead.id))
+      && (!validated.search || searchable.some((value) => value.includes(validated.search as string)))
+      && this.matchesView(lead, validated.view, principal, now)
+      && this.matchesSavedView(lead, validated.savedView)
+      && (!query.assignedToId || lead.assignedToId === query.assignedToId)
+      && (!query.collaboratorId || Boolean(lead.collaboratorIds?.includes(query.collaboratorId)))
+      && (!validated.status || lead.status === validated.status)
+      && (!validated.temperature || (lead.temperature ?? "UNEVALUATED") === validated.temperature)
+      && matches(lead.source, query.source)
+      && (!validated.channel || this.sourceChannel(lead.source) === validated.channel)
+      && matches(lead.program, query.program)
+      && matches(lead.campaign, query.campaign)
+      && matches(lead.campus, query.campus)
+      && matches(lead.assignmentMode, query.assignmentMode)
+      && matches(lead.importBatchId, query.importBatchId)
+      && (!validated.createdFrom || lead.createdAt >= validated.createdFrom)
+      && (!validated.createdTo || lead.createdAt <= validated.createdTo);
+  }
+
+  private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {
+    if (query.view === "FOLLOW_UP") {
+      return (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr");
+    }
+    const direction = query.sortDirection === "asc" ? 1 : -1;
+    return direction * left[query.sortBy].localeCompare(right[query.sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr");
   }
 
   private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
