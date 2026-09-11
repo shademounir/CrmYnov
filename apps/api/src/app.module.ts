@@ -41,6 +41,8 @@ import { ViewSharingController } from "./leads/view-sharing.controller.js";
 import { LeadWorkflowPersistenceRepository } from "./leads/lead-workflow-persistence.repository.js";
 import { AssignmentController } from "./assignment/assignment.controller.js";
 import { AssignmentService } from "./assignment/assignment.service.js";
+import { CampusAssignmentService } from "./assignment/campus-assignment.service.js";
+import { PersistentAssignmentService } from "./assignment/persistent-assignment.service.js";
 import { LeadAssignmentController } from "./assignment/lead-assignment.controller.js";
 import { LeadAssignmentService } from "./assignment/lead-assignment.service.js";
 import { ReassignmentController } from "./assignment/reassignment.controller.js";
@@ -101,10 +103,20 @@ import { AppointmentService } from "./appointments/appointment.service.js";
 import { PrismaService } from "./persistence/prisma.service.js";
 import { LocalOutboxRepository } from "./outbox/local-outbox.repository.js";
 import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
+import { SheetImportController } from "./sheet-import/sheet-import.controller.js";
+import { SheetImportAdminService } from "./sheet-import/sheet-import-admin.service.js";
+import { SheetImportExecutor } from "./sheet-import/sheet-import-executor.js";
+import { SheetImportScheduler, ScheduledSheetExecutor } from "./sheet-import/sheet-import-scheduler.js";
+import { SheetSource } from "./sheet-import/synthetic-sheet-source.js";
+import { createSheetSource } from "./sheet-import/google-sheet-source.js";
+import { resolve } from "node:path";
 
 @Module({
-  controllers: [ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
+    SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
+    { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
+    { provide: SheetSource, useFactory: (): ReturnType<typeof createSheetSource> => createSheetSource(process.env, resolve(__dirname, "../../..")) },
     ViewSharingService, ViewSharingAudiences,
     { provide: GrantProvider, useClass: DynamicGrantProvider },
     DynamicPermissionService,
@@ -133,6 +145,8 @@ import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
     SavedLeadViewService,
     LeadWorkflowPersistenceRepository,
     AssignmentService,
+    CampusAssignmentService,
+    PersistentAssignmentService,
     LeadAssignmentService,
     ReassignmentService,
     AssignmentDashboardService,

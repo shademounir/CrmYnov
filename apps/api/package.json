@@ -22,6 +22,7 @@
     "@nestjs/core": "11.1.29",
     "@nestjs/platform-express": "11.1.29",
     "@prisma/client": "6.19.3",
+    "google-auth-library": "11.0.2",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "swagger-ui-express": "5.0.1"

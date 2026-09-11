@@ -123,10 +123,8 @@ export class ImportMappingService {
     const mapping = this.getVersion(input.mappingKey, input.mappingVersion);
     this.validateDryRun(input, mapping);
     const records = input.rows.map((row, index) => this.toRecord(row, index + 1, mapping, input));
-    const preview = this.ingestion.dryRun({ idempotencyKey: input.idempotencyKey, profile: mapping.profile, assignment: input.assignment, records }, principal, `${correlationId}:preflight`);
-    const resolvedAssignments = Object.fromEntries(preview.lines.flatMap((line) => line.proposedAssigneeId ? [[String(line.lineNumber), line.proposedAssigneeId]] : []));
     return this.persistent.confirm({ idempotencyKey: input.idempotencyKey, profile: mapping.profile, confirmed: true, mappingId: mapping.id,
-      mappingVersion: mapping.version, sourceFileSha256: input.sourceFileSha256, assignment: input.assignment, records, resolvedAssignments }, principal, correlationId);
+      mappingVersion: mapping.version, sourceFileSha256: input.sourceFileSha256, assignment: input.assignment, records }, principal, correlationId);
   }
 
   list(principal: Principal): ImportMappingTemplate[] {
@@ -166,6 +164,15 @@ export class ImportMappingService {
     return this.copy(mapping);
   }
 
+  async dryRunForApi(input: ImportDryRunInput, principal: Principal, correlationId: string): Promise<IngestionDryRunResult & { mappingId: string; mappingVersion: number }> {
+    this.assertRole(principal);
+    const mapping = this.getVersion(input.mappingKey, input.mappingVersion);
+    this.validateDryRun(input, mapping);
+    const records = input.rows.map((row, index) => this.toRecord(row, index + 1, mapping, input));
+    const result = await this.ingestion.dryRunForApi({ idempotencyKey: input.idempotencyKey, profile: mapping.profile, assignment: input.assignment, records }, principal, correlationId);
+    return { ...result, mappingId: mapping.id, mappingVersion: mapping.version };
+  }
+
   dryRun(input: ImportDryRunInput, principal: Principal, correlationId: string): IngestionDryRunResult & { mappingId: string; mappingVersion: number } {
     this.assertRole(principal);
     const mapping = this.getVersion(input.mappingKey, input.mappingVersion);
@@ -183,6 +190,26 @@ export class ImportMappingService {
   describeVersion(mappingId: string, version: number): Pick<ImportMappingTemplate, "id" | "mappingKey" | "version" | "profile"> | undefined {
     const mapping = [...this.mappings.values()].flat().find((item) => item.id === mappingId && item.version === version);
     return mapping ? { id: mapping.id, mappingKey: mapping.mappingKey, version: mapping.version, profile: mapping.profile } : undefined;
+  }
+
+  /** Pure mapping compiler. Authorization and immutable persistence belong to the caller's transaction. */
+  snapshot(input: SaveImportMappingInput, actorId: string, createdAt: string): ImportMappingTemplate {
+    this.validateMapping(input);
+    if (!actorId || Number.isNaN(Date.parse(createdAt))) throw new BadRequestException({ code: "mapping_snapshot_invalid" });
+    const version = input.expectedVersion + 1;
+    return { id: this.snapshotId(input.mappingKey, version, input.columns), mappingKey: input.mappingKey, name: input.name.trim(),
+      profile: input.profile, version, columns: input.columns.map((column) => ({ ...column })), builtIn: false, createdAt, createdBy: actorId };
+  }
+
+  /** Uses exactly the manual-import validation and transformations; no session or role is manufactured. */
+  recordsFromSnapshot(mapping: ImportMappingTemplate, input: ImportDryRunInput): IngestionRecordInput[] {
+    this.validateMapping({ ...mapping, expectedVersion: mapping.version - 1 });
+    if (mapping.id !== this.snapshotId(mapping.mappingKey, mapping.version, mapping.columns)
+      || input.mappingKey !== mapping.mappingKey || input.mappingVersion !== mapping.version) {
+      throw new BadRequestException({ code: "mapping_snapshot_invalid" });
+    }
+    this.validateDryRun(input, mapping);
+    return input.rows.map((row, index) => this.toRecord(row, index + 1, mapping, input));
   }
 
   private validateMapping(input: SaveImportMappingInput): void {
@@ -271,6 +298,14 @@ export class ImportMappingService {
 
   private mappingId(mappingKey: string, version: number, columns: ImportMappingColumnInput[]): string {
     return `mapping-${createHash("sha256").update(JSON.stringify({ mappingKey, version, columns })).digest("hex").slice(0, 24)}`;
+  }
+
+  private snapshotId(mappingKey: string, version: number, columns: ImportMappingColumnInput[]): string {
+    // JSONB may reorder object keys. Field order is fixed here, while column order remains meaningful.
+    const canonicalColumns = columns.map((column) => ({ sourceColumn: column.sourceColumn,
+      ...(column.targetField !== undefined ? { targetField: column.targetField } : {}), action: column.action,
+      ...(column.required !== undefined ? { required: column.required } : {}), ...(column.reason !== undefined ? { reason: column.reason } : {}) }));
+    return this.mappingId(mappingKey, version, canonicalColumns);
   }
 
   private looksLikeFormula(value: string): boolean {

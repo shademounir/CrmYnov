@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { NotFoundException } from "@nestjs/common";
+import type { PersistentAssignmentService } from "../src/assignment/persistent-assignment.service.js";
 import { AssignmentService } from "../src/assignment/assignment.service.js";
 import { LeadAssignmentController } from "../src/assignment/lead-assignment.controller.js";
 import { LeadAssignmentService } from "../src/assignment/lead-assignment.service.js";
 import { AuditService } from "../src/audit/audit.service.js";
-import { LeadService } from "../src/leads/lead.service.js";
+import { LeadService, type LeadRecord } from "../src/leads/lead.service.js";
 
 const manager = { userId: "synthetic-manager", roles: ["MANAGER" as const], scopes: [{ kind: "GLOBAL" as const }], sessionId: "00000000-0000-4000-8000-000000000001" };
 const firstUser = "00000000-0000-4000-8000-000000000010";
@@ -53,21 +55,21 @@ test("refuses unconfirmed, duplicate, unbounded and ineligible assignments", () 
   assert.throws(() => service.assignOne(lead.id, "unknown-user", true, "single-fixed-001", manager, "corr"), hasCode("assignment_target_ineligible"));
 });
 
-test("controller requires a principal and exposes bounded preview", () => {
+test("controller requires a principal and exposes bounded preview", async () => {
   const { leads, service } = setup(); const lead = leads.registerLocalLead(leadInput("LD-ASSIGN-040")); const controller = new LeadAssignmentController(service);
   const request = { principal: manager, header: () => "corr-controller" } as never;
-  const preview = controller.preview({ idempotencyKey: "preview-001", strategy: "FIXED", targetUserId: firstUser, items: [{ leadId: lead.id, source: lead.source, campaign: lead.campaign }] }, request);
+  const preview = await controller.preview({ idempotencyKey: "preview-001", strategy: "FIXED", targetUserId: firstUser, items: [{ leadId: lead.id, source: lead.source, campaign: lead.campaign }] }, request);
   assert.equal(preview.mutated, false); assert.equal(preview.items[0]?.outcome, "READY");
-  assert.throws(() => controller.preview({ idempotencyKey: "preview-002", strategy: "FIXED", targetUserId: firstUser, items: [] }, { header: () => undefined } as never), hasCode("principal_missing"));
+  await assert.rejects(() => controller.preview({ idempotencyKey: "preview-002", strategy: "FIXED", targetUserId: firstUser, items: [] }, { header: () => undefined } as never), hasCode("principal_missing"));
 });
 
-test("persists fixed API batches with replay, skip and refusal outcomes", async () => {
+test("delegates persistent API batches with replay, skip and refusal outcomes", async () => {
   const audit = new AuditService();
   const engine = new AssignmentService(audit);
   engine.configure([{ id: "persistent-rule", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [
     { userId: firstUser, active: true, capacity: 10, activeLeadCount: 0 },
   ] }], manager, "persistent-config");
-  const records = new Map([
+  const records = new Map<string, LeadRecord>([
     ["persistent-ready", { ...leadInput("LD-PERSIST-READY"), id: "persistent-ready", status: "PROSPECT" as const, createdAt: "2026-08-25T12:00:00.000Z" }],
     ["persistent-assigned", { ...leadInput("LD-PERSIST-ASSIGNED"), id: "persistent-assigned", status: "PROSPECT" as const, createdAt: "2026-08-25T12:00:00.000Z", assignedToId: secondUser }],
     ["persistent-single", { ...leadInput("LD-PERSIST-SINGLE"), id: "persistent-single", status: "PROSPECT" as const, createdAt: "2026-08-25T12:00:00.000Z" }],
@@ -81,7 +83,23 @@ test("persists fixed API batches with replay, skip and refusal outcomes", async 
       return Promise.resolve(updated);
     },
   } as unknown as LeadService;
-  const service = new LeadAssignmentService(persistentLeads, engine, audit);
+  const receipts = new Set<string>();
+  const persistent: Pick<PersistentAssignmentService, "apply" | "preview"> = {
+    preview: () => { throw new Error("unexpected_preview"); },
+    apply: async (request, actor, correlationId) => {
+      assert.equal(actor, manager);
+      const lead = records.get(request.leadId);
+      if (!lead) throw new NotFoundException({ code: "lead_not_found" });
+      const assignment = { eventKey: request.eventKey };
+      if (receipts.has(request.eventKey)) return { outcome: "PRESERVED", assignment, lead, replayed: true };
+      if (lead.assignedToId) return { outcome: "PRESERVED", assignment, lead, replayed: false };
+      assert.equal(request.assignment.targetUserId, firstUser);
+      const updated = await persistentLeads.assignLocalLeadForApi(lead.id, firstUser, actor, correlationId, "synthetic");
+      receipts.add(request.eventKey);
+      return { outcome: "ASSIGNED", assignment, lead: updated, replayed: false };
+    },
+  };
+  const service = new LeadAssignmentService(persistentLeads, engine, audit, persistent);
   const input = { idempotencyKey: "persistent-batch-001", strategy: "FIXED" as const, targetUserId: firstUser, confirmed: true,
     items: [
       { leadId: "persistent-ready", source: "FORM", campaign: "Campaign" },

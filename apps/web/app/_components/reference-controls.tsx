@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 export interface ReferenceOption { id: string; kind: string; code: string; label: string; scope: string; campusId: string | null; state: string; version: number }
 export const referenceLabels = { CAMPUS: "Campus", PROGRAM: "Formation", SCHOLARSHIP: "Bourse", CAMPAIGN: "Campagne", TAG: "Tag" } as const;

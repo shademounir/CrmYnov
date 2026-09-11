@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import type { AuditEvent, Lead, LeadActivity, LeadCollaborationRequest, LeadCollaborator, LeadMutationReceipt, LocalOutboxEvent, PrismaClient } from "@prisma/client";
 
 interface SyntheticAccount { id: string; email: string; password: string; campusId: string }
-export interface LeadAuditFixture { accounts: [SyntheticAccount, SyntheticAccount, SyntheticAccount]; assignmentLeadId: string }
+export interface LeadAuditFixture { accounts: [SyntheticAccount, SyntheticAccount, SyntheticAccount]; assignmentLeadId: string; assigneeId: string }
 interface AdditionState {
   lead: Lead;
   collaborators: LeadCollaborator[];
@@ -38,8 +38,10 @@ export async function prepareLeadAuditFixture(client: PrismaClient): Promise<Lea
     return { id, email, password, campusId };
   }
   const accounts: LeadAuditFixture["accounts"] = [await account(campusA), await account(campusA), await account(campusB)];
+  const assigneeId = randomUUID();
+  await client.collaborator.create({ data: { id: assigneeId, professionalEmail: `${assigneeId}@example.invalid`, roles: ["ADMISSIONS"], campusId: campusA } });
   const lead = await client.lead.create({ data: { leadCode: "SYNTHETIC-ASSIGNMENT-GATE", firstName: "Lead", lastName: "Synthétique", campus: "SYNTHETIC-A", program: "SYNTHETIC-PROGRAM", campaign: "SYNTHETIC-CAMPAIGN", educationLevel: "BAC", source: "TEST" } });
-  return { accounts, assignmentLeadId: lead.id };
+  return { accounts, assignmentLeadId: lead.id, assigneeId };
 }
 
 export async function assertLeadAuditCycle(client: PrismaClient, base: string, fixture: LeadAuditFixture, report: (message: string) => void, additionRollbackOnly = false): Promise<void> {
@@ -61,13 +63,25 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
     assert.equal(response.status, status, `${correlation}: expected authenticated success`);
     return response.json() as Promise<T>;
   }
-  await success("/assignment/config", "PUT", { rules: [{ scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [{ userId: actor.id, active: true, capacity: 20, activeLeadCount: 0 }] }] }, "cycle-config", 200);
-  await success(`/leads/${fixture.assignmentLeadId}/assignment`, "POST", { targetUserId: actor.id, confirmed: true, idempotencyKey: "gate-assignment" }, "gate-assignment", 201);
-  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } })).assignedToId, actor.id);
+  await success("/assignment/config", "PUT", { campusId: fixture.accounts[0].campusId, expectedVersion: 0, rules: [{ scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [{ userId: fixture.assigneeId, active: true, capacity: 20, activeLeadCount: 0 }] }] }, "cycle-config", 200);
+  await success(`/leads/${fixture.assignmentLeadId}/assignment`, "POST", { targetUserId: fixture.assigneeId, confirmed: true, idempotencyKey: "gate-assignment" }, "gate-assignment", 201);
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } })).assignedToId, fixture.assigneeId);
   const gateEvents = await client.auditEvent.findMany({ where: { resourceId: fixture.assignmentLeadId } });
   assert.equal(gateEvents.length, 1); assert.equal(gateEvents[0]?.actorId, actor.id); assert.equal(gateEvents[0]?.eventType, "LEAD_ASSIGNED");
   assert.equal(gateEvents[0]?.campusId, "SYNTHETIC-A"); assert.equal(gateEvents[0]?.sessionId, null);
-  assert.deepEqual(gateEvents[0]?.after, { version: 2, scope: "CAMPUS" });
+  const assignmentKeys = ["version", "scope", "origin", "decisionRef", "configurationVersion", "ruleId", "requestHash", "selectedUserId"].sort(compareAuditKeys);
+  function assertAssignmentMetadata(value: unknown): void {
+    assert.ok(value && typeof value === "object");
+    assert.deepEqual(Object.keys(value).sort(compareAuditKeys), assignmentKeys);
+    assert.ok("origin" in value && value.origin === "MANUAL");
+    assert.ok("configurationVersion" in value && value.configurationVersion === 1);
+    assert.ok("selectedUserId" in value && value.selectedUserId === fixture.assigneeId);
+    assert.ok("requestHash" in value && typeof value.requestHash === "string" && /^[a-f0-9]{64}$/.test(value.requestHash));
+    assert.ok("decisionRef" in value && typeof value.decisionRef === "string" && /^campus-assignment-decision:[a-f0-9]{64}$/.test(value.decisionRef));
+    assert.ok("scope" in value && value.scope === "CAMPUS");
+  }
+  assertAssignmentMetadata(gateEvents[0]?.after);
+  assert.ok(gateEvents[0]?.after && typeof gateEvents[0].after === "object" && "version" in gateEvents[0].after && gateEvents[0].after.version === 2);
   report("Compiled API assignment gate: HTTP 201, one persistent audit, authenticated Admin and correct campus.");
   // A separate lead keeps this rollback/retry proof outside the seven-mutation count.
   const rollbackLeadId = fixture.assignmentLeadId;
@@ -127,7 +141,7 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   report("HTTP interaction replay: identical result, exactly two audits for creation and interaction.");
   await success(`/leads/${id}/timeline/${interaction.id}/corrections`, "POST", { idempotencyKey: "cycle-correction", expectedCorrectionCount: 0, operation: "CANCEL", reasonCode: "DUPLICATE_ENTRY" }, "cycle-correction", 201);
   await success(`/leads/${id}/status`, "PATCH", { status: "CONTACTED", reason: "Contact synthétique" }, "cycle-status", 200);
-  await success(`/leads/${id}/assignment`, "POST", { targetUserId: actor.id, confirmed: true, idempotencyKey: "cycle-assignment" }, "cycle-assignment", 201);
+  await success(`/leads/${id}/assignment`, "POST", { targetUserId: fixture.assigneeId, confirmed: true, idempotencyKey: "cycle-assignment" }, "cycle-assignment", 201);
   const collaboration = await success<{ id: string }>(`/leads/${id}/collaboration-requests`, "POST", { targetUserId: reviewer.id, action: "ADD", role: "ADVISER", justification: "Collaboration synthétique" }, "cycle-collaboration-request", 201);
   await success(`/collaboration-requests/${collaboration.id}/decision`, "PATCH", { decision: "APPROVE", expectedVersion: 1, reason: "Validation synthétique" }, "cycle-collaboration-decision", 200, reviewer);
   const events = await client.auditEvent.findMany({ where: { resourceId: id }, orderBy: { occurredAt: "asc" } });
@@ -138,7 +152,8 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   for (const event of events) {
     assert.deepEqual(event.actorRoles, ["ADMIN"]); assert.equal(event.campusId, "SYNTHETIC-A"); assert.equal(event.resourceType, "LEAD"); assert.equal(event.result, "SUCCESS");
     assert.equal(event.sessionId, null); assert.equal(event.minimizedIp, null);
-    assert.deepEqual(Object.keys(event.after as object).sort(compareAuditKeys), ["scope", "version"]);
+    if (event.eventType === "LEAD_ASSIGNED") assertAssignmentMetadata(event.after);
+    else assert.deepEqual(Object.keys(event.after as object).sort(compareAuditKeys), ["scope", "version"]);
     assert.equal((event.after as { scope: string }).scope, "CAMPUS");
     for (const excluded of [input.email, actor.token, actor.sessionId, "password", "token", "hash"]) assert.equal(JSON.stringify(event.after).includes(excluded), false);
   }

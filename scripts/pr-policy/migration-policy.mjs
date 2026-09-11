@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { recognizedForeignKeyWords, sqlStatements, statementText, structuredAddColumn } from "./migration-grammar.mjs";
 
 const MIGRATION_SQL = /^apps\/api\/prisma\/migrations\/([^/]+)\/migration\.sql$/;
 const ROLLBACK_DOC = /^apps\/api\/prisma\/migrations\/([^/]+)\/rollback\.md$/;
-const SAFE_DEFAULT = /^(?:'[^']*'|[-+]?\d+(?:\.\d+)?|true|false|current_timestamp|now\(\)|gen_random_uuid\(\))$/i;
 const FORBIDDEN_WORDS = new Set(["DROP", "TRUNCATE", "DELETE", "UPDATE", "INSERT"]);
 
 function stable(values) {
@@ -14,35 +14,8 @@ function result(reasons = [], details = {}) {
   return { approved: reasons.length === 0, reasons: stable(reasons), ...details };
 }
 
-function statements(sql) {
-  return sql
-    .split(/\r?\n/)
-    .filter((line) => !line.trim().startsWith("--"))
-    .join(" ")
-    .split(";")
-    .map((statement) => statement.split(/\s+/).filter(Boolean).join(" ").trim())
-    .filter(Boolean);
-}
-
-function words(statement) {
-  return new Set(statement.toUpperCase().split(/[^A-Z_]+/).filter(Boolean));
-}
-
 function cleanIdentifier(value) {
   return String(value ?? "").replaceAll('"', "").toLowerCase();
-}
-
-function safeAddColumn(statement) {
-  const upper = statement.toUpperCase();
-  if (!upper.startsWith("ALTER TABLE ") || !upper.includes(" ADD COLUMN ") || upper.includes(" REFERENCES ")) return false;
-  if (!upper.includes(" NOT NULL")) return true;
-  const defaultAt = upper.indexOf(" DEFAULT ");
-  if (defaultAt < 0) return false;
-  const rawCandidate = statement.slice(defaultAt + 9).trim();
-  const candidate = rawCandidate.toUpperCase().endsWith(" NOT NULL")
-    ? rawCandidate.slice(0, -9).trim()
-    : rawCandidate;
-  return SAFE_DEFAULT.test(candidate);
 }
 
 function createdTables(items) {
@@ -55,16 +28,18 @@ function createdTables(items) {
     }));
 }
 
-function statementReason(statement, newTables, uniquenessValidated) {
+function statementReason(lexemes, newTables, uniquenessValidated) {
+  const statement = statementText(lexemes);
   const upper = statement.toUpperCase();
-  const tokens = words(statement);
+  const allowedActions = recognizedForeignKeyWords(lexemes);
+  const tokens = new Set(lexemes.filter(token => token.kind === "word" && !allowedActions.has(token)).map(token => token.value.toUpperCase()));
   if ([...FORBIDDEN_WORDS].some((word) => tokens.has(word))) return "migration_destructive_or_data_statement";
   if (tokens.has("RENAME") || (upper.includes("ALTER COLUMN") && (tokens.has("TYPE") || upper.includes(" SET NOT NULL")))) {
     return "migration_destructive_alteration";
   }
   if (upper.startsWith("CREATE TABLE ") || (upper.startsWith("CREATE TYPE ") && upper.includes(" AS ENUM"))) return undefined;
   if (upper.startsWith("CREATE UNIQUE INDEX ")) return uniquenessValidated ? undefined : "migration_unique_index_proof_missing";
-  if (upper.startsWith("CREATE INDEX ") || safeAddColumn(statement) || (upper.startsWith("ALTER TYPE ") && upper.includes(" ADD VALUE"))) return undefined;
+  if (upper.startsWith("CREATE INDEX ") || structuredAddColumn(lexemes) || (upper.startsWith("ALTER TYPE ") && upper.includes(" ADD VALUE"))) return undefined;
   if (upper.startsWith("ALTER TABLE ") && upper.includes(" ADD CONSTRAINT ") && upper.includes(" FOREIGN KEY ")) {
     return newTables.has(cleanIdentifier(statement.split(" ")[2])) ? undefined : "migration_sql_ambiguous";
   }
@@ -87,8 +62,10 @@ export function analyzeMigrationSql(sql) {
   for (const marker of ["additive", "ephemeral-only", "rollback-documented"]) {
     if (!lines.has(`-- prisma-policy: ${marker}`)) reasons.push(`migration_marker_${marker}_missing`);
   }
-  const items = statements(source);
-  const newTables = createdTables(items);
+  let items;
+  try { items = sqlStatements(source); }
+  catch { return result([...reasons, "migration_sql_ambiguous"], { statementCount: 0 }); }
+  const newTables = createdTables(items.map(statementText));
   const uniquenessValidated = lines.has("-- prisma-policy: uniqueness-validated");
   reasons.push(...items.map((statement) => statementReason(statement, newTables, uniquenessValidated)).filter(Boolean));
   return result(reasons, { statementCount: items.length });

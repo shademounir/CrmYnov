@@ -30,7 +30,13 @@ test("canonical coverage remaps before the unchanged filters and is used by CI",
   const pkg = JSON.parse(await read("package.json"));
   const lock = JSON.parse(await read("package-lock.json"));
   const command = pkg.scripts["test:coverage"];
-  assert.equal(command, "c8 --all --exclude-after-remap --include=apps/**/*.ts --include=apps/**/*.tsx --include=packages/**/*.ts --include=scripts/**/*.mjs --exclude=**/.next/** --exclude=**/dist/** --exclude=**/tests/** --exclude=**/test/** --reporter=text --reporter=lcov npm test");
+  assert.equal(command, "c8 --all --exclude-after-remap --include=apps/**/*.ts --include=apps/**/*.tsx --include=packages/**/*.ts --include=scripts/**/*.mjs --exclude=**/.next/** --exclude=**/dist/** --exclude=**/tests/** --exclude=**/test/** --reporter=text --reporter=lcov node scripts/ci/coverage-runner.mjs");
+  const runner = await read("scripts/ci/coverage-runner.mjs");
+  assert.match(runner, /npm\(\["test"\]\)/);
+  assert.match(runner, /await postgresProofs\(\)/);
+  assert.match(runner, /coverage_instrumentation_required/);
+  assert.match(runner, /coverage_database_identity_mismatch/);
+  assert.match(runner, /coverage_database_not_empty/);
   assert.equal(lock.packages["node_modules/c8"].version, pkg.devDependencies.c8);
   assert.match(await read("node_modules/c8/lib/parse-args.js"), /option\('exclude-after-remap'/);
   const workflow = await read(".github/workflows/application-quality.yml");

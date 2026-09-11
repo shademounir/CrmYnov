@@ -1,11 +1,17 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, UnprocessableEntityException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Optional, UnprocessableEntityException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
-import { validateLeadReferences } from "../references/reference.repository.js";
+import { resolveReference, validateLeadReferences } from "../references/reference.repository.js";
 import type { IngestionBatchInput, IngestionRecordInput } from "./ingestion.service.js";
+import { commitSheetAssignment, prepareSheetAssignment, type SheetAssignment } from "../assignment/campus-assignment-resolver.js";
+import { canonicalCampus } from "../permissions/dynamic-resources.js";
+import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
+import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
+import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
+import { submissionFingerprint } from "./submission-fingerprint.js";
 
 export interface ConfirmPersistentImportInput extends IngestionBatchInput {
   confirmed: true;
@@ -30,6 +36,8 @@ export interface PersistentImportResult {
 
 type LineOutcome = "CREATED" | "ATTACHED" | "MANUAL_REVIEW" | "INVALID" | "IGNORED";
 type Line = { lineNumber: number; outcome: LineOutcome; reason?: string; leadId?: string };
+type SheetConnector = Prisma.SheetImportConnectorGetPayload<object>;
+type CampusReference = Prisma.CrmReferenceGetPayload<object>;
 const SAFE_KEY = /^[A-Za-z0-9:_-]{8,128}$/;
 const SAFE_MAPPING = /^mapping-[0-9a-f]{24}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -40,6 +48,7 @@ export class PersistentIngestionService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(DynamicPermissionRepository) private readonly permissions?: Pick<DynamicPermissionRepository, "snapshots">,
   ) {}
 
   async confirm(input: ConfirmPersistentImportInput, principal: Principal, correlationId: string): Promise<PersistentImportResult> {
@@ -62,6 +71,7 @@ export class PersistentIngestionService {
         createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0,
       } });
       for (const record of [...input.records].sort((a, b) => a.lineNumber - b.lineNumber)) {
+        if (input.assignment.strategy !== "UNASSIGNED") await this.authorizeAssignment(tx, principal, record.campus ?? "");
         lines.push(await this.persistLine(tx, batchId, record, input, principal, correlationId));
       }
       const created = this.count(lines, "CREATED");
@@ -91,7 +101,143 @@ export class PersistentIngestionService {
     }
   }
 
-  private async persistLine(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, principal: Principal, correlationId: string): Promise<Line> {
+  /** Connector-only execution, with no browser session or synthetic administrative role. Caller supplies a fenced transaction. */
+  async persistSheetRecord(tx: Prisma.TransactionClient, connectorId: string, record: IngestionRecordInput, mapping: { id: string; version: number }, correlationId: string,
+    assignment: IngestionBatchInput["assignment"] = { strategy: "UNASSIGNED" }): Promise<{ batchId: string; outcome: LineOutcome; assignmentReason?: string }> {
+    if (!SAFE_MAPPING.test(mapping.id) || !Number.isInteger(mapping.version) || mapping.version < 1) throw new BadRequestException({ code: "sheet_mapping_invalid" });
+    const { connector, campus, local, externalId } = await this.sheetRecordContext(tx, connectorId, record);
+    const actorId = `SYSTEM:SHEETS:${connector.id}`;
+    const batchId = randomUUID();
+    const key = `sheet:${connector.id}:${createHash("sha256").update(externalId).digest("hex").slice(0, 48)}`;
+    const existing = await tx.ingestionBatch.findUnique({ where: { idempotencyKey: key } });
+    if (existing) throw new ConflictException({ code: "sheet_receipt_reconciliation_required" });
+    const normalizedEmail = record.email?.trim().toLowerCase();
+    const normalizedPhone = record.phone?.replace(/[^+\d]/g, "");
+    const { matches } = await this.findMatches(tx, record.technicalSystem, externalId, normalizedEmail, normalizedPhone);
+    await this.assertMatchedLeadScopes(tx, matches, campus.id);
+    const selected: SheetAssignment = matches.size ? { eventKey: key, reason: "assignment_existing_preserved" }
+      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, true);
+    const input = this.sheetPersistenceInput(record, mapping, key, local, assignment, selected);
+    await tx.ingestionBatch.create({ data: { id: batchId, idempotencyKey: key, fingerprint: this.fingerprint(input), profile: input.profile,
+      assignmentMode: input.assignment.strategy, actorId, totalCount: 1, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
+    const localReason = local ? await this.localSheetReviewReason(tx, record, matches) : undefined;
+    const line = localReason ? await this.review(tx, batchId, record.lineNumber, localReason)
+      : await this.persistLine(tx, batchId, record, input, { userId: actorId, roles: ["SYSTEM"] }, correlationId, selected);
+    await this.persistSheetArtifacts(tx, { connector, campus, batchId, actorId, key, input, line, selected, record, correlationId });
+    return { batchId, outcome: line.outcome, ...(selected.reason ? { assignmentReason: selected.reason } : {}) };
+  }
+
+  private async sheetRecordContext(tx: Prisma.TransactionClient, connectorId: string, record: IngestionRecordInput): Promise<{ connector: SheetConnector; campus: CampusReference; local: boolean; externalId: string }> {
+    const connector = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
+    if (!connector) throw new ForbiddenException({ code: "sheet_connector_disabled" });
+    await this.assertSheetConnectorRunnable(tx, connector, record.technicalSystem);
+    const campus = await tx.crmReference.findUnique({ where: { id: connector.campusId } });
+    const local = record.technicalSystem === "GOOGLE_SHEETS_LOCAL";
+    const externalId = record.externalId?.trim() ?? "";
+    this.assertSheetRecordScope(campus, record, local, externalId);
+    if (local) await this.validateLocalSheetIdentity(tx, connector, externalId);
+    return { connector, campus, local, externalId };
+  }
+
+  private async assertSheetConnectorRunnable(tx: Prisma.TransactionClient, connector: SheetConnector, technicalSystem: string): Promise<void> {
+    if (connector.enabled) return;
+    const run = connector.activeRunId ? await tx.sheetImportRun.findUnique({ where: { id: connector.activeRunId } }) : null;
+    const allowedManualRun = technicalSystem === "GOOGLE_SHEETS_LOCAL" && run?.trigger === "MANUAL" && run.status === "RUNNING";
+    if (!allowedManualRun) throw new ForbiddenException({ code: "sheet_connector_disabled" });
+  }
+
+  private assertSheetRecordScope(campus: CampusReference | null, record: IngestionRecordInput, local: boolean, externalId: string): asserts campus is CampusReference {
+    if (campus?.kind !== "CAMPUS" || campus.state !== "ACTIVE") throw new ForbiddenException({ code: "sheet_connector_scope_refused" });
+    if (record.campus !== campus.code) throw new ForbiddenException({ code: "sheet_connector_scope_refused" });
+    if (!local && record.technicalSystem !== "FORMINATOR_ZAPIER") throw new ForbiddenException({ code: "sheet_connector_scope_refused" });
+    if (!externalId) throw new ForbiddenException({ code: "sheet_connector_scope_refused" });
+  }
+
+  private async assertMatchedLeadScopes(tx: Prisma.TransactionClient, matches: Set<string>, campusId: string): Promise<void> {
+    for (const leadId of matches) {
+      const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId }, select: { campus: true } });
+      const matchedCampus = await resolveReference(tx, "CAMPUS", lead.campus);
+      if (matchedCampus?.id !== campusId) throw new ForbiddenException({ code: "sheet_identity_scope_refused" });
+    }
+  }
+
+  private sheetPersistenceInput(record: IngestionRecordInput, mapping: { id: string; version: number }, key: string, local: boolean,
+    assignment: IngestionBatchInput["assignment"], selected: SheetAssignment): ConfirmPersistentImportInput {
+    return { confirmed: true, profile: local ? "CUSTOM" : "FORMINATOR_ZAPIER", idempotencyKey: key,
+      mappingId: mapping.id, mappingVersion: mapping.version, sourceFileSha256: this.fingerprintRecord(record),
+      assignment: selected.reason === "assignment_configuration_absent" ? { strategy: "UNASSIGNED" } : assignment,
+      records: [record] };
+  }
+
+  private async persistSheetArtifacts(tx: Prisma.TransactionClient, state: { connector: SheetConnector; campus: CampusReference; batchId: string;
+    actorId: string; key: string; input: ConfirmPersistentImportInput; line: Line; selected: SheetAssignment; record: IngestionRecordInput;
+    correlationId: string }): Promise<void> {
+    const { connector, campus, batchId, actorId, key, input, line, selected, record, correlationId } = state;
+    if (line.outcome === "CREATED" && line.leadId) await commitSheetAssignment(tx, selected, line.leadId);
+    await tx.ingestionBatch.update({ where: { id: batchId }, data: { createdCount: Number(line.outcome === "CREATED"), attachedCount: Number(line.outcome === "ATTACHED"),
+      reviewCount: Number(line.outcome === "MANUAL_REVIEW"), invalidCount: Number(line.outcome === "INVALID") } });
+    await tx.auditEvent.create({ data: { actorId, actorRoles: ["SYSTEM"], campusId: campus.id, resourceType: "SHEET_IMPORT", resourceId: connector.id,
+      eventType: "SHEET_IMPORT_ROW_PROCESSED", correlationId, result: line.outcome === "INVALID" || line.outcome === "MANUAL_REVIEW" ? "FAILED" : "SUCCESS", idempotencyKey: key,
+      after: { batchId, outcome: line.outcome, connectorVersion: connector.version,
+        assignment: { version: selected.configurationVersion ?? null, reason: selected.reason ?? "assignment_selected_or_preserved",
+          ...(selected.selection ? { ruleId: selected.selection.ruleId, strategy: selected.selection.strategy, selectedUserId: selected.selection.selectedUserId,
+            candidateFingerprint: selected.selection.candidateFingerprint, algorithmVersion: "assignment-v1" } : {}) } } } });
+    await tx.importReport.create({ data: { jobId: key, batchId, mappingId: input.mappingId, mappingVersion: input.mappingVersion,
+      sourceFileSha256: input.sourceFileSha256, totalCount: 1, createdCount: Number(line.outcome === "CREATED"), updatedCount: 0,
+       ignoredCount: Number(line.outcome === "IGNORED"), duplicateCount: Number(line.outcome === "ATTACHED"), errorCount: Number(line.outcome === "INVALID" || line.outcome === "MANUAL_REVIEW"),
+       ...(line.reason ? { rejections: { create: { lineNumber: record.lineNumber, category: line.outcome, reasonCode: line.reason } } } : {}) } });
+  }
+
+  private async validateLocalSheetIdentity(tx: Prisma.TransactionClient, connector: { campusId: string; workbookId: string; configuration: Prisma.JsonValue }, id: string): Promise<void> {
+    const tracked = await tx.sheetLocalRow.findUnique({ where: { id }, include: { stream: true } });
+    const config = connector.configuration;
+    const source = config && typeof config === "object" && !Array.isArray(config) ? config.source : null;
+    if (!source || typeof source !== "object" || Array.isArray(source) || source.identityMode !== "LOCAL_ROW"
+      || !tracked || tracked.stream.suspended || tracked.stream.campusId !== connector.campusId
+      || tracked.stream.workbookId !== connector.workbookId || tracked.stream.sheetId !== source.sheetId || tracked.status !== "PENDING") {
+      throw new ForbiddenException({ code: "sheet_local_identity_refused" });
+    }
+  }
+
+  private async localSheetReviewReason(tx: Prisma.TransactionClient, record: IngestionRecordInput, matches: Set<string>): Promise<string | undefined> {
+    if (!record.campus) return "REQUIRED_MAPPING_MISSING";
+    if (!record.email?.trim() && !record.phone?.trim()) return "CONTACT_IDENTITY_MISSING";
+    if (matches.size > 1) return "IDENTITY_COLLISION";
+    const matched = [...matches][0];
+    if (matched) {
+      const lead = await tx.lead.findUniqueOrThrow({ where: { id: matched } });
+      const name = (value: string): string => value.trim().toLowerCase();
+      if (name(lead.firstName) !== name(record.firstName) || name(lead.lastName) !== name(record.lastName)
+        || (lead.email && record.email && name(lead.email) !== name(record.email))
+        || (lead.phone && record.phone && lead.phone !== record.phone.replace(/[^+\d]/gu, ""))) return "CONTACT_VALUES_CONTRADICTORY";
+      return undefined;
+    }
+    const names = await tx.lead.count({ where: { campus: record.campus, firstName: { equals: record.firstName.trim(), mode: "insensitive" },
+      lastName: { equals: record.lastName.trim(), mode: "insensitive" } } });
+    return names ? "NAME_ONLY_MATCH" : undefined;
+  }
+
+  private programOutsideAllowedMapping(record: IngestionRecordInput, input: ConfirmPersistentImportInput): boolean {
+    return Boolean(record.program && input.allowedPrograms?.length && !input.allowedPrograms.includes(record.program.trim()));
+  }
+
+  private hasRequiredMapping(record: IngestionRecordInput): record is IngestionRecordInput & { campus: string; campaign: string; educationLevel: string; program: string } {
+    return Boolean(record.campus?.trim() && record.campaign?.trim() && record.educationLevel?.trim() && record.program?.trim());
+  }
+
+  private fingerprintRecord(record: IngestionRecordInput): string {
+    return createHash("sha256").update(JSON.stringify(this.canonical(record))).digest("hex");
+  }
+
+  private async authorizeAssignment(tx: Prisma.TransactionClient, actor: Principal, campusValue: string): Promise<void> {
+    if (!this.permissions) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    const current = await currentPrincipal(tx, actor);
+    const campus = await canonicalCampus(tx, campusValue);
+    const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+    if (!evaluatePermission(current, "lead.assign", await this.permissions.snapshots(tx), context).allowed) permissionDenied();
+  }
+
+  private async persistLine(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, principal: Pick<Principal, "userId"> & { roles: Principal["roles"] | readonly ["SYSTEM"] }, correlationId: string, selected?: SheetAssignment): Promise<Line> {
     const invalid = this.validateRecord(record);
     if (invalid) return { lineNumber: record.lineNumber, outcome: "INVALID", reason: invalid };
     const mappedStatus = this.mapStatus(record.historicalStatus, record.structuredPriorContact === true);
@@ -101,22 +247,30 @@ export class PersistentIngestionService {
     const { external, matches } = await this.findMatches(tx, record.technicalSystem.trim(), externalId, email, phone);
     if (matches.size > 1) return this.review(tx, batchId, record.lineNumber, "IDENTITY_COLLISION");
     const matchedLeadId = [...matches][0];
+    if (external && record.technicalSystem.trim() === "FORMINATOR_ZAPIER") {
+      return this.replayCanonicalSubmission(tx, batchId, record, external);
+    }
     if (mappedStatus === "DUPLICATE" && !matchedLeadId) return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
     if (mappedStatus === "UNKNOWN") return this.review(tx, batchId, record.lineNumber, "STATUS_UNKNOWN", matchedLeadId);
-    if (record.program && input.allowedPrograms?.length && !input.allowedPrograms.includes(record.program.trim())) return this.review(tx, batchId, record.lineNumber, "PROGRAM_UNKNOWN", matchedLeadId);
+    if (this.programOutsideAllowedMapping(record, input)) return this.review(tx, batchId, record.lineNumber, "PROGRAM_UNKNOWN", matchedLeadId);
     if (matchedLeadId) return this.attachMatch(tx, batchId, matchedLeadId, record, mappedStatus === "DUPLICATE", Boolean(external), principal.userId, correlationId);
     if (mappedStatus === "DUPLICATE") return this.review(tx, batchId, record.lineNumber, "DUPLICATE_WITHOUT_RELIABLE_MATCH");
-    if (!record.campus?.trim() || !record.campaign?.trim() || !record.educationLevel?.trim() || !record.program?.trim()) return this.review(tx, batchId, record.lineNumber, "REQUIRED_MAPPING_MISSING");
+    if (!this.hasRequiredMapping(record)) return this.review(tx, batchId, record.lineNumber, "REQUIRED_MAPPING_MISSING");
     try {
       const references = await validateLeadReferences(tx, { campus: record.campus, campaign: record.campaign, program: record.program });
-      return await this.createLead(tx, batchId, { ...record, ...references }, input, mappedStatus, email, phone, principal.userId, correlationId);
+      return await this.createLead(tx, batchId, { ...record, ...references }, input, mappedStatus, email, phone, principal.userId, correlationId, selected, principal.roles ?? []);
     } catch (error) {
       if (!(error instanceof UnprocessableEntityException)) throw error;
       return this.review(tx, batchId, record.lineNumber, "REFERENCE_VALUE_UNKNOWN");
     }
   }
 
-  private async findMatches(tx: Prisma.TransactionClient, technicalSystem: string, externalId: string | undefined, email: string | undefined, phone: string | undefined): Promise<{ external: { leadId: string } | null; matches: Set<string> }> {
+  private async replayCanonicalSubmission(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, external: { leadId: string; submissionFingerprint: string | null }): Promise<Line> {
+    if (external.submissionFingerprint !== submissionFingerprint(record)) return this.review(tx, batchId, record.lineNumber, "SUBMISSION_CONTENT_DIVERGENT", external.leadId);
+    return { lineNumber: record.lineNumber, outcome: "ATTACHED", leadId: external.leadId };
+  }
+
+  private async findMatches(tx: Prisma.TransactionClient, technicalSystem: string, externalId: string | undefined, email: string | undefined, phone: string | undefined): Promise<{ external: { leadId: string; submissionFingerprint: string | null } | null; matches: Set<string> }> {
     const external = externalId ? await tx.leadProvenance.findUnique({ where: { technicalSystem_externalId: { technicalSystem, externalId } } }) : null;
     const identities = [...(email ? [{ email }] : []), ...(phone ? [{ phone }] : [])];
     const identityMatches = identities.length ? await tx.lead.findMany({ where: { OR: identities }, select: { id: true }, take: 3 }) : [];
@@ -129,10 +283,11 @@ export class PersistentIngestionService {
     return { lineNumber: record.lineNumber, outcome: ignored ? "IGNORED" : "ATTACHED", leadId };
   }
 
-  private async createLead(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, mappedStatus: "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST", email: string | undefined, phone: string | undefined, actorId: string, correlationId: string): Promise<Line> {
+  private async createLead(tx: Prisma.TransactionClient, batchId: string, record: IngestionRecordInput, input: ConfirmPersistentImportInput, mappedStatus: "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST", email: string | undefined, phone: string | undefined, actorId: string, correlationId: string, selected: SheetAssignment | undefined, actorRoles: readonly string[]): Promise<Line> {
     const leadId = randomUUID();
-    const assignedToId = input.resolvedAssignments?.[String(record.lineNumber)];
-    if (input.assignment.strategy !== "UNASSIGNED" && !assignedToId) return this.review(tx, batchId, record.lineNumber, "ASSIGNMENT_UNRESOLVED");
+    const campus = await canonicalCampus(tx, record.campus!);
+    const selection = selected ?? await prepareSheetAssignment(tx, input.assignment, record, campus.id, `${input.idempotencyKey}:${record.lineNumber}`);
+    const assignedToId = selection.targetUserId;
     if (assignedToId && !UUID.test(assignedToId)) return { lineNumber: record.lineNumber, outcome: "INVALID", reason: "assignment_target_invalid" };
     await tx.lead.create({ data: {
       id: leadId, leadCode: `LD-${new Date().getUTCFullYear()}-${leadId.slice(0, 8).toUpperCase()}`,
@@ -146,13 +301,22 @@ export class PersistentIngestionService {
     for (const [index, historical] of (record.historicalActivities ?? []).entries()) {
       await tx.leadActivity.create({ data: { id: randomUUID(), leadId, type: historical.type, result: historical.result.slice(0, 240), authorId: "LEGACY_IMPORT", correlationId: `${correlationId}:${record.lineNumber}:historical:${index}`, occurredAt: new Date(historical.occurredAt) } });
     }
-    return { lineNumber: record.lineNumber, outcome: "CREATED", leadId };
+    if (!selected) await commitSheetAssignment(tx, selection, leadId);
+    if (!selected || assignedToId) {
+      await tx.auditEvent.create({ data: { actorId, actorRoles: [...actorRoles], campusId: campus.id, resourceType: "LEAD", resourceId: leadId,
+        eventType: assignedToId ? "LEAD_ASSIGNED" : "IMPORT_ASSIGNMENT_RESOLVED", result: "SUCCESS", correlationId, idempotencyKey: `import-assignment:${batchId}:${record.lineNumber}`,
+        after: { configurationVersion: selection.configurationVersion ?? null, reason: selection.reason ?? "assignment_selected",
+          ...(assignedToId ? { origin: actorRoles.includes("SYSTEM") || input.assignment.strategy !== "FIXED" ? "AUTOMATIC" : "MANUAL", decisionRef: `import-assignment:${batchId}:${record.lineNumber}` } : {}),
+          ruleId: selection.selection?.ruleId ?? null, assignedToId: assignedToId ?? null } } });
+    }
+    return { lineNumber: record.lineNumber, outcome: "CREATED", leadId, ...(selection.reason ? { reason: selection.reason } : {}) };
   }
 
   private async provenance(tx: Prisma.TransactionClient, batchId: string, leadId: string, record: IngestionRecordInput): Promise<void> {
     await tx.leadProvenance.create({ data: { id: randomUUID(), leadId, batchId, sourceType: record.source,
       technicalSystem: record.technicalSystem.trim(), originalSource: record.originalSource.trim(), recentSource: record.recentSource?.trim() || record.originalSource.trim(),
       campaign: record.campaign?.trim() || null, externalId: record.externalId?.trim() || null, rawStatus: record.historicalStatus?.trim() || null,
+      submissionFingerprint: record.technicalSystem.trim() === "FORMINATOR_ZAPIER" ? submissionFingerprint(record) : null,
       occurredAt: record.occurredAt ? new Date(record.occurredAt) : null } });
   }
 

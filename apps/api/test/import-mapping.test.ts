@@ -120,3 +120,27 @@ test("dry-run is idempotent at the audit boundary and never advances assignment 
   assert.equal(audit.list().filter((event) => event.eventType === "LEAD_IMPORT_DRY_RUN_COMPLETED").length, 1);
   assert.equal(first.lines.every((line) => line.outcome === "VALID"), true);
 });
+
+test("persistent snapshot reuses canonical transformations without a session or in-memory registration", () => {
+  const { mappings, audit } = setup();
+  const builtIn = mappings.list(manager).find((item) => item.mappingKey === "forminator-zapier-v1");
+  assert.ok(builtIn);
+  const snapshot = mappings.snapshot({ mappingKey: "synthetic-sheet", name: "Mapping synthétique", profile: "FORMINATOR_ZAPIER",
+    expectedVersion: 2, columns: builtIn.columns }, "synthetic-admin", "2026-09-05T12:00:00Z");
+  assert.equal(snapshot.version, 3);
+  const otherInstance = setup().mappings;
+  const input = dryRun([row("SYN-000030", { "Adresse éléctronique": " SYNTHETIC@example.invalid ", "Numéro de téléphone": "+212 600 000 030" })],
+    { mappingKey: snapshot.mappingKey, mappingVersion: snapshot.version });
+  const [record] = otherInstance.recordsFromSnapshot(snapshot, input);
+  assert.ok(record);
+  assert.equal(record.email, "synthetic@example.invalid");
+  assert.equal(record.phone, "+212600000030");
+  assert.equal(record.externalId, "SYN-000030");
+  assert.equal(record.technicalSystem, "FORMINATOR_ZAPIER");
+  assert.equal(record.occurredAt, "2026-08-23T09:00:00.000Z");
+  assert.equal(mappings.list(manager).some((item) => item.mappingKey === snapshot.mappingKey), false);
+  assert.equal(audit.list().some((event) => event.eventType === "LEAD_IMPORT_MAPPING_VERSION_CREATED"), false, "caller owns the atomic audit boundary");
+  assert.equal(code(() => otherInstance.recordsFromSnapshot({ ...snapshot, id: "mapping-tampered" }, input)), "mapping_snapshot_invalid");
+  assert.equal(code(() => otherInstance.recordsFromSnapshot(snapshot, { ...input, mappingVersion: 1 })), "mapping_snapshot_invalid");
+  assert.equal(code(() => otherInstance.recordsFromSnapshot(snapshot, { ...input, sourceColumns: ["Unexpected"] })), "dry_run_columns_mismatch");
+});

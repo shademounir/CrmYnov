@@ -1,9 +1,12 @@
-import { BadRequestException, ConflictException, HttpException, Injectable } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { BadRequestException, ConflictException, HttpException, Inject, Injectable, Optional } from "@nestjs/common";
+import { PersistentAssignmentService } from "./persistent-assignment.service.js";
+import { createHash, randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService, type LeadRecord } from "../leads/lead.service.js";
 import { AssignmentService, type AssignmentStrategy } from "./assignment.service.js";
+import type { IngestionBatchInput } from "../ingestion/ingestion.service.js";
+import type { SheetAssignment } from "./campus-assignment-resolver.js";
 
 export type BatchAssignmentStrategy = "FIXED" | AssignmentStrategy;
 export interface AssignmentItemInput { leadId: string; source: string; campaign: string }
@@ -23,7 +26,27 @@ const IDEMPOTENCY_KEY = /^[a-zA-Z0-9:_-]{8,128}$/;
 export class LeadAssignmentService {
   private readonly completed = new Map<string, Readonly<AssignmentBatchResult>>();
   private readonly activeLeadLocks = new Set<string>();
-  constructor(private readonly leads: LeadService, private readonly engine: AssignmentService, private readonly audit: AuditService) {}
+  constructor(@Inject(LeadService) private readonly leads: LeadService, @Inject(AssignmentService) private readonly engine: AssignmentService, @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(PersistentAssignmentService) private readonly persistent?: Pick<PersistentAssignmentService, "preview" | "apply"> & Partial<Pick<PersistentAssignmentService, "previewImportRecords">>) {}
+
+  async previewImportRecords(input: IngestionBatchInput, principal: Principal): Promise<Map<number, SheetAssignment>> {
+    if (!this.persistent?.previewImportRecords) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    return this.persistent.previewImportRecords(input, principal);
+  }
+
+  async previewForApi(input: BatchAssignmentInput, principal: Principal): Promise<AssignmentPreviewItem[]> {
+    if (!this.leads.persistenceEnabled()) return this.preview(input, principal);
+    this.validate(input, false);
+    if (!this.persistent) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    const result: AssignmentPreviewItem[] = [];
+    for (const [index, item] of input.items.entries()) {
+      const selected = await this.persistent.preview({ leadId: item.leadId, eventKey: `${input.idempotencyKey}:${index}`,
+        assignment: { strategy: input.strategy, ...(input.targetUserId ? { targetUserId: input.targetUserId } : {}) } }, principal);
+      result.push({ leadId: item.leadId, ...(selected.targetUserId ? { selectedUserId: selected.targetUserId } : {}),
+        outcome: selected.reason === "assignment_existing_preserved" ? "SKIPPED" : selected.targetUserId ? "READY" : "REFUSED", ...(selected.reason ? { reason: selected.reason } : {}) });
+    }
+    return result;
+  }
 
   preview(input: BatchAssignmentInput, principal: Principal): AssignmentPreviewItem[] {
     this.validate(input, false);
@@ -64,21 +87,21 @@ export class LeadAssignmentService {
   async assignBatchForApi(input: BatchAssignmentInput, principal: Principal, correlationId: string): Promise<AssignmentBatchResult> {
     if (!this.leads.persistenceEnabled()) return this.assignBatch(input, principal, correlationId);
     this.validate(input, true);
-    const previous = this.completed.get(input.idempotencyKey);
-    if (previous) return this.copy(previous);
+    if (!this.persistent) throw new ConflictException({ code: "persistent_assignment_unavailable" });
     const assigned: LeadRecord[] = []; const skipped: AssignmentPreviewItem[] = []; const refused: AssignmentPreviewItem[] = [];
     for (const [index, item] of input.items.entries()) {
       try {
-        const lead = await this.leads.findLocalLeadForApi(item.leadId);
-        if (!lead) { refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: "lead_not_found" }); continue; }
-        if (lead.assignedToId) { skipped.push({ leadId: item.leadId, outcome: "SKIPPED", reason: "lead_already_assigned" }); continue; }
-        const target = input.strategy === "FIXED" ? this.fixedTarget(input) : this.engineTarget(input, item, index, principal, correlationId);
-        assigned.push(await this.leads.assignLocalLeadForApi(item.leadId, target, principal, `${correlationId}:${index}`, `BATCH:${input.idempotencyKey}`, input.strategy));
+        const result = await this.persistent.apply({ leadId: item.leadId, eventKey: `${input.idempotencyKey}:${index}`,
+          assignment: { strategy: input.strategy, ...(input.targetUserId ? { targetUserId: input.targetUserId } : {}) } }, principal, `${correlationId}:${index}`);
+        if (result.outcome === "ASSIGNED" || result.replayed) assigned.push(result.lead);
+        else if (result.outcome === "PRESERVED") skipped.push({ leadId: item.leadId, outcome: "SKIPPED", reason: "lead_already_assigned" });
+        else refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: result.assignment.reason ?? "assignment_unassigned" });
       } catch (error) { refused.push({ leadId: item.leadId, outcome: "REFUSED", reason: this.reason(error) }); }
     }
-    const result: Readonly<AssignmentBatchResult> = Object.freeze({ batchId: randomUUID(), idempotencyKey: input.idempotencyKey,
+    const digest = createHash("sha256").update(JSON.stringify([principal.userId, input.idempotencyKey])).digest("hex");
+    const batchId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+    const result: Readonly<AssignmentBatchResult> = Object.freeze({ batchId, idempotencyKey: input.idempotencyKey,
       assigned: assigned.map((lead) => Object.freeze({ ...lead })), skipped: skipped.map((item) => Object.freeze({ ...item })), refused: refused.map((item) => Object.freeze({ ...item })) });
-    this.completed.set(input.idempotencyKey, result);
     return this.copy(result);
   }
 

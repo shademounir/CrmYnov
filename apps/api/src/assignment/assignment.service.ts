@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { selectAssignmentCandidate } from "./assignment-selection.js";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 
@@ -61,10 +62,7 @@ export class AssignmentService {
   configure(inputs: AssignmentRuleInput[], principal: Principal, correlationId: string): AssignmentRule[] {
     this.assertManager(principal);
     if (!inputs.length) throw new BadRequestException({ code: "assignment_rules_empty" });
-    const normalized = inputs.map((input) => this.normalizeRule(input, principal.userId));
-    const uniqueScopes = new Set(normalized.map((rule) => `${rule.scope}:${rule.matchValue ?? ""}`));
-    if (uniqueScopes.size !== normalized.length) throw new ConflictException({ code: "assignment_rule_duplicate_scope" });
-    if (normalized.filter((rule) => rule.scope === "GLOBAL" && rule.enabled).length !== 1) throw new BadRequestException({ code: "assignment_global_rule_required" });
+    const normalized = this.snapshotRules(inputs, principal.userId);
     this.rules.clear();
     for (const rule of normalized) this.rules.set(rule.id, Object.freeze(rule));
     this.history = [...this.history, ...normalized.map((rule) => Object.freeze({ ...rule, candidates: rule.candidates.map((candidate) => ({ ...candidate })) }))];
@@ -72,6 +70,15 @@ export class AssignmentService {
       sessionId: principal.sessionId, correlationId, after: { ruleIds: normalized.map((rule) => rule.id), ruleCount: normalized.length },
       result: "SUCCESS", idempotencyKey: `assignment-config:${correlationId}` });
     return this.listRules();
+  }
+
+  /** Pure validation/normalization shared with the durable campus configuration. */
+  snapshotRules(inputs: AssignmentRuleInput[], actorId: string): AssignmentRule[] {
+    const normalized = inputs.map((input) => this.normalizeRule(input, actorId));
+    const uniqueScopes = new Set(normalized.map((rule) => `${rule.scope}:${rule.matchValue ?? ""}`));
+    if (uniqueScopes.size !== normalized.length) throw new ConflictException({ code: "assignment_rule_duplicate_scope" });
+    if (normalized.filter((rule) => rule.scope === "GLOBAL" && rule.enabled).length !== 1) throw new BadRequestException({ code: "assignment_global_rule_required" });
+    return normalized;
   }
 
   listRules(): AssignmentRule[] {
@@ -122,20 +129,9 @@ export class AssignmentService {
     if (specific.length > 1) throw new ConflictException({ code: "assignment_rule_ambiguous" });
     const rule = specific[0] ?? [...this.rules.values()].find((candidate) => candidate.enabled && candidate.scope === "GLOBAL");
     if (!rule) throw new NotFoundException({ code: "assignment_rule_not_found" });
-    const eligible = rule.candidates.filter((candidate) => candidate.active && !candidate.suspended && !candidate.excluded && candidate.activeLeadCount < candidate.capacity)
-      .sort((left, right) => left.userId.localeCompare(right.userId));
-    if (!eligible.length) throw new ConflictException({ code: "assignment_candidate_unavailable" });
-    let selected: AssignmentCandidate;
-    if (rule.strategy === "ROUND_ROBIN") {
-      selected = eligible[(rule.cursor + roundRobinOffset) % eligible.length]!;
-      if (mutateCursor) this.rules.set(rule.id, Object.freeze({ ...rule, cursor: rule.cursor + 1 }));
-    } else {
-      const digest = createHash("sha256").update(`assignment-v1:${rule.id}:${context.eventKey}`).digest();
-      selected = eligible[digest.readUInt32BE(0) % eligible.length]!;
-    }
-    const candidateIds = eligible.map((candidate) => candidate.userId);
-    return { ruleId: rule.id, strategy: rule.strategy, selectedUserId: selected.userId, candidateIds,
-      candidateFingerprint: createHash("sha256").update(candidateIds.join(":"), "utf8").digest("hex") };
+    const selection = selectAssignmentCandidate(rule, context.eventKey, roundRobinOffset);
+    if (mutateCursor && rule.strategy === "ROUND_ROBIN") this.rules.set(rule.id, Object.freeze({ ...rule, cursor: rule.cursor + 1 }));
+    return selection;
   }
 
   private normalizeRule(input: AssignmentRuleInput, actorId: string): AssignmentRule {

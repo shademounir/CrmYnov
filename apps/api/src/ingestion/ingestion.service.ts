@@ -134,7 +134,34 @@ export class IngestionService {
     return this.copy(result);
   }
 
+  async dryRunForApi(input: Omit<IngestionBatchInput, "confirmed">, principal: Principal, correlationId: string): Promise<IngestionDryRunResult> {
+    if (!this.leads.persistenceEnabled()) return this.dryRun(input, principal, correlationId);
+    await this.leads.refreshReportingForApi();
+    const result = this.buildDryRun({ ...input, assignment: { strategy: "UNASSIGNED" } }, principal);
+    if (input.assignment.strategy !== "UNASSIGNED") {
+      const valid = new Set(result.lines.filter((line) => line.outcome === "VALID").map((line) => line.lineNumber));
+      const selected = await this.assignments.previewImportRecords({ ...input, records: input.records.filter((record) => valid.has(record.lineNumber)) }, principal);
+      const distribution = new Map<string, number>();
+      for (const line of result.lines) {
+        const selection = selected.get(line.lineNumber);
+        if (selection?.targetUserId) { line.proposedAssigneeId = selection.targetUserId; distribution.set(selection.targetUserId, (distribution.get(selection.targetUserId) ?? 0) + 1); }
+        else if (selection?.reason) line.reason = selection.reason;
+      }
+      result.assigned = result.lines.filter((line) => line.proposedAssigneeId).length;
+      result.unassigned = result.valid - result.assigned;
+      result.assignmentDistribution = [...distribution].sort(([a], [b]) => a.localeCompare(b)).map(([userId, count]) => ({ userId, count }));
+    }
+    this.recordDryRunAudit(input, principal, correlationId, result);
+    return this.copyDryRun(result);
+  }
+
   dryRun(input: Omit<IngestionBatchInput, "confirmed">, principal: Principal, correlationId: string): IngestionDryRunResult {
+    const result = this.buildDryRun(input, principal);
+    this.recordDryRunAudit(input, principal, correlationId, result);
+    return this.copyDryRun(result);
+  }
+
+  private buildDryRun(input: Omit<IngestionBatchInput, "confirmed">, principal: Principal): IngestionDryRunResult {
     this.assertRole(principal);
     this.validateBatch({ ...input, confirmed: true });
     const externalIds = new Map<string, number>();
@@ -179,6 +206,10 @@ export class IngestionService {
       lines,
       mutated: false,
     };
+    return result;
+  }
+
+  private recordDryRunAudit(input: Omit<IngestionBatchInput, "confirmed">, principal: Principal, correlationId: string, result: IngestionDryRunResult): void {
     this.audit.record({
       eventType: "LEAD_IMPORT_DRY_RUN_COMPLETED",
       actorId: principal.userId,
@@ -199,7 +230,6 @@ export class IngestionService {
       result: result.invalid || result.manualReview ? "FAILED" : "SUCCESS",
       idempotencyKey: `lead-import-dry-run:${input.idempotencyKey}`,
     });
-    return this.copyDryRun(result);
   }
 
   listProvenance(leadId: string, principal: Principal): Array<Omit<ProvenanceRecord, "externalId"> & { hasExternalId: boolean }> {

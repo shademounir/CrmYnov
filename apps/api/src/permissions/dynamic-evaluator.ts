@@ -66,6 +66,12 @@ function explainRole(role: Role, key: string, rows: readonly ConfigurationSnapsh
   const restriction = invariant ? "auditor_read_only" : context.restriction ?? (!context.active ? "resource_inactive" : null);
   return { role, sourceScope, globalCeiling, campusCeiling, campusGrant, allowed: scopeAllowed && !restriction, restriction };
 }
+
+/** Capability check for an explicitly delegated import job, not an authenticated HTTP principal. */
+export function scheduledImportCapability(roleList: readonly Role[], key: "settings.campus.manage" | "import.execute" | "import.confirm" | "lead.assign", rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  if (!definition(key)?.available || !roleList.some((role) => role === "ADMIN" || role === "SUPER_ADMIN")) return false;
+  return [...new Set(roleList)].some((role) => explainRole(role, key, rows, context).allowed);
+}
 export function evaluatePermission(principal: Principal, key: string, rows: readonly ConfigurationSnapshot[], context: EvaluationContext): PermissionDecision {
   if (!definition(key)?.available || !principal.userId || !principal.sessionId || principal.mustChangeSecret) return { permission: key, allowed: false, sources: [], restriction: "permission_or_session_invalid" };
   if (key === "audit.view") {
