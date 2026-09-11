@@ -159,7 +159,7 @@ export class LeadPersistenceRepository {
   }
 
   private mapStoredLead(row: SnapshotLeadRow): StoredLead {
-    const qualification = row.commercialQualifications[0];
+    const qualification = row.commercialQualifications?.[0];
     const temperature = (qualification?.temperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>;
     return {
       id: row.id,
