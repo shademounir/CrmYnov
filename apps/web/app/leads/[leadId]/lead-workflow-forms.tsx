@@ -63,6 +63,10 @@ const operationLabels: Readonly<Record<Operation, string>> = {
   "follow-up": "La relance",
 };
 const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Record<string, string>>>>> = {
+  interaction: {
+    next_action_invalid: "La date de prochaine action est invalide.",
+    next_action_chronology_invalid: "La prochaine action doit être postérieure à l’interaction enregistrée maintenant.",
+  },
   status: {
     lead_status_transition_forbidden: "Cette étape n’est pas disponible depuis l’étape actuelle. Utilisez le parcours de clôture pour « Inscrit » ou « Sans suite ».",
     lead_closure_approval_required: "Les étapes « Inscrit » et « Sans suite » nécessitent une demande de clôture validée.",
@@ -93,6 +97,27 @@ export function statusTransitionOptions(currentStatus: string): ReadonlyArray<{ 
   if (currentStatus === "PROSPECT") return [{ value: "CONTACTED", label: "Contacté" }];
   if (currentStatus === "CONTACTED") return [{ value: "QUALIFIED", label: "Qualifié" }];
   return [];
+}
+
+const statusJourney = [
+  { value: "PROSPECT", label: "Prospect" },
+  { value: "CONTACTED", label: "Contacté" },
+  { value: "QUALIFIED", label: "Qualifié" },
+] as const;
+
+export function statusJourneyState(currentStatus: string, value: string): "completed" | "current" | "upcoming" {
+  const currentIndex = statusJourney.findIndex((item) => item.value === currentStatus);
+  const valueIndex = statusJourney.findIndex((item) => item.value === value);
+  if (currentIndex < 0 || valueIndex > currentIndex) return "upcoming";
+  return valueIndex === currentIndex ? "current" : "completed";
+}
+
+export function nextActionChronologyError(nextActionAt: string, now = new Date()): string | undefined {
+  if (!nextActionAt) return undefined;
+  const candidate = new Date(nextActionAt);
+  if (Number.isNaN(candidate.valueOf())) return "La date de prochaine action est invalide.";
+  if (candidate.valueOf() <= now.valueOf()) return "La prochaine action doit être postérieure à l’interaction enregistrée maintenant.";
+  return undefined;
 }
 
 export function failureMessage(operation: Operation, status: number, code?: string): string {
@@ -196,21 +221,27 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
 
 export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps>): React.JSX.Element {
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const dirty = useDirty(onDirtyChange);
+  const submissionLock = useRef(false);
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); if (busy) return; setBusy(true); setFeedback({ kind: "idle" });
+    event.preventDefault(); if (submissionLock.current) return;
+    const body = interactionBody(new FormData(event.currentTarget));
+    const chronologyError = nextActionChronologyError(body.nextActionAt ?? "");
+    if (chronologyError) { setFeedback({ kind: "error", message: chronologyError }); return; }
+    submissionLock.current = true; setBusy(true); setFeedback({ kind: "idle" });
     try {
-      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(interactionBody(new FormData(event.currentTarget))) });
+      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("interaction", response) }); return; }
       dirty.clearDirty(); setFeedback({ kind: "success", message: "Interaction enregistrée dans l’historique protégé." }); onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
-    finally { setBusy(false); }
+    finally { submissionLock.current = false; setBusy(false); }
   }
   return <form className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => void save(event)}>
     <label>Type d’interaction<select name="type" required disabled={busy} defaultValue="CRM_CALL" autoFocus><option value="CRM_CALL">Appel depuis le CRM</option><option value="PHONE_CALL">Appel téléphonique</option><option value="PHYSICAL_VISIT">Visite du campus</option><option value="WHATSAPP">Échange WhatsApp</option><option value="MANUAL_EMAIL">Email de suivi</option><option value="MEETING">Rendez-vous</option><option value="COMMENT">Note de suivi</option></select></label>
     <label>Résultat<select name="result" required disabled={busy} defaultValue="NO_ANSWER"><option value="CONNECTED">Contact établi</option><option value="NO_ANSWER">Injoignable</option><option value="COMPLETED">Action terminée</option><option value="FOLLOW_UP_REQUIRED">Relance nécessaire</option><option value="INFORMATION_RECORDED">Information enregistrée</option></select></label>
     <label>Note de suivi<textarea name="note" disabled={busy} rows={5} maxLength={1000} placeholder="Ajoutez uniquement les informations utiles au suivi." /></label>
-    <label>Prochaine action<input name="nextActionAt" type="datetime-local" disabled={busy} /></label>
-    <p className="lead-assignment-dialog__notice">Le résultat de contact reste distinct de l’étape commerciale. L’événement est horodaté par le serveur et l’historique existant n’est jamais réécrit.</p>
+    <label>Prochaine action<input name="nextActionAt" type="datetime-local" disabled={busy} aria-describedby="interaction-date-help" /></label>
+    <p id="interaction-date-help" className="lead-assignment-dialog__help">La saisie suit l’heure locale Africa/Casablanca. Elle doit être postérieure à l’interaction ; le serveur enregistre les instants en UTC.</p>
+    <p className="lead-assignment-dialog__notice">Le résultat de contact reste distinct de l’étape commerciale. L’interaction est horodatée par le serveur et l’historique existant n’est jamais réécrit.</p>
     <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’interaction" {...(onCancel ? { onCancel } : {})} />
   </form>;
 }
@@ -228,10 +259,16 @@ export function StatusWorkflowForm({ leadId, currentStatus, onCancel, onComplete
     finally { setBusy(false); }
   }
   return <form className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => void save(event)}>
+    <section className="lead-status-dialog__journey" aria-labelledby="lead-status-journey-title">
+      <h3 id="lead-status-journey-title">Parcours commercial</h3>
+      <ol>{statusJourney.map((item) => <li key={item.value} data-state={statusJourneyState(currentStatus, item.value)} aria-current={item.value === currentStatus ? "step" : undefined}>{item.label}</li>)}</ol>
+      <p>Étapes de clôture distinctes : « Inscrit » après qualification, ou « Sans suite » après contact. Elles exigent un motif et les droits de validation prévus.</p>
+    </section>
     {options.length ? <>
-      <label>Nouvelle étape<select name="status" required disabled={busy} defaultValue={options[0]?.value} autoFocus>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      <label>Étape suivante autorisée<select name="status" required disabled={busy} defaultValue={options[0]?.value} autoFocus>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
       <label>Motif<textarea name="reason" disabled={busy} rows={5} maxLength={1000} placeholder="Précisez le contexte utile à l’historique." /></label>
-      <p className="lead-assignment-dialog__notice">Seule la prochaine étape autorisée est proposée. « Inscrit » et « Sans suite » suivent le parcours de clôture avec validation.</p>
+      <p className="lead-assignment-dialog__notice">La liste propose uniquement la progression autorisée depuis l’étape actuelle. La température commerciale reste indépendante.</p>
+      {(currentStatus === "CONTACTED" || currentStatus === "QUALIFIED") ? <Link className="lead-assignment-dialog__details" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir le parcours « Inscrit / Sans suite »</Link> : null}
       <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’étape" {...(onCancel ? { onCancel } : {})} />
     </> : <div className="lead-status-dialog__terminal" role="status">
       <p>Aucune transition directe n’est disponible depuis cette étape.</p>

@@ -638,12 +638,14 @@ export class LeadService implements OnModuleInit {
     const lead = this.leads.get(leadId);
     if (!lead) throw new NotFoundException({ code: "lead_not_found" });
     if (!(activityTypes as readonly string[]).includes(input.type) || !input.result?.trim()) throw new BadRequestException({ code: "activity_invalid" });
+    const occurredAt = new Date();
     const nextActionAt = input.nextActionAt ? new Date(input.nextActionAt) : undefined;
     if (nextActionAt && Number.isNaN(nextActionAt.valueOf())) throw new BadRequestException({ code: "next_action_invalid" });
+    if (nextActionAt && nextActionAt.valueOf() <= occurredAt.valueOf()) throw new BadRequestException({ code: "next_action_chronology_invalid" });
     const activity: LeadActivityRecord = Object.freeze({
       id: randomUUID(), leadId, type: input.type as ActivityType, result: input.result.trim(),
       ...(input.note?.trim() ? { note: input.note.trim() } : {}), authorId: principal.userId,
-      ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: new Date().toISOString(),
+      ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: occurredAt.toISOString(),
     });
     this.activities = [...this.activities, activity];
     this.leads.set(leadId, Object.freeze({ ...lead, lastActivityAt: activity.occurredAt, ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) }));

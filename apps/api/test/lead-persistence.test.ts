@@ -134,6 +134,12 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
 
   const interaction = await service.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_NOTE" }, principal, "persistent-activity");
   assert.equal((await service.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_NOTE" }, principal, "persistent-activity")).id, interaction.id);
+  const restartedService = new LeadService(new AuditService(), repository);
+  await restartedService.onModuleInit();
+  assert.equal((await restartedService.timelineForApi(id, principal)).filter((event) => event.id === interaction.id).length, 1);
+  const stateBeforeInvalidChronology = JSON.stringify(state);
+  await assert.rejects(() => restartedService.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_PAST", nextActionAt: "2020-01-01T00:00:00Z" }, principal, "persistent-past"), hasCode("next_action_chronology_invalid"));
+  assert.equal(JSON.stringify(state), stateBeforeInvalidChronology);
   const correction = await service.correctActivityForApi(id, interaction.id, { idempotencyKey: "persistent-correction", expectedCorrectionCount: 0,
     operation: "CANCEL", reasonCode: "DUPLICATE_ENTRY" }, principal, "persistent-correction");
   assert.equal(correction.correction?.operation, "CANCEL");

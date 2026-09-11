@@ -18,7 +18,7 @@ import {
   UserCircle,
   UsersThree,
 } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LeadAssignmentDrawer } from "./lead-assignment-drawer";
 import { LeadFollowUpDrawer } from "./lead-follow-up-drawer";
 import { LeadInteractionDrawer } from "./lead-interaction-drawer";
@@ -224,11 +224,12 @@ export function leadSourceLabel(source: string): string {
   return sourceLabels[source] ?? source;
 }
 
-function formatDate(value: string | undefined, includeTime = true): string {
+export function formatDate(value: string | undefined, includeTime = true): string {
   if (!value) return "Non planifiée";
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return "Date à vérifier";
   return new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Africa/Casablanca",
     day: "numeric",
     month: "short",
     year: includeTime ? undefined : "numeric",
@@ -389,7 +390,7 @@ export function LeadProfileView({ lead, events, actionMessage, onLeadChanged, on
     <CommercialPanel lead={lead} lastContact={lastContact} />
     <ProfileActions lead={lead} {...(onLeadChanged ? { onLeadChanged } : {})} {...(onLeadEdited ? { onLeadEdited } : {})} />
 
-    {actionMessage ? <p className="lead-profile__action-feedback" role="status">{actionMessage} Les informations affichées proviennent de la réponse serveur.</p> : null}
+    {actionMessage ? <p className="lead-profile__action-feedback" role="status">{actionMessage}</p> : null}
 
     <div className="lead-profile__content-grid">
       <RelationPanel lead={lead} />
@@ -421,10 +422,11 @@ export function LeadProfile({ leadId }: Readonly<{ leadId: string }>): React.JSX
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [actionMessage, setActionMessage] = useState<string>();
+  const pendingActionMessage = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const controller = new AbortController();
-    setState({ kind: "loading" });
+    if (revision === 0) setState({ kind: "loading" });
     const encodedLeadId = encodeURIComponent(leadId);
     void Promise.all([
       loadJson(`/api/crm/leads/${encodedLeadId}`, controller.signal),
@@ -433,9 +435,17 @@ export function LeadProfile({ leadId }: Readonly<{ leadId: string }>): React.JSX
       const lead = parseLead(leadPayload);
       if (!lead) throw new Error("lead_payload_invalid");
       setState({ kind: "ready", lead, events: parseTimeline(timelinePayload) });
+      if (revision > 0) {
+        setActionMessage(`${pendingActionMessage.current ?? "Action enregistrée."} La fiche et l’historique ont été relus depuis le serveur.`);
+        pendingActionMessage.current = undefined;
+      }
     }).catch((error: unknown) => {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setState(stateForError(error));
+      if (revision === 0) setState(stateForError(error));
+      else {
+        pendingActionMessage.current = undefined;
+        setActionMessage("Action confirmée par le serveur, mais la relecture de la fiche a échoué. Réessayez l’actualisation sans ressaisir l’action.");
+      }
     });
     return (): void => controller.abort();
   }, [leadId, revision]);
@@ -446,7 +456,7 @@ export function LeadProfile({ leadId }: Readonly<{ leadId: string }>): React.JSX
     lead={state.lead}
     events={state.events}
     {...(actionMessage ? { actionMessage } : {})}
-    onLeadChanged={(message) => { setActionMessage(message); setRevision((value) => value + 1); }}
-    onLeadEdited={(lead) => { setActionMessage("Informations du Lead corrigées."); setState({ kind: "ready", lead: { ...state.lead, ...lead }, events: state.events }); }}
+    onLeadChanged={(message) => { pendingActionMessage.current = message; setActionMessage(undefined); setRevision((value) => value + 1); }}
+    onLeadEdited={(lead) => { setActionMessage("Informations du Lead corrigées. La réponse serveur est affichée."); setState({ kind: "ready", lead: { ...state.lead, ...lead }, events: state.events }); }}
   />;
 }

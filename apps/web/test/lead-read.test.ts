@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   LeadProfileView,
+  formatDate,
   interactionResultLabel,
   lastContactSummary,
   leadDisplayName,
@@ -18,7 +19,7 @@ import {
 import { interactionBody } from "../app/leads/[leadId]/lead-interaction-drawer.js";
 import { followUpBody } from "../app/leads/[leadId]/lead-follow-up-drawer.js";
 import { statusBody } from "../app/leads/[leadId]/lead-status-drawer.js";
-import { failureMessage, statusTransitionOptions } from "../app/leads/[leadId]/lead-workflow-forms.js";
+import { failureMessage, nextActionChronologyError, StatusWorkflowForm, statusJourneyState, statusTransitionOptions } from "../app/leads/[leadId]/lead-workflow-forms.js";
 
 function renderStructure(value: unknown): string {
   return JSON.stringify(value, (key: string, item: unknown): unknown =>
@@ -46,7 +47,7 @@ test("renders a role-aware unified lead profile", () => {
     qualificationVersion: 1,
   };
   const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [], actionMessage: "Qualification commerciale enregistrée." }));
-  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffecter", "Réaffecter ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée", "réponse serveur"]) assert.match(html, new RegExp(expected));
+  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffecter", "Réaffecter ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée"]) assert.match(html, new RegExp(expected));
   assert.equal(html.includes("00000000-0000-4000-8000-000000000172"), false);
   assert.equal(leadSectionHref("lead/id", "timeline"), "/leads/lead%2Fid/timeline");
   assert.doesNotMatch(html, /title="Affectez d’abord/u);
@@ -142,6 +143,18 @@ test("only proposes direct stage transitions and explains terminal validation", 
   assert.match(failureMessage("status", 400, "lead_status_transition_forbidden"), /n’est pas disponible depuis l’étape actuelle/u);
   assert.match(failureMessage("status", 403), /autorisation/u);
   assert.match(failureMessage("status", 409), /Actualisez/u);
+  assert.equal(statusJourneyState("CONTACTED", "PROSPECT"), "completed");
+  assert.equal(statusJourneyState("CONTACTED", "CONTACTED"), "current");
+  assert.equal(statusJourneyState("CONTACTED", "QUALIFIED"), "upcoming");
+  assert.match(failureMessage("interaction", 400, "next_action_chronology_invalid"), /postérieure/u);
+  assert.equal(nextActionChronologyError("2099-09-12T10:30:00.000Z", new Date("2026-09-11T10:00:00.000Z")), undefined);
+  assert.match(nextActionChronologyError("2026-09-10T10:30:00.000Z", new Date("2026-09-11T10:00:00.000Z")) ?? "", /postérieure/u);
+  const html = renderToStaticMarkup(createElement(StatusWorkflowForm, { leadId: "synthetic-lead", currentStatus: "CONTACTED" }));
+  for (const expected of ["Parcours commercial", "Étape suivante autorisée", "Qualifié", "Inscrit / Sans suite", "température commerciale reste indépendante"]) assert.match(html, new RegExp(expected));
+});
+test("renders timestamps in French using the explicit Africa/Casablanca timezone", () => {
+  assert.equal(formatDate("2026-09-11T23:30:00.000Z"), "12 sept., 00:30");
+  assert.equal(formatDate(undefined), "Non planifiée");
 });
 test("renders operational work views, temperature and assignment filters", () => { const rendered = renderStructure(LeadsPage()); for (const expected of ["Mes leads", "À relancer", "Non affectés", "Sans activité", "Clôturés", "temperature", "Non évalué", "Chaud", "assignmentMode", "importBatchId", "Forminator/Zapier", "Ynov.ma historique", "Appels", "Visites", "JobInTech", "Sources non classifiées", "À compléter", "Imports en erreur"]) assert.match(rendered, new RegExp(expected)); });
 test("keeps every Lead action inside the medium desktop viewport", () => {
