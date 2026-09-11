@@ -17,8 +17,8 @@ test("synthetic governed reference form and tags are responsive and keyboard-acc
   await expect(page.getByRole("combobox", { name: "Formation", exact: true })).toBeEnabled(); await page.getByRole("combobox", { name: "Formation", exact: true }).selectOption("B1");
   const select = page.getByRole("combobox", { name: "Formation", exact: true }); await select.focus(); await expect(select).toBeFocused(); expect((await select.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await page.getByRole("combobox", { name: "Campagne", exact: true }).selectOption("SYNTHETIC");
-  for (const [label, value] of [["Prénom", "Lead"], ["Nom", "Synthétique"], ["Niveau", "BAC"], ["Source", "TEST"]] as const) await page.getByRole("textbox", { name: label, exact: true }).fill(value);
-  await page.getByRole("button", { name: "Créer le lead", exact: true }).click(); await expect(page.getByText("Enregistrement confirmé par l’API.", { exact: true })).toBeVisible();
+  for (const [label, value] of [["Prénom", "Lead"], ["Nom", "Synthétique"], ["Niveau d’études", "BAC"], ["Source du lead", "TEST"]] as const) await page.getByRole("textbox", { name: label, exact: true }).fill(value);
+  await page.getByRole("button", { name: "Créer le lead", exact: true }).click(); await expect(page.getByText("Le lead a bien été créé.", { exact: true })).toBeVisible();
   await page.goto("/leads/00000000-0000-4000-8000-000000000443/tags");
   await expect(page.getByLabel("Tag synthétique", { exact: true })).toBeEnabled(); await page.getByLabel("Tag synthétique", { exact: true }).check();
   await page.getByRole("button", { name: "Enregistrer les tags", exact: true }).click();

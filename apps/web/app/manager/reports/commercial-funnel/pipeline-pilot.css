@@ -1,0 +1,58 @@
+.pipeline-pilot-page { width: 100%; max-width: 1240px; margin: 0 auto; padding: 28px; color: var(--onyx); }
+.pipeline-pilot-filters, .pipeline-pilot-panel, .pipeline-pilot-help { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; margin-top: 20px; }
+.pipeline-pilot-filters { padding: 20px 24px; }
+.pipeline-pilot-primaryFilters { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; }
+.pipeline-pilot-page label { display: grid; gap: 7px; font-size: 12px; font-weight: 600; }
+.pipeline-pilot-page input { min-height: 44px; min-width: 0; width: 100%; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--onyx); }
+.pipeline-pilot-page button { min-height: 44px; padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 12px; display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
+.pipeline-pilot-apply { background: var(--teal); color: var(--onyx); border: 1px solid var(--teal); }
+.pipeline-pilot-apply:hover { background: var(--teal-soft); border-color: var(--teal-dark); }
+.pipeline-pilot-reset { background: var(--surface); border: 1px solid var(--border); color: var(--onyx); }
+.pipeline-pilot-reset:hover { background: var(--teal-soft); }
+.pipeline-pilot-advanced { margin-top: 12px; }
+.pipeline-pilot-advanced summary, .pipeline-pilot-help summary { min-height: 44px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.pipeline-pilot-advanced summary { display: flex; align-items: center; gap: 8px; }
+.pipeline-pilot-advanced > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 10px 0; }
+.pipeline-pilot-hint { font-size: 11px; color: var(--muted); margin: 10px 0 0; }
+.pipeline-pilot-panel { overflow: hidden; }
+.pipeline-pilot-panelHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 24px; border-bottom: 1px solid var(--border); }
+.pipeline-pilot-panelHeader p { font-size: 12px; color: var(--muted); margin: 7px 0 0; }
+.pipeline-pilot-panelHeader svg { color: var(--teal-dark); flex-shrink: 0; }
+.pipeline-pilot-summary { display: flex; justify-content: space-between; align-items: center; padding: 22px 24px 0; gap: 20px; }
+.pipeline-pilot-summary div { display: grid; gap: 4px; }
+.pipeline-pilot-summary span, .pipeline-pilot-summary p { font-size: 12px; color: var(--muted); }
+.pipeline-pilot-summary strong { font-size: 32px; letter-spacing: -.04em; }
+.pipeline-pilot-summary p { max-width: 240px; margin: 0; text-align: right; }
+.pipeline-pilot-volumes { list-style: none; margin: 0; padding: 16px 24px 26px; display: grid; gap: 20px; }
+.pipeline-pilot-rowHeading { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: 13px; margin-bottom: 9px; }
+.pipeline-pilot-rowHeading > span:last-child { display: flex; align-items: baseline; gap: 12px; }
+.pipeline-pilot-rowHeading strong { font-size: 18px; }
+.pipeline-pilot-rowHeading small { font-size: 11px; color: var(--muted); min-width: 105px; text-align: right; }
+.pipeline-pilot-track { height: 12px; border-radius: 4px; background: var(--page); overflow: hidden; }
+.pipeline-pilot-track div { height: 100%; border-radius: inherit; background: var(--teal); }
+.pipeline-pilot-row[data-stage="1"] .pipeline-pilot-track div { background: var(--blue); }
+.pipeline-pilot-row[data-stage="2"] .pipeline-pilot-track div { background: var(--violet); }
+.pipeline-pilot-row[data-stage="3"] .pipeline-pilot-track div { background: var(--green); }
+.pipeline-pilot-row[data-stage="4"] .pipeline-pilot-track div { background: var(--muted); }
+.pipeline-pilot-temperatures { margin: 0 24px 24px; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--page); }
+.pipeline-pilot-temperatures h2 { margin: 0; font-size: 17px; }
+.pipeline-pilot-temperatures header p, .pipeline-pilot-temperatures > p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.pipeline-pilot-temperatures dl { margin: 16px 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.pipeline-pilot-temperatures dl > div { min-height: 72px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); display: grid; align-content: space-between; gap: 8px; }
+.pipeline-pilot-temperatures dt { color: var(--muted); font-size: 11px; font-weight: 650; }
+.pipeline-pilot-temperatures dd { margin: 0; font-size: 22px; font-weight: 800; }
+.pipeline-pilot-temperatures [data-temperature="HOT"] { border-left: 4px solid #d65f3d; }
+.pipeline-pilot-temperatures [data-temperature="WARM"] { border-left: 4px solid #d99b2b; }
+.pipeline-pilot-temperatures [data-temperature="COLD"] { border-left: 4px solid var(--blue); }
+.pipeline-pilot-temperatures [data-temperature="UNEVALUATED"] { border-left: 4px solid var(--muted); }
+.pipeline-pilot-freshness { padding: 14px 24px; background: var(--page); font-size: 11px; color: var(--muted); }
+.pipeline-pilot-state { min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; text-align: center; }
+.pipeline-pilot-state p { max-width: 470px; margin: 10px auto; font-size: 13px; color: var(--muted); }
+.pipeline-pilot-state > span { font-size: 12px; color: var(--muted); }
+.pipeline-pilot-skeleton { width: min(300px, 100%); height: 16px; background: var(--border); border-radius: 8px; }
+.pipeline-pilot-help { padding: 12px 24px; }
+.pipeline-pilot-help summary { padding-top: 12px; }
+.pipeline-pilot-help p { font-size: 12px; color: var(--muted); max-width: 850px; }
+.pipeline-pilot-page summary:focus-visible { outline: 3px solid var(--teal-dark); outline-offset: 2px; border-radius: 4px; }
+@media (max-width: 850px) { .pipeline-pilot-page { padding: 20px; } .pipeline-pilot-advanced > div { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pipeline-pilot-temperatures dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .pipeline-pilot-page { padding: 16px 12px; } .pipeline-pilot-filters, .pipeline-pilot-panelHeader { padding: 18px 16px; } .pipeline-pilot-primaryFilters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .pipeline-pilot-primaryFilters label { grid-column: 1 / -1; } .pipeline-pilot-advanced > div { grid-template-columns: 1fr; } .pipeline-pilot-summary { padding: 20px 16px 0; align-items: flex-start; } .pipeline-pilot-summary p { max-width: 150px; } .pipeline-pilot-volumes { padding: 18px 16px 24px; } .pipeline-pilot-rowHeading > span:last-child { gap: 8px; } .pipeline-pilot-rowHeading small { min-width: 0; } .pipeline-pilot-temperatures { margin: 0 16px 20px; padding: 16px; } .pipeline-pilot-temperatures dl { grid-template-columns: 1fr 1fr; } .pipeline-pilot-freshness { padding: 14px 16px; } .pipeline-pilot-help { padding: 10px 16px; } }

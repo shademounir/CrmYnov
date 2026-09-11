@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import LeadsPage from "../app/leads/page.js";
-import LeadDetailPage, { leadSectionHref } from "../app/leads/[leadId]/page.js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  LeadProfileView,
+  interactionResultLabel,
+  lastContactSummary,
+  leadDisplayName,
+  leadSectionHref,
+  leadSourceLabel,
+  leadStatusLabel,
+  timelineEventLabel,
+  type LeadProfileRecord,
+} from "../app/leads/[leadId]/lead-profile.js";
+import { interactionBody } from "../app/leads/[leadId]/lead-interaction-drawer.js";
+import { followUpBody } from "../app/leads/[leadId]/lead-follow-up-drawer.js";
+import { statusBody } from "../app/leads/[leadId]/lead-status-drawer.js";
+import { failureMessage, statusTransitionOptions } from "../app/leads/[leadId]/lead-workflow-forms.js";
 
 function renderStructure(value: unknown): string {
   return JSON.stringify(value, (key: string, item: unknown): unknown =>
@@ -10,5 +27,130 @@ function renderStructure(value: unknown): string {
 }
 
 test("renders shareable search and combined lead filters", () => { const rendered = renderStructure(LeadsPage()); assert.match(rendered, /Tous les leads/); assert.match(rendered, /Pagination/); assert.match(rendered, /assignedToId/); assert.match(rendered, /search/); assert.match(rendered, /method/); });
-test("renders a role-aware persistent lead detail", () => { const rendered = renderStructure(LeadDetailPage()); assert.match(rendered, /Fiche lead persistante/); assert.match(rendered, /contacts sont masqués/); assert.equal(leadSectionHref("lead/id", "timeline"), "/leads/lead%2Fid/timeline"); });
-test("renders operational work views and assignment filters", () => { const rendered = renderStructure(LeadsPage()); for (const expected of ["Mes leads", "À relancer", "Non affectés", "Sans activité", "Clôturés", "assignmentMode", "importBatchId", "Forminator/Zapier", "Ynov.ma historique", "Appels", "Visites", "JobInTech", "Sources non classifiées", "À compléter", "Imports en erreur"]) assert.match(rendered, new RegExp(expected)); });
+test("renders a role-aware unified lead profile", () => {
+  const lead: LeadProfileRecord = {
+    id: "00000000-0000-4000-8000-000000000171",
+    leadCode: "LD-SYN-171",
+    firstName: "Camille",
+    lastName: "Essai",
+    campus: "Casablanca",
+    campaign: "Rentrée synthétique",
+    educationLevel: "BAC",
+    program: "Programme synthétique",
+    source: "Formulaire de démonstration",
+    status: "PROSPECT",
+    assignedToId: "00000000-0000-4000-8000-000000000172",
+    collaboratorIds: [],
+    temperature: "HOT",
+    temperatureLabel: "Chaud",
+    qualificationVersion: 1,
+  };
+  const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [], actionMessage: "Qualification commerciale enregistrée." }));
+  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffecter", "Réaffecter ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée", "réponse serveur"]) assert.match(html, new RegExp(expected));
+  assert.equal(html.includes("00000000-0000-4000-8000-000000000172"), false);
+  assert.equal(leadSectionHref("lead/id", "timeline"), "/leads/lead%2Fid/timeline");
+  assert.doesNotMatch(html, /title="Affectez d’abord/u);
+});
+test("keeps an unassigned Lead in context while exposing preview before confirmation", () => {
+  const lead: LeadProfileRecord = {
+    id: "00000000-0000-4000-8000-000000000173",
+    leadCode: "LD-SYN-UNASSIGNED",
+    firstName: "Alex",
+    lastName: "Synthétique",
+    campus: "Casablanca",
+    campaign: "Rentrée synthétique",
+    educationLevel: "BAC",
+    program: "Programme synthétique",
+    source: "WEB_FORM",
+    status: "PROSPECT",
+    collaboratorIds: [],
+    temperature: "UNEVALUATED",
+    temperatureLabel: "Non évalué",
+    qualificationVersion: 0,
+  };
+  const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [] }));
+  for (const expected of ["Affecter ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer"]) assert.match(html, new RegExp(expected));
+  assert.doesNotMatch(html, /Réaffecter ce Lead/u);
+  assert.match(html, /disabled="" title="Affectez d’abord le Lead à un conseiller"/u);
+});
+test("uses business labels and neutral fallbacks", () => {
+  assert.equal(leadDisplayName({ firstName: " ", lastName: "" }), "Prospect indisponible");
+  assert.equal(leadDisplayName({ firstName: "ًٌْ٢٠٠٥", lastName: "Bargam" }), "Bargam");
+  assert.equal(leadStatusLabel("QUALIFIED"), "Qualifié");
+  assert.equal(leadStatusLabel("UNKNOWN"), "Statut à vérifier");
+  assert.equal(leadSourceLabel("WEB_FORM"), "Formulaire web");
+  assert.equal(leadSourceLabel("Source partenaire"), "Source partenaire");
+  assert.equal(timelineEventLabel("ASSIGNMENT_CHANGED"), "Affectation mise à jour");
+  assert.equal(timelineEventLabel("UNKNOWN"), "Événement de suivi");
+  assert.equal(interactionResultLabel("NO_ANSWER"), "Injoignable");
+  assert.equal(interactionResultLabel("FOLLOW_UP_REQUIRED"), "Relance nécessaire");
+});
+test("isolates mixed writing directions without altering the lead identity", () => {
+  const lead: LeadProfileRecord = {
+    id: "00000000-0000-4000-8000-000000000174",
+    leadCode: "LD-SYN-BIDI",
+    firstName: "سلمى",
+    lastName: "Bargam",
+    campus: "Casablanca",
+    campaign: "Rentrée synthétique",
+    educationLevel: "BAC",
+    program: "Programme synthétique",
+    source: "WEB_FORM",
+    status: "PROSPECT",
+    collaboratorIds: [],
+    temperature: "UNEVALUATED",
+    temperatureLabel: "Non évalué",
+    qualificationVersion: 0,
+  };
+  const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [] }));
+  assert.equal(leadDisplayName(lead), "سلمى Bargam");
+  assert.match(html, /<bdi dir="auto">سلمى<\/bdi> <bdi dir="auto">Bargam<\/bdi>/u);
+});
+test("keeps the commercial stage separate from the latest contact result", () => {
+  const events = [
+    { id: "event-1", type: "PHONE_CALL", result: "NO_ANSWER", occurredAt: "2026-09-09T09:00:00.000Z" },
+    { id: "event-2", type: "CRM_CALL", result: "NO_ANSWER", occurredAt: "2026-09-08T09:00:00.000Z" },
+    { id: "event-3", type: "LEAD_CREATED", result: "SUCCESS", occurredAt: "2026-09-06T09:00:00.000Z" },
+  ];
+  assert.equal(lastContactSummary(events), "Injoignable — 2 tentatives");
+  assert.equal(lastContactSummary([{ id: "event-4", type: "MANUAL_EMAIL", result: "CONNECTED", occurredAt: "2026-09-09T10:00:00.000Z" }, ...events]), "Contact établi");
+  assert.equal(lastContactSummary([]), "Aucun contact enregistré");
+});
+test("builds the existing timeline contract from the contextual interaction panel", () => {
+  const form = new FormData();
+  form.set("type", "MEETING");
+  form.set("result", "FOLLOW_UP_REQUIRED");
+  form.set("note", " Note synthétique ");
+  form.set("nextActionAt", "2026-09-10T10:30");
+  assert.deepEqual(interactionBody(form), { type: "MEETING", result: "FOLLOW_UP_REQUIRED", note: "Note synthétique", nextActionAt: "2026-09-10T10:30" });
+});
+test("builds the existing status and follow-up contracts from contextual panels", () => {
+  const status = new FormData();
+  status.set("status", "CLOSED_LOST");
+  status.set("reason", " Décision synthétique ");
+  assert.deepEqual(statusBody(status), { status: "CLOSED_LOST", reason: "Décision synthétique" });
+
+  const followUp = new FormData();
+  followUp.set("dueAt", "2026-09-12T10:30");
+  followUp.set("reason", " Relance synthétique ");
+  assert.deepEqual(followUpBody(followUp), { dueAt: "2026-09-12T10:30", reason: "Relance synthétique" });
+});
+test("only proposes direct stage transitions and explains terminal validation", () => {
+  assert.deepEqual(statusTransitionOptions("PROSPECT"), [{ value: "CONTACTED", label: "Contacté" }]);
+  assert.deepEqual(statusTransitionOptions("CONTACTED"), [{ value: "QUALIFIED", label: "Qualifié" }]);
+  assert.deepEqual(statusTransitionOptions("QUALIFIED"), []);
+  assert.match(failureMessage("status", 400, "lead_status_transition_forbidden"), /n’est pas disponible depuis l’étape actuelle/u);
+  assert.match(failureMessage("status", 403), /autorisation/u);
+  assert.match(failureMessage("status", 409), /Actualisez/u);
+});
+test("renders operational work views, temperature and assignment filters", () => { const rendered = renderStructure(LeadsPage()); for (const expected of ["Mes leads", "À relancer", "Non affectés", "Sans activité", "Clôturés", "temperature", "Non évalué", "Chaud", "assignmentMode", "importBatchId", "Forminator/Zapier", "Ynov.ma historique", "Appels", "Visites", "JobInTech", "Sources non classifiées", "À compléter", "Imports en erreur"]) assert.match(rendered, new RegExp(expected)); });
+test("keeps every Lead action inside the medium desktop viewport", () => {
+  const css = readFileSync(new URL("../app/leads/lead-profile.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 1360px\) and \(min-width: 821px\)[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/u);
+  assert.match(css, /\.lead-profile__actions > \.primary-button,[\s\S]*min-width: 0/u);
+});
+test("keeps commercial context and actions ahead of the dossier on mobile", () => {
+  const css = readFileSync(new URL("../app/leads/lead-profile.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 430px\)[\s\S]*\.lead-profile__commercial \{ order: 3; \}[\s\S]*\.lead-profile__actions \{ order: 4; \}[\s\S]*\.lead-profile__relation \{ order: 5; \}/u);
+  assert.match(css, /\.lead-profile__actions > \.secondary-button:last-of-type \{ grid-column: 1 \/ -1; \}/u);
+});

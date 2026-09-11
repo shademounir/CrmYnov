@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 export interface ReferenceOption { id: string; kind: string; code: string; label: string; scope: string; campusId: string | null; state: string; version: number }
 export const referenceLabels = { CAMPUS: "Campus", PROGRAM: "Formation", SCHOLARSHIP: "Bourse", CAMPAIGN: "Campagne", TAG: "Tag" } as const;
@@ -27,7 +27,7 @@ export function ReferenceSelect({ name, label, options, value, disabled = false,
   </select></label>;
 }
 
-export function LeadReferenceSelectors({ initial = { campus: "", program: "", campaign: "" } }: Readonly<{ initial?: { campus: string; program: string; campaign: string } }>): React.JSX.Element {
+export function LeadReferenceSelectors({ initial = { campus: "", program: "", campaign: "" }, legend = "Référentiels gouvernés" }: Readonly<{ initial?: { campus: string; program: string; campaign: string }; legend?: string }>): React.JSX.Element {
   const [values, setValues] = useState(initial);
   const [campuses, setCampuses] = useState<ReferenceOption[]>([]);
   const [programs, setPrograms] = useState<ReferenceOption[]>([]);
@@ -48,7 +48,7 @@ export function LeadReferenceSelectors({ initial = { campus: "", program: "", ca
     }).catch(() => { if (current) setState("error"); });
     return (): void => { current = false; };
   }, [campuses, values.campus]);
-  return <fieldset className="reference-fields" aria-busy={state === "loading"}><legend>Référentiels gouvernés</legend>
+  return <fieldset className="reference-fields" aria-busy={state === "loading"}><legend>{legend}</legend>
     <ReferenceSelect name="campus" label="Campus" options={campuses} value={values.campus} disabled={state === "loading"} onChange={(campus) => setValues({ campus, program: "", campaign: "" })} />
     <ReferenceSelect name="program" label="Formation" options={programs} value={values.program} disabled={state !== "ready"} onChange={(program) => setValues({ ...values, program })} />
     <ReferenceSelect name="campaign" label="Campagne" options={campaigns} value={values.campaign} disabled={state !== "ready"} onChange={(campaign) => setValues({ ...values, campaign })} />
