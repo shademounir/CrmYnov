@@ -155,10 +155,11 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     // Contact matching spans connectors and source identity modes. Retry only a fully
     // rolled-back serialization conflict; each attempt reacquires authority and
     // the lease. This callback performs database work only, never external I/O.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try { return await this.authorizedTransaction(context, action); }
       catch (error) {
-        if (attempt === 2 || !isSerializationConflict(error)) throw error;
+        if (attempt === 4 || !isSerializationConflict(error)) throw error;
+        await new Promise<void>((resolve) => setTimeout(resolve, serializationRetryDelay(context, attempt)));
       }
     }
     throw new Error("sheet_transaction_conflict");
@@ -213,6 +214,14 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
 
 function isSerializationConflict(error: unknown): boolean {
   return error !== null && typeof error === "object" && "code" in error && error.code === "P2034";
+}
+
+function serializationRetryDelay(context: RunContext, attempt: number): number {
+  // Distinct connectors must not immediately collide again after PostgreSQL
+  // aborts concurrent serializable transactions for the same contact.
+  const digest = createHash("sha256").update(`${context.lease.connectorId}:${context.lease.runId}`).digest("hex");
+  const jitter = Number.parseInt(digest.slice(0, 12), 16) % 251;
+  return (2 ** attempt) * 10 + jitter;
 }
 
 function executionErrorCode(error: unknown): string {
