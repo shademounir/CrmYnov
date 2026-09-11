@@ -95,3 +95,17 @@ variable "common_labels" {
     phase       = "foundation"
   }
 }
+
+variable "dev_sheets_reader_impersonators" {
+  description = "Explicit principals allowed to mint short-lived tokens for the DEV Sheets reader service account."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for member in var.dev_sheets_reader_impersonators :
+      can(regex("^(user|serviceAccount):[^[:space:]]+$", member))
+    ])
+    error_message = "Every Sheets reader impersonator must be an explicit user: or serviceAccount: IAM member."
+  }
+}

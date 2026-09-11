@@ -82,6 +82,18 @@ test("Terraform cannot assign basic Owner or Editor roles", () => {
   assert.doesNotMatch(terraform, /"roles\/(owner|editor)"\s*=/i);
 });
 
+test("DEV Sheets reader uses exact service-account impersonation without keys or project roles", () => {
+  assert.match(foundationMain, /dev\s*=\s*toset\(\[[\s\S]*"sheets\.googleapis\.com"/);
+  assert.match(foundationMain, /resource\s+"google_service_account"\s+"sheets_reader"/);
+  assert.match(foundationMain, /account_id\s*=\s*"crm-sheets-reader"/);
+  assert.match(foundationMain, /resource\s+"google_service_account_iam_member"\s+"sheets_reader_token_creator"/);
+  assert.match(foundationMain, /role\s*=\s*"roles\/iam\.serviceAccountTokenCreator"/);
+  assert.match(foundationMain, /for_each\s*=\s*var\.dev_sheets_reader_impersonators/);
+  assert.doesNotMatch(terraform, /resource\s+"google_service_account_key"/);
+  assert.match(readFileSync(path.join(infra, "modules", "project", "main.tf"), "utf8"),
+    /ignore_changes\s*=\s*\[billing_account\]/);
+});
+
 test("Terraform billing roles are additive and exclude billing administration", () => {
   const billingUser = wifMain.match(
     /resource\s+"google_billing_account_iam_member"\s+"terraform_billing_user"\s*\{([\s\S]*?)\n\}/,

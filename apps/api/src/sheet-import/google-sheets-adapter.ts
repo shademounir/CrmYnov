@@ -5,7 +5,7 @@ export interface SheetsAccessTokenProvider {
 
 export type SheetsTransport = (url: URL, init: RequestInit) => Promise<Response>;
 export interface SheetTab { id: number; title: string }
-export interface SheetValues { columns: string[]; rows: Array<Record<string, string>> }
+export interface SheetValues { columns: string[]; rows: Array<Record<string, string>>; observation?: { sheetId: number; range: string; values: string[][] } }
 
 export class SheetsSourceError extends Error {
   constructor(readonly code: string, readonly status: number | "NETWORK", readonly retryAfter?: string) {
@@ -75,14 +75,42 @@ export class GoogleSheetsAdapter {
     });
   }
 
-  async values(id: string, tab: string): Promise<SheetValues> {
+  async values(id: string, tab: string, boundedRange?: string, sheetId?: number): Promise<SheetValues> {
     if (!tab.length || tab.length > 100 || [...tab].some((character) => character.charCodeAt(0) < 32)) throw new Error("sheet_tab_invalid");
     // One extra row/column detects overflow rather than silently truncating an import.
-    const range = `'${tab.replaceAll("'", "''")}'!A1:CW10002`;
+    if (boundedRange !== undefined) validateSheetRange(boundedRange);
+    const range = `'${tab.replaceAll("'", "''")}'!${boundedRange ?? "A1:CW10002"}`;
     const url = this.endpoint(id, `/values/${encodeURIComponent(range)}`);
     url.searchParams.set("majorDimension", "ROWS");
     url.searchParams.set("valueRenderOption", "FORMATTED_VALUE");
-    return parseValues(await this.read(url));
+    const raw: unknown = await this.read(url);
+    const parsed = parseValues(raw);
+    if (boundedRange !== undefined && sheetId !== undefined) {
+      const values: unknown = object(raw).values;
+      parsed.observation = { sheetId, range: boundedRange, values: Array.isArray(values)
+        ? values.map((row: unknown): string[] => { if (!Array.isArray(row)) throw new SheetsSourceError("sheet_row_invalid", 502); return row.map(cell); }) : [] };
+    }
+    return parsed;
+  }
+
+  /** Identity and requested cells originate in the same read response, avoiding a metadata/values rename race. */
+  async boundedValues(id: string, tab: string, range: string, sheetId: number, identityMode: "EXTERNAL_ID" | "LOCAL_ROW" = "EXTERNAL_ID"): Promise<SheetValues> {
+    validateSheetRange(range);
+    if (!Number.isSafeInteger(sheetId) || sheetId < 0 || !tab.length || tab.length > 100 || /[\p{Cc}]/u.test(tab)) {
+      throw new SheetsSourceError("sheet_tab_invalid", 400);
+    }
+    const url = this.endpoint(id);
+    url.searchParams.set("ranges", `'${tab.replaceAll("'", "''")}'!${range}`);
+    url.searchParams.set("fields", "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue))))");
+    const raw = object(await this.read(url));
+    if (!Array.isArray(raw.sheets) || raw.sheets.length !== 1) throw new SheetsSourceError("sheet_response_invalid", 502);
+    const sheet = object(raw.sheets[0]), properties = object(sheet.properties);
+    if (properties.sheetId !== sheetId || properties.title !== tab) throw new SheetsSourceError("sheet_tab_identity_changed", 409);
+    const values = gridValues(sheet.data, range);
+    // The local-row ledger needs unmodified header positions to retain an invalid observation for reconciliation.
+    // No key projection is manufactured from empty or duplicate headers in this mode.
+    const projection = identityMode === "LOCAL_ROW" ? { columns: values[0] ?? [], rows: [] } : parseValues({ values });
+    return { ...projection, observation: { sheetId, range, values } };
   }
 
   private endpoint(id: string, suffix = ""): URL {
@@ -116,6 +144,36 @@ export class GoogleSheetsAdapter {
     }
     return readBoundedJson(response);
   }
+}
+
+/** Explicit rectangular range, header first, no whole-column reads or named ranges. */
+export function validateSheetRange(range: string): void {
+  const match = /^([A-Z]{1,2})([1-9][0-9]{0,5}):([A-Z]{1,2})([1-9][0-9]{0,5})$/u.exec(range);
+  if (!match) throw new SheetsSourceError("sheet_range_invalid", 400);
+  const column = (text: string): number => [...text].reduce((value, char) => value * 26 + char.charCodeAt(0) - 64, 0);
+  const start = column(match[1] ?? ""), end = column(match[3] ?? "");
+  const first = Number(match[2]), last = Number(match[4]);
+  if (end < start || end - start + 1 > MAX_COLUMNS || last <= first || last - first > MAX_ROWS) {
+    throw new SheetsSourceError("sheet_range_invalid", 400);
+  }
+}
+
+function gridValues(data: unknown, range: string): string[][] {
+  if (!Array.isArray(data) || data.length !== 1) throw new SheetsSourceError("sheet_response_invalid", 502);
+  const grid = object(data[0]);
+  const parts = /^([A-Z]+)([0-9]+):([A-Z]+)([0-9]+)$/u.exec(range);
+  if (!parts) throw new SheetsSourceError("sheet_range_invalid", 400);
+  const column = (text: string): number => [...text].reduce((value, char) => value * 26 + char.charCodeAt(0) - 64, 0);
+  const firstColumn = column(parts[1] ?? ""), lastColumn = column(parts[3] ?? "");
+  const firstRow = Number(parts[2]), lastRow = Number(parts[4]);
+  if ((grid.startRow ?? 0) !== firstRow - 1 || (grid.startColumn ?? 0) !== firstColumn - 1) throw new SheetsSourceError("sheet_response_invalid", 502);
+  const rows: unknown = grid.rowData ?? [];
+  if (!Array.isArray(rows) || rows.length > lastRow - firstRow + 1) throw new SheetsSourceError("sheet_row_limit_exceeded", 502);
+  return rows.map((raw: unknown): string[] => {
+    const values: unknown = object(raw).values ?? [];
+    if (!Array.isArray(values) || values.length > lastColumn - firstColumn + 1) throw new SheetsSourceError("sheet_columns_invalid", 502);
+    return values.map((entry: unknown): string => cell(object(entry).formattedValue));
+  });
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {

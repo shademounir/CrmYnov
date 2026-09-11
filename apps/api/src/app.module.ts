@@ -108,16 +108,18 @@ import { SheetImportController } from "./sheet-import/sheet-import.controller.js
 import { SheetImportAdminService } from "./sheet-import/sheet-import-admin.service.js";
 import { SheetImportExecutor } from "./sheet-import/sheet-import-executor.js";
 import { SheetImportScheduler, ScheduledSheetExecutor } from "./sheet-import/sheet-import-scheduler.js";
-import { SheetSource, SyntheticSheetSource } from "./sheet-import/synthetic-sheet-source.js";
+import { SheetSource } from "./sheet-import/synthetic-sheet-source.js";
 import { LeadQualificationController } from "./qualification/lead-qualification.controller.js";
 import { LeadQualificationService } from "./qualification/lead-qualification.service.js";
+import { createSheetSource } from "./sheet-import/google-sheet-source.js";
+import { resolve } from "node:path";
 
 @Module({
   controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
     { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
-    { provide: SheetSource, useClass: SyntheticSheetSource },
+    { provide: SheetSource, useFactory: (): ReturnType<typeof createSheetSource> => createSheetSource(process.env, resolve(__dirname, "../../..")) },
     ViewSharingService, ViewSharingAudiences,
     { provide: GrantProvider, useClass: DynamicGrantProvider },
     DynamicPermissionService,

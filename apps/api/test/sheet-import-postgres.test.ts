@@ -109,7 +109,14 @@ test("CRMY-171 PostgreSQL: fenced takeover, atomic receipts and disable", { skip
     nextRunAt: new Date(now.valueOf() - 1),
   } });
 
-  const attempts = await Promise.all([workerA.claim(connector.id, "MANUAL"), workerB.claim(connector.id, "SCHEDULED")]);
+  assert.equal(await workerA.claim(connector.id, "SCHEDULED", (): boolean => false), undefined,
+    "an incapable instance leaves the due connector unclaimed");
+  assert.equal(await client.sheetImportRun.count({ where: { connectorId: connector.id } }), 0);
+  assert.equal((await client.sheetImportConnector.findUniqueOrThrow({ where: { id: connector.id } })).leaseUntil, null);
+  const attempts = await Promise.all([
+    workerA.claim(connector.id, "MANUAL", (): boolean => false),
+    workerB.claim(connector.id, "SCHEDULED", (): boolean => true),
+  ]);
   assert.equal(attempts.filter(Boolean).length, 1, "manual and scheduled share the same database lock");
   const initial = attempts.find((item) => item !== undefined);
   assert.ok(initial);

@@ -19,7 +19,8 @@ Les 24 contrôles techniques distants, la couverture Sonar du nouveau code à 94
 
 - Worktree : `C:\Crm Ynov\worktrees\crmy-ui-pilots-20260906`.
 - Branche dédiée : `feature/CRMY-172-lead-workspace`.
-- Head de base : `71c6750d35b762e933a31682d360368c147bb010`.
+- Head de base historique : `71c6750d35b762e933a31682d360368c147bb010`.
+- Dépendance intégrée explicitement : PR92 au SHA `87242fd69f5c2ffb8d35f140338b37fd8ac20d52`, par merge sans reset ni écrasement.
 - Les sources modifiées et non suivies sont conservées localement. Elles ne sont couvertes ni par le SHA de PR92 ni par son Sonar.
 
 Le lot contient :
@@ -33,8 +34,9 @@ Le lot contient :
 
 ## Validations locales du diff courant
 
-- Suite canonique avant le dernier ajustement responsive : racine 415 réussis et 1 ignoré, API 356 réussis et 14 ignorés, Web 143/143, shared 1/1 ; aucun échec.
-- Après correction du débordement desktop et de l'ordre mobile, la suite Web dédiée compte 145/145 tests réussis et le build Web de production `xwfhtQ9qSpJkEPAVR2X8G` expose 35 routes sans erreur.
+- Suite canonique après intégration de PR92 : racine 416/417 réussis (1 ignoré), API 390/412 réussis (22 tests optionnels ignorés), Web 154/154, shared 1/1 ; aucun échec.
+- Les preuves PostgreSQL optionnelles ont ensuite été activées explicitement : qualification, relances et CRMY-171 ont réussi ; la suite CRMY-169 a réussi ses 22 scénarios après lancement avec son mode de harnais documenté.
+- Après correction du débordement desktop et de l'ordre mobile, le build Web de production post-merge `m6d10tD2Q4ohlDb79mUVB` expose 35 routes sans erreur.
 - Couverture locale du dernier passage complet : 29,41 % des lignes et instructions, 73,88 % des fonctions et 76,03 % des branches. Cette mesure globale locale ne doit pas être assimilée à la couverture Sonar du nouveau code.
 - Qualification HTTP/PostgreSQL : 1/1, deux API, conflit optimiste, rejeu exact, refus intercampus, rollback et redémarrage.
 - Relances HTTP/PostgreSQL : 1/1, transaction, rejeu exact, concurrence multi-instance, refus intercampus, rollback et redémarrage.
@@ -50,7 +52,7 @@ La référence approuvée reste « Relation Ynov ». Une recette connectée Admi
 
 La validation navigateur Super Admin n'est pas acquise : la base de recette ne contient pas de compte Super Admin persistant. Les tests HTTP/PostgreSQL couvrent ce rôle, mais ils ne remplacent pas une recette navigateur. L'affectation n'a pas pu être finalisée dans le navigateur car aucun autre conseiller autorisé n'était disponible dans la fixture ; le panneau et la page directe ont affiché cet état sans proposer d'action invalide.
 
-Le build final local a été inspecté dans Chrome, avec la même fixture et la même session, à 1280, 820 et 390 px. À 1280 px, les six actions restent dans la largeur grâce à une grille 3 × 2 ; à 820 px, elles restent lisibles en grille 2 × 3 et le panneau de relance reste entièrement visible ; à 390 px, la situation commerciale et les actions précèdent le dossier, l'action principale et la relance occupent une ligne complète, et le panneau de relance est une feuille mobile sans débordement. Les contrôles ont porté sur le rendu réellement servi par `xwfhtQ9qSpJkEPAVR2X8G`, pas uniquement sur les tests.
+Le build final local pré-merge a été inspecté dans Chrome, avec la même fixture et la même session, à 1280, 820 et 390 px. À 1280 px, les six actions restent dans la largeur grâce à une grille 3 × 2 ; à 820 px, elles restent lisibles en grille 2 × 3 et le panneau de relance reste entièrement visible ; à 390 px, la situation commerciale et les actions précèdent le dossier, l'action principale et la relance occupent une ligne complète, et le panneau de relance est une feuille mobile sans débordement. Les contrôles ont porté sur le rendu réellement servi par `xwfhtQ9qSpJkEPAVR2X8G`, pas uniquement sur les tests. Le build post-merge `m6d10tD2Q4ohlDb79mUVB` a été reconstruit et typé, mais la comparaison visuelle post-merge reste à confirmer ; PR92 n'a pas modifié les composants de fiche Lead concernés.
 
 Réserves visuelles : l'acceptation esthétique PO reste ouverte ; le champ natif `datetime-local` peut afficher un gabarit `mm/dd/yyyy` selon les réglages du navigateur, bien que la valeur persistée reste au format contractuel. Les captures observées dans la session navigateur n'ont pas été exportées comme artefacts locaux autonomes.
 

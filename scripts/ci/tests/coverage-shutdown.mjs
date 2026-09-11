@@ -14,6 +14,6 @@ const flushAndExit = () => {
 // Node process. The coverage-only IPC channel provides the same graceful,
 // counter-flushing shutdown on every CI host.
 process.once("message", (message) => {
-  if (message?.type === "crmy-coverage-shutdown") flushAndExit();
+  if (message === "flush-coverage" || message?.type === "crmy-coverage-shutdown") flushAndExit();
 });
 process.once("SIGTERM", flushAndExit);

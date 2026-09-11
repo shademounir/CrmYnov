@@ -3,7 +3,7 @@
 ## État de réalisation
 
 Tranche A commencée depuis `7c06743729f9d3fd0dd95f4a35b37a87c4fc3c55`.
-Configuration, mapping versionné, ordonnanceur, moteur transactionnel, API/OpenAPI et interface d'administration sont raccordés localement. Les consommateurs historiques d'affectation utilisent désormais le résolveur Prisma par campus en mode persistant. Les preuves HTTP utilisent deux API NestJS compilées et PostgreSQL éphémère, exclusivement synthétiques. Aucun connecteur réel n'est activé. La tranche verticale reste NON publiable : contrôle visuel responsive final et gates complets restent à clôturer.
+Configuration, mapping versionné, ordonnanceur, moteur transactionnel, API/OpenAPI et interface d'administration sont raccordés localement. Les consommateurs historiques d'affectation utilisent désormais le résolveur Prisma par campus en mode persistant. La recette Google réelle bornée du 7 septembre a créé cinq Leads dans PostgreSQL local, puis le rejeu a produit cinq doublons sans nouvelle écriture métier ; le PO a personnellement constaté les six Leads et l'absence de doublon visible. Le connecteur est revenu désactivé. Cette preuve ne valide ni l'ordonnancement continu, ni l'affectation automatique, ni la qualité visuelle globale. La tranche verticale reste NON publiable : les gates du diff local et les preuves du futur SHA publié restent à clôturer.
 
 ## Ordre du lot
 
@@ -19,6 +19,7 @@ Configuration, mapping versionné, ordonnanceur, moteur transactionnel, API/Open
 - Parcours HTTP authentifié : configuration initialement désactivée, simulation sans Lead, activation, premier import autonome, rejeu manuel, historique, désactivation, refus intercampus et rôle non admissible.
 - Déduplication intercanal FORMINATOR_ZAPIER, contenu divergent en revue sans écrasement du Lead et absence d'identifiant stable sans création.
 - Tests Web DOM : configuration, activation, simulation, lancement, historique et retours exclusifs succès/erreur.
+- Éligibilité locale des workers : une instance sans transport Google ne prend plus le bail d'une configuration `GOOGLE`. La capacité est vérifiée dans la transaction de claim, avec la version du connecteur dans la condition de prise ; les validations d'allowlist, permissions, fencing et erreurs restent exécutées par le moteur capable. Les tests couvrent l'instance incapable, la concurrence avec une instance capable et la reprise du bail.
 
 ### Raccordements et preuves supplémentaires du 6 septembre
 
@@ -40,6 +41,18 @@ Configuration, mapping versionné, ordonnanceur, moteur transactionnel, API/Open
 - Achever les preuves UI desktop/tablette/mobile, accessibilité et parcours intégré.
 - Gates complets, couverture canonique, scans des images affectées, Draft PR et audits du SHA final.
 
+### Préparation production — décisions encore requises
+
+- **Première reprise.** Recommandation : enregistrer un point de départ explicite approuvé par campus et par source, puis importer l'historique dans une opération distincte et bornée. Ne pas choisir automatiquement « tout l'historique » ou « à partir d'aujourd'hui ».
+- **Périmètre de lecture.** Recommandation : conserver l'allowlist exacte classeur/onglet/plage et définir des fenêtres rectangulaires bornées, avec limites de lignes/cellules et progression persistante. L'étendue de production au-delà de `A1:K6` reste à décider.
+- **Téléphones ambigus.** Recommandation : conserver la valeur hors champ CRM et en revue tant qu'un format/pays source n'est pas explicitement contracté. Aucun préfixe ou chiffre ne doit être inféré.
+- **Identité de service.** La production ne doit pas dépendre de l'ADC personnel de l'opérateur. Recommandation : identité d'exécution dédiée et impersonation sans clé via le mécanisme natif de l'hébergeur, limitée au compte lecteur Sheets.
+- **Déclenchement hébergé.** Le poller en processus est sûr entre instances grâce aux baux PostgreSQL, mais un hébergement pouvant tomber à zéro ne garantit pas l'intervalle. Recommandation : worker toujours actif ou déclencheur planifié authentifié vers un contrat interne dédié ; choix d'architecture à valider avant déploiement.
+- **Supervision.** Exiger compteurs de runs en attente/en échec/en reprise, âge du bail, dernier succès par campus, alertes après échecs bornés, corrélation sans cellules ni coordonnées.
+- **Sauvegarde/restauration.** Définir sauvegardes PostgreSQL, restauration testée et objectifs RPO/RTO avant production. Les sauvegardes locales de recette ne constituent pas cette preuve.
+- **Désactivation/rollback.** Désactiver le connecteur bloque les nouveaux claims et conserve Leads, identités locales, reçus et audits. Le rollback applicatif revient à la version de configuration explicitement approuvée ; aucune suppression ou réécriture historique.
+- **Foundation.** Réutiliser les tickets d'infrastructure existants. Le plan DEV ciblé reste sans changement ; le plan Foundation complet demeure non validé tant que le projet Phase 0 `crmynov-bst-n7x4q2` n'est pas prouvé accessible. Aucune création ou application cloud n'est incluse dans cette livraison.
+
 Cette séparation décrit l'état de reprise ; chaque élément ne sera marqué livré qu'après sa preuve effective.
 
 ### Origine historique de la remédiation : administration des règles d'affectation
@@ -60,13 +73,13 @@ Recherche effectuée sur les 170 tickets, puis sur leurs descriptions contenant 
 
 Le CDC V1.4.2, sections 4.1–4.6, conserve PostgreSQL comme autorité après mise en service, le secours manuel et la priorité des identités externes. L'autorisation PO du 5 septembre 2026 ajoute Sheets planifié. La règle d'une seule alimentation automatique active reste applicable à la future production ; les tests intercanaux couvrent également les bascules et relectures tardives.
 
-La clé de soumission utilise la source canonique `FORMINATOR_ZAPIER`, indépendamment du canal. Le numéro de ligne reste une information d'affichage, jamais une identité métier. Sans identifiant stable : revue contrôlée, aucune création ou fusion automatique. Même identifiant avec contenu divergent : revue, aucune modification silencieuse du Lead. L'empreinte est technique, non une preuve d'identité et non une anonymisation des données.
+Dans le contrat historique avec identifiant externe, la clé de soumission utilise la source canonique `FORMINATOR_ZAPIER`, indépendamment du canal. Le numéro de ligne reste une information d'affichage, jamais une identité métier. Sans identifiant stable : revue contrôlée, aucune création ou fusion automatique dans ce contrat. Même identifiant avec contenu divergent : revue, aucune modification silencieuse du Lead. L'empreinte est technique, non une preuve d'identité et non une anonymisation des données. L'arbitrage du 7 septembre ajoute le mode LOCAL_ROW explicite décrit plus bas, sans changer ce contrat historique.
 
 ## Contraintes du raccordement réalisé
 
 - Configuration et mapping versionné, exécutions et suivi des soumissions sont persistés avec contraintes uniques et migrations additives.
 - Résoudre le campus depuis les références serveur ; vérifier rôle Admin/Super Admin et permission dynamique effective. Réévaluer les droits pour chaque exécution, sans fabriquer un principal privilégié.
-- Utiliser un port de lecture synthétique fermé aux connexions réelles. Prévoir la future sélection du classeur/onglet sans accepter une URL arbitraire à appeler depuis le serveur.
+- Utiliser le port synthétique par défaut. Le transport réel ajouté le 7 septembre exige l'opt-in serveur et une sélection exacte autorisée ; aucune URL arbitraire n'est appelée depuis le serveur.
 - Claim multi-instance et reprise par bail borné ; transaction d'import et suivi idempotent, audit append-only dans la même transaction. Une désactivation empêche les nouveaux claims.
 - Réutiliser la validation/mapping et la persistance canoniques. Le worker appelle le port transactionnel `persistSheetRecord` dans la transaction du coordinateur, et non une confirmation ouvrant une transaction indépendante. Les reçus, compteurs, soumissions et audit sont validés ensemble.
 - Les mappings personnalisés manuels d'`ImportMappingService` restent en mémoire ; le chemin Sheets utilise son snapshot/version persistant, sans remplacer les identifiants ni conventions des mappings manuels existants.
@@ -150,8 +163,43 @@ La PR 92 reste Draft/manual-po ; les cinq échecs du head 846a1a9 étaient trois
 
 ## Désactivation et rollback
 
-Le chemin serveur est branché, mais toute configuration est désactivée initialement et le fournisseur refuse les classeurs non synthétiques. Passer `enabled=false` annule le run actif et invalide son bail : une ligne déjà validée reste conservée, un worker périmé ne peut plus valider une nouvelle ligne. Conserver configurations, suivis, provenance, audits, images et volumes. Un rollback applicatif doit refuser de lancer le connecteur s'il ne comprend plus sa version de configuration ; ne pas supprimer les tables ou restaurer silencieusement des données.
+Le chemin serveur est branché, mais toute configuration est désactivée initialement et le fournisseur par défaut refuse les classeurs non synthétiques. Passer `enabled=false` annule le run actif et invalide son bail : une ligne déjà validée reste conservée, un worker périmé ne peut plus valider une nouvelle ligne. En LOCAL_ROW, une demande manuelle ultérieure explicite et autorisée est possible sans activation de l'ordonnanceur automatique. Conserver configurations, suivis, provenance, audits, images et volumes. Un rollback applicatif doit refuser de lancer le connecteur s'il ne comprend plus sa version de configuration ; ne pas supprimer les tables ou restaurer silencieusement des données.
+
+## Arbitrage PO du 7 septembre — Sheets sans identifiant externe
+
+Un mode distinct est autorisé pour une source strictement en lecture seule et ajoutée en fin de feuille. Le contrat historique FORMINATOR_ZAPIER avec identifiant externe reste inchangé. L'identité locale de l'enregistrement source devra être persistée séparément du Lead, du mapping et de la progression. Classeur, sheetId stable et ligne absolue servent à retrouver la position ; l'empreinte constate un changement, elle ne crée pas une nouvelle identité. Aucune identité locale ne doit être annoncée comme un identifiant Forminator/Zapier.
+
+Implémenté et testé isolément : `sheet-local-observation.ts` décrit les positions absolues, conserve les lignes intérieures vides/incomplètes, calcule les empreintes avant mapping, détecte les changements d'en-têtes, de périmètre et de lignes observées, et distingue les nouvelles positions en fin de réponse dans la plage bornée. Deux lignes identiques restent deux positions. Une modification d'une ligne vide déjà observée passe en réconciliation plutôt que d'être perdue. Les permutations de lignes strictement identiques restent indétectables sans identifiant source. Tests exclusivement synthétiques, aucune écriture Google.
+
+État historique du premier socle : ces composants n'étaient alors pas raccordés. Ils le sont dans la tranche locale décrite ci-dessous ; les 21 tests isolés restent une preuve historique, pas la validation finale.
+
+Le campus et la campagne proviendront de la configuration serveur autorisée ; provenance métier à vérifier, niveau d'études non déduit automatiquement de la branche du baccalauréat, téléphone ambigu en revue sans zéro/indicatif inventé. Déduplication métier et refus intercampus conservés ; pas de promesse d'identité commune Sheets/Zapier sans identifiant partagé. La recette limitée reste soumise à simulation et confirmation PO avant import.
+
+## Tranche locale du 7 septembre — mode LOCAL_ROW raccordé
+
+- Deux tables additives conservent la source, son périmètre et sa suspension, puis les identités immuables des positions avec empreinte, état et lien de lot. Une position déjà observée conserve son identité après changement de mapping ou nouvelle exécution. Aucun backfill, déplacement de données historiques ou écriture Google.
+- Le moteur utilise la même transaction autorisée et protégée par bail pour l'ingestion, provenance, reçu, état de ligne, compteurs et audit. L'observation initiale des positions PENDING est conservée séparément afin qu'une reprise détecte aussi les changements de lignes qui n'avaient pas encore été ingérées. Un échec d'ingestion laisse cette observation PENDING, sans Lead ni reçu de succès partiel.
+- Le transport réel est opt-in, avec authentification serveur et liste exacte classeur/identifiant numérique d'onglet/titre/plage. Les erreurs ne basculent jamais vers le simulateur. Les tests réseau n'utilisent aucun accès Google réel. Voir `google-sheets-local-readonly.md` pour les prérequis manuels.
+- L'administration et l'interface distinguent source simulée/réelle, identifiant externe/identité locale, mapping, simulation, activation automatique et demande manuelle. LOCAL_ROW peut être lancé manuellement avec le connecteur automatique désactivé ; cela ne l'active pas. Le contrat historique EXTERNAL_ID conserve son refus de lancement désactivé. Les permissions restent obligatoires dans les deux cas.
+- L'inspection de réconciliation est paginée, expurgée et en lecture seule. Un changement observé ou un en-tête invalide suspend l'import. Aucune commande de réinitialisation, fusion, réinterprétation ou reprise destructive n'est proposée : une résolution nécessitant un nouveau contrat attend l'arbitrage PO.
+- Les lignes vides, invalides ou ambiguës restent visibles en revue. Une ligne vide observée puis complétée est un changement à réconcilier, pas une nouvelle identité. Deux lignes identiques à des positions différentes ont deux identités sources ; la déduplication métier peut les rattacher au même Lead sans réaffectation. Une permutation de lignes strictement identiques n'est pas détectable sans identifiant externe.
+
+Preuves actuelles : PostgreSQL réel local pour identité, rejeu, suspension, isolation, rollback et concurrence ; exécuteur testé avec interruption, bail expiré, reprise sur une seconde instance, refus après révocation et lancement manuel désactivé. Migration appliquée à une base vide puis une copie synthétique peuplée : huit contraintes nouvelles présentes et empreintes des tables préexistantes identiques. Après ces tests, la migration additive a aussi été appliquée séparément à la base de recette restaurée : empreintes des tables préexistantes identiques, Recette PO A version 10, dix versions et dix audits conservés, connecteur désactivé. Aucun seed, reset ou ajustement de checksum.
+
+La simulation LOCAL_ROW et l'ingestion refusent une identité de contact absente avec `CONTACT_IDENTITY_MISSING`, sans présenter la ligne comme admissible. La vérification concurrente a révélé une course entre sources distinctes : les transactions Sheets utilisent désormais l'isolation sérialisable, avec au plus trois tentatives uniquement après un conflit PostgreSQL intégralement annulé. Chaque tentative réévalue autorité et bail ; elle ne relit pas Google. Les identités externes et locales restent distinctes. Les preuves finales doivent couvrir aussi le cas mixte LOCAL_ROW/EXTERNAL_ID, et non seulement deux sources locales.
+
+La recette Google réelle bornée, en lecture seule sur la plage autorisée, a créé cinq Leads puis classé les cinq mêmes lignes comme doublons au rejeu. Le PO a constaté personnellement les six Leads présents, dont le Lead antérieur. Recette PO A version 10, ses dix versions, ses audits et les sauvegardes sont conservés ; la configuration réelle termine désactivée. Cette preuve ne valide ni l'ordonnancement continu, ni l'affectation automatique, ni la qualité visuelle globale.
+
+Le diagnostic de la réclamation concurrente a établi qu'une instance configurée uniquement pour la source simulée pouvait prendre le bail d'une configuration Google avant de découvrir qu'elle ne pouvait pas la lire. La capacité du fournisseur est désormais contrôlée avant la création du run et du bail ; la version du connecteur participe aussi à la comparaison atomique. Une instance inéligible laisse la configuration réclamable par une instance Google autorisée. Une configuration persistée mal formée reste réclamée puis échoue explicitement afin de ne pas rester silencieusement due pour toujours.
+
+Gates locaux sur le diff final avant publication : lint, types et builds verts ; suite complète 416/417 contrats d'infrastructure (un conditionnel documenté), 383 tests API réussis (20 conditionnels), 137 tests Web et un test Shared ; intégrations 67/67, E2E isolés 9/9, Playwright 13 réussis et un conditionnel ignoré. La couverture canonique réexécute les cinq preuves PostgreSQL, les quatre preuves LOCAL_ROW, les trois preuves d'exécuteur, la simulation persistante et le cycle HTTP sur deux API compilées. Résultat : 88,41 % lignes globales, 89,12 % branches et estimation du nouveau code à 94,22 % (2 548/2 591 lignes et 1 948/2 181 branches). Aucun seuil, exclusion ou LCOV n'a été modifié ; Sonar sur le futur SHA publié reste l'autorité finale.
+
+Images reconstruites depuis ce même état local et réellement testées : API `sha256:535acbc57bce2c7d000043f26c43b073b47e8966b71461f6a2a6151146276640` et Web `sha256:0f2878aff04b1e4ac4a70ebf8d21b47ca945007724a51ec9e7b128b59c4e4208`. Le cycle HTTP/PostgreSQL utilise deux conteneurs de l'image API, puis vérifie page/CSS, proxy JSON authentifié et refus anonyme sur l'image Web. Les scans Trivy 0.70.0 natifs de ces identités exactes retournent zéro High, zéro Critical et zéro secret ; Trivy IaC retourne aussi zéro High/Critical. Le SBOM CycloneDX 1.5 et les JSON natifs restent hors Git.
+
+Les checks distants/Sonar et audits SHA-bound doivent encore être renouvelés après le commit. Les changements sont encore locaux et non commis ; le Sonar du head distant `aec30989721bc9f8cecec82e3f121cbb856b773d` ne les couvre pas.
+
+La prévisualisation Web 3021 nécessite le lancement manuel contrôlable documenté hors dépôt : le refus historique de lancement par l'outil n'est pas contourné. Aucun rendu nouveau n'est déclaré conforme par les seuls tests DOM ou build. Les pilotes création/Pipeline restent isolés dans leur worktree et attendent leur jalon de revue avant généralisation.
 
 ## Future mise en service réelle
 
-Autorisation PO distincte, source/classeur/onglet approuvés, mapping et identifiant de soumission stables, accès lecture seule au minimum nécessaire, secret serveur hors Git/frontend/logs, politique de rotation et périmètre campus validés. Réaliser une simulation et une réconciliation avant activation d'un seul canal automatique. Aucun de ces prérequis ne nécessite un credential réel pour les tests synthétiques actuels.
+Autorisation PO distincte, source/classeur/onglet/plage approuvés, mapping et mode d'identification validés, accès lecture seule au minimum nécessaire, secret serveur hors Git/frontend/logs, politique de rotation et périmètre campus validés. Réaliser une simulation et une réconciliation avant activation d'un seul canal automatique. Aucun de ces prérequis ne nécessite un credential réel pour les tests synthétiques actuels.

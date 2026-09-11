@@ -38,4 +38,8 @@ export class SheetImportController {
   history(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query("page") page?: string): ReturnType<SheetImportAdminService["history"]> {
     return this.service.history(principal(request), id, page === undefined ? 1 : Number(page));
   }
+  @Get(":id/reconciliation")
+  reconciliation(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query("page") page?: string): ReturnType<SheetImportAdminService["reconciliation"]> {
+    return this.service.reconciliation(principal(request), id, page === undefined ? 1 : Number(page));
+  }
 }

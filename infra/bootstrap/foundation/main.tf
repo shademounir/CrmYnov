@@ -26,6 +26,7 @@ locals {
       "iam.googleapis.com",
       "iamcredentials.googleapis.com",
       "serviceusage.googleapis.com",
+      "sheets.googleapis.com",
     ])
     staging = toset([
       "iam.googleapis.com",
@@ -125,6 +126,23 @@ resource "google_project_service" "required" {
   disable_on_destroy = false
 
   depends_on = [module.billing]
+}
+
+resource "google_service_account" "sheets_reader" {
+  project      = module.projects["dev"].id
+  account_id   = "crm-sheets-reader"
+  display_name = "CRM Sheets Reader"
+  description  = "Read-only Google Sheets identity for the local CRMY-171 DEV recipe"
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_service_account_iam_member" "sheets_reader_token_creator" {
+  for_each = var.dev_sheets_reader_impersonators
+
+  service_account_id = google_service_account.sheets_reader.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.value
 }
 
 module "budgets" {

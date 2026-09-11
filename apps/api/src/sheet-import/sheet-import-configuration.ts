@@ -1,7 +1,10 @@
 import { BadRequestException } from "@nestjs/common";
 import { crmImportTargets, type ImportMappingColumnInput, type ImportMappingTemplate, type ImportDryRunInput, type MappingAction } from "../import-mapping/import-mapping.service.js";
+import { parseSheetLocalRange } from "./sheet-local-observation.js";
+import { ingestionSources } from "../ingestion/ingestion.service.js";
 
 export interface SheetConfiguration {
+  source?: { mode: "SIMULATED" | "GOOGLE"; identityMode: "EXTERNAL_ID" | "LOCAL_ROW"; sheetId?: number; range?: string };
   mapping: ImportMappingTemplate;
   context: ImportDryRunInput["context"];
   assignment: ImportDryRunInput["assignment"];
@@ -40,10 +43,10 @@ function mappingAction(value: string): MappingAction {
   }
 }
 
-function mapping(value: unknown): ImportMappingTemplate {
+function mapping(value: unknown, local = false): ImportMappingTemplate {
   const item = sheetObject(value);
-  if (item.profile !== "FORMINATOR_ZAPIER" || !Array.isArray(item.columns) || item.columns.length > 100) invalid();
-  return { id: sheetText(item.id), mappingKey: sheetText(item.mappingKey, 64), name: sheetText(item.name, 100), profile: "FORMINATOR_ZAPIER",
+  if (item.profile !== (local ? "CUSTOM" : "FORMINATOR_ZAPIER") || !Array.isArray(item.columns) || item.columns.length > 100) invalid();
+  return { id: sheetText(item.id), mappingKey: sheetText(item.mappingKey, 64), name: sheetText(item.name, 100), profile: local ? "CUSTOM" : "FORMINATOR_ZAPIER",
     version: sheetVersion(item.version), columns: item.columns.map(column), builtIn: false,
     createdAt: sheetText(item.createdAt), createdBy: sheetText(item.createdBy) };
 }
@@ -60,11 +63,28 @@ function assignment(value: unknown): ImportDryRunInput["assignment"] {
 /** Only configuration metadata is persisted here; raw spreadsheet cells never enter this snapshot. */
 export function readSheetConfiguration(value: unknown): SheetConfiguration {
   const item = sheetObject(value), context = sheetObject(item.context);
-  if (context.source !== "WEB_FORM" || context.technicalSystem !== "FORMINATOR_ZAPIER") invalid();
-  return { mapping: mapping(item.mapping), assignment: assignment(item.assignment), context: {
-    source: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER", originalSource: "FORMINATOR", recentSource: "GOOGLE_SHEETS",
+  const source = readSheetSource(item.source);
+  const local = source?.identityMode === "LOCAL_ROW";
+  const businessSource = ingestionSources.find((candidate) => candidate === context.source);
+  if (!businessSource || (!local && businessSource !== "WEB_FORM") || context.technicalSystem !== (local ? "GOOGLE_SHEETS_LOCAL" : "FORMINATOR_ZAPIER")) invalid();
+  return { ...(source ? { source } : {}), mapping: mapping(item.mapping, local), assignment: assignment(item.assignment), context: {
+    source: businessSource, technicalSystem: local ? "GOOGLE_SHEETS_LOCAL" : "FORMINATOR_ZAPIER", originalSource: local ? sheetText(context.originalSource) : "FORMINATOR", recentSource: "GOOGLE_SHEETS",
     campus: sheetText(context.campus), campaign: sheetText(context.campaign),
     ...(context.program !== undefined ? { program: sheetText(context.program) } : {}),
     ...(context.educationLevel !== undefined ? { educationLevel: sheetText(context.educationLevel) } : {}),
   } };
+}
+
+function readSheetSource(raw: unknown): SheetConfiguration["source"] {
+  if (raw === undefined) return undefined;
+  const item = sheetObject(raw);
+  if (item.mode !== "SIMULATED" && item.mode !== "GOOGLE") invalid();
+  if (item.identityMode !== "EXTERNAL_ID" && item.identityMode !== "LOCAL_ROW") invalid();
+  if (item.mode === "GOOGLE" || item.identityMode === "LOCAL_ROW") {
+    if (typeof item.sheetId !== "number" || !Number.isSafeInteger(item.sheetId) || item.sheetId < 0) invalid();
+    const range = sheetText(item.range, 64);
+    try { parseSheetLocalRange(range); } catch { invalid(); }
+    return { mode: item.mode, identityMode: item.identityMode, sheetId: item.sheetId, range };
+  }
+  return { mode: item.mode, identityMode: item.identityMode };
 }

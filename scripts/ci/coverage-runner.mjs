@@ -19,6 +19,13 @@ async function verifyDatabase(url, nonce) {
   } finally { await client.$disconnect(); }
 }
 
+async function waitForPostgres(container) {
+  for (let n = 0; ; n++) {
+    try { docker(["exec", container, "pg_isready", "-U", "postgres"]); return; }
+    catch { if (n >= 60) throw Error("coverage_postgres_not_ready"); await delay(250); }
+  }
+}
+
 async function postgresProofs() {
   let container;
   const precreated = process.env.CRMY171_COVERAGE_PRECREATED === "true";
@@ -29,7 +36,7 @@ async function postgresProofs() {
     if (!precreated) {
       container = `crmy171-coverage-${randomUUID()}`;
       docker(["run", "-d", "--name", container, "--publish", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data:rw", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17.6-bookworm"]);
-      for (let n = 0; ; n++) { try { docker(["exec", container, "pg_isready", "-U", "postgres"]); break; } catch { if (n >= 60) throw Error("coverage_postgres_not_ready"); await delay(250); } }
+      await waitForPostgres(container);
       port = docker(["port", container, "5432"]).trim().split(":").at(-1);
       if (!/^\d+$/u.test(port ?? "")) throw Error("coverage_postgres_port_invalid");
       for (const database of ["crmy171_synthetic", "crmy171_http_synthetic"]) {
@@ -42,6 +49,9 @@ async function postgresProofs() {
     await verifyDatabase(direct, nonce); await verifyDatabase(http, nonce);
     run(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", "apps/api/prisma/schema.prisma"], { env: { ...process.env, DATABASE_URL: direct } });
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });
+    for (const testFile of ["sheet-local-postgres.test.ts", "sheet-local-executor-postgres.test.ts", "sheet-local-admin-postgres.test.ts"]) {
+      run(process.execPath, ["--import", "tsx", "--test", `test/${testFile}`], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });
+    }
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-http-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, CRMY171_HTTP_TEST: "true", CRMY171_HTTP_PRECREATED_URL: http, CRMY171_DATABASE_NONCE: nonce } });
   } finally { if (container) docker(["rm", "-f", container]); }
 }
