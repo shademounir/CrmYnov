@@ -33,11 +33,13 @@ export function LeadReferenceSelectors({ initial = { campus: "", program: "", ca
   const [programs, setPrograms] = useState<ReferenceOption[]>([]);
   const [campaigns, setCampaigns] = useState<ReferenceOption[]>([]);
   const [state, setState] = useState("loading");
+  const [reloadVersion, setReloadVersion] = useState(0);
   useEffect(() => {
     let current = true;
+    setState("loading");
     void loadReferences("CAMPUS").then((rows) => { if (current) { setCampuses(rows); setState("ready"); } }).catch(() => { if (current) setState("error"); });
     return (): void => { current = false; };
-  }, []);
+  }, [reloadVersion]);
   useEffect(() => {
     let current = true;
     const campus = campuses.find((item) => item.code === values.campus || item.label === values.campus);
@@ -53,7 +55,9 @@ export function LeadReferenceSelectors({ initial = { campus: "", program: "", ca
     <ReferenceSelect name="program" label="Formation" options={programs} value={values.program} disabled={state !== "ready"} onChange={(program) => setValues({ ...values, program })} />
     <ReferenceSelect name="campaign" label="Campagne" options={campaigns} value={values.campaign} disabled={state !== "ready"} onChange={(campaign) => setValues({ ...values, campaign })} />
     {state === "loading" ? <output>Chargement des valeurs autorisées…</output> : null}
-    {state === "error" ? <p role="alert">Référentiels indisponibles. Ne validez pas le formulaire.</p> : null}
+    {state === "error" ? <p role="alert">Référentiels indisponibles. Ne validez pas le formulaire. <button className="reference-retry" type="button" onClick={() => setReloadVersion((version) => version + 1)}>Réessayer</button></p> : null}
     {state === "ready" && !campuses.length ? <p>Aucun campus actif disponible. Contacter un administrateur.</p> : null}
+    {state === "ready" && Boolean(values.campus) && !programs.length ? <p>Aucune formation active n’est disponible pour ce campus.</p> : null}
+    {state === "ready" && Boolean(values.campus) && !campaigns.length ? <p>Aucune campagne active n’est disponible pour ce campus.</p> : null}
   </fieldset>;
 }

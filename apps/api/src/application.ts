@@ -137,7 +137,7 @@ export function configureApplication(app: INestApplication): void {
         patch: { summary: "Apply a controlled lead status transition", responses: { "200": { description: "Status changed and timeline event appended" }, "400": { description: "Transition or closure reason refused" }, "403": { description: "Role or closure approval refused" }, "404": { description: "Lead not found" } } },
       },
       "/leads": {
-        post: { summary: "Create a normalized lead with an immutable identifier", responses: { "201": { description: "Lead created with probable duplicate warnings" }, "400": { description: "Invalid or incomplete input" }, "403": { description: "Role refused" } } },
+        post: { summary: "Create a normalized lead with an immutable identifier", description: "Accepts a client-stable idempotencyKey so an ambiguous network retry replays the first committed creation. Probable contact matches are reported without silently merging records.", responses: { "201": { description: "Lead created or idempotently replayed, with probable duplicate warnings" }, "400": { description: "Invalid, incomplete or malformed idempotency input" }, "403": { description: "Role or campus scope refused" }, "409": { description: "Idempotency key reused with different content" } } },
         get: { summary: "Search, filter, sort and paginate operational and saved provenance lead views", responses: { "200": { description: "Filtered leads with deterministic pagination, provenance views and role-based masking" }, "400": { description: "Invalid view, filter, sort or pagination" }, "403": { description: "Role refused" } } },
       },
       "/leads/{leadId}": {

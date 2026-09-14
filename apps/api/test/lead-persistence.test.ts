@@ -123,10 +123,15 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
   await service.onModuleInit();
   assert.equal(service.persistenceEnabled(), true);
 
-  const created = await service.createLeadForApi({ firstName: "Nora", lastName: "Synthétique", email: "nora@example.invalid",
+  const creationInput = { firstName: "Nora", lastName: "Synthétique", email: "nora@example.invalid",
     phone: "+212600000299", campus: "SYNTHETIC", campaign: "SYNTHETIC", educationLevel: "BAC",
-    program: "SYNTHETIC", source: "TEST" }, principal, "persistent-create");
+    program: "SYNTHETIC", source: "TEST", idempotencyKey: "lead-create-ui-replay-0001" };
+  const created = await service.createLeadForApi(creationInput, principal, "persistent-create");
   const id = created.lead.id;
+  const replayedCreation = await service.createLeadForApi(creationInput, principal, "persistent-create-retry");
+  assert.equal(replayedCreation.lead.id, id);
+  assert.equal(state.leads.length, 1); assert.equal(state.activities.length, 1); assert.equal(state.audits.length, 1);
+  await assert.rejects(() => service.createLeadForApi({ ...creationInput, lastName: "Différent" }, principal, "persistent-create-conflict"), hasCode("lead_idempotency_conflict"));
   assert.equal((await service.listLeadsForApi({ page: 1, pageSize: 20 }, principal, "persistent-list")).total, 1);
   assert.equal((await service.getLeadForApi(id, principal, "persistent-get")).id, id);
   assert.equal((await service.findLocalLeadForApi(id))?.id, id);

@@ -10,11 +10,11 @@ test("renders the complete normalized lead creation form", () => {
   const page = NewLeadPage();
   assert.equal(page.type, "main");
   const html = renderToStaticMarkup(createElement(NewLeadPage));
-  assert.match(html, /Créer un lead/); assert.match(html, /doublons/); assert.match(html, /Campus, formation et campagne/); assert.match(html, /select name="program"/); assert.match(html, /Formation/);
+  assert.match(html, /Créer un Lead/); assert.match(html, /correspondance de coordonnées/); assert.match(html, /Référentiels autorisés/); assert.match(html, /select name="program"/); assert.match(html, /Formation/);
   const dom = new JSDOM(html);
   for (const field of ["firstName", "lastName", "educationLevel", "source", "campus", "program", "campaign"]) assert.equal(dom.window.document.querySelector(`[name="${field}"]`)?.hasAttribute("required"), true);
   dom.window.close();
   assert.match(html, /type="email"/); assert.match(html, /type="tel"/); assert.match(html, /Annuler/);
   const drawer = renderToStaticMarkup(createElement(LeadCreationDrawer));
-  assert.match(drawer, /lead-create-trigger/); assert.match(drawer, /Nouveau lead/);
+  assert.match(drawer, /lead-create-trigger/); assert.match(drawer, /Nouveau Lead/); assert.match(drawer, /aria-haspopup="dialog"/);
 });

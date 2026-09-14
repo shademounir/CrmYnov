@@ -45,7 +45,7 @@ export interface LeadActivityRecord {
   nextActionAt?: string; correlationId: string; occurredAt: string; correction?: ActivityCorrection;
 }
 
-export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
+export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status"> & { idempotencyKey?: string };
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
 export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">> & { expectedVersion?: number; idempotencyKey: string };
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
@@ -130,18 +130,30 @@ export class LeadService implements OnModuleInit {
   }
 
   async createLeadForApi(input: CreateLeadInput, principal: Principal, correlationId: string): Promise<CreateLeadResult> {
-    strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "nextActionAt"]);
-    await this.references?.validateForLead(input, principal);
-    if (!this.persistence?.enabled) return this.createLead(input, principal, correlationId);
+    strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "nextActionAt", "idempotencyKey"]);
+    const idempotencyKey = input.idempotencyKey?.trim();
+    if (idempotencyKey !== undefined && !/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey)) throw new BadRequestException({ code: "lead_create_idempotency_invalid" });
+    const leadInput = { ...input };
+    delete leadInput.idempotencyKey;
+    await this.references?.validateForLead(leadInput, principal);
+    if (!this.persistence?.enabled) return this.createLead(leadInput, principal, correlationId);
     await this.refreshPersistentState();
-    const fingerprint = this.persistence.fingerprint({ input, actorId: principal.userId });
+    const fingerprint = this.persistence.fingerprint({ input: leadInput, actorId: principal.userId });
+    const receiptKey = `lead:create:${principal.userId}:${idempotencyKey ?? correlationId}`;
+    const replay = await this.persistence.findMutationReplay(receiptKey, fingerprint);
+    if (replay) {
+      const duplicateCandidates = [...this.leads.values()].filter((lead) => lead.id !== replay.id
+        && Boolean((replay.email && lead.email === replay.email) || (replay.phone && lead.phone === replay.phone)))
+        .map((lead) => lead.leadCode).sort((left, right) => left.localeCompare(right));
+      return { lead: this.visibleLead(replay, principal), duplicateCandidates };
+    }
     const activityIds = new Set(this.activities.map((item) => item.id));
-    const result = this.createLead(input, principal, correlationId, true);
+    const result = this.createLead(leadInput, principal, correlationId, true);
     const lead = { ...result.lead, version: 1 };
     const activity = this.activities.find((item) => item.leadId === lead.id && !activityIds.has(item.id));
     if (!activity) throw new Error("lead_create_activity_missing");
     try {
-      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint, principal, correlationId);
+      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, receiptKey, fingerprint, principal, correlationId);
       await this.refreshPersistentState();
       this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `lead-created:${stored.id}`, after: { leadId: stored.id, leadCode: stored.leadCode, duplicateCandidateCount: result.duplicateCandidates.length } });
       return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };
