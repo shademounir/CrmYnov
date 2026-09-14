@@ -20,6 +20,7 @@ import { interactionBody } from "../app/leads/[leadId]/lead-interaction-drawer.j
 import { followUpBody } from "../app/leads/[leadId]/lead-follow-up-drawer.js";
 import { statusBody } from "../app/leads/[leadId]/lead-status-drawer.js";
 import { failureMessage, nextActionChronologyError, StatusWorkflowForm, statusJourneyState, statusTransitionOptions } from "../app/leads/[leadId]/lead-workflow-forms.js";
+import { LeadDirectoryTable, leadDirectoryInitials, leadDirectoryNameParts, leadDirectoryStatus } from "../app/leads/lead-directory.js";
 
 function renderStructure(value: unknown): string {
   return JSON.stringify(value, (key: string, item: unknown): unknown =>
@@ -28,6 +29,16 @@ function renderStructure(value: unknown): string {
 }
 
 test("renders shareable search and combined lead filters", () => { const rendered = renderStructure(LeadsPage()); assert.match(rendered, /Tous les leads/); assert.match(rendered, /Pagination/); assert.match(rendered, /assignedToId/); assert.match(rendered, /search/); assert.match(rendered, /method/); });
+test("renders compact, localized Lead directory rows without exposing adviser UUIDs", () => {
+  const item = { id: "lead-1", leadCode: "LD-2026-SYNTH", firstName: "Camille", lastName: "Essai", status: "QUALIFIED", temperature: "HOT", temperatureLabel: "Chaud", program: "Programme synthétique", assignedToId: "00000000-0000-4000-8000-000000000172" };
+  const html = renderToStaticMarkup(createElement(LeadDirectoryTable, { items: [item], ariaLabel: "Leads" }));
+  for (const expected of ["1 prospect", "Camille", "Essai", "LD-2026-SYNTH", "Qualifié", "Chaud", "Programme synthétique", "Affecté", "Ouvrir la fiche LD-2026-SYNTH"]) assert.match(html, new RegExp(expected));
+  assert.doesNotMatch(html, /00000000-0000-4000-8000-000000000172/u);
+  assert.deepEqual(leadDirectoryNameParts({ firstName: "ًٌْ٢٠٠٥", lastName: "Bargam" }), ["Bargam"]);
+  assert.equal(leadDirectoryInitials(item), "CE");
+  assert.equal(leadDirectoryStatus("PROSPECT"), "Prospect");
+  assert.equal(leadDirectoryStatus("UNKNOWN"), "À vérifier");
+});
 test("renders a role-aware unified lead profile", () => {
   const lead: LeadProfileRecord = {
     id: "00000000-0000-4000-8000-000000000171",
@@ -143,6 +154,8 @@ test("only proposes direct stage transitions and explains terminal validation", 
   assert.match(failureMessage("status", 400, "lead_status_transition_forbidden"), /n’est pas disponible depuis l’étape actuelle/u);
   assert.match(failureMessage("status", 403), /autorisation/u);
   assert.match(failureMessage("status", 409), /Actualisez/u);
+  assert.match(failureMessage("interaction", 401), /session a expiré/u);
+  assert.match(failureMessage("interaction", 401), /Aucune modification n’a été enregistrée/u);
   assert.equal(statusJourneyState("CONTACTED", "PROSPECT"), "completed");
   assert.equal(statusJourneyState("CONTACTED", "CONTACTED"), "current");
   assert.equal(statusJourneyState("CONTACTED", "QUALIFIED"), "upcoming");

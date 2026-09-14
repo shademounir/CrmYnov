@@ -80,6 +80,7 @@ const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Reco
   },
 };
 const httpFailureMessages: Readonly<Record<number, string>> = {
+  401: "Votre session a expiré. Aucune modification n’a été enregistrée. Reconnectez-vous avant de réessayer ; votre saisie reste affichée.",
   403: "Vous n’avez pas l’autorisation d’effectuer cette action.",
   409: "La situation du Lead a changé. Actualisez la fiche avant de réessayer.",
   422: "Les informations saisies ne respectent pas les règles métier de cette action.",

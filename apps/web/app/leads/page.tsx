@@ -4,9 +4,9 @@ import React, { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Funnel } from "@phosphor-icons/react";
-import { ConnectedResource } from "../_components/connected-resource";
 import { PageHeader } from "../_components/ui/page-header";
 import DashboardReturnLink from "./dashboard-return-link";
+import { LeadDirectory } from "./lead-directory";
 import { SavedViews } from "./saved-views";
 import { LeadCreationDrawer } from "./lead-creation";
 
@@ -15,7 +15,7 @@ function LeadResults(): React.JSX.Element {
   const query = new URLSearchParams(searchParams.toString());
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("pageSize")) query.set("pageSize", "25");
-  return <ConnectedResource endpoint={`/api/crm/leads?${query.toString()}`} ariaLabel="Leads issus de PostgreSQL" emptyMessage="Aucun lead ne correspond aux filtres." fields={[{ key: "leadCode", label: "Identifiant" }, { key: "firstName", label: "Prénom" }, { key: "lastName", label: "Nom" }, { key: "status", label: "Statut" }, { key: "temperatureLabel", label: "Température" }, { key: "program", label: "Formation" }, { key: "assignedToId", label: "Conseiller" }]} itemPathPrefix="/leads" />;
+  return <LeadDirectory endpoint={`/api/crm/leads?${query.toString()}`} ariaLabel="Leads issus de PostgreSQL" emptyMessage="Aucun lead ne correspond aux filtres." />;
 }
 
 export default function LeadsPage(): React.JSX.Element {
