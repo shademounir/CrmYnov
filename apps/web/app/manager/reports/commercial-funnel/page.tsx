@@ -1,3 +1,4 @@
+import React from "react";
 import Pipeline from "./pipeline";
 
 export default async function CommercialFunnelPage({ searchParams = Promise.resolve({}) }: {
