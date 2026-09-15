@@ -349,8 +349,22 @@ input, select, textarea { color: var(--onyx); }
 @media (max-width: 768px) {
   .app-shell, .app-shell.is-collapsed { display: block; }
   .app-main { grid-column: auto; }
-  .sidebar, .is-collapsed .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 95; width: min(300px, 84vw); transform: translateX(-105%); }
-  .sidebar.is-mobile-open { transform: translateX(0); }
+  .sidebar, .is-collapsed .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 95;
+    width: min(300px, 84vw);
+    transform: translateX(-105%);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform .25s ease, visibility 0s linear .25s;
+  }
+  .sidebar.is-mobile-open {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+  }
   .brand-lockup, .is-collapsed .brand-lockup { min-height: 120px; padding: 18px 20px; align-items: flex-start; }
   .brand-lockup img, .is-collapsed .brand-lockup img { width: 118px; height: auto; object-fit: contain; object-position: left center; }
   .brand-lockup span, .sidebar nav button span, .sidebar nav button strong, .sidebar-profile > span:nth-child(2), .sidebar-profile > svg { display: flex; }
