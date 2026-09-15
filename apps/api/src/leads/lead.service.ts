@@ -645,7 +645,7 @@ export class LeadService implements OnModuleInit {
     return { ...visible, email: "***", phone: "***" };
   }
 
-  addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {
+  addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string; clearNextAction?: boolean }, principal: Principal, correlationId: string): LeadActivityRecord {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const lead = this.leads.get(leadId);
     if (!lead) throw new NotFoundException({ code: "lead_not_found" });
@@ -660,7 +660,9 @@ export class LeadService implements OnModuleInit {
       ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: occurredAt.toISOString(),
     });
     this.activities = [...this.activities, activity];
-    this.leads.set(leadId, Object.freeze({ ...lead, lastActivityAt: activity.occurredAt, ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) }));
+    const updatedLead: LeadRecord = { ...lead, lastActivityAt: activity.occurredAt, ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) };
+    if (input.clearNextAction) delete updatedLead.nextActionAt;
+    this.leads.set(leadId, Object.freeze(updatedLead));
     this.audit.record({ eventType: "LEAD_ACTIVITY_ADDED", actorId: principal.userId, actorRoles: principal.roles,
       sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, type: activity.type }, result: "SUCCESS",
       idempotencyKey: `lead-activity:${activity.id}` });

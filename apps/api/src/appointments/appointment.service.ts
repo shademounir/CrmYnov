@@ -14,8 +14,8 @@ export type AppointmentType = typeof appointmentTypes[number]; export type Appoi
 export type AppointmentState = typeof appointmentStates[number]; export type InterviewResult = typeof interviewResults[number];
 const finalStates = new Set<AppointmentState>(["ANNULE", "REALISE", "ABSENT", "REFUSE"]);
 const transitions: Readonly<Record<AppointmentState, readonly AppointmentState[]>> = {
-  BROUILLON: ["PLANIFIE", "ANNULE"], PLANIFIE: ["CONFIRME", "REPORTE", "ANNULE", "REFUSE"],
-  CONFIRME: ["REPORTE", "ANNULE", "REALISE", "ABSENT", "REFUSE"], REPORTE: ["CONFIRME", "ANNULE", "REFUSE"],
+  BROUILLON: ["PLANIFIE", "ANNULE"], PLANIFIE: ["CONFIRME", "REPORTE", "ANNULE", "ABSENT", "REFUSE"],
+  CONFIRME: ["REPORTE", "ANNULE", "REALISE", "ABSENT", "REFUSE"], REPORTE: ["CONFIRME", "ANNULE", "ABSENT", "REFUSE"],
   ANNULE: [], REALISE: [], ABSENT: [], REFUSE: [],
 };
 export interface AppointmentRecord { id: string; leadId: string; type: AppointmentType; mode: AppointmentMode; state: AppointmentState; startsAt: string; durationMinutes: number; campus?: string; adviserId: string; organizerId: string; evaluatorId?: string; participantIds: string[]; version: number; createdAt: string; updatedAt: string; conflictWarning: boolean; overloadWarning: boolean }
@@ -168,12 +168,20 @@ export class AppointmentService implements OnModuleInit {
 
   transition(id: string, input: { state?: string; reason?: string; expectedVersion?: number; idempotencyKey?: string; startsAt?: string }, principal: Principal, correlationId: string): AppointmentRecord {
     const current = this.authorized(id, principal, correlationId); const next = input.state as AppointmentState; const key = input.idempotencyKey ?? ""; const reason = input.reason?.trim();
-    if (!appointmentStates.includes(next) || !transitions[current.state].includes(next) || input.expectedVersion !== current.version || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new ConflictException({ code: "appointment_transition_refused" });
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new ConflictException({ code: "appointment_transition_refused" });
+    const signature = `${id}:${next}`;
+    const receipt = this.receipts.get(key);
+    if (receipt) {
+      if (receipt.id !== id || receipt.signature !== signature) throw new ConflictException({ code: "appointment_idempotency_conflict" });
+      return this.copy(this.items.get(receipt.id)!);
+    }
+    if (!appointmentStates.includes(next) || !transitions[current.state].includes(next) || input.expectedVersion !== current.version) throw new ConflictException({ code: "appointment_transition_refused" });
     if (["REPORTE", "ANNULE", "ABSENT", "REFUSE"].includes(next) && !reason) throw new BadRequestException({ code: "appointment_reason_required" });
+    const scheduledEnd = new Date(current.startsAt).valueOf() + current.durationMinutes * 60_000;
+    if (["REALISE", "ABSENT"].includes(next) && Date.now() < scheduledEnd) throw new BadRequestException({ code: "appointment_outcome_too_early" });
     const start = next === "REPORTE" ? new Date(input.startsAt ?? "") : new Date(current.startsAt); if (next === "REPORTE" && Number.isNaN(start.valueOf())) throw new BadRequestException({ code: "appointment_reschedule_invalid" });
-    const receipt = this.receipts.get(key); if (receipt) return this.copy(this.items.get(receipt.id)!);
-    const updated: Readonly<AppointmentRecord> = Object.freeze({ ...current, state: next, startsAt: start.toISOString(), version: current.version + 1, updatedAt: new Date().toISOString() }); this.items.set(id, updated); this.receipts.set(key, { signature: `${id}:${next}:${current.version}`, id });
-    this.appendEvent(updated, `APPOINTMENT_${next}`, principal, key, current.state, next, reason); this.leads.addActivity(current.leadId, { type: "MEETING", result: `APPOINTMENT_${next}`, ...(["PLANIFIE", "CONFIRME", "REPORTE"].includes(next) ? { nextActionAt: updated.startsAt } : {}) }, principal, correlationId);
+    const updated: Readonly<AppointmentRecord> = Object.freeze({ ...current, state: next, startsAt: start.toISOString(), version: current.version + 1, updatedAt: new Date().toISOString() }); this.items.set(id, updated); this.receipts.set(key, { signature, id });
+    this.appendEvent(updated, `APPOINTMENT_${next}`, principal, key, current.state, next, reason); this.leads.addActivity(current.leadId, { type: "MEETING", result: `APPOINTMENT_${next}`, ...(["PLANIFIE", "CONFIRME", "REPORTE"].includes(next) ? { nextActionAt: updated.startsAt } : { clearNextAction: true }) }, principal, correlationId);
     this.notify(updated, `APPOINTMENT_${next}`, this.involved(updated), key); this.recordAudit(updated, principal, correlationId, `APPOINTMENT_${next}`); return this.copy(updated);
   }
 

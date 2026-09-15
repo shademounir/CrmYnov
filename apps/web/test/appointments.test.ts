@@ -8,6 +8,7 @@ import AppointmentReportingPage from "../app/manager/reports/appointments/page.j
 import { appointmentDate, appointmentsForView, appointmentState } from "../app/appointments/appointment-agenda.js";
 import { appointmentDurationOptions, appointmentTypeOptions, casablancaDateTimeToIso } from "../app/leads/[leadId]/appointments/lead-appointment-form.js";
 import { appointmentEventLabel, appointmentPrivacyNotice } from "../app/appointments/[appointmentId]/appointment-detail.js";
+import { appointmentOutcomeAvailable } from "../app/appointments/[appointmentId]/appointment-state-actions.js";
 
 test("agenda exposes the persistent accessible API view without external integration", () => {
   const html = renderToStaticMarkup(AppointmentsPage());
@@ -46,7 +47,10 @@ test("detail documents scoped availability and append-only compensation", async 
   assert.ok(html.includes("Chargement depuis l’API locale"));
   assert.ok(appointmentPrivacyNotice.includes("créneaux occupés"));
   assert.equal(appointmentEventLabel("APPOINTMENT_CREATED"), "Rendez-vous créé");
+  assert.equal(appointmentEventLabel("APPOINTMENT_ABSENT"), "Absence constatée");
   assert.equal(appointmentEventLabel("UNKNOWN_EVENT"), "Événement du rendez-vous");
+  assert.equal(appointmentOutcomeAvailable({ startsAt: "2026-09-15T10:00:00Z", durationMinutes: 30 }, new Date("2026-09-15T10:29:59Z").valueOf()), false);
+  assert.equal(appointmentOutcomeAvailable({ startsAt: "2026-09-15T10:00:00Z", durationMinutes: 30 }, new Date("2026-09-15T10:30:00Z").valueOf()), true);
 });
 
 test("reporting documents descriptive safeguards", () => {

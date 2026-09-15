@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { ArrowLeft, CalendarCheck, Clock, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { appointmentDate, appointmentState } from "../appointment-agenda";
+import { AppointmentStateActions } from "./appointment-state-actions";
 
 interface AppointmentRecord {
   id: string; leadId: string; type: string; mode: string; state: string; startsAt: string;
@@ -21,6 +22,12 @@ const typeLabels: Readonly<Record<string, string>> = {
 const modeLabels: Readonly<Record<string, string>> = { SUR_SITE: "Sur site", TELEPHONE: "Téléphone", DISTANCIEL_NON_CONNECTE: "À distance" };
 const eventLabels: Readonly<Record<string, string>> = {
   APPOINTMENT_CREATED: "Rendez-vous créé",
+  APPOINTMENT_CONFIRME: "Rendez-vous confirmé",
+  APPOINTMENT_REPORTE: "Rendez-vous reporté",
+  APPOINTMENT_REALISE: "Rendez-vous réalisé",
+  APPOINTMENT_ABSENT: "Absence constatée",
+  APPOINTMENT_ANNULE: "Rendez-vous annulé",
+  APPOINTMENT_REFUSE: "Rendez-vous refusé",
   APPOINTMENT_CONFIRMED: "Rendez-vous confirmé",
   APPOINTMENT_COMPLETED: "Rendez-vous réalisé",
   APPOINTMENT_NO_SHOW: "Absence constatée",
@@ -33,13 +40,17 @@ export const appointmentPrivacyNotice = "Les participants autorisés ne révèle
 
 export function AppointmentDetail({ appointmentId }: Readonly<{ appointmentId: string }>): React.JSX.Element {
   const [state, setState] = useState<DetailState>({ kind: "loading" });
+  const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    const response = await fetch(`/api/crm/appointments/${encodeURIComponent(appointmentId)}`, { cache: "no-store", credentials: "same-origin", ...(signal ? { signal } : {}) });
+    if (!response.ok) throw new Error("appointment_unavailable");
+    setState({ kind: "ready", payload: await response.json() as AppointmentPayload });
+  }, [appointmentId]);
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/crm/appointments/${encodeURIComponent(appointmentId)}`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
-      .then(async (response) => { if (!response.ok) throw new Error("appointment_unavailable"); setState({ kind: "ready", payload: await response.json() as AppointmentPayload }); })
+    void load(controller.signal)
       .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setState({ kind: "error" }); });
     return (): void => controller.abort();
-  }, [appointmentId]);
+  }, [load]);
 
   if (state.kind === "loading") return <main className="appointment-detail-page"><section className="connected-state" aria-live="polite" aria-busy="true"><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="sr-only">Chargement depuis l’API locale…</span></section></main>;
   if (state.kind === "error") return <main className="appointment-detail-page"><Link className="lead-profile__back" href="/appointments?view=table"><ArrowLeft size={17} /> Retour aux rendez-vous</Link><section className="ui-state ui-state--error" role="alert"><h1>Rendez-vous indisponible</h1><p>Il n’existe pas ou n’est pas visible dans votre périmètre.</p><button type="button" onClick={() => globalThis.location.reload()}>Réessayer</button></section></main>;
@@ -55,6 +66,7 @@ export function AppointmentDetail({ appointmentId }: Readonly<{ appointmentId: s
       <article><span><ShieldCheck size={18} /></span><div><strong>{appointment.campus ?? "À distance"}</strong><small>Périmètre</small></div></article>
       <article><span><WarningCircle size={18} /></span><div><strong>{appointment.conflictWarning ? "À vérifier" : "Aucun signal"}</strong><small>Conflit</small></div></article>
     </section>
+    <AppointmentStateActions appointment={appointment} onUpdated={() => load()} />
     <div className="appointment-detail-page__grid">
       <section className="panel"><p className="eyebrow">Historique protégé</p><h2>Chronologie immuable</h2>{events.length ? <ol>{events.map((event) => <li key={event.id}><time dateTime={event.occurredAt}>{appointmentDate(event.occurredAt).date} · {appointmentDate(event.occurredAt).time}</time><strong>{appointmentEventLabel(event.type)}</strong>{event.reasonCode ? <span>Motif enregistré</span> : null}</li>)}</ol> : <p>Aucun événement visible.</p>}</section>
       <aside className="panel"><p className="eyebrow">Confidentialité</p><h2>Disponibilités bornées</h2><p>{appointmentPrivacyNotice}</p><p>Une correction ajoute un événement compensatoire : aucun historique n’est effacé.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(appointment.leadId)}`}>Ouvrir la fiche Lead</Link></aside>

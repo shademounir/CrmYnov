@@ -33,3 +33,35 @@ test("planning from a Lead writes once and exposes the persistent agenda links",
   await expect(page.getByRole("link", { name: "Voir tous les rendez-vous" })).toHaveAttribute("href", "/appointments?view=table");
   expect(submissions).toBe(1);
 });
+
+test("records one durable no-show from the appointment detail", async ({ page }) => {
+  const appointmentId = "appointment-no-show-synthetic";
+  let transitions = 0;
+  let state = "PLANIFIE";
+  let version = 1;
+  let events = [{ id: "event-created", type: "APPOINTMENT_CREATED", occurredAt: "2026-09-14T09:00:00Z" }];
+  await page.route(`**/api/crm/appointments/${appointmentId}/state`, async (route) => {
+    transitions += 1;
+    const body = route.request().postDataJSON() as { state: string; reason?: string; expectedVersion: number; idempotencyKey: string };
+    expect(body).toMatchObject({ state: "ABSENT", reason: "NO_SHOW_SYNTHETIC", expectedVersion: 1 });
+    expect(body.idempotencyKey.length).toBeGreaterThanOrEqual(8);
+    state = "ABSENT";
+    version = 2;
+    events = [...events, { id: "event-absent", type: "APPOINTMENT_ABSENT", occurredAt: "2026-09-15T12:00:00Z" }];
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: appointmentId, state, version }) });
+  });
+  await page.route(`**/api/crm/appointments/${appointmentId}`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      appointment: { id: appointmentId, leadId: "lead-synthetic", type: "RENDEZ_VOUS_LIBRE", mode: "TELEPHONE", state, startsAt: "2026-09-14T10:00:00Z", durationMinutes: 30, campus: "SYNTHETIC", version, conflictWarning: false, overloadWarning: false },
+      events,
+    }) });
+  });
+  await page.goto(`/appointments/${appointmentId}`);
+  await page.getByRole("button", { name: "Marquer comme non honoré" }).click();
+  await page.getByLabel("Motif obligatoire").fill("NO_SHOW_SYNTHETIC");
+  await page.getByRole("button", { name: "Confirmer le changement" }).click();
+  await expect(page.getByText("Absence enregistrée dans l’historique protégé.")).toBeVisible();
+  await expect(page.getByText("Absent", { exact: true })).toBeVisible();
+  await expect(page.getByText("Absence constatée", { exact: true })).toBeVisible();
+  expect(transitions).toBe(1);
+});

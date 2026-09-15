@@ -85,7 +85,7 @@ export class AppointmentPersistenceRepository {
         });
         if (changed.count !== 1) throw new ConflictException({ code: "appointment_transition_refused" });
         await this.persistEvent(tx, event);
-        await this.persistLeadActivity(tx, record, event, principal, correlationId);
+        await this.persistLeadActivity(tx, record, event, principal, correlationId, undefined, ["ANNULE", "REALISE", "ABSENT", "REFUSE"].includes(record.state));
         await this.persistAudit(tx, record, event.type, principal, correlationId, event.idempotencyKey);
       }, { isolationLevel: "Serializable" });
     } catch (error) {
@@ -144,6 +144,7 @@ export class AppointmentPersistenceRepository {
     principal: Principal,
     correlationId: string,
     explicitNextActionAt?: string,
+    clearNextAction = false,
   ): Promise<void> {
     const nextActionAt = explicitNextActionAt ?? (["PLANIFIE", "CONFIRME", "REPORTE"].includes(record.state) ? record.startsAt : undefined);
     await tx.leadActivity.create({ data: {
@@ -152,7 +153,7 @@ export class AppointmentPersistenceRepository {
       idempotencyKey: `appointment-activity-${this.hash(event.idempotencyKey)}`, occurredAt: new Date(event.occurredAt),
     } });
     await tx.lead.update({ where: { id: record.leadId }, data: {
-      lastActivityAt: new Date(event.occurredAt), ...(nextActionAt ? { nextActionAt: new Date(nextActionAt) } : {}), version: { increment: 1 },
+      lastActivityAt: new Date(event.occurredAt), ...(nextActionAt ? { nextActionAt: new Date(nextActionAt) } : clearNextAction ? { nextActionAt: null } : {}), version: { increment: 1 },
     } });
   }
 
