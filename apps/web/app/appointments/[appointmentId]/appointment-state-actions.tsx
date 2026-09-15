@@ -24,7 +24,10 @@ const targetLabels: Readonly<Record<TransitionTarget, string>> = {
 };
 
 function idempotencyKey(): string {
-  return typeof crypto.randomUUID === "function" ? `appointment-state-${crypto.randomUUID()}` : `appointment-state-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const secureId = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : Array.from(crypto.getRandomValues(new Uint32Array(4)), (part) => part.toString(16).padStart(8, "0")).join("");
+  return `appointment-state-${secureId}`;
 }
 
 export function appointmentOutcomeAvailable(appointment: Pick<AppointmentStateRecord, "startsAt" | "durationMinutes">, now = Date.now()): boolean {
