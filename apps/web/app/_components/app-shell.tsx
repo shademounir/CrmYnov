@@ -21,7 +21,7 @@ import {
 } from "@phosphor-icons/react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { apiString, resourceObjects, type ApiValue } from "./connected-resource";
@@ -51,9 +51,14 @@ const navigation = [
   { href: "/admin/scheduled-sheets", label: "Sheets planifié", icon: UploadSimple },
 ] as const;
 
-export function isActive(pathname: string, href: string): boolean {
-  const route = href.split("?")[0] ?? href;
-  if (route === "/leads") return pathname === "/leads";
+export function isActive(pathname: string, href: string, locationSearch = ""): boolean {
+  const [route = href, routeSearch = ""] = href.split("?");
+  if (route === "/leads") {
+    const expectedView = new URLSearchParams(routeSearch).get("view")?.toUpperCase();
+    const currentView = new URLSearchParams(locationSearch).get("view")?.toUpperCase();
+    if (expectedView === "FOLLOW_UP") return pathname === "/leads" && currentView === "FOLLOW_UP";
+    return pathname === "/leads" && currentView !== "FOLLOW_UP";
+  }
   if (route === "/manager/reports/dashboard") return pathname === route;
   return pathname === route || pathname.startsWith(`${route}/`);
 }
@@ -86,10 +91,10 @@ export async function loadSearchResults(
 }
 
 export function AppShell({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
-  return <AppShellClient pathname={usePathname()}>{children}</AppShellClient>;
+  return <AppShellClient pathname={usePathname()} locationSearch={useSearchParams().toString()}>{children}</AppShellClient>;
 }
 
-export function AppShellClient({ pathname, children }: Readonly<{ pathname: string; children: ReactNode }>): React.JSX.Element {
+export function AppShellClient({ pathname, locationSearch = "", children }: Readonly<{ pathname: string; locationSearch?: string; children: ReactNode }>): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -100,7 +105,7 @@ export function AppShellClient({ pathname, children }: Readonly<{ pathname: stri
   useEffect(() => {
     setMobileOpen(false);
     setProfileOpen(false);
-  }, [pathname]);
+  }, [locationSearch, pathname]);
 
   useEffect(() => {
     const normalized = query.trim();
@@ -122,6 +127,7 @@ export function AppShellClient({ pathname, children }: Readonly<{ pathname: stri
 
   return <AppShellView
     pathname={pathname}
+    locationSearch={locationSearch}
     collapsed={collapsed}
     mobileOpen={mobileOpen}
     profileOpen={profileOpen}
@@ -139,6 +145,7 @@ export function AppShellClient({ pathname, children }: Readonly<{ pathname: stri
 type AppShellViewProps = Readonly<{
   children: ReactNode;
   pathname: string;
+  locationSearch?: string;
   collapsed: boolean;
   mobileOpen: boolean;
   profileOpen: boolean;
@@ -155,6 +162,7 @@ type AppShellViewProps = Readonly<{
 export function AppShellView({
   children,
   pathname,
+  locationSearch = "",
   collapsed,
   mobileOpen,
   profileOpen,
@@ -167,7 +175,7 @@ export function AppShellView({
   onQueryChange,
   onSearchSelect,
 }: AppShellViewProps): React.JSX.Element {
-  const currentLabel = navigation.find((item) => isActive(pathname, item.href))?.label ?? "CRM Admissions";
+  const currentLabel = navigation.find((item) => isActive(pathname, item.href, locationSearch))?.label ?? "CRM Admissions";
   return <div className={`app-shell ${collapsed ? "is-collapsed" : ""}`}>
     <aside className={`sidebar ${mobileOpen ? "is-mobile-open" : ""}`} aria-label="Navigation CRM">
       <div className="brand-lockup">
@@ -175,7 +183,7 @@ export function AppShellView({
         {!collapsed ? <span>CRM Admissions</span> : null}
         <button type="button" className="mobile-close" onClick={onMobileClose} aria-label="Fermer la navigation"><X size={22} /></button>
       </div>
-      <SidebarNavigation pathname={pathname} collapsed={collapsed} />
+      <SidebarNavigation pathname={pathname} locationSearch={locationSearch} collapsed={collapsed} />
       <Link className="sidebar-profile" href="/admin/users" aria-label="Ouvrir le profil de la session locale">
         <span className="avatar" aria-hidden="true">SL</span>
         {!collapsed ? <span><b>Session locale</b><small>Droits contrôlés par l’API</small></span> : null}
@@ -208,10 +216,10 @@ export function AppShellView({
   </div>;
 }
 
-function SidebarNavigation({ pathname, collapsed }: Readonly<{ pathname: string; collapsed: boolean }>): React.JSX.Element {
+function SidebarNavigation({ pathname, locationSearch, collapsed }: Readonly<{ pathname: string; locationSearch: string; collapsed: boolean }>): React.JSX.Element {
   return <nav aria-label="Navigation principale">
     {navigation.map(({ href, label, icon: Icon }) => {
-      const active = isActive(pathname, href);
+      const active = isActive(pathname, href, locationSearch);
       return <Link key={`${label}-${href}`} href={href} className={active ? "active" : ""} aria-current={active ? "page" : undefined} title={collapsed ? label : undefined}>
         <Icon size={21} weight={active ? "fill" : "regular"} aria-hidden="true" />
         {!collapsed ? <span>{label}</span> : <span className="sr-only">{label}</span>}

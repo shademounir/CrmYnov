@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import LeadsPage from "../app/leads/page.js";
+import LeadsPage, { leadPageMode } from "../app/leads/page.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -20,7 +20,7 @@ import { interactionBody } from "../app/leads/[leadId]/lead-interaction-drawer.j
 import { followUpBody } from "../app/leads/[leadId]/lead-follow-up-drawer.js";
 import { statusBody } from "../app/leads/[leadId]/lead-status-drawer.js";
 import { failureMessage, nextActionChronologyError, StatusWorkflowForm, statusJourneyState, statusTransitionOptions } from "../app/leads/[leadId]/lead-workflow-forms.js";
-import { LeadDirectoryTable, leadDirectoryInitials, leadDirectoryNameParts, leadDirectoryStatus } from "../app/leads/lead-directory.js";
+import { LeadDirectoryTable, followUpDate, leadDirectoryInitials, leadDirectoryNameParts, leadDirectoryStatus } from "../app/leads/lead-directory.js";
 
 function renderStructure(value: unknown): string {
   return JSON.stringify(value, (key: string, item: unknown): unknown =>
@@ -28,7 +28,8 @@ function renderStructure(value: unknown): string {
   );
 }
 
-test("renders shareable search and combined lead filters", () => { const rendered = renderStructure(LeadsPage()); assert.match(rendered, /Tous les leads/); assert.match(rendered, /Pagination/); assert.match(rendered, /assignedToId/); assert.match(rendered, /search/); assert.match(rendered, /method/); });
+test("wraps the Lead directory in a client suspense boundary", () => { const rendered = renderStructure(LeadsPage()); assert.match(rendered, /fallback/); });
+test("selects the dedicated follow-up presentation without changing other work views", () => { assert.equal(leadPageMode("FOLLOW_UP"), "follow-up"); assert.equal(leadPageMode("follow_up"), "follow-up"); assert.equal(leadPageMode("ALL"), "directory"); });
 test("renders compact, localized Lead directory rows without exposing adviser UUIDs", () => {
   const item = { id: "lead-1", leadCode: "LD-2026-SYNTH", firstName: "Camille", lastName: "Essai", status: "QUALIFIED", temperature: "HOT", temperatureLabel: "Chaud", program: "Programme synthétique", assignedToId: "00000000-0000-4000-8000-000000000172" };
   const html = renderToStaticMarkup(createElement(LeadDirectoryTable, { items: [item], ariaLabel: "Leads" }));
@@ -38,6 +39,13 @@ test("renders compact, localized Lead directory rows without exposing adviser UU
   assert.equal(leadDirectoryInitials(item), "CE");
   assert.equal(leadDirectoryStatus("PROSPECT"), "Prospect");
   assert.equal(leadDirectoryStatus("UNKNOWN"), "À vérifier");
+});
+test("renders a task-first follow-up row with an explicit Casablanca due date", () => {
+  const item = { id: "lead-follow-up", leadCode: "LD-SYN-DUE", firstName: "Sam", lastName: "Essai", status: "CONTACTED", temperature: "WARM", temperatureLabel: "Tiède", program: "Programme synthétique", nextActionAt: "2026-09-15T09:30:00.000Z" };
+  const html = renderToStaticMarkup(createElement(LeadDirectoryTable, { items: [item], ariaLabel: "Relances", context: "follow-up" }));
+  for (const expected of ["Échéance", "15 sept., 10:30", "À traiter", "LD-SYN-DUE", "Ouvrir la fiche LD-SYN-DUE"]) assert.match(html, new RegExp(expected));
+  assert.equal(followUpDate("invalid"), "Date à vérifier");
+  assert.doesNotMatch(html, /Tiède/u);
 });
 test("renders a role-aware unified lead profile", () => {
   const lead: LeadProfileRecord = {
@@ -169,7 +177,6 @@ test("renders timestamps in French using the explicit Africa/Casablanca timezone
   assert.equal(formatDate("2026-09-11T23:30:00.000Z"), "12 sept., 00:30");
   assert.equal(formatDate(undefined), "Non planifiée");
 });
-test("renders operational work views, temperature and assignment filters", () => { const rendered = renderStructure(LeadsPage()); for (const expected of ["Mes leads", "À relancer", "Non affectés", "Sans activité", "Clôturés", "temperature", "Non évalué", "Chaud", "assignmentMode", "importBatchId", "Forminator/Zapier", "Ynov.ma historique", "Appels", "Visites", "JobInTech", "Sources non classifiées", "À compléter", "Imports en erreur"]) assert.match(rendered, new RegExp(expected)); });
 test("keeps every Lead action inside the medium desktop viewport", () => {
   const css = readFileSync(new URL("../app/leads/lead-profile.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width: 1360px\) and \(min-width: 821px\)[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/u);
