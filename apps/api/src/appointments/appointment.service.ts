@@ -29,9 +29,9 @@ export class AppointmentService implements OnModuleInit {
   private readonly items = new Map<string, Readonly<AppointmentRecord>>(); private events: Readonly<AppointmentEvent>[] = [];
   private readonly reports = new Map<string, Readonly<InterviewReport>>(); private readonly receipts = new Map<string, { signature: string; id: string }>();
   constructor(
-    private readonly leads: LeadService,
-    private readonly notifications: NotificationService,
-    private readonly audit: AuditService,
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(NotificationService) private readonly notifications: NotificationService,
+    @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(AppointmentPersistenceRepository) private readonly persistence?: AppointmentPersistenceRepository,
   ) {}
 
