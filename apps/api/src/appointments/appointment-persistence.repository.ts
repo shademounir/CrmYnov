@@ -28,12 +28,18 @@ export class AppointmentPersistenceRepository {
   }
 
   async snapshot(): Promise<AppointmentSnapshot> {
-    const rows = await this.requiredClient().appointment.findMany({
+    const client = this.requiredClient();
+    const rows = await client.appointment.findMany({
       include: { participants: true, events: { orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }, interviewReports: { orderBy: [{ validatedAt: "asc" }, { id: "asc" }] } },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     });
+    const collaboratorIds = [...new Set(rows.flatMap((row) => [row.adviserId, row.organizerId]))];
+    const collaboratorLabels = new Map((await client.collaborator.findMany({
+      where: { id: { in: collaboratorIds } },
+      select: { id: true, professionalDisplayName: true },
+    })).map((collaborator) => [collaborator.id, collaborator.professionalDisplayName?.trim() || undefined]));
     return {
-      items: rows.map((row) => this.mapAppointment(row)),
+      items: rows.map((row) => this.mapAppointment(row, collaboratorLabels)),
       events: rows.flatMap((row) => row.events.map((event) => ({
         id: event.id, appointmentId: event.appointmentId, type: event.eventType,
         ...(event.fromState ? { fromState: event.fromState as NonNullable<AppointmentEvent["fromState"]> } : {}),
@@ -147,13 +153,15 @@ export class AppointmentPersistenceRepository {
     clearNextAction = false,
   ): Promise<void> {
     const nextActionAt = explicitNextActionAt ?? (["PLANIFIE", "CONFIRME", "REPORTE"].includes(record.state) ? record.startsAt : undefined);
+    const currentLead = clearNextAction ? await tx.lead.findUnique({ where: { id: record.leadId }, select: { nextActionAt: true } }) : undefined;
+    const clearsThisAppointment = Boolean(clearNextAction && currentLead?.nextActionAt && currentLead.nextActionAt.valueOf() === new Date(record.startsAt).valueOf());
     await tx.leadActivity.create({ data: {
       leadId: record.leadId, type: "MEETING", result: event.type === "APPOINTMENT_CREATED" ? `APPOINTMENT_${record.state}` : event.type, authorId: principal.userId,
       ...(nextActionAt ? { nextActionAt: new Date(nextActionAt) } : {}), correlationId,
       idempotencyKey: `appointment-activity-${this.hash(event.idempotencyKey)}`, occurredAt: new Date(event.occurredAt),
     } });
     await tx.lead.update({ where: { id: record.leadId }, data: {
-      lastActivityAt: new Date(event.occurredAt), ...(nextActionAt ? { nextActionAt: new Date(nextActionAt) } : clearNextAction ? { nextActionAt: null } : {}), version: { increment: 1 },
+      lastActivityAt: new Date(event.occurredAt), ...(nextActionAt ? { nextActionAt: new Date(nextActionAt) } : clearsThisAppointment ? { nextActionAt: null } : {}), version: { increment: 1 },
     } });
   }
 
@@ -173,11 +181,16 @@ export class AppointmentPersistenceRepository {
     } });
   }
 
-  private mapAppointment(row: AppointmentRow): AppointmentRecord {
+  private mapAppointment(row: AppointmentRow, collaboratorLabels: ReadonlyMap<string, string | undefined>): AppointmentRecord {
+    const adviserLabel = collaboratorLabels.get(row.adviserId);
+    const organizerLabel = collaboratorLabels.get(row.organizerId);
     return {
       id: row.id, leadId: row.leadId, type: row.type as AppointmentRecord["type"], mode: row.mode as AppointmentRecord["mode"],
       state: row.state as AppointmentRecord["state"], startsAt: row.startsAt.toISOString(), durationMinutes: row.durationMinutes,
-      ...(row.campus ? { campus: row.campus } : {}), adviserId: row.adviserId, organizerId: row.organizerId,
+      ...(row.campus ? { campus: row.campus } : {}), adviserId: row.adviserId,
+      ...(adviserLabel ? { adviserLabel } : {}),
+      organizerId: row.organizerId,
+      ...(organizerLabel ? { organizerLabel } : {}),
       ...(row.evaluatorId ? { evaluatorId: row.evaluatorId } : {}), participantIds: row.participants.map((participant) => participant.userId).sort((left, right) => left.localeCompare(right)),
       version: row.version, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       conflictWarning: false, overloadWarning: false,

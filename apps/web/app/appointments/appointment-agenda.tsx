@@ -54,14 +54,19 @@ export function appointmentsForView(items: ApiObject[], view: AgendaView, refere
   return items.filter((item) => { const key = dayKey(new Date(apiString(item, "startsAt"))); return key >= weekStart && key <= weekEnd; });
 }
 
+export function appointmentAgendaSummary(items: ApiObject[], reference = new Date()): ReadonlyArray<{ label: string; value: number }> {
+  const today = dayKey(reference); const active = items.filter((item) => !finalStates.has(apiString(item, "state")));
+  return [
+    { label: "Aujourd’hui", value: items.filter((item) => dayKey(new Date(apiString(item, "startsAt"))) === today).length },
+    { label: "À venir", value: active.filter((item) => new Date(apiString(item, "startsAt")).valueOf() > reference.valueOf()).length },
+    { label: "À confirmer", value: active.filter((item) => apiString(item, "state") === "PLANIFIE").length },
+    { label: "Confirmés", value: active.filter((item) => apiString(item, "state") === "CONFIRME").length },
+  ];
+}
+
 function Summary({ items }: Readonly<{ items: ApiObject[] }>): React.JSX.Element {
-  const now = new Date(); const today = dayKey(now); const active = items.filter((item) => !finalStates.has(apiString(item, "state")));
-  const metrics = [
-    { label: "Aujourd’hui", value: active.filter((item) => dayKey(new Date(apiString(item, "startsAt"))) === today).length, icon: CalendarBlank },
-    { label: "À venir", value: active.filter((item) => new Date(apiString(item, "startsAt")).valueOf() > now.valueOf()).length, icon: Clock },
-    { label: "À confirmer", value: active.filter((item) => apiString(item, "state") === "PLANIFIE").length, icon: UsersThree },
-    { label: "Confirmés", value: active.filter((item) => apiString(item, "state") === "CONFIRME").length, icon: CalendarCheck },
-  ] as const;
+  const icons = [CalendarBlank, Clock, UsersThree, CalendarCheck];
+  const metrics = appointmentAgendaSummary(items).map((metric, index) => ({ ...metric, icon: icons[index]! }));
   return <section className="appointments-summary" aria-label="Repères de l’agenda">{metrics.map(({ label, value, icon: Icon }) => <article key={label}><span><Icon size={18} aria-hidden="true" /></span><div><strong>{value}</strong><small>{label}</small></div></article>)}</section>;
 }
 
@@ -70,7 +75,7 @@ function AppointmentTable({ items }: Readonly<{ items: ApiObject[] }>): React.JS
     <thead><tr><th scope="col">Date et heure</th><th scope="col">Rendez-vous</th><th scope="col">Mode</th><th scope="col">État</th><th scope="col">Campus</th><th scope="col"><span className="sr-only">Action</span></th></tr></thead>
     <tbody>{items.map((item, index) => { const id = apiString(item, "id"); const state = apiString(item, "state"); const type = apiString(item, "type"); const date = appointmentDate(apiString(item, "startsAt")); return <tr key={id || index}>
       <td data-label="Date et heure"><span className="appointments-date"><strong>{date.date}</strong><small>{date.time} · Casablanca</small></span></td>
-      <th scope="row" data-label="Rendez-vous">{typeLabels[type] ?? "Rendez-vous à vérifier"}</th>
+      <th scope="row" data-label="Rendez-vous"><span className="appointments-owner"><strong>{typeLabels[type] ?? "Rendez-vous à vérifier"}</strong><small>{apiString(item, "adviserLabel", "Responsable autorisé")}</small></span></th>
       <td data-label="Mode">{modeLabels[apiString(item, "mode")] ?? "À préciser"}</td>
       <td data-label="État"><span className="appointments-state" data-state={state}>{appointmentState(state)}</span></td>
       <td data-label="Campus">{apiString(item, "campus", "À distance")}</td>

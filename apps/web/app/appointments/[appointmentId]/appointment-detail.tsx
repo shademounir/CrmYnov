@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, CalendarCheck, Clock, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { ArrowLeft, CalendarCheck, Clock, ShieldCheck, UserCircle, WarningCircle } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { appointmentDate, appointmentState } from "../appointment-agenda";
 import { AppointmentStateActions } from "./appointment-state-actions";
 
 interface AppointmentRecord {
   id: string; leadId: string; type: string; mode: string; state: string; startsAt: string;
-  durationMinutes: number; campus?: string; version: number; conflictWarning: boolean; overloadWarning: boolean;
+  durationMinutes: number; campus?: string; adviserId: string; adviserLabel?: string; organizerId: string; organizerLabel?: string;
+  version: number; conflictWarning: boolean; overloadWarning: boolean;
 }
 interface AppointmentEvent { id: string; type: string; occurredAt: string; reasonCode?: string }
 interface AppointmentPayload { appointment: AppointmentRecord; events: AppointmentEvent[] }
@@ -36,6 +37,7 @@ const eventLabels: Readonly<Record<string, string>> = {
   INTERVIEW_REPORT_VALIDATED: "Compte rendu validé",
 };
 export function appointmentEventLabel(type: string): string { return eventLabels[type] ?? "Événement du rendez-vous"; }
+export function appointmentEventReason(reasonCode?: string): string | undefined { const reason = reasonCode?.trim(); return reason ? `Motif : ${reason}` : undefined; }
 export const appointmentPrivacyNotice = "Les participants autorisés ne révèlent que leurs créneaux occupés. L’agenda complet n’est jamais exposé.";
 
 export function AppointmentDetail({ appointmentId }: Readonly<{ appointmentId: string }>): React.JSX.Element {
@@ -64,11 +66,12 @@ export function AppointmentDetail({ appointmentId }: Readonly<{ appointmentId: s
       <article><span><Clock size={18} /></span><div><strong>{appointment.durationMinutes} min</strong><small>Durée</small></div></article>
       <article><span><CalendarCheck size={18} /></span><div><strong>{modeLabels[appointment.mode] ?? "À préciser"}</strong><small>Mode</small></div></article>
       <article><span><ShieldCheck size={18} /></span><div><strong>{appointment.campus ?? "À distance"}</strong><small>Périmètre</small></div></article>
+      <article><span><UserCircle size={18} /></span><div><strong>{appointment.adviserLabel ?? "Responsable autorisé"}</strong><small>Conseiller responsable</small></div></article>
       <article><span><WarningCircle size={18} /></span><div><strong>{appointment.conflictWarning ? "À vérifier" : "Aucun signal"}</strong><small>Conflit</small></div></article>
     </section>
     <AppointmentStateActions appointment={appointment} onUpdated={() => load()} />
     <div className="appointment-detail-page__grid">
-      <section className="panel"><p className="eyebrow">Historique protégé</p><h2>Chronologie immuable</h2>{events.length ? <ol>{events.map((event) => <li key={event.id}><time dateTime={event.occurredAt}>{appointmentDate(event.occurredAt).date} · {appointmentDate(event.occurredAt).time}</time><strong>{appointmentEventLabel(event.type)}</strong>{event.reasonCode ? <span>Motif enregistré</span> : null}</li>)}</ol> : <p>Aucun événement visible.</p>}</section>
+      <section className="panel"><p className="eyebrow">Historique protégé</p><h2>Chronologie immuable</h2>{events.length ? <ol>{events.map((event) => { const reason = appointmentEventReason(event.reasonCode); return <li key={event.id}><time dateTime={event.occurredAt}>{appointmentDate(event.occurredAt).date} · {appointmentDate(event.occurredAt).time}</time><strong>{appointmentEventLabel(event.type)}</strong>{reason ? <span>{reason}</span> : null}</li>; })}</ol> : <p>Aucun événement visible.</p>}</section>
       <aside className="panel"><p className="eyebrow">Confidentialité</p><h2>Disponibilités bornées</h2><p>{appointmentPrivacyNotice}</p><p>Une correction ajoute un événement compensatoire : aucun historique n’est effacé.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(appointment.leadId)}`}>Ouvrir la fiche Lead</Link></aside>
     </div>
   </main>;

@@ -2,6 +2,7 @@
 
 import { CheckCircle, UserMinus, WarningCircle } from "@phosphor-icons/react";
 import { useRef, useState } from "react";
+import { casablancaDateTimeToIso } from "../../leads/[leadId]/appointments/lead-appointment-form";
 
 export interface AppointmentStateRecord {
   id: string;
@@ -11,16 +12,18 @@ export interface AppointmentStateRecord {
   version: number;
 }
 
-type TransitionTarget = "CONFIRME" | "REALISE" | "ABSENT" | "ANNULE";
+type TransitionTarget = "CONFIRME" | "REPORTE" | "REALISE" | "ABSENT" | "ANNULE" | "REFUSE";
 
 const finalStates = new Set(["ANNULE", "REALISE", "ABSENT", "REFUSE"]);
-const reasonRequired = new Set<TransitionTarget>(["ABSENT", "ANNULE"]);
+const reasonRequired = new Set<TransitionTarget>(["REPORTE", "ABSENT", "ANNULE", "REFUSE"]);
 
 const targetLabels: Readonly<Record<TransitionTarget, string>> = {
   CONFIRME: "Confirmer le rendez-vous",
+  REPORTE: "Reporter le rendez-vous",
   REALISE: "Marquer comme réalisé",
   ABSENT: "Marquer comme non honoré",
   ANNULE: "Annuler le rendez-vous",
+  REFUSE: "Indiquer un refus",
 };
 
 function idempotencyKey(): string {
@@ -34,28 +37,32 @@ export function appointmentOutcomeAvailable(appointment: Pick<AppointmentStateRe
   return now >= new Date(appointment.startsAt).valueOf() + appointment.durationMinutes * 60_000;
 }
 
-function availableTargets(appointment: AppointmentStateRecord): TransitionTarget[] {
+export function appointmentTransitionTargets(appointment: AppointmentStateRecord): TransitionTarget[] {
   if (finalStates.has(appointment.state)) return [];
   const targets: TransitionTarget[] = [];
   if (["PLANIFIE", "REPORTE"].includes(appointment.state)) targets.push("CONFIRME");
+  if (["PLANIFIE", "CONFIRME"].includes(appointment.state)) targets.push("REPORTE");
   if (appointment.state === "CONFIRME" && appointmentOutcomeAvailable(appointment)) targets.push("REALISE");
   if (["PLANIFIE", "CONFIRME", "REPORTE"].includes(appointment.state) && appointmentOutcomeAvailable(appointment)) targets.push("ABSENT");
   if (["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE"].includes(appointment.state)) targets.push("ANNULE");
+  if (["PLANIFIE", "CONFIRME", "REPORTE"].includes(appointment.state)) targets.push("REFUSE");
   return targets;
 }
 
 function transitionError(code: string): string {
   if (code === "appointment_outcome_too_early") return "Le résultat ne peut être enregistré qu’après la fin prévue du rendez-vous.";
   if (code === "appointment_reason_required") return "Un motif est obligatoire pour cette décision.";
+  if (code === "appointment_reschedule_invalid") return "Choisissez une nouvelle date future en heure de Casablanca.";
   if (code === "appointment_transition_refused") return "Le rendez-vous a changé ou cette transition n’est plus permise. Les données ont été actualisées.";
   if (code === "appointment_not_found") return "Ce rendez-vous n’est plus accessible dans votre périmètre.";
   return "Le changement n’a pas pu être confirmé. Votre motif est conservé.";
 }
 
 export function AppointmentStateActions({ appointment, onUpdated }: Readonly<{ appointment: AppointmentStateRecord; onUpdated: () => Promise<void> }>): React.JSX.Element {
-  const targets = availableTargets(appointment);
+  const targets = appointmentTransitionTargets(appointment);
   const [target, setTarget] = useState<TransitionTarget | undefined>();
   const [reason, setReason] = useState("");
+  const [rescheduledAt, setRescheduledAt] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "success" | "error"; text: string }>();
   const attemptKey = useRef(idempotencyKey());
@@ -73,10 +80,16 @@ export function AppointmentStateActions({ appointment, onUpdated }: Readonly<{ a
     setMessage(undefined);
     attemptKey.current = idempotencyKey();
     if (!reasonRequired.has(next)) setReason("");
+    if (next !== "REPORTE") setRescheduledAt("");
   };
 
   const submit = async (): Promise<void> => {
     if (!target || (reasonRequired.has(target) && !reason.trim()) || busy) return;
+    const startsAt = target === "REPORTE" ? casablancaDateTimeToIso(rescheduledAt) : undefined;
+    if (target === "REPORTE" && (!startsAt || new Date(startsAt).valueOf() <= Date.now())) {
+      setMessage({ kind: "error", text: transitionError("appointment_reschedule_invalid") });
+      return;
+    }
     setBusy(true);
     setMessage(undefined);
     try {
@@ -84,7 +97,7 @@ export function AppointmentStateActions({ appointment, onUpdated }: Readonly<{ a
         method: "PATCH",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ state: target, expectedVersion: appointment.version, idempotencyKey: attemptKey.current, ...(reason.trim() ? { reason: reason.trim() } : {}) }),
+        body: JSON.stringify({ state: target, expectedVersion: appointment.version, idempotencyKey: attemptKey.current, ...(reason.trim() ? { reason: reason.trim() } : {}), ...(startsAt ? { startsAt } : {}) }),
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({})) as { code?: string };
@@ -93,6 +106,7 @@ export function AppointmentStateActions({ appointment, onUpdated }: Readonly<{ a
       setMessage({ kind: "success", text: target === "ABSENT" ? "Absence enregistrée dans l’historique protégé." : "État du rendez-vous enregistré." });
       setTarget(undefined);
       setReason("");
+      setRescheduledAt("");
       attemptKey.current = idempotencyKey();
       await onUpdated();
     } catch (error) {
@@ -115,8 +129,9 @@ export function AppointmentStateActions({ appointment, onUpdated }: Readonly<{ a
     </div>
     {target ? <div className="appointment-state-panel__confirm">
       <strong>{targetLabels[target]}</strong>
-      {reasonRequired.has(target) ? <label>Motif obligatoire<textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} disabled={busy} placeholder={target === "ABSENT" ? "Ex. Le prospect ne s’est pas présenté au créneau convenu." : "Indiquez la raison de l’annulation."} /></label> : <p>Confirmez cette action. Elle sera historisée avec votre identité et l’heure du serveur.</p>}
-      <div><button type="button" className="text-button" onClick={() => setTarget(undefined)} disabled={busy}>Revenir</button><button type="button" className="primary-button" onClick={() => void submit()} disabled={busy || (reasonRequired.has(target) && !reason.trim())}>{busy ? "Enregistrement…" : "Confirmer le changement"}</button></div>
+      {target === "REPORTE" ? <label>Nouvelle date et heure · Casablanca<input type="datetime-local" value={rescheduledAt} onChange={(event) => setRescheduledAt(event.target.value)} disabled={busy} required /></label> : null}
+      {reasonRequired.has(target) ? <label>Motif obligatoire<textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} disabled={busy} placeholder={target === "ABSENT" ? "Ex. Le prospect ne s’est pas présenté au créneau convenu." : target === "REPORTE" ? "Indiquez la raison du report." : target === "REFUSE" ? "Indiquez la raison du refus." : "Indiquez la raison de l’annulation."} /></label> : <p>Confirmez cette action. Elle sera historisée avec votre identité et l’heure du serveur.</p>}
+      <div><button type="button" className="text-button" onClick={() => setTarget(undefined)} disabled={busy}>Revenir</button><button type="button" className="primary-button" onClick={() => void submit()} disabled={busy || (reasonRequired.has(target) && !reason.trim()) || (target === "REPORTE" && !rescheduledAt)}>{busy ? "Enregistrement…" : "Confirmer le changement"}</button></div>
     </div> : null}
     {message ? <p className={`appointment-state-panel__message appointment-state-panel__message--${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</p> : null}
   </section>;

@@ -39,6 +39,25 @@ test("records a no-show once after the scheduled end",()=>{
     assert.equal(leads.getLead(lead.id,adviser,"lead-after-no-show").nextActionAt,undefined);
   } finally { Date.now=originalNow; }
 });
+test("preserves another valid next action when an appointment is closed",()=>{
+  const {service,lead,leads}=setup();
+  const startsAt="2099-01-04T09:00:00.000Z";
+  const laterAction="2099-01-06T09:00:00.000Z";
+  const item=service.create(lead.id,{type:"RENDEZ_VOUS_LIBRE",mode:"TELEPHONE",startsAt,durationMinutes:30,idempotencyKey:"appointment-next-action-01"},adviser,"create");
+  leads.addActivity(lead.id,{type:"COMMENT",result:"FOLLOW_UP",nextActionAt:laterAction},adviser,"later-action");
+  const originalNow=Date.now;
+  Date.now=():number=>new Date(startsAt).valueOf()+31*60_000;
+  try {
+    service.transition(item.id,{state:"ABSENT",reason:"NO_SHOW",expectedVersion:1,idempotencyKey:"transition-next-action-01"},adviser,"absent");
+    assert.equal(leads.getLead(lead.id,adviser,"lead-after-no-show").nextActionAt,laterAction);
+  } finally { Date.now=originalNow; }
+});
+test("requires a bounded reason and a future date when rescheduling",()=>{
+  const {service,lead}=setup();
+  const item=service.create(lead.id,{type:"RENDEZ_VOUS_LIBRE",mode:"TELEPHONE",startsAt:"2099-01-04T09:00:00.000Z",durationMinutes:30,idempotencyKey:"appointment-reschedule-01"},adviser,"create");
+  assert.throws(()=>service.transition(item.id,{state:"REPORTE",reason:"Past slot",startsAt:"2020-01-01T09:00:00.000Z",expectedVersion:1,idempotencyKey:"transition-reschedule-01"},adviser,"past"),code("appointment_reschedule_invalid"));
+  assert.throws(()=>service.transition(item.id,{state:"ANNULE",reason:"x".repeat(501),expectedVersion:1,idempotencyKey:"transition-reason-long-01"},adviser,"reason"),code("appointment_reason_required"));
+});
 test("enforces campus, reasons, bounded availability and anti-IDOR",()=>{ const {service,lead}=setup(); assert.throws(()=>service.create(lead.id,{type:"VISITE_CAMPUS",mode:"SUR_SITE",startsAt:"2099-01-01T09:00:00Z",durationMinutes:60,campus:"Other",idempotencyKey:"appointment-2001"},adviser,"campus"),code("appointment_campus_required")); const item=service.create(lead.id,{type:"APPEL_INFORMATION",mode:"TELEPHONE",startsAt:"2099-01-01T09:00:00Z",durationMinutes:30,idempotencyKey:"appointment-2002"},adviser,"create"); assert.throws(()=>service.transition(item.id,{state:"ANNULE",expectedVersion:1,idempotencyKey:"transition-2001"},adviser,"reason"),code("appointment_reason_required")); const outsider={...adviser,userId:"outsider",scopes:[{kind:"CAMPUS" as const,id:"Other"}]}; assert.throws(()=>service.detail(item.id,outsider,"idor"),code("appointment_not_found")); assert.equal(service.availability([adviser.userId],"2099-01-01T00:00:00Z","2099-01-02T00:00:00Z",adviser)[0]?.busyRanges.length,1); });
 test("refuses a meeting in the past",()=>{ const {service,lead}=setup(); assert.throws(()=>service.create(lead.id,{type:"RENDEZ_VOUS_LIBRE",mode:"TELEPHONE",startsAt:"2020-01-01T09:00:00Z",durationMinutes:30,idempotencyKey:"appointment-past-01"},adviser,"past"),code("appointment_invalid")); });
 test("publishes descriptive KPI definitions only",()=>{ const {service,lead}=setup(); service.create(lead.id,{type:"TEST_ADMISSION",mode:"TELEPHONE",startsAt:"2099-02-01T09:00:00Z",durationMinutes:30,idempotencyKey:"appointment-3001"},adviser,"create"); const report=service.kpis(adviser); assert.equal(report.timezone,"Africa/Casablanca"); assert.equal(report.counts.PLANIFIE,1); assert.equal(report.safeguards.automaticAdmission,false); assert.equal(report.safeguards.disciplinaryScore,false); });
