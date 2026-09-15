@@ -71,7 +71,7 @@ test("renders a role-aware unified lead profile", () => {
   assert.equal(leadSectionHref("lead/id", "timeline"), "/leads/lead%2Fid/timeline");
   assert.doesNotMatch(html, /title="Affectez d’abord/u);
 });
-test("keeps an unassigned Lead in context while exposing preview before confirmation", () => {
+test("keeps an unassigned Lead in context while explaining how to unlock follow-up planning", () => {
   const lead: LeadProfileRecord = {
     id: "00000000-0000-4000-8000-000000000173",
     leadCode: "LD-SYN-UNASSIGNED",
@@ -89,9 +89,9 @@ test("keeps an unassigned Lead in context while exposing preview before confirma
     qualificationVersion: 0,
   };
   const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [] }));
-  for (const expected of ["Affecter ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer"]) assert.match(html, new RegExp(expected));
+  for (const expected of ["Affecter ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer", "Planifier une relance", "Affectation nécessaire", "Une relance doit avoir un conseiller responsable", "sans quitter la fiche"]) assert.match(html, new RegExp(expected));
   assert.doesNotMatch(html, /Réaffecter ce Lead/u);
-  assert.match(html, /disabled="" title="Affectez d’abord le Lead à un conseiller"/u);
+  assert.doesNotMatch(html, /title="Affectez d’abord le Lead à un conseiller"/u);
 });
 test("uses business labels and neutral fallbacks", () => {
   assert.equal(leadDisplayName({ firstName: " ", lastName: "" }), "Prospect indisponible");

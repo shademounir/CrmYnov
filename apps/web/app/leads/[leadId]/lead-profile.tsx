@@ -327,14 +327,15 @@ function ProfileActions({ lead, onLeadChanged, onLeadEdited }: Readonly<{
   onLeadChanged?: (message: string) => void;
   onLeadEdited?: (lead: LeadProfileRecord) => void;
 }>): React.JSX.Element {
+  const assignmentTriggerId = `lead-assignment-${lead.id}`;
   return <nav className="lead-profile__actions" aria-label="Actions principales du lead">
     <LeadEditDrawer lead={lead} {...(onLeadEdited ? { onCompleted: onLeadEdited } : {})} />
     <LeadInteractionDrawer leadId={lead.id} leadCode={lead.leadCode} {...completionProps(onLeadChanged, "Interaction enregistrée dans l’historique protégé.")} />
-    <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...completionProps(onLeadChanged, lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.")} />
+    <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} triggerId={assignmentTriggerId} {...completionProps(onLeadChanged, lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.")} />
     <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...completionProps(onLeadChanged, "Étape commerciale enregistrée.")} />
     <LeadQualificationDrawer leadId={lead.id} leadCode={lead.leadCode} temperatureLabel={lead.temperatureLabel} {...completionProps(onLeadChanged, "Qualification commerciale enregistrée.")} />
     <Link className="secondary-button" href={`/leads/${encodeURIComponent(lead.id)}/appointments`}><CalendarBlank size={18} aria-hidden="true" /> Planifier un rendez-vous</Link>
-    <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...completionProps(onLeadChanged, "Relance planifiée et enregistrée.")} />
+    <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} assignmentTriggerId={assignmentTriggerId} {...completionProps(onLeadChanged, "Relance planifiée et enregistrée.")} />
   </nav>;
 }
 
