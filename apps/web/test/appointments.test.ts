@@ -5,13 +5,28 @@ import AppointmentDetailPage from "../app/appointments/[appointmentId]/page.js";
 import AppointmentsPage from "../app/appointments/page.js";
 import LeadAppointmentsPage from "../app/leads/[leadId]/appointments/page.js";
 import AppointmentReportingPage from "../app/manager/reports/appointments/page.js";
+import { appointmentDate, appointmentsForView, appointmentState } from "../app/appointments/appointment-agenda.js";
 
 test("agenda exposes the persistent accessible API view without external integration", () => {
   const html = renderToStaticMarkup(AppointmentsPage());
-  assert.ok(html.includes("Agenda des rendez-vous"));
+  assert.ok(html.includes("Rendez-vous"));
   assert.ok(html.includes("Chargement depuis l’API locale"));
-  assert.ok(html.includes("Africa/Casablanca"));
-  assert.ok(html.includes("Calendriers externes"));
+  assert.ok(html.includes("Casablanca"));
+  assert.ok(html.includes("calendriers externes désactivés"));
+});
+
+test("agenda localizes dates and applies the selected operational period", () => {
+  const reference = new Date("2026-09-15T09:00:00Z");
+  const items = [
+    { id: "today", startsAt: "2026-09-15T10:00:00Z" },
+    { id: "week", startsAt: "2026-09-18T10:00:00Z" },
+    { id: "later", startsAt: "2026-09-25T10:00:00Z" },
+  ];
+  assert.deepEqual(appointmentsForView(items, "day", reference).map((item) => item.id), ["today"]);
+  assert.deepEqual(appointmentsForView(items, "week", reference).map((item) => item.id), ["today", "week"]);
+  assert.equal(appointmentsForView(items, "table", reference).length, 3);
+  assert.equal(appointmentDate("invalid").date, "Date à vérifier");
+  assert.equal(appointmentState("CONFIRME"), "Confirmé");
 });
 
 test("lead appointment form contains controlled types and duration", async () => {
