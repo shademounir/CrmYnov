@@ -101,6 +101,7 @@ import { TelephonyController } from "./telephony/telephony.controller.js";
 import { TelephonyService } from "./telephony/telephony.service.js";
 import { AppointmentController } from "./appointments/appointment.controller.js";
 import { AppointmentService } from "./appointments/appointment.service.js";
+import { AppointmentPersistenceRepository } from "./appointments/appointment-persistence.repository.js";
 import { PrismaService } from "./persistence/prisma.service.js";
 import { LocalOutboxRepository } from "./outbox/local-outbox.repository.js";
 import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
@@ -177,6 +178,7 @@ import { resolve } from "node:path";
     CandidateDocumentService,
     TelephonyService,
     AppointmentService,
+    AppointmentPersistenceRepository,
     FollowUpService,
     FollowUpPersistenceRepository,
     ClosureService,

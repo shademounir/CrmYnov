@@ -333,6 +333,7 @@ function ProfileActions({ lead, onLeadChanged, onLeadEdited }: Readonly<{
     <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...completionProps(onLeadChanged, lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.")} />
     <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...completionProps(onLeadChanged, "Étape commerciale enregistrée.")} />
     <LeadQualificationDrawer leadId={lead.id} leadCode={lead.leadCode} temperatureLabel={lead.temperatureLabel} {...completionProps(onLeadChanged, "Qualification commerciale enregistrée.")} />
+    <Link className="secondary-button" href={`/leads/${encodeURIComponent(lead.id)}/appointments`}><CalendarBlank size={18} aria-hidden="true" /> Planifier un rendez-vous</Link>
     <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} {...completionProps(onLeadChanged, "Relance planifiée et enregistrée.")} />
   </nav>;
 }
