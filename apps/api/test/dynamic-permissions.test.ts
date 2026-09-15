@@ -92,6 +92,21 @@ test("CRMY-169 route permission registry denies unknown controllers and handlers
   assert.equal(routePermissions("LeadController", "delete"), null);
   assert.deepEqual(routePermissions("LeadController", "update"), ["lead.edit"]);
   assert.deepEqual(routePermissions("ReassignmentController", "decide"), ["lead.reassign.approve"]);
+  assert.deepEqual(routePermissions("LeadAssignmentController", "candidates"), []);
+  assert.deepEqual(routePermissions("LeadQualificationController", "read"), ["lead.view"]);
+  assert.deepEqual(routePermissions("LeadQualificationController", "update"), ["lead.qualification.update"]);
+});
+test("qualification update defaults are limited to Admin and Super Admin scopes", () => {
+  const permission = "lead.qualification.update";
+  assert.equal(evaluatePermission(principal(["SUPER_ADMIN"]), permission, [], { ...context, globalAllowed: true }).allowed, true);
+  assert.equal(evaluatePermission(principal(["ADMIN"]), permission, [], context).allowed, true);
+  assert.equal(evaluatePermission(principal(["ADMIN"]), permission, [], { ...context, campusAllowed: false }).allowed, false);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [], context).allowed, false);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "CAMPUS")], context).allowed, true);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "OWN")], { ...context, own: true }).allowed, true);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "OWN")], context).allowed, false);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "CAMPUS")], { ...context, campusAllowed: false }).allowed, false);
+  assert.equal(evaluatePermission(principal(["AUDITOR"]), permission, [snapshot(roleTarget("AUDITOR"), permission, "GLOBAL")], { ...context, globalAllowed: true }).allowed, false);
 });
 
 test("CRMY-169 TEAM for a Manager requires explicit responsibility without denying another role's membership", () => {

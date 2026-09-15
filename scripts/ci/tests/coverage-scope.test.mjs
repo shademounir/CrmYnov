@@ -34,6 +34,7 @@ test("canonical coverage remaps before the unchanged filters and is used by CI",
   const runner = await read("scripts/ci/coverage-runner.mjs");
   assert.match(runner, /npm\(\["test"\]\)/);
   assert.match(runner, /await postgresProofs\(\)/);
+  assert.match(runner, /leadWorkflowPostgresProofs\(\)/);
   assert.match(runner, /coverage_instrumentation_required/);
   assert.match(runner, /coverage_database_identity_mismatch/);
   assert.match(runner, /coverage_database_not_empty/);

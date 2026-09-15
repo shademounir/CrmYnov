@@ -30,5 +30,6 @@ test("controller delegates creation with correlation and fails without principal
   const controller = new LeadController(new LeadService(new AuditService()));
   const result = await controller.create(input, { principal, header: () => "corr-controller" } as never);
   assert.equal(result.lead.firstName, "Camille");
+  await assert.rejects(() => controller.create({ ...input, idempotencyKey: "short" }, { principal, header: () => "corr-invalid-key" } as never), hasCode("lead_create_idempotency_invalid"));
   await assert.rejects(() => controller.create(input, { header: () => undefined } as never), hasCode("principal_missing"));
 });

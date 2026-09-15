@@ -24,7 +24,7 @@ test("CRMY-169 responsive role editor: preview, cancel, save, conflict, history 
   });
   await page.goto("/admin/roles");
   await expect(page.getByRole("heading", { name: "Rôles et permissions", exact: true })).toBeVisible();
-  const toggle = page.getByRole("switch", { name: "Activer lead.edit", exact: true });
+  const toggle = page.getByRole("listitem").filter({ hasText: "Corriger les informations d’un Lead" }).getByRole("switch", { name: "Activer cette capacité", exact: true });
   await expect(toggle).toBeEnabled();
   await toggle.uncheck(); await page.getByRole("button", { name: "Prévisualiser les changements" }).click();
   await expect(page.getByRole("heading", { name: "Aperçu avant enregistrement" })).toBeVisible();
@@ -36,7 +36,7 @@ test("CRMY-169 responsive role editor: preview, cancel, save, conflict, history 
   await page.getByRole("button", { name: "Enregistrer la nouvelle version" }).click();
   await expect(page.getByRole("button", { name: "Restaurer la version 1" })).toBeVisible(); expect(writes).toBe(1);
   await page.getByRole("button", { name: "Expliquer mes droits dans ce contexte" }).click();
-  await expect(page.getByRole("heading", { name: "Mes permissions effectives" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Mes droits effectifs" })).toBeVisible();
   await page.getByRole("button", { name: "Restaurer la version 1" }).click();
   await expect(page.getByRole("heading", { name: "Confirmer la restauration de v1 ?" })).toBeVisible();
   await page.getByRole("button", { name: "Confirmer la restauration", exact: true }).click();
@@ -51,7 +51,7 @@ test("CRMY-169 responsive role editor: preview, cancel, save, conflict, history 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText("Lecteur : les permissions de mutation sont structurellement non attribuables.")).toBeVisible();
   const size = await toggle.boundingBox(); expect(size?.width).toBeGreaterThanOrEqual(44); expect(size?.height).toBeGreaterThanOrEqual(44);
-  await page.getByLabel("Rechercher une permission", { exact: true }).fill("unknown-permission");
+  await page.getByLabel("Rechercher une capacité", { exact: true }).fill("unknown-permission");
   await expect(page.getByText("Aucune permission correspondant à la recherche.")).toBeVisible();
 });
 

@@ -24,6 +24,13 @@ const defaultRoles: Record<string, readonly Role[]> = {
 export function defaultRoleScope(role: Role, permission: string): PermissionScope {
   const item = definition(permission);
   if (!item?.available || role === "AUDITOR" && item.mutation) return "NONE";
+  // Catalogue v2: qualification is an explicit administrative capability.
+  // Other roles stay denied until a separate, persisted delegation is approved.
+  if (permission === "lead.qualification.update") {
+    if (role === "SUPER_ADMIN") return "GLOBAL";
+    if (role === "ADMIN") return "CAMPUS";
+    return "NONE";
+  }
   const viewScope = viewDefaultScope(role, permission);
   if (viewScope !== undefined) return viewScope;
   if (role === "SUPER_ADMIN") return "GLOBAL";

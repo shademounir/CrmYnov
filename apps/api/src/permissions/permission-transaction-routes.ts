@@ -4,6 +4,7 @@ import type { PermissionTransactionMode } from "./permission-fence.js";
 const readers: Readonly<Record<string, readonly string[]>> = {
   LeadController: ["list", "detail"],
   LeadTimelineController: ["list"],
+  LeadQualificationController: ["read"],
   ReassignmentController: ["list"],
   ClosureController: ["list"],
   LeadCollaborationController: ["list"],

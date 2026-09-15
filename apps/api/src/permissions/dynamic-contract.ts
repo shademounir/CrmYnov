@@ -3,11 +3,12 @@ import { isRole, type Role } from "../auth/auth.types.js";
 import { viewGrantKeys } from "./view-grants.js";
 
 export const scopes = ["NONE", "OWN", "TEAM", "CAMPUS", "GLOBAL"] as const;
+export const permissionCatalogueVersion = 2;
 export type PermissionScope = typeof scopes[number];
 export type ConfigurationKind = "CEILING" | "ROLE";
 export interface PermissionDefinition { key: string; module: string; mutation: boolean; sensitive: boolean; scopes: readonly PermissionScope[]; reserved: boolean; available: boolean }
 const keys = [
-  "lead.view", "lead.create", "lead.edit", "lead.assign", "lead.reassign.request", "lead.reassign.approve", "lead.close.request", "lead.close.approve", "lead.tags.assign", "lead.collaborators.manage",
+  "lead.view", "lead.create", "lead.edit", "lead.qualification.update", "lead.assign", "lead.reassign.request", "lead.reassign.approve", "lead.close.request", "lead.close.approve", "lead.tags.assign", "lead.collaborators.manage",
   "lead.tags.manage", "lead.references.view", "lead.references.manage", "lead.references.archive", "interaction.create", "interaction.view", "reminder.manage", "appointment.manage",
   "import.view", "import.execute", "import.confirm", "import.review.resolve", "import.report.export", "reporting.view", "reporting.export", "reporting.global.view",
   "users.view", "users.create", "users.edit", "users.disable", "users.roles.assign", "roles.permissions.view", "roles.permissions.manage", "settings.campus.manage", "settings.global.manage",
@@ -29,10 +30,18 @@ export type Grants = Record<string, PermissionScope>;
  * Only a complete old catalogue is upgradeable; malformed/partial grants fail closed.
  */
 export function historicalGrants(value: Record<string, string>, target: ConfigurationTarget): Grants {
-  const oldKeys = keys.filter((key) => !(viewGrantKeys as readonly string[]).includes(key));
+  const qualificationKey = "lead.qualification.update";
+  const previousKeys = keys.filter((key) => key !== qualificationKey);
+  const beforeViewsKeys = keys.filter((key) => !(viewGrantKeys as readonly string[]).includes(key));
+  const beforeViewsAndQualificationKeys = beforeViewsKeys.filter((key) => key !== qualificationKey);
   const names = Object.keys(value);
-  const legacy = names.length === oldKeys.length && oldKeys.every((key) => Object.hasOwn(value, key));
-  const expanded = legacy ? { ...Object.fromEntries(viewGrantKeys.map((key) => [key, "NONE"])), ...value } : value;
+  const isExactCatalogue = (catalogue: readonly string[]): boolean => names.length === catalogue.length && catalogue.every((key) => Object.hasOwn(value, key));
+  const beforeViews = isExactCatalogue(beforeViewsKeys);
+  const beforeViewsAndQualification = isExactCatalogue(beforeViewsAndQualificationKeys);
+  const beforeQualification = isExactCatalogue(previousKeys);
+  const expanded = beforeViews || beforeViewsAndQualification
+    ? { ...Object.fromEntries(viewGrantKeys.map((key) => [key, "NONE"])), ...(beforeViewsAndQualification ? { [qualificationKey]: "NONE" } : {}), ...value }
+    : beforeQualification ? { [qualificationKey]: "NONE", ...value } : value;
   validateGrants(expanded, target);
   return expanded;
 }

@@ -4,6 +4,7 @@ import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService, leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 
 export const FUNNEL_DEFINITION_VERSION = "commercial-funnel-v1";
 export const FUNNEL_TIMEZONE = "Africa/Casablanca";
@@ -12,6 +13,7 @@ export interface CommercialFunnel {
   definitionVersion: string; timezone: string; generatedAt: string;
   cohort: { from?: string; to?: string; totalUniqueLeads: number };
   currentState: Record<LeadStatus, number>;
+  temperatureDistribution: Record<LeadTemperature, number>;
   attainment: { contactedOrBeyond: number; qualifiedOrBeyond: number; enrolled: number };
   rates: { contactedOrBeyond: number | null; qualifiedOrBeyond: number | null; enrolled: number | null };
   breakdowns: Record<"campus" | "campaign" | "program" | "source", Array<{ value: string; count: number }>>;
@@ -35,6 +37,7 @@ export class CommercialFunnelService {
       .map((lead) => [lead.id, lead]));
     const rows = [...unique.values()];
     const currentState = Object.fromEntries(leadStatuses.map((status) => [status, rows.filter((lead) => lead.status === status).length])) as Record<LeadStatus, number>;
+    const temperatureDistribution = Object.fromEntries(leadTemperatures.map((temperature) => [temperature, rows.filter((lead) => lead.temperature === temperature).length])) as Record<LeadTemperature, number>;
     const total = rows.length;
     const attainment = {
       contactedOrBeyond: currentState.CONTACTED + currentState.QUALIFIED + currentState.ENROLLED,
@@ -44,11 +47,12 @@ export class CommercialFunnelService {
     const rate = (value: number): number | null => total === 0 ? null : Number((value / total).toFixed(4));
     const result: CommercialFunnel = {
       definitionVersion: FUNNEL_DEFINITION_VERSION, timezone: FUNNEL_TIMEZONE, generatedAt: new Date().toISOString(),
-      cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), totalUniqueLeads: total }, currentState, attainment,
+      cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), totalUniqueLeads: total }, currentState, temperatureDistribution, attainment,
       rates: { contactedOrBeyond: rate(attainment.contactedOrBeyond), qualifiedOrBeyond: rate(attainment.qualifiedOrBeyond), enrolled: rate(attainment.enrolled) },
       breakdowns: { campus: this.breakdown(rows, "campus"), campaign: this.breakdown(rows, "campaign"), program: this.breakdown(rows, "program"), source: this.breakdown(rows, "source") },
       definitions: [
         { key: "currentState", formula: "count(distinct lead.id) grouped by current status", denominator: "selected cohort", exclusions: ["historical statuses", "deleted records"] },
+        { key: "temperatureDistribution", formula: "latest human qualification per lead, or UNEVALUATED when absent", denominator: "selected cohort", exclusions: ["automatic inference", "historical spreadsheet values"] },
         { key: "contactedOrBeyond", formula: "CONTACTED + QUALIFIED + ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST", "PROSPECT"] },
         { key: "qualifiedOrBeyond", formula: "QUALIFIED + ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST", "CONTACTED", "PROSPECT"] },
         { key: "enrolled", formula: "ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST"] },

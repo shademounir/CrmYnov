@@ -15,6 +15,16 @@ const terraformRoot = resolve(repository, "infra/bootstrap/foundation");
 const shell = process.platform === "win32" ? "powershell.exe" : "pwsh";
 const windowsOnly = { skip: process.platform !== "win32" };
 
+function shellEnvironment(overrides = {}) {
+  const env = { ...process.env, ...overrides };
+  // Codex may prepend PowerShell 7 modules to PSModulePath. Windows PowerShell
+  // can discover that incompatible module first and then lose Get-FileHash.
+  if (process.platform === "win32" && typeof env.PSModulePath === "string") {
+    env.PSModulePath = env.PSModulePath.split(";").filter(path => !/\\codex-runtimes\\.+\\native\\powershell\\Modules$/i.test(path)).join(";");
+  }
+  return env;
+}
+
 function parseSummary(result) {
   const line = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
   return JSON.parse(line);
@@ -23,7 +33,7 @@ function parseSummary(result) {
 function invokeSynthetic(path = positive, failure = "None", env = {}) {
   return spawnSync(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", wrapper, "-SyntheticFixture", "-FixturePath", path, "-SyntheticFailure", failure], {
     encoding: "utf8",
-    env: { ...process.env, ...env, GOOGLE_APPLICATION_CREDENTIALS: "", CLOUDSDK_CORE_PROJECT: "" },
+    env: shellEnvironment({ ...env, GOOGLE_APPLICATION_CREDENTIALS: "", CLOUDSDK_CORE_PROJECT: "" }),
   });
 }
 
@@ -49,15 +59,14 @@ function invokeContract({ scenario = "success", expectedSha, tfvarsMode = "valid
   ];
   const result = spawnSync(shell, args, {
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: shellEnvironment({
       TF_DATA_DIR: inheritedTfDataDir ?? process.env.TF_DATA_DIR,
       FAKE_TERRAFORM_SCENARIO: scenario,
       FAKE_TERRAFORM_LOG: log,
       FAKE_TERRAFORM_FIXTURE: positive,
       GOOGLE_APPLICATION_CREDENTIALS: "",
       CLOUDSDK_CORE_PROJECT: "",
-    },
+    }),
   });
   const calls = readdirSync(harness).includes("terraform-calls.jsonl")
     ? readFileSync(log, "utf8").trim().split(/\r?\n/).filter(Boolean).map(JSON.parse)

@@ -1,14 +1,25 @@
-import { BadRequestException, Body, Controller, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, ConflictException, Controller, Get, Inject, Optional, Param, Post, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import type { LeadRecord } from "../leads/lead.service.js";
 import { LeadAssignmentService, type AssignmentBatchResult, type AssignmentPreviewItem, type BatchAssignmentInput } from "./lead-assignment.service.js";
+import { PersistentAssignmentService, type AssignmentCandidateOption } from "./persistent-assignment.service.js";
 
 @Controller()
 @UseGuards(RbacGuard)
 @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
 export class LeadAssignmentController {
-  constructor(@Inject(LeadAssignmentService) private readonly assignments: LeadAssignmentService) {}
+  constructor(
+    @Inject(LeadAssignmentService) private readonly assignments: LeadAssignmentService,
+    @Optional() @Inject(PersistentAssignmentService) private readonly persistent?: PersistentAssignmentService,
+  ) {}
+
+  @Get("leads/:leadId/assignment-candidates")
+  @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
+  async candidates(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): Promise<{ candidates: AssignmentCandidateOption[] }> {
+    if (!this.persistent) throw new ConflictException({ code: "persistent_assignment_unavailable" });
+    return { candidates: await this.persistent.candidateOptions(leadId, this.principal(request)) };
+  }
 
   @Post("leads/:leadId/assignment")
   async assignOne(@Param("leadId") leadId: string, @Body() body: { targetUserId: string; confirmed?: boolean; idempotencyKey: string }, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {

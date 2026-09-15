@@ -38,6 +38,9 @@ function response(status: number, body: unknown = {}): Response {
 
 test("recognizes only the active CRM route", () => {
   assert.equal(isActive("/leads", "/leads"), true);
+  assert.equal(isActive("/leads", "/leads", "view=FOLLOW_UP"), false);
+  assert.equal(isActive("/leads", "/leads?view=FOLLOW_UP", "view=FOLLOW_UP"), true);
+  assert.equal(isActive("/leads", "/leads?view=FOLLOW_UP", "view=MINE"), false);
   assert.equal(isActive("/leads/123", "/leads"), false);
   assert.equal(isActive("/appointments/123", "/appointments"), true);
   assert.equal(isActive("/manager/reports/dashboard", "/manager/reports/dashboard"), true);
@@ -83,6 +86,17 @@ test("renders the responsive shell and every explicit search state", () => {
   for (const [state, copy] of states) assert.match(renderShell(state), new RegExp(copy));
 
   assert.doesNotMatch(renderShell({ kind: "closed", items: [] }), /Résultats de la recherche globale/);
+});
+
+test("marks only Relances active for the follow-up queue", () => {
+  const followUp = renderShell({ kind: "closed", items: [] }, {
+    pathname: "/leads",
+    locationSearch: "view=FOLLOW_UP",
+  });
+  assert.match(followUp, /class="active" aria-current="page" href="\/leads\?view=FOLLOW_UP"/u);
+  assert.match(followUp, /Page actuelle : Relances/u);
+  assert.doesNotMatch(followUp, /href="\/leads" class="active"/u);
+  assert.equal((followUp.match(/aria-current="page"/gu) ?? []).length, 1);
 });
 
 test("renders the client shell initial state and bypasses chrome on authentication routes", () => {

@@ -39,7 +39,7 @@ async function startApi(t: TestContext, database: string): Promise<string> {
   t.after(async (): Promise<void> => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((done) => child.once("exit", () => done()));
-    if (instrumented) child.send("flush-coverage");
+    if (instrumented && child.connected) child.send({ type: "crmy-coverage-shutdown" });
     else child.kill();
     await closed;
     if (coverageDirectory) {

@@ -60,6 +60,31 @@ test("CRMY-169 ephemeral PostgreSQL: authorization, versions, restore, rollback 
   const target: ConfigurationTarget = { ...globalTarget, campus: campusId };
   function change(target: ConfigurationTarget, grants: Grants, expectedVersion = 0): ConfigurationInput { return { ...target, grants, expectedVersion, confirmed: true, reason: "ACCESS_REVIEW" }; }
   const lead = await client.lead.create({ data: { leadCode: `SYN-${marker}`, firstName: "Lead", lastName: "Synthétique", campus: `SYN-${marker}`, campaign: "SYNTHETIC", program: "SYNTHETIC", educationLevel: "BAC", source: "TEST", assignedToId: adviser.userId } });
+  await t.test("catalogue v2 upgrades a persisted Admin configuration once, with version and audit", async () => {
+    const legacyTarget: ConfigurationTarget = { kind: "ROLE", role: "ADMIN", campus: campusId };
+    const id = configurationKey(legacyTarget);
+    const legacy = Object.entries(defaultConfiguration(legacyTarget)).filter(([permission]) => permission !== "lead.qualification.update");
+    await client.rolePermissionConfiguration.create({ data: { id, kind: legacyTarget.kind, role: legacyTarget.role, campus: legacyTarget.campus, version: 1, versions: { create: { number: 1, grants: { create: legacy.map(([permission, scope]) => ({ permission, scope })) } } } } });
+    const upgrades = await Promise.all([repository.upgradeQualificationCatalogue(), new DynamicPermissionRepository(secondPrisma).upgradeQualificationCatalogue()]);
+    assert.equal(upgrades.reduce((sum, count) => sum + count, 0), 1);
+    const stored = await client.rolePermissionConfiguration.findUniqueOrThrow({ where: { id }, include: { versions: { orderBy: { number: "asc" }, include: { grants: true, audits: true } } } });
+    assert.equal(stored.version, 2); assert.equal(stored.versions[0]?.grants.some((grant) => grant.permission === "lead.qualification.update"), false);
+    assert.equal(stored.versions[1]?.grants.find((grant) => grant.permission === "lead.qualification.update")?.scope, "CAMPUS");
+    assert.equal(stored.versions[1]?.audits[0]?.reason, "CATALOGUE_UPGRADE");
+    assert.equal(await repository.upgradeQualificationCatalogue(), 0);
+  });
+  await t.test("Admin and Super Admin qualify in scope; persisted revocation reaches another instance", async () => {
+    const resource = await leadResource(client, lead.id);
+    assert.equal((await service.decision(admin, "lead.qualification.update", resource)).allowed, true);
+    assert.equal((await service.decision(superAdmin, "lead.qualification.update", resource)).allowed, true);
+    const adminTarget: ConfigurationTarget = { kind: "ROLE", role: "ADMIN", campus: campusId };
+    const current = await service.read(superAdmin, adminTarget);
+    await service.save(superAdmin, change(adminTarget, { ...current.grants, "lead.qualification.update": "NONE" }, current.version));
+    assert.equal((await second.decision(admin, "lead.qualification.update", resource)).allowed, false);
+    const revoked = await service.read(superAdmin, adminTarget);
+    await service.restore(superAdmin, { ...adminTarget, restoreVersion: current.version, expectedVersion: revoked.version, reason: "RESTORE_VERSION", confirmed: true });
+    assert.equal((await second.decision(admin, "lead.qualification.update", resource)).allowed, true);
+  });
   await t.test("fresh identity, current TEAM/OWN and withdrawn collaboration", async () => {
     const evaluate = async (who: Principal): Promise<Awaited<ReturnType<typeof resourceEvaluationContext>>> => repository.transaction(async (tx) => resourceEvaluationContext(tx, await currentPrincipal(tx, who), await leadResource(tx, lead.id)));
     assert.equal((await evaluate(manager)).team, true); assert.equal((await evaluate(adviser)).own, true);
