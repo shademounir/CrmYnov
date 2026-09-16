@@ -7,6 +7,7 @@ import {
   AppShellView,
   isActive,
   loadSearchResults,
+  loadUnreadNotificationCount,
   searchItems,
   type SearchState,
 } from "../app/_components/app-shell.js";
@@ -64,6 +65,16 @@ test("loads every bounded global-search state", async () => {
   assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(401))) as typeof fetch).then((value) => value.kind), "session");
   assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(403))) as typeof fetch).then((value) => value.kind), "forbidden");
   assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(503))) as typeof fetch).then((value) => value.kind), "error");
+});
+
+test("uses the API unread count instead of a static badge", async () => {
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: 3 }))) as typeof fetch), 3);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: -2 }))) as typeof fetch), 0);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(401))) as typeof fetch), undefined);
+  const withBadge = renderShell({ kind: "closed", items: [] }, { unreadNotifications: 3 });
+  assert.match(withBadge, /3 non lues/);
+  assert.match(withBadge, /notification-dot/);
+  assert.doesNotMatch(renderShell({ kind: "closed", items: [] }, { unreadNotifications: 0 }), /notification-dot/);
 });
 
 test("renders the responsive shell and every explicit search state", () => {

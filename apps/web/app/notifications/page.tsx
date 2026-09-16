@@ -1,3 +1,16 @@
-import { ConnectedResource } from "../_components/connected-resource";
+import { Bell } from "@phosphor-icons/react/dist/ssr";
+import { NotificationCenter } from "./notification-center";
 
-export default function NotificationsPage(): React.JSX.Element { return <main><h1>Centre de notifications</h1><p>Notifications internes persistantes, sans canal externe.</p><ConnectedResource endpoint="/api/crm/notifications?page=1&pageSize=25" ariaLabel="Notifications paginées" emptyMessage="Aucune notification." fields={[{ key: "type", label: "Type" }, { key: "priority", label: "Priorité" }, { key: "resourceType", label: "Ressource" }, { key: "createdAt", label: "Créée le" }, { key: "readAt", label: "Lecture" }]} /><p>La lecture et l’action « Tout marquer comme lu » sont contrôlées par l’API.</p></main>; }
+export default function NotificationsPage(): React.JSX.Element {
+  return <main className="notifications-page">
+    <header className="ui-page-header notifications-page__header">
+      <div>
+        <p className="eyebrow">Travail quotidien · Alertes internes</p>
+        <h1>Centre de notifications</h1>
+        <p>Retrouvez les événements qui demandent votre attention, sans modifier vos droits sur les dossiers.</p>
+      </div>
+      <span className="notifications-page__icon" aria-hidden="true"><Bell size={24} /></span>
+    </header>
+    <NotificationCenter />
+  </main>;
+}
