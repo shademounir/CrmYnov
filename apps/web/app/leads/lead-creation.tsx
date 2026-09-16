@@ -116,7 +116,7 @@ export function LeadCreationForm({ onCancel, onDirtyChange }: Readonly<{ onCance
         <CheckCircle size={24} weight="fill" aria-hidden="true" />
         <div><strong>{created.leadCode} a bien été créé.</strong><p>L’écriture est confirmée par l’API. Ouvrez la fiche pour poursuivre le suivi.</p>
           {duplicateCandidates.length ? <p className="lead-create-collision"><Warning size={17} aria-hidden="true" /> {duplicateCandidates.length} correspondance{duplicateCandidates.length > 1 ? "s" : ""} potentielle{duplicateCandidates.length > 1 ? "s" : ""} détectée{duplicateCandidates.length > 1 ? "s" : ""}. Aucun dossier n’a été fusionné.</p> : null}
-          <div className="lead-create-success-actions"><Link className="primary-button" href={`/leads/${encodeURIComponent(created.id)}`}>Ouvrir la fiche</Link><Link className="secondary-button" href={`/leads?search=${encodeURIComponent(created.leadCode)}`}>Voir dans la liste</Link></div>
+          <div className="lead-create-success-actions"><Link className="primary-button" href={`/leads/${encodeURIComponent(created.id)}`}>Ouvrir la fiche</Link><a className="secondary-button" href={`/leads?search=${encodeURIComponent(created.leadCode)}`}>Voir dans la liste</a></div>
         </div>
       </div> : null}
     </div>

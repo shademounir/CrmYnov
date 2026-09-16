@@ -35,6 +35,29 @@ test("synthetic governed reference form and tags are responsive and keyboard-acc
   expect(errors).toEqual([]);
 });
 
+test("the creation drawer opens the filtered list with a document navigation", async ({ page }) => {
+  const campus = { id: "00000000-0000-4000-8000-000000000461", code: "SYNTHETIC", label: "Campus synthétique", kind: "CAMPUS", scope: "GLOBAL", campusId: null, state: "ACTIVE", version: 1 };
+  const lead = { id: "00000000-0000-4000-8000-000000000462", leadCode: "LD-SYNTHETIC-LIST", firstName: "Lead", lastName: "Liste", status: "PROSPECT", temperature: "UNEVALUATED", temperatureLabel: "Non évalué", program: "B1" };
+  await page.route("**/api/crm/**", (route) => route.fulfill({ json: { items: [] } }));
+  await page.route("**/api/crm/references?*", async (route) => { const kind = new URL(route.request().url()).searchParams.get("kind"); await route.fulfill({ json: { items: [{ ...campus, kind, code: kind === "PROGRAM" ? "B1" : "SYNTHETIC" }] } }); });
+  await page.route("**/api/crm/leads*", async (route) => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 201, json: { lead } });
+    else await route.fulfill({ json: { items: [lead] } });
+  });
+  await page.setViewportSize({ width: 820, height: 900 });
+  await page.goto("/leads"); await page.getByRole("button", { name: "Nouveau Lead", exact: true }).click();
+  await page.getByRole("combobox", { name: "Campus", exact: true }).selectOption("SYNTHETIC");
+  await page.getByRole("combobox", { name: "Formation", exact: true }).selectOption("B1");
+  await page.getByRole("combobox", { name: "Campagne", exact: true }).selectOption("SYNTHETIC");
+  for (const [label, value] of [["Prénom", "Lead"], ["Nom", "Liste"], ["Niveau d’études", "BAC"], ["Source du Lead", "TEST"]] as const) await page.getByRole("textbox", { name: label, exact: true }).fill(value);
+  await page.getByRole("button", { name: "Créer le Lead", exact: true }).click();
+  await expect(page.getByText("LD-SYNTHETIC-LIST a bien été créé.", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Voir dans la liste", exact: true }).click();
+  await expect(page).toHaveURL(/\/leads\?search=LD-SYNTHETIC-LIST$/u);
+  await expect(page.getByRole("dialog", { name: "Créer un Lead" })).toBeHidden();
+  await expect(page.getByText("LD-SYNTHETIC-LIST", { exact: true })).toBeVisible();
+});
+
 test("reference administration archives/restores and uses the server availability version", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message)); page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   const campus = { id: "00000000-0000-4000-8000-000000000451", code: "SYNTHETIC", label: "Campus synthétique", kind: "CAMPUS", scope: "GLOBAL", campusId: null, state: "ACTIVE", version: 1 };
