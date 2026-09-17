@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import { LeadAssignmentDrawer } from "./lead-assignment-drawer";
 import { LeadFollowUpDrawer } from "./lead-follow-up-drawer";
 import { LeadInteractionDrawer } from "./lead-interaction-drawer";
+import { LeadCallDrawer } from "./lead-call-drawer";
 import { LeadQualificationDrawer } from "./lead-qualification-drawer";
 import { LeadStatusDrawer } from "./lead-status-drawer";
 import { LeadEditDrawer } from "./lead-edit-workflow";
@@ -330,6 +331,7 @@ function ProfileActions({ lead, onLeadChanged, onLeadEdited }: Readonly<{
   const assignmentTriggerId = `lead-assignment-${lead.id}`;
   return <nav className="lead-profile__actions" aria-label="Actions principales du lead">
     <LeadEditDrawer lead={lead} {...(onLeadEdited ? { onCompleted: onLeadEdited } : {})} />
+    <LeadCallDrawer leadId={lead.id} leadCode={lead.leadCode} {...(lead.phone ? { phone: lead.phone } : {})} {...completionProps(onLeadChanged, "Commande d’appel enregistrée et état relu depuis le serveur.")} />
     <LeadInteractionDrawer leadId={lead.id} leadCode={lead.leadCode} {...completionProps(onLeadChanged, "Interaction enregistrée dans l’historique protégé.")} />
     <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} triggerId={assignmentTriggerId} {...completionProps(onLeadChanged, lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.")} />
     <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...completionProps(onLeadChanged, "Étape commerciale enregistrée.")} />

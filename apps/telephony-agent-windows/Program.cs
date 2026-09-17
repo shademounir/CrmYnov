@@ -1,0 +1,145 @@
+using System.Security.Cryptography;
+using System.Text;
+
+namespace CrmYnov.TelephonyAgent;
+
+internal static class Program
+{
+    private const string Version = "0.1.0-pilot";
+    private const string SdkVersion = "5.5.21";
+    public static async Task<int> Main(string[] args)
+    {
+        Console.OutputEncoding = Encoding.UTF8;
+        var command = args.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        try
+        {
+            // Loading the official SDK must remain a read-only diagnostic: it must
+            // not create a local profile or touch a user's protected SIP state.
+            if (command == "native-check") return NativeCheck();
+            var store = new DpapiStore(); store.EnsureDirectory();
+            return command switch {
+                "pair" => await PairAsync(store),
+                "configure-secret" => ConfigureSecret(store),
+                "run" => await RunAsync(store),
+                _ => Status(store),
+            };
+        }
+        catch (Exception error) { Console.Error.WriteLine($"Agent indisponible : {SafeCode(error)}"); return 1; }
+    }
+
+    private static async Task<int> PairAsync(DpapiStore store)
+    {
+        Console.Write("URL API CRM (HTTPS, ou loopback HTTP en recette) : "); var api = Console.ReadLine()?.Trim() ?? "";
+        Console.Write("Code d’association temporaire : "); var code = ReadSecret();
+        Console.Write("Nom de ce poste : "); var name = Console.ReadLine()?.Trim() ?? Environment.MachineName;
+        var publicId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Environment.UserDomainName}|{Environment.UserName}|{Environment.MachineName}"))).ToLowerInvariant()[..32];
+        using var client = new CrmAgentClient(api); var paired = await client.PairAsync(new(code, publicId, name, Version, SdkVersion), CancellationToken.None);
+        store.Save(new(api, paired.Token, paired.WorkstationId, paired.Profile.Id, paired.Profile.SipAddress, paired.Profile.AuthUsername, paired.Profile.Server.SipDomain, paired.Profile.Server.ProxyUri, paired.Profile.Server.Transport, "", null, null));
+        Console.WriteLine("Poste associé. Le mot de passe SIP reste à configurer localement."); return 0;
+    }
+    private static int ConfigureSecret(DpapiStore store)
+    {
+        var settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
+        Console.Write("Mot de passe SIP (stocké par DPAPI pour cet utilisateur Windows) : "); var password = ReadSecret();
+        if (password.Length < 1) throw new InvalidOperationException("SIP_SECRET_EMPTY");
+        store.Save(settings with { SipPassword = password }); Console.WriteLine("Secret SIP protégé localement. Aucun test d’appel n’a été lancé."); return 0;
+    }
+    private static int NativeCheck()
+    {
+        var version = Linphone.LinphoneWrapper.VERSION;
+        _ = Linphone.Factory.Instance;
+        Console.WriteLine($"Liblinphone chargé : {version}. Aucun compte SIP et aucun appel utilisés."); return 0;
+    }
+    private static int Status(DpapiStore store)
+    {
+        var settings = store.Load();
+        Console.WriteLine(settings is null ? "Agent non associé." : $"Agent associé au poste {settings.WorkstationId}; SDK attendu {SdkVersion}; secret SIP {(settings.SipPassword.Length > 0 ? "présent" : "absent")}.");
+        return 0;
+    }
+    private static async Task<int> RunAsync(DpapiStore store)
+    {
+        var settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
+        if (settings.SipPassword.Length == 0) throw new InvalidOperationException("SIP_SECRET_MISSING");
+        var journal = new EventJournal(store.JournalPath);
+        using var client = new CrmAgentClient(settings.ApiBaseUrl, settings.AgentToken);
+        store.RemoveLegacyCoreConfig();
+        using var engine = new LinphoneEngine(settings, store.DataDirectory);
+        var pending = new Queue<AgentEvent>(journal.Pending);
+        engine.EventObserved += item => { journal.Add(item); lock (pending) pending.Enqueue(item); };
+        engine.StatusChanged += state => Console.WriteLine($"État : {state}");
+        engine.Start();
+        using var cancellation = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
+        Console.WriteLine("Agent actif. Commandes locales : devices, input N, output N, hangup, quit.");
+        var nextPoll = DateTimeOffset.MinValue; var nextStatus = DateTimeOffset.MinValue;
+        while (!cancellation.IsCancellationRequested)
+        {
+            engine.Iterate();
+            if (Console.KeyAvailable)
+            {
+                var line = Console.ReadLine()?.Trim() ?? "";
+                if (line.Equals("quit", StringComparison.OrdinalIgnoreCase)) break;
+                if (line.Equals("hangup", StringComparison.OrdinalIgnoreCase)) engine.Hangup();
+                if (line.Equals("devices", StringComparison.OrdinalIgnoreCase)) PrintDevices(engine);
+                if (TryDevice(line, "input", engine, true, store, ref settings) || TryDevice(line, "output", engine, false, store, ref settings)) { }
+            }
+            if (DateTimeOffset.UtcNow >= nextStatus)
+            {
+                await client.SendStatusAsync(new(engine.SipRegistered ? "CONNECTED" : "UNAVAILABLE", engine.SdkLoaded, engine.SipRegistered, settings.InputDeviceId, settings.OutputDeviceId, engine.SipRegistered ? null : "SIP_NOT_REGISTERED"), cancellation.Token);
+                nextStatus = DateTimeOffset.UtcNow.AddSeconds(10);
+            }
+            AgentEvent? item = null; lock (pending) { if (pending.Count > 0) item = pending.Dequeue(); }
+            if (item is not null)
+            {
+                try { await client.SendEventAsync(item, cancellation.Token); journal.Acknowledge(item); }
+                catch (HttpRequestException) { lock (pending) pending.Enqueue(item); }
+            }
+            if (DateTimeOffset.UtcNow >= nextPoll)
+            {
+                var response = await client.PollAsync(cancellation.Token); var command = response.Command;
+                if (command is not null)
+                {
+                    if (command.HangupRequested) engine.Hangup();
+                    else if (command.ExpiresAt <= DateTimeOffset.UtcNow) await RejectAsync(client, journal, command, "COMMAND_EXPIRED", cancellation.Token);
+                    else if (journal.HasSeen(command.CommandId)) await RejectAsync(client, journal, command, "LOCAL_REPLAY_BLOCKED", cancellation.Token);
+                    else
+                    {
+                        journal.MarkCommand(command.CommandId);
+                        try { engine.StartCall(command); }
+                        catch (InvalidOperationException error) { await RejectAsync(client, journal, command, SafeCode(error), cancellation.Token); }
+                    }
+                }
+                nextPoll = DateTimeOffset.UtcNow.AddSeconds(2);
+            }
+            try { await Task.Delay(20, cancellation.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { break; }
+        }
+        return 0;
+    }
+    private static async Task RejectAsync(CrmAgentClient client, EventJournal journal, AgentCommand command, string reason, CancellationToken cancellation)
+    {
+        var item = new AgentEvent("1", command.CommandId, command.CallId, $"agent-{Guid.NewGuid():N}", "FAILED", DateTimeOffset.UtcNow, reason); journal.Add(item); await client.SendEventAsync(item, cancellation); journal.Acknowledge(item);
+    }
+    private static void PrintDevices(LinphoneEngine engine)
+    {
+        var devices = engine.Devices; for (var index = 0; index < devices.Count; index++) Console.WriteLine($"{index}: {devices[index].DeviceName} [{devices[index].Capabilities}]");
+    }
+    private static bool TryDevice(string line, string prefix, LinphoneEngine engine, bool input, DpapiStore store, ref AgentSettings settings)
+    {
+        if (!line.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase) || !int.TryParse(line[(prefix.Length + 1)..], out var index)) return false;
+        var devices = engine.Devices; if (index < 0 || index >= devices.Count) { Console.WriteLine("Index de périphérique invalide."); return true; }
+        settings = input ? settings with { InputDeviceId = devices[index].Id } : settings with { OutputDeviceId = devices[index].Id };
+        store.Save(settings); engine.ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId); Console.WriteLine("Périphérique appliqué."); return true;
+    }
+    private static string ReadSecret()
+    {
+        var value = new StringBuilder(); ConsoleKeyInfo key;
+        while ((key = Console.ReadKey(true)).Key != ConsoleKey.Enter) { if (key.Key == ConsoleKey.Backspace && value.Length > 0) value.Length--; else if (!char.IsControl(key.KeyChar)) value.Append(key.KeyChar); }
+        Console.WriteLine(); return value.ToString();
+    }
+    private static string SafeCode(Exception error)
+    {
+        var value = error is HttpRequestException http && http.StatusCode is not null ? $"CRM_HTTP_{(int)http.StatusCode}" : error.Message;
+        return System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Z0-9_]{3,80}$") ? value : "AGENT_OPERATION_FAILED";
+    }
+}

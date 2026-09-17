@@ -1,0 +1,66 @@
+import assert from "node:assert/strict";
+import { randomBytes, randomUUID } from "node:crypto";
+import test from "node:test";
+import type { Principal } from "../../src/auth/auth.types.js";
+import { PrismaService } from "../../src/persistence/prisma.service.js";
+import { TelephonyAgentRepository } from "../../src/telephony/telephony-agent.repository.js";
+
+const enabled = process.env.CRMY165_AGENT_TEST === "true";
+const errorCode = (expected: string) => (failure: unknown): boolean => JSON.stringify((failure as { getResponse?: () => unknown }).getResponse?.()).includes(expected);
+
+test("pairs one workstation, encrypts and claims one command, then revokes its token", { skip: !enabled }, async () => {
+  const database = new URL(process.env.DATABASE_URL ?? "");
+  assert.ok(["127.0.0.1", "localhost"].includes(database.hostname));
+  assert.equal(database.pathname, "/crmy165_telephony_preview_20260916");
+  const previousKey = process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY;
+  process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+  const prisma = new PrismaService(); const client = prisma.client; assert.ok(client);
+  const repository = new TelephonyAgentRepository(prisma);
+  const suffix = randomUUID().slice(0, 8); const userId = randomUUID(); const callId = randomUUID();
+  const principal: Principal = { userId, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: randomUUID() };
+  let serverId: string | undefined; let profileId: string | undefined; let workstationId: string | undefined;
+  try {
+    await client.collaborator.create({ data: { id: userId, professionalEmail: `agent-${suffix}@example.invalid`, professionalDisplayName: "Agent synthétique", roles: ["SUPER_ADMIN"], active: true, firstLoginRequired: false } });
+    const server = await repository.upsertServerProfile({ name: `SIP ${suffix}`, sipDomain: "sip.example.invalid", transport: "TLS", enabled: true }, principal) as { id: string };
+    serverId = server.id;
+    const profile = await repository.upsertUserProfile({ userId, serverProfileId: serverId, sipAddress: `sip:agent-${suffix}@sip.example.invalid`, authUsername: `agent-${suffix}`, enabled: true }, principal) as { id: string };
+    profileId = profile.id;
+    const pairing = await repository.createPairingCode(profileId, principal);
+    const paired = await repository.pair({ code: pairing.code, publicId: `test-${suffix}`, displayName: "Poste synthétique", agentVersion: "0.1.0-pilot", sdkVersion: "5.5.21" }) as { token: string; workstationId: string };
+    workstationId = paired.workstationId;
+    await assert.rejects(() => repository.pair({ code: pairing.code, publicId: `replay-${suffix}`, displayName: "Rejeu synthétique", agentVersion: "0.1.0-pilot", sdkVersion: "5.5.21" }), errorCode("telephony_pairing_code_refused"));
+    const identity = await repository.authenticate(paired.token);
+    const firstStatus = await repository.status(identity, { connectionState: "CONNECTED", sdkLoaded: true, sipRegistered: true, inputDeviceId: "synthetic-input", outputDeviceId: "synthetic-output" }) as { version: number };
+    const secondStatus = await repository.status(identity, { connectionState: "CONNECTED", sdkLoaded: true, sipRegistered: true, inputDeviceId: "synthetic-input", outputDeviceId: "synthetic-output" }) as { version: number };
+    assert.equal(secondStatus.version, firstStatus.version, "a heartbeat must not create a new workstation version");
+    assert.equal((await repository.readiness(userId)).available, true);
+    await client.telephonyCall.create({ data: { id: callId, provider: "LINPHONE", externalId: randomUUID(), direction: "OUTBOUND", state: "REQUESTED", phoneFingerprint: "a".repeat(64), maskedPhone: "***165", dispatchState: "ACCEPTED", dispatchUpdatedAt: new Date(), matchState: "MATCHED", requestedAt: new Date(), createdBy: userId } });
+    await repository.enqueue(callId, userId, "+212600000165");
+    await repository.enqueue(callId, userId, "+212600000165");
+    assert.equal(await client.telephonyAgentCommand.count({ where: { callId } }), 1);
+    const stored = await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } });
+    assert.equal(JSON.stringify(stored).includes("+212600000165"), false);
+    const firstPoll = await repository.poll(identity); assert.equal(firstPoll.command?.destination, "+212600000165");
+    assert.equal((await repository.poll(identity)).command, null, "a claimed dialing command must not be redelivered");
+    await repository.assertEvent(identity, firstPoll.command!.commandId, callId, "FAILED");
+    await repository.markEventApplied(identity, callId, "FAILED");
+    assert.equal((await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } })).state, "TERMINAL");
+    await repository.revokeWorkstation(workstationId, principal);
+    await assert.rejects(() => repository.authenticate(paired.token), errorCode("telephony_agent_authentication_refused"));
+    const replacementCode = await repository.createPairingCode(profileId, principal);
+    const replacement = await repository.pair({ code: replacementCode.code, publicId: `test-${suffix}`, displayName: "Poste synthétique réassocié", agentVersion: "0.1.0-pilot", sdkVersion: "5.5.21" }) as { token: string; workstationId: string };
+    assert.equal(replacement.workstationId, workstationId, "a revoked physical workstation must be versioned rather than duplicated");
+    assert.equal(await client.telephonyWorkstation.count({ where: { publicId: `test-${suffix}` } }), 1);
+    assert.equal((await repository.authenticate(replacement.token)).workstationId, workstationId);
+  } finally {
+    await client.telephonyAgentCommand.deleteMany({ where: { callId } });
+    await client.telephonyCall.deleteMany({ where: { id: callId } });
+    if (profileId) await client.telephonyPairingCode.deleteMany({ where: { userProfileId: profileId } });
+    if (workstationId) await client.telephonyWorkstation.deleteMany({ where: { id: workstationId } });
+    if (profileId) await client.telephonyUserProfile.deleteMany({ where: { id: profileId } });
+    if (serverId) await client.telephonyServerProfile.deleteMany({ where: { id: serverId } });
+    await client.collaborator.deleteMany({ where: { id: userId } });
+    await prisma.onModuleDestroy();
+    if (previousKey === undefined) delete process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY; else process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY = previousKey;
+  }
+});

@@ -13,6 +13,7 @@ import {
   List,
   MagnifyingGlass,
   MapPin,
+  PhoneCall,
   SidebarSimple,
   UploadSimple,
   UsersThree,
@@ -40,6 +41,7 @@ const navigation = [
   { href: "/manager/reports/commercial-funnel", label: "Pipeline", icon: GitBranch },
   { href: "/leads?view=FOLLOW_UP", label: "Relances", icon: Alarm },
   { href: "/appointments", label: "Rendez-vous", icon: CalendarBlank },
+  { href: "/calls/queue", label: "Appels", icon: PhoneCall },
   { href: "/imports/wizard", label: "Imports", icon: UploadSimple },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/chat", label: "Chat", icon: ChatCircleDots },
@@ -47,6 +49,7 @@ const navigation = [
   { href: "/admin/users", label: "Administration", icon: Gear },
   { href: "/admin/references", label: "Référentiels", icon: Gear },
   { href: "/admin/roles", label: "Rôles et permissions", icon: Gear },
+  { href: "/admin/telephony", label: "Téléphonie", icon: PhoneCall },
   { href: "/admin/audit", label: "Journal d’audit", icon: List },
   { href: "/admin/scheduled-sheets", label: "Sheets planifié", icon: UploadSimple },
 ] as const;

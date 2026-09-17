@@ -1,6 +1,8 @@
+import { PhoneCall } from "@phosphor-icons/react/dist/ssr";
 import React from "react";
+import { LeadCalls } from "./lead-calls";
 
 export default async function LeadCallsPage({ params }: Readonly<{ params: Promise<{ leadId: string }> }>): Promise<React.JSX.Element> {
   const { leadId } = await params;
-  return <main><nav aria-label="Fil d’Ariane"><a href={`/leads/${leadId}`}>Dossier du lead</a> / Appels</nav><h1>Appels du lead</h1><p>Le numéro est masqué dans les éléments techniques : <strong>***123</strong>.</p><button type="button" disabled aria-describedby="provider-reason">Appeler</button><p id="provider-reason" role="status">Fournisseur réel non configuré. Utilisez le mode manuel/externe.</p><section aria-labelledby="current-call"><h2 id="current-call">Appel courant</h2><dl><dt>État</dt><dd>REQUESTED</dd><dt>Durée</dt><dd>Calculée depuis les événements structurés</dd><dt>Résultat</dt><dd>À renseigner</dd></dl><label>Commentaire de suivi<textarea name="followUpComment" maxLength={2000} /></label><label>Relance éventuelle<input type="datetime-local" name="nextActionAt" /></label></section><section><h2>Historique append-only</h2><ol><li>REQUESTED — événement synthétique</li><li>Les corrections sont ajoutées comme événements compensatoires.</li></ol></section><section><h2>Enregistrement</h2><p>UNAVAILABLE — aucune lecture, URL signée ou possibilité de téléchargement.</p></section></main>;
+  return <main className="calls-page lead-calls-page"><a className="back-link" href={`/leads/${encodeURIComponent(leadId)}`}>← Retour au dossier du Lead</a><header className="ui-page-header calls-page__header"><div><p className="eyebrow">Dossier · Téléphonie</p><h1>Historique des appels</h1><p>Les états techniques sont conservés sans exposer le numéro complet ni simuler un fournisseur réel.</p></div><span className="calls-page__icon" aria-hidden="true"><PhoneCall size={24} /></span></header><LeadCalls leadId={leadId} /></main>;
 }

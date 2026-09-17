@@ -5,7 +5,7 @@ import { AuditService } from "../src/audit/audit.service.js";
 import type { AuthenticatedRequest, Principal } from "../src/auth/auth.types.js";
 import { LeadService } from "../src/leads/lead.service.js";
 import { TelephonyController } from "../src/telephony/telephony.controller.js";
-import { DisabledTelephonyAdapter, ManualExternalTelephonyAdapter, SyntheticTelephonyAdapter } from "../src/telephony/telephony.adapter.js";
+import { DisabledTelephonyAdapter, LinphoneBridgeAdapter, ManualExternalTelephonyAdapter, SyntheticTelephonyAdapter } from "../src/telephony/telephony.adapter.js";
 import { TelephonyService } from "../src/telephony/telephony.service.js";
 
 const code = (expected: string) => (error: unknown): boolean => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes(expected);
@@ -35,9 +35,41 @@ test("matches inbound calls uniquely, queues collisions and requires a human con
   const absent = service.ingestSyntheticIncoming({ provider: "MANUAL_EXTERNAL", externalId: "incoming-absent", phone: "+212699999999", idempotencyKey: "incoming-absent-1", occurredAt: "2026-08-25T11:10:00Z" }, adviser, "absent"); assert.equal(absent.matchState, "UNMATCHED"); service.receiveEvent(absent.id, { idempotencyKey: "absent-ring-0001", state: "RINGING", occurredAt: "2026-08-25T11:10:01Z" }, adviser, "ring"); service.receiveEvent(absent.id, { idempotencyKey: "absent-missed-01", state: "MISSED", occurredAt: "2026-08-25T11:10:02Z" }, adviser, "missed"); assert.equal(service.queue(adviser).missed.length, 1); assert.equal(service.recording(unique.id, admin, "recording").state, "UNAVAILABLE"); assert.throws(() => service.recording(unique.id, adviser, "denied"), code("recording_not_found"));
 });
 
+test("lists persisted-style lead calls and exposes only safe association candidates", async () => {
+  const { service, leads, first } = fixture(); const admin = principal("manager", ["SUPER_ADMIN"]); const adviser = principal("adviser", ["ADMISSIONS"]); configure(service, admin);
+  leads.registerLocalLead({ leadCode: "LD-TEL-DUP-2", firstName: "Second", lastName: "Synthetic", phone: "+212600000148", campus: "campus-a", campaign: "Synthetic", educationLevel: "BAC", program: "Program", source: "MANUAL" });
+  const collision = service.ingestSyntheticIncoming({ provider: "MANUAL_EXTERNAL", externalId: "incoming-candidate", phone: "+212600000148", idempotencyKey: "incoming-candidate-1", occurredAt: "2026-08-25T11:00:00Z" }, adviser, "candidate");
+  const candidates = await service.associationCandidatesForApi(collision.id, admin, "candidate-list");
+  assert.equal(candidates.items.length, 2); assert.deepEqual(Object.keys(candidates.items[0] ?? {}).sort(), ["campus", "displayName", "id", "leadCode"]);
+  assert.equal(JSON.stringify(candidates).includes("+212600000148"), false);
+  const linked = await service.confirmAssociationForApi(collision.id, first.id, admin, "candidate-confirm");
+  assert.equal(linked.matchState, "CONFIRMED"); assert.equal((await service.callsForLeadForApi(first.id, admin, "lead-calls")).items.length, 1);
+  assert.equal((await service.associationCandidatesForApi(linked.id, admin, "candidate-after")).items.length, 0);
+});
+
 test("keeps webhook disabled while testing synthetic HMAC and adapter contracts", () => {
   const { service } = fixture(); const payload = JSON.stringify({ event: "synthetic" }); const timestamp = "1787644800"; const secret = "synthetic-telephony-secret"; const signature = `sha256=${createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex")}`; assert.equal(service.verifySyntheticSignature(payload, timestamp, signature, secret), true); assert.equal(service.verifySyntheticSignature(payload, timestamp, signature.replace(/.$/, "0"), secret), false); assert.equal(service.webhookStatus().enabled, false); assert.throws(() => service.rejectRealWebhook(), code("telephony_webhook_disabled"));
   const manual = new ManualExternalTelephonyAdapter(); const receipt = manual.initiate({ direction: "OUTBOUND", phoneFingerprint: "f".repeat(64), correlationId: "adapter" }); assert.equal(manual.state(receipt.externalId).configured, true); assert.equal(manual.cancel(receipt.externalId).accepted, true); const synthetic = new SyntheticTelephonyAdapter(); assert.match(synthetic.initiate({ direction: "OUTBOUND", phoneFingerprint: "f".repeat(64), correlationId: "synthetic" }).externalId, /^synthetic-/); for (const provider of ["COOVOX", "LINPHONE"] as const) { const disabled = new DisabledTelephonyAdapter(provider); assert.equal(disabled.available, false); assert.throws(() => disabled.cancel("opaque"), code("provider_not_configured")); }
+});
+
+test("signs one bounded Linphone bridge command and classifies definite versus uncertain outcomes", async () => {
+  const secret = "synthetic-bridge-secret-that-is-long-enough"; let observedBody = ""; let observedSignature = "";
+  const acceptedFetch: typeof fetch = (_input, init) => {
+    observedBody = typeof init?.body === "string" ? init.body : ""; observedSignature = new Headers(init?.headers).get("x-crm-bridge-signature") ?? "";
+    return Promise.resolve(new Response(JSON.stringify({ accepted: true, commandId: "00000000-0000-4000-8000-000000000165", bridgeVersion: "synthetic-1" }), { status: 200, headers: { "content-type": "application/json" } }));
+  };
+  const adapter = new LinphoneBridgeAdapter("http://127.0.0.1:16500/", secret, acceptedFetch, 4_000, "bridge-synthetic");
+  const result = await adapter.initiate({ schemaVersion: "1", commandId: "00000000-0000-4000-8000-000000000165", callId: "00000000-0000-4000-8000-000000000166", destination: "+212600000165", maxDurationSeconds: 7200 });
+  assert.equal(result.state, "ACCEPTED"); assert.match(observedSignature, /^sha256=[a-f0-9]{64}$/); assert.equal(observedBody.includes("+212600000165"), true);
+  assert.equal(JSON.stringify(result).includes("+212600000165"), false);
+  const uncertain = new LinphoneBridgeAdapter("http://127.0.0.1:16500/", secret, () => Promise.reject(new TypeError("synthetic network loss")), 4_000, "bridge-synthetic");
+  assert.deepEqual(await uncertain.initiate({ schemaVersion: "1", commandId: "00000000-0000-4000-8000-000000000165", callId: "00000000-0000-4000-8000-000000000166", destination: "+212600000165", maxDurationSeconds: 7200 }), { state: "UNCERTAIN", reasonCode: "BRIDGE_UNREACHABLE" });
+  const unloaded = new LinphoneBridgeAdapter("http://[::1]:16500/", secret, () => Promise.resolve(Response.json({ sdkLoaded: false, sipRegistered: false })), 4_000, "bridge-synthetic");
+  assert.deepEqual(await unloaded.readiness(), { available: false, reason: "SDK_NOT_LOADED", sdkLoaded: false, sipRegistered: false });
+  const unregistered = new LinphoneBridgeAdapter("http://127.0.0.1:16500/", secret, () => Promise.resolve(Response.json({ sdkLoaded: true, sipRegistered: false })), 4_000, "bridge-synthetic");
+  assert.deepEqual(await unregistered.readiness(), { available: false, reason: "SIP_NOT_REGISTERED", sdkLoaded: true, sipRegistered: false });
+  const remote = new LinphoneBridgeAdapter("https://example.invalid", secret, acceptedFetch, 4_000, "bridge-synthetic");
+  assert.equal(remote.configured, false); assert.deepEqual(await remote.readiness(), { available: false, reason: "NOT_CONFIGURED" });
 });
 
 test("exposes controller contracts and rejects missing principals", () => {

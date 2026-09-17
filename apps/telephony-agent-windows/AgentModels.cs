@@ -1,0 +1,37 @@
+using System.Text.Json.Serialization;
+
+namespace CrmYnov.TelephonyAgent;
+
+internal sealed record AgentSettings(
+    string ApiBaseUrl,
+    string AgentToken,
+    string WorkstationId,
+    string ProfileId,
+    string SipAddress,
+    string? AuthUsername,
+    string SipDomain,
+    string? ProxyUri,
+    string Transport,
+    string SipPassword,
+    string? InputDeviceId,
+    string? OutputDeviceId);
+
+internal sealed record PairRequest(string Code, string PublicId, string DisplayName, string AgentVersion, string SdkVersion);
+internal sealed record PairResponse(string Token, string WorkstationId, AgentProfile Profile);
+internal sealed record AgentProfile(string Id, string WorkstationId, string SipAddress, string? AuthUsername, AgentServer Server, bool InboundEnabled, bool RecordingEnabled);
+internal sealed record AgentServer(string SipDomain, string? ProxyUri, string Transport);
+internal sealed record PollResponse(AgentProfile Profile, AgentCommand? Command);
+internal sealed record AgentCommand(string CommandId, string CallId, string Destination, DateTimeOffset ExpiresAt, int MaxDurationSeconds, bool HangupRequested);
+internal sealed record AgentStatus(string ConnectionState, bool SdkLoaded, bool SipRegistered, string? InputDeviceId, string? OutputDeviceId, string? ErrorCode);
+internal sealed record AgentEvent(string SchemaVersion, string CommandId, string CallId, string EventId, string State, DateTimeOffset OccurredAt, string? ReasonCode);
+internal sealed record JournalRecord(string Kind, string CommandId, string? EventId, string? CallId, string? State, DateTimeOffset At, bool? Acknowledged);
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(AgentSettings))]
+[JsonSerializable(typeof(PairRequest))]
+[JsonSerializable(typeof(PairResponse))]
+[JsonSerializable(typeof(PollResponse))]
+[JsonSerializable(typeof(AgentStatus))]
+[JsonSerializable(typeof(AgentEvent))]
+[JsonSerializable(typeof(JournalRecord))]
+internal partial class AgentJsonContext : JsonSerializerContext;

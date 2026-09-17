@@ -210,6 +210,7 @@ model Collaborator {
   sessions              LocalSession[]
   recoveryChallenges    LocalRecoveryChallenge[]
   teamResponsibilities TeamResponsibility[]
+  telephonyProfile     TelephonyUserProfile?
 
   @@index([active, campusId, teamId])
   @@map("collaborators")
@@ -629,6 +630,109 @@ model TelephonyConfiguration {
   @@map("telephony_configurations")
 }
 
+model TelephonyServerProfile {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(120)
+  sipDomain    String   @map("sip_domain") @db.VarChar(255)
+  proxyUri     String?  @map("proxy_uri") @db.VarChar(500)
+  transport    String   @default("TLS") @db.VarChar(8)
+  campusId     String?  @map("campus_id") @db.VarChar(64)
+  enabled      Boolean  @default(false)
+  version      Int      @default(1)
+  createdBy    String   @map("created_by") @db.VarChar(64)
+  updatedBy    String   @map("updated_by") @db.VarChar(64)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  userProfiles TelephonyUserProfile[]
+
+  @@unique([campusId, name])
+  @@index([enabled, campusId])
+  @@map("telephony_server_profiles")
+}
+
+model TelephonyUserProfile {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @unique @map("user_id") @db.Uuid
+  serverProfileId String   @map("server_profile_id") @db.Uuid
+  sipAddress      String   @map("sip_address") @db.VarChar(255)
+  authUsername    String?  @map("auth_username") @db.VarChar(255)
+  enabled         Boolean  @default(false)
+  state           String   @default("INCOMPLETE") @db.VarChar(40)
+  version         Int      @default(1)
+  updatedBy       String   @map("updated_by") @db.VarChar(64)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user            Collaborator @relation(fields: [userId], references: [id], onDelete: Restrict)
+  serverProfile   TelephonyServerProfile @relation(fields: [serverProfileId], references: [id], onDelete: Restrict)
+  pairingCodes    TelephonyPairingCode[]
+  workstations    TelephonyWorkstation[]
+
+  @@index([serverProfileId, enabled])
+  @@map("telephony_user_profiles")
+}
+
+model TelephonyPairingCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  userProfileId String    @map("user_profile_id") @db.Uuid
+  codeDigest    String    @unique @map("code_digest") @db.VarChar(64)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt        DateTime? @map("used_at") @db.Timestamptz(6)
+  createdBy     String    @map("created_by") @db.VarChar(64)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  userProfile   TelephonyUserProfile @relation(fields: [userProfileId], references: [id], onDelete: Restrict)
+
+  @@index([userProfileId, expiresAt])
+  @@map("telephony_pairing_codes")
+}
+
+model TelephonyWorkstation {
+  id              String    @id @default(uuid()) @db.Uuid
+  userProfileId   String    @map("user_profile_id") @db.Uuid
+  publicId        String    @unique @map("public_id") @db.VarChar(80)
+  displayName     String    @map("display_name") @db.VarChar(120)
+  tokenDigest     String    @unique @map("token_digest") @db.VarChar(64)
+  active          Boolean   @default(true)
+  connectionState String    @default("OFFLINE") @map("connection_state") @db.VarChar(24)
+  sipRegistered   Boolean   @default(false) @map("sip_registered")
+  sdkLoaded       Boolean   @default(false) @map("sdk_loaded")
+  agentVersion    String    @map("agent_version") @db.VarChar(40)
+  sdkVersion      String    @map("sdk_version") @db.VarChar(40)
+  inputDeviceId   String?   @map("input_device_id") @db.VarChar(255)
+  outputDeviceId  String?   @map("output_device_id") @db.VarChar(255)
+  lastErrorCode   String?   @map("last_error_code") @db.VarChar(80)
+  lastSeenAt      DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  pairedAt        DateTime  @default(now()) @map("paired_at") @db.Timestamptz(6)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+  version         Int       @default(1)
+  userProfile     TelephonyUserProfile @relation(fields: [userProfileId], references: [id], onDelete: Restrict)
+  commands        TelephonyAgentCommand[]
+
+  @@index([userProfileId, active, lastSeenAt])
+  @@map("telephony_workstations")
+}
+
+model TelephonyAgentCommand {
+  id                    String    @id @default(uuid()) @db.Uuid
+  callId                String    @unique @map("call_id") @db.Uuid
+  workstationId         String    @map("workstation_id") @db.Uuid
+  destinationCiphertext String    @map("destination_ciphertext") @db.Text
+  destinationIv         String    @map("destination_iv") @db.VarChar(32)
+  destinationTag        String    @map("destination_tag") @db.VarChar(32)
+  state                 String    @default("PENDING") @db.VarChar(24)
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  claimedAt             DateTime? @map("claimed_at") @db.Timestamptz(6)
+  hangupRequestedAt     DateTime? @map("hangup_requested_at") @db.Timestamptz(6)
+  hangupDeliveredAt     DateTime? @map("hangup_delivered_at") @db.Timestamptz(6)
+  terminalAt            DateTime? @map("terminal_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  call                  TelephonyCall @relation(fields: [callId], references: [id], onDelete: Restrict)
+  workstation           TelephonyWorkstation @relation(fields: [workstationId], references: [id], onDelete: Restrict)
+
+  @@index([workstationId, state, expiresAt])
+  @@map("telephony_agent_commands")
+}
+
 model TelephonyCall {
   id               String                      @id @default(uuid()) @db.Uuid
   provider         String                      @db.VarChar(24)
@@ -637,6 +741,10 @@ model TelephonyCall {
   state            String                      @db.VarChar(16)
   leadId           String?                     @map("lead_id") @db.Uuid
   phoneFingerprint String                      @map("phone_fingerprint") @db.VarChar(64)
+  maskedPhone      String                      @default("***") @map("masked_phone") @db.VarChar(8)
+  dispatchState    String                      @default("ACCEPTED") @map("dispatch_state") @db.VarChar(16)
+  dispatchErrorCode String?                    @map("dispatch_error_code") @db.VarChar(64)
+  dispatchUpdatedAt DateTime?                  @map("dispatch_updated_at") @db.Timestamptz(6)
   matchState       String                      @default("UNMATCHED") @map("match_state") @db.VarChar(24)
   requestedAt      DateTime                    @map("requested_at") @db.Timestamptz(6)
   answeredAt       DateTime?                   @map("answered_at") @db.Timestamptz(6)
@@ -647,6 +755,7 @@ model TelephonyCall {
   lead             Lead?                       @relation(fields: [leadId], references: [id], onDelete: Restrict)
   events           TelephonyCallEvent[]
   recording        TelephonyRecordingMetadata? @relation(fields: [recordingId], references: [id], onDelete: Restrict)
+  agentCommand     TelephonyAgentCommand?
 
   @@unique([provider, externalId])
   @@index([leadId, requestedAt(sort: Desc)])

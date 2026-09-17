@@ -23,7 +23,8 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   SavedLeadViewController: { list: ["lead.view"], create: ["lead.edit"], update: ["lead.edit"], remove: ["lead.edit"] },
   NotificationController: { list: ["lead.view"], markAll: ["notification.manage"], markRead: ["notification.manage"] },
   ManagerDashboardController: { read: ["reporting.view"], export: ["reporting.export"] },
-  TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], detail: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
+  TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
+  TelephonyProvisioningController: { list: [], server: [], user: [], pairing: [], revoke: [] },
 };
 const grouped: Readonly<Record<string, string>> = {
   FollowUpController: "reminder.manage", AppointmentController: "appointment.manage",
@@ -39,7 +40,7 @@ const groupedHandlers: Readonly<Record<string, readonly string[]>> = {
 };
 // These controllers enforce their own permission or security lifecycle contract.
 const delegated = new Set(["ReferenceController", "LeadTagController", "DynamicPermissionController", "AuditController"]);
-export const lifecycleControllers = new Set(["HealthController", "SessionController", "AccessRecoveryController", "FirstLoginController", "ForminatorWebhookController"]);
+export const lifecycleControllers = new Set(["HealthController", "SessionController", "AccessRecoveryController", "FirstLoginController", "ForminatorWebhookController", "TelephonyBridgeController", "TelephonyAgentController"]);
 export function routePermissions(controller: string, handler: string): readonly string[] | null {
   // Each operation rechecks persisted audience, owner and grant inside the shared fence.
   if (controller === "ViewSharingController") return ["audiences", "received", "history", "read", "share", "revoke", "duplicate", "archive"].includes(handler) ? [] : null;

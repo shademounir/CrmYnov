@@ -97,8 +97,10 @@ import { BroadcastService } from "./broadcast/broadcast.service.js";
 import { CandidateDocumentController, DocumentVerificationController } from "./documents/candidate-document.controller.js";
 import { CandidateDocumentService } from "./documents/candidate-document.service.js";
 import { LocalTemporaryDocumentStorageAdapter } from "./documents/document-storage.adapter.js";
-import { TelephonyController } from "./telephony/telephony.controller.js";
+import { TelephonyAgentController, TelephonyBridgeController, TelephonyController, TelephonyProvisioningController } from "./telephony/telephony.controller.js";
 import { TelephonyService } from "./telephony/telephony.service.js";
+import { TelephonyPersistenceRepository } from "./telephony/telephony-persistence.repository.js";
+import { TelephonyAgentRepository } from "./telephony/telephony-agent.repository.js";
 import { AppointmentController } from "./appointments/appointment.controller.js";
 import { AppointmentService } from "./appointments/appointment.service.js";
 import { AppointmentPersistenceRepository } from "./appointments/appointment-persistence.repository.js";
@@ -116,7 +118,7 @@ import { createSheetSource } from "./sheet-import/google-sheet-source.js";
 import { resolve } from "node:path";
 
 @Module({
-  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
     { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
@@ -177,6 +179,8 @@ import { resolve } from "node:path";
     },
     CandidateDocumentService,
     TelephonyService,
+    TelephonyPersistenceRepository,
+    TelephonyAgentRepository,
     AppointmentService,
     AppointmentPersistenceRepository,
     FollowUpService,

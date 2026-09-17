@@ -26,7 +26,7 @@ export class DynamicResourceLocator {
     if (controller === "FollowUpController" && handler === "decide") return [await this.followUps.permissionLeadIdForApi(scalar(request.params.id))];
     if (controller === "AppointmentController" && request.params.id) return [await this.appointments.permissionLeadIdForApi(scalar(request.params.id))];
     if (controller !== "TelephonyController" || !request.params.callId) return [];
-    const existing = this.telephony.permissionLeadId(scalar(request.params.callId));
+    const existing = await this.telephony.permissionLeadIdForApi(scalar(request.params.callId));
     const ids = existing ? [existing] : [];
     if (handler === "associate") {
       const body: unknown = request.body;
