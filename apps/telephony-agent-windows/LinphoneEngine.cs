@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Linphone;
@@ -166,7 +167,15 @@ internal sealed class LinphoneEngine : IDisposable
         if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
         if (MissingSelectedDevice() is not null) throw new InvalidOperationException("AUDIO_DEVICE_UNAVAILABLE");
         if (audioTestActive) return;
-        try { core.StartEchoTester(16000); }
+        // Liblinphone 5.5 returns 1 when the echo tester starts successfully and
+        // -1 on failure. The generated C# wrapper treats every non-zero value as
+        // an exception, so calling Core.StartEchoTester() reports a false failure
+        // on the successful path. Keep the workaround local and remove it when a
+        // corrected official wrapper is adopted.
+        try {
+            if (NativeAudio.StartEchoTester(core.nativePtr, 48000) != 1)
+                throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED");
+        }
         catch (Exception error) { throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED", error); }
         audioTestActive = true;
         StatusChanged?.Invoke("AUDIO_MIC_TEST_RUNNING");
@@ -175,7 +184,13 @@ internal sealed class LinphoneEngine : IDisposable
     public void StopMicrophoneTest()
     {
         if (!audioTestActive || core is null) return;
-        try { core.StopEchoTester(); } finally { audioTestActive = false; StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED"); }
+        try {
+            // 5.5.x builds have returned both 0 and 1 on a successful stop;
+            // only the documented negative status is a failure.
+            if (NativeAudio.StopEchoTester(core.nativePtr) < 0)
+                throw new InvalidOperationException("AUDIO_MICROPHONE_STOP_FAILED");
+        }
+        finally { audioTestActive = false; StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED"); }
     }
 
     public void PlayOutputTest()
@@ -185,9 +200,10 @@ internal sealed class LinphoneEngine : IDisposable
         var output = Devices.FirstOrDefault(device => device.Id == settings.OutputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay));
         if (output is null) throw new InvalidOperationException("AUDIO_OUTPUT_UNAVAILABLE");
         localPlayer?.Close();
-        localPlayer = core.CreateLocalPlayer(output.DeviceName, null!, IntPtr.Zero) ?? throw new InvalidOperationException("AUDIO_PLAYER_UNAVAILABLE");
-        var path = Path.Combine(AppContext.BaseDirectory, "share", "sounds", "linphone", "hello16000.wav");
-        if (!File.Exists(path)) throw new InvalidOperationException("AUDIO_TEST_FILE_MISSING");
+        // CreateLocalPlayer expects the sound-card identifier understood by
+        // mediastreamer, not the human-readable label displayed in the UI.
+        localPlayer = core.CreateLocalPlayer(output.Id, null!, IntPtr.Zero) ?? throw new InvalidOperationException("AUDIO_PLAYER_UNAVAILABLE");
+        var path = EnsureOutputTestTone();
         localPlayer.Open(path);
         localPlayer.Start();
         StatusChanged?.Invoke("AUDIO_OUTPUT_TEST_PLAYING");
@@ -238,6 +254,50 @@ internal sealed class LinphoneEngine : IDisposable
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
     private static string ExtractUser(string address) { var body = address.StartsWith("sip:", StringComparison.OrdinalIgnoreCase) ? address[4..] : address; return body.Split('@', 2)[0]; }
+
+    private string EnsureOutputTestTone()
+    {
+        var path = Path.Combine(dataDirectory, "output-test-48000-stereo.wav");
+        if (File.Exists(path)) return path;
+        Directory.CreateDirectory(dataDirectory);
+        const int sampleRate = 48000;
+        const short channels = 2;
+        const short bitsPerSample = 16;
+        const double durationSeconds = 0.8;
+        var sampleFrames = (int)(sampleRate * durationSeconds);
+        var dataBytes = sampleFrames * channels * (bitsPerSample / 8);
+        using var stream = File.Create(path);
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: false);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + dataBytes);
+        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write(channels);
+        writer.Write(sampleRate);
+        writer.Write(sampleRate * channels * (bitsPerSample / 8));
+        writer.Write((short)(channels * (bitsPerSample / 8)));
+        writer.Write(bitsPerSample);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(dataBytes);
+        for (var frame = 0; frame < sampleFrames; frame++) {
+            var envelope = Math.Min(1d, frame / (sampleRate * 0.02d)) * Math.Min(1d, (sampleFrames - frame) / (sampleRate * 0.04d));
+            var sample = (short)(Math.Sin(2d * Math.PI * 440d * frame / sampleRate) * short.MaxValue * 0.18d * envelope);
+            writer.Write(sample);
+            writer.Write(sample);
+        }
+        return path;
+    }
+
+    private static class NativeAudio
+    {
+        [DllImport(LinphoneWrapper.LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "linphone_core_start_echo_tester")]
+        internal static extern int StartEchoTester(IntPtr core, uint rate);
+
+        [DllImport(LinphoneWrapper.LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "linphone_core_stop_echo_tester")]
+        internal static extern int StopEchoTester(IntPtr core);
+    }
+
     public void Dispose()
     {
         if (stopping) return; stopping = true;

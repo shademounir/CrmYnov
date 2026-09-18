@@ -55,6 +55,9 @@ case dédiée.
 - `CrmYnov.TelephonyAgent native-check` : charge le SDK sans compte SIP ni appel ;
 - `CrmYnov.TelephonyAgent audio-check <rapport.json>` : inventorie les capacités
   audio sans nom ni identifiant de périphérique, sans SIP et sans enregistrement ;
+- `CrmYnov.TelephonyAgent audio-probe <rapport.json>` : ouvre brièvement le
+  microphone, mesure son niveau et envoie un son local vers la sortie retenue,
+  sans SIP, appel ni enregistrement ; l’audibilité reste à confirmer humainement ;
 - `CrmYnov.TelephonyAgent run` : enregistre le compte SIP et interroge l'API ;
 - `CrmYnov.TelephonyAgent self-test <rapport.json>` : vérifie DPAPI, le journal
   de rejeu et l’export expurgé, sans réseau SIP ni appel.

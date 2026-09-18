@@ -465,6 +465,7 @@ internal sealed class MainForm : Form
         InvalidOperationException invalid when invalid.Message == "AUDIO_NOT_INITIALIZED" => "Le service audio local n’est pas encore disponible. Rouvrez l’étape Audio.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_TEST_CALL_ACTIVE" => "Terminez l’appel en cours avant de lancer un test audio local.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_MICROPHONE_OPEN_FAILED" => "Le microphone n’a pas pu être ouvert. Vérifiez qu’il est connecté et que Windows autorise l’accès au microphone.",
+        InvalidOperationException invalid when invalid.Message is "AUDIO_PLAYER_UNAVAILABLE" or "AUDIO_TEST_FILE_MISSING" => "Le son de test n’a pas pu être envoyé vers la sortie choisie. Actualisez les périphériques puis réessayez.",
         _ => "L’opération n’a pas pu être confirmée. Aucun appel n’a été lancé.",
     };
 

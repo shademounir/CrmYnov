@@ -6,7 +6,7 @@ namespace CrmYnov.TelephonyAgent;
 
 internal static class Program
 {
-    private const string Version = "0.3.0-pilot";
+    private const string Version = "0.3.1-pilot";
     private const string SdkVersion = "5.5.21";
     [STAThread]
     public static async Task<int> Main(string[] args)
@@ -22,6 +22,7 @@ internal static class Program
             var store = new DpapiStore(); store.EnsureDirectory();
             return command switch {
                 "audio-check" => AudioCheck(store, args.Skip(1).FirstOrDefault()),
+                "audio-probe" => AudioProbe(store, args.Skip(1).FirstOrDefault()),
                 "pair" => await PairAsync(store),
                 "configure-secret" => ConfigureSecret(store),
                 "run" => await RunAsync(store),
@@ -90,6 +91,49 @@ internal static class Program
         };
         File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         return report.passed ? 0 : 1;
+    }
+
+    private static int AudioProbe(DpapiStore store, string? reportPath)
+    {
+        if (string.IsNullOrWhiteSpace(reportPath)) throw new InvalidOperationException("AUDIO_REPORT_PATH_REQUIRED");
+        var settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
+        store.RemoveLegacyCoreConfig();
+        using var engine = new LinphoneEngine(settings, store.DataDirectory);
+        engine.StartAudio();
+        Iterate(engine, 20);
+        var microphoneOpened = false;
+        var microphonePeakPercent = 0;
+        var outputDispatchSucceeded = false;
+        try {
+            engine.StartMicrophoneTest();
+            microphoneOpened = true;
+            for (var index = 0; index < 60; index++) {
+                engine.Iterate();
+                microphonePeakPercent = Math.Max(microphonePeakPercent, engine.MicrophoneLevel);
+                Thread.Sleep(25);
+            }
+        }
+        finally { engine.StopMicrophoneTest(); }
+        Iterate(engine, 10);
+        engine.PlayOutputTest();
+        outputDispatchSucceeded = true;
+        Iterate(engine, 80);
+        var report = new {
+            generatedAt = DateTimeOffset.UtcNow,
+            passed = microphoneOpened && outputDispatchSucceeded,
+            microphoneOpened,
+            microphonePeakPercent,
+            outputDispatchSucceeded,
+            outputAudibilityRequiresHumanConfirmation = true,
+            privacy = "No call, recording, device name, identifier or SIP secret included",
+        };
+        File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        return report.passed ? 0 : 1;
+    }
+
+    private static void Iterate(LinphoneEngine engine, int count)
+    {
+        for (var index = 0; index < count; index++) { engine.Iterate(); Thread.Sleep(25); }
     }
     private static int Status(DpapiStore store)
     {
