@@ -1,4 +1,5 @@
 import { PhoneCall } from "@phosphor-icons/react/dist/ssr";
+import React from "react";
 import { CallQueue } from "./call-queue";
 
 export default function CallQueuePage(): React.JSX.Element {

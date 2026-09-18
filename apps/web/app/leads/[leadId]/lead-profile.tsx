@@ -249,6 +249,14 @@ const resultLabels: Readonly<Record<string, string>> = {
   COMPLETED: "Action terminée",
   FOLLOW_UP_REQUIRED: "Relance nécessaire",
   INFORMATION_RECORDED: "Information enregistrée",
+  CALL_REQUESTED: "Demande d’appel enregistrée",
+  CALL_DIALING: "Numérotation en cours",
+  CALL_RINGING: "Sonnerie en cours",
+  CALL_ANSWERED: "Appel décroché",
+  CALL_ENDED: "Appel terminé",
+  CALL_MISSED: "Appel sans réponse",
+  CALL_FAILED: "Appel en échec",
+  CALL_CANCELLED: "Appel annulé",
 };
 
 export function interactionResultLabel(result: string): string {

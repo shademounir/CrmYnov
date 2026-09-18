@@ -16,7 +16,7 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
   process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY = randomBytes(32).toString("base64");
   const prisma = new PrismaService(); const client = prisma.client; assert.ok(client);
   const repository = new TelephonyAgentRepository(prisma);
-  const suffix = randomUUID().slice(0, 8); const userId = randomUUID(); const callId = randomUUID();
+  const suffix = randomUUID().slice(0, 8); const userId = randomUUID(); const callId = randomUUID(); const busyCallId = randomUUID(); const expiredCallId = randomUUID();
   const principal: Principal = { userId, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: randomUUID() };
   let serverId: string | undefined; let profileId: string | undefined; let workstationId: string | undefined;
   try {
@@ -41,10 +41,26 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
     const stored = await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } });
     assert.equal(JSON.stringify(stored).includes("+212600000165"), false);
     const firstPoll = await repository.poll(identity); assert.equal(firstPoll.command?.destination, "+212600000165");
+    await client.telephonyCall.create({ data: { id: busyCallId, provider: "LINPHONE", externalId: randomUUID(), direction: "OUTBOUND", state: "REQUESTED", phoneFingerprint: "b".repeat(64), maskedPhone: "***166", dispatchState: "ACCEPTED", dispatchUpdatedAt: new Date(), matchState: "MATCHED", requestedAt: new Date(), createdBy: userId } });
+    await assert.rejects(() => repository.enqueue(busyCallId, userId, "+212600000166"), errorCode("telephony_workstation_busy"));
+    assert.equal(await client.telephonyAgentCommand.count({ where: { callId: busyCallId } }), 0, "two CRM windows must not create two dialing commands");
+    await client.telephonyAgentCommand.update({ where: { callId }, data: { expiresAt: new Date(Date.now() - 1_000) } });
     assert.equal((await repository.poll(identity)).command, null, "a claimed dialing command must not be redelivered");
-    await repository.assertEvent(identity, firstPoll.command!.commandId, callId, "FAILED");
+    assert.equal((await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } })).state, "UNCERTAIN");
+    const uncertainCall = await client.telephonyCall.findUniqueOrThrow({ where: { id: callId } });
+    assert.equal(uncertainCall.dispatchState, "UNCERTAIN");
+    assert.equal(uncertainCall.dispatchErrorCode, "AGENT_RESULT_UNKNOWN");
+    await repository.assertEvent(identity, firstPoll.command.commandId, callId, "FAILED");
     await repository.markEventApplied(identity, callId, "FAILED");
-    assert.equal((await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } })).state, "TERMINAL");
+    assert.equal((await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } })).state, "TERMINAL", "a late terminal event must reconcile an uncertain command");
+    await client.telephonyCall.create({ data: { id: expiredCallId, provider: "LINPHONE", externalId: randomUUID(), direction: "OUTBOUND", state: "REQUESTED", phoneFingerprint: "c".repeat(64), maskedPhone: "***167", dispatchState: "ACCEPTED", dispatchUpdatedAt: new Date(), matchState: "MATCHED", requestedAt: new Date(), createdBy: userId } });
+    await repository.enqueue(expiredCallId, userId, "+212600000167");
+    await client.telephonyAgentCommand.update({ where: { callId: expiredCallId }, data: { expiresAt: new Date(Date.now() - 1_000) } });
+    assert.equal((await repository.poll(identity)).command, null, "an expired command must never be delivered late");
+    assert.equal((await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId: expiredCallId } })).state, "EXPIRED");
+    const expiredCall = await client.telephonyCall.findUniqueOrThrow({ where: { id: expiredCallId } });
+    assert.equal(expiredCall.dispatchState, "UNCERTAIN");
+    assert.equal(expiredCall.dispatchErrorCode, "AGENT_COMMAND_EXPIRED");
     await repository.revokeWorkstation(workstationId, principal);
     await assert.rejects(() => repository.authenticate(paired.token), errorCode("telephony_agent_authentication_refused"));
     const replacementCode = await repository.createPairingCode(profileId, principal);
@@ -53,8 +69,8 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
     assert.equal(await client.telephonyWorkstation.count({ where: { publicId: `test-${suffix}` } }), 1);
     assert.equal((await repository.authenticate(replacement.token)).workstationId, workstationId);
   } finally {
-    await client.telephonyAgentCommand.deleteMany({ where: { callId } });
-    await client.telephonyCall.deleteMany({ where: { id: callId } });
+    await client.telephonyAgentCommand.deleteMany({ where: { callId: { in: [callId, busyCallId, expiredCallId] } } });
+    await client.telephonyCall.deleteMany({ where: { id: { in: [callId, busyCallId, expiredCallId] } } });
     if (profileId) await client.telephonyPairingCode.deleteMany({ where: { userProfileId: profileId } });
     if (workstationId) await client.telephonyWorkstation.deleteMany({ where: { id: workstationId } });
     if (profileId) await client.telephonyUserProfile.deleteMany({ where: { id: profileId } });

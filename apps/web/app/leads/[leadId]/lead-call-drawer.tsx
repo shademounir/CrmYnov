@@ -9,6 +9,9 @@ interface CallRecord { id: string; state: CallState; dispatchState: DispatchStat
 interface ConfigurationPayload { mode?: string; clickToCallEnabled?: boolean; outboundEnabled?: boolean; outboundReadiness?: { available?: boolean; reason?: string; sdkLoaded?: boolean; sipRegistered?: boolean; identityLabel?: string } }
 
 function maskPhone(phone: string): string { const digits = phone.replace(/\D/g, ""); return digits.length >= 3 ? `••• ${digits.slice(-3)}` : "numéro masqué"; }
+export function callStateLabel(state: CallState): string {
+  return ({ REQUESTED: "Demande enregistrée", DIALING: "Numérotation en cours", RINGING: "Sonnerie en cours", ANSWERED: "Appel décroché", ENDED: "Appel terminé", FAILED: "Appel en échec", MISSED: "Sans réponse", CANCELLED: "Appel annulé" } as const)[state];
+}
 function isCall(value: unknown): value is CallRecord {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
@@ -91,7 +94,7 @@ export function LeadCallDrawer({ leadId, leadCode, phone, onCompleted }: Readonl
           <br />Aucun repli vers l’appel manuel ou Coovox n’est appliqué.
         </div> : null}
         {!call && callable ? <><p className="lead-assignment-dialog__notice">Confirmez une seule fois. Une commande acceptée ne signifie ni sonnerie ni décroché ; ces états viendront du SDK.</p>{configuration?.outboundReadiness?.identityLabel ? <p className="lead-call-dialog__identity">Identité téléphonique du poste : <strong>{configuration.outboundReadiness.identityLabel}</strong></p> : null}</> : null}
-        {call ? <section className={`lead-call-dialog__state lead-call-dialog__state--${call.dispatchState.toLowerCase()}`} aria-live="polite"><p className="eyebrow">État observé</p><h3>{call.state}</h3><p>{stateLabel(call)}</p>{typeof call.durationSeconds === "number" ? <p>Durée observée : {call.durationSeconds} s</p> : null}</section> : null}
+        {call ? <section className={`lead-call-dialog__state lead-call-dialog__state--${call.dispatchState.toLowerCase()}`} aria-live="polite"><p className="eyebrow">État observé</p><h3>{callStateLabel(call.state)}</h3><p>{stateLabel(call)}</p>{typeof call.durationSeconds === "number" ? <p>Durée observée : {call.durationSeconds} s</p> : null}</section> : null}
         {error ? <p className="lead-assignment-dialog__feedback lead-assignment-dialog__feedback--error" role="alert">{error}</p> : null}
         <footer className="lead-assignment-dialog__footer">
           <button className="text-button" type="button" onClick={close}>Fermer</button>

@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowClockwise, ArrowRight, PhoneDisconnect, PhoneIncoming, ShieldCheck, WarningCircle, X } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Call = Readonly<{ id: string; direction: "INBOUND" | "OUTBOUND"; state: string; leadId?: string; maskedPhone: string; matchState: string; requestedAt: string; durationSeconds?: number }>;
 type Queue = Readonly<{ missed: Call[]; toVerify: Call[] }>;

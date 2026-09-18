@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowClockwise, PhoneCall, PhoneIncoming, WarningCircle } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 type Event = Readonly<{ id: string; eventType: string; state: string; reasonCode?: string; occurredAt: string }>;
 type Call = Readonly<{ id: string; direction: string; state: string; maskedPhone: string; matchState: string; requestedAt: string; durationSeconds?: number; recording: { state: string }; events: Event[] }>;

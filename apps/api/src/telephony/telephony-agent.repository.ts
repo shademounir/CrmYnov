@@ -4,6 +4,7 @@ import type { Principal } from "../auth/auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 
 const terminalStates = new Set(["ENDED", "FAILED", "MISSED", "CANCELLED"]);
+const observedStates = new Set(["DIALING", "RINGING", "ANSWERED", ...terminalStates]);
 const connectionStates = new Set(["CONNECTED", "UNAVAILABLE", "ERROR", "OFFLINE"]);
 const allowedTransports = new Set(["UDP", "TCP", "TLS"]);
 
@@ -192,7 +193,25 @@ export class TelephonyAgentRepository {
     return client.$transaction(async (tx) => {
       const now = new Date();
       await tx.telephonyWorkstation.update({ where: { id: identity.workstationId }, data: { lastSeenAt: now } });
-      await tx.telephonyAgentCommand.updateMany({ where: { workstationId: identity.workstationId, state: "PENDING", expiresAt: { lte: now } }, data: { state: "EXPIRED", terminalAt: now } });
+      const staleCommands = await tx.telephonyAgentCommand.findMany({
+        where: { workstationId: identity.workstationId, state: { in: ["PENDING", "DELIVERED"] }, terminalAt: null, expiresAt: { lte: now } },
+        select: { id: true, callId: true, state: true },
+      });
+      for (const stale of staleCommands) {
+        const uncertainDelivery = stale.state === "DELIVERED";
+        await tx.telephonyAgentCommand.update({
+          where: { id: stale.id },
+          data: { state: uncertainDelivery ? "UNCERTAIN" : "EXPIRED", terminalAt: now },
+        });
+        await tx.telephonyCall.updateMany({
+          where: { id: stale.callId, dispatchState: { in: ["PENDING", "ACCEPTED"] } },
+          data: {
+            dispatchState: "UNCERTAIN",
+            dispatchErrorCode: uncertainDelivery ? "AGENT_RESULT_UNKNOWN" : "AGENT_COMMAND_EXPIRED",
+            dispatchUpdatedAt: now,
+          },
+        });
+      }
       const workstation = await tx.telephonyWorkstation.findUniqueOrThrow({ where: { id: identity.workstationId }, include: { userProfile: { include: { serverProfile: true } } } });
       const hangup = await tx.telephonyAgentCommand.findFirst({ where: { workstationId: identity.workstationId, state: "DELIVERED", hangupRequestedAt: { not: null }, hangupDeliveredAt: null }, include: { call: true }, orderBy: { hangupRequestedAt: "asc" } });
       if (hangup) {
@@ -246,6 +265,7 @@ export class TelephonyAgentRepository {
   }
 
   async assertEvent(identity: AgentIdentity, commandId: string, callId: string, state: string): Promise<void> {
+    if (!observedStates.has(state)) throw new BadRequestException({ code: "telephony_agent_event_state_invalid" });
     const client = this.requiredClient();
     const command = await client.telephonyAgentCommand.findFirst({ where: { callId, workstationId: identity.workstationId }, include: { call: true } });
     if (!command || command.call.externalId !== commandId) throw new NotFoundException({ code: "telephony_agent_command_not_found" });
@@ -254,10 +274,9 @@ export class TelephonyAgentRepository {
   async markEventApplied(identity: AgentIdentity, callId: string, state: string): Promise<void> {
     if (!terminalStates.has(state)) return;
     const client = this.requiredClient();
-    await client.telephonyAgentCommand.updateMany({
-      where: { callId, workstationId: identity.workstationId, terminalAt: null },
-      data: { state: "TERMINAL", terminalAt: new Date() },
-    });
+    const current = await client.telephonyAgentCommand.findFirst({ where: { callId, workstationId: identity.workstationId }, select: { id: true, terminalAt: true } });
+    if (!current) return;
+    await client.telephonyAgentCommand.update({ where: { id: current.id }, data: { state: "TERMINAL", terminalAt: current.terminalAt ?? new Date() } });
   }
 
   async revokeWorkstation(workstationId: string, principal: Principal): Promise<Record<string, unknown>> {

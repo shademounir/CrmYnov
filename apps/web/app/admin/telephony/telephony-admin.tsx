@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowClockwise, CheckCircle, Desktop, LinkSimple, PhoneCall, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
 
 interface ServerProfile { id: string; name: string; sipDomain: string; proxyUri: string | null; transport: string; campusId: string | null; enabled: boolean; version: number }

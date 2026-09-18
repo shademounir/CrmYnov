@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProxy } from "../app/api/crm/[...path]/route.js";
+import { createProxy } from "../app/api/crm/proxy.js";
 
 function relay(upstream: () => Response): ReturnType<typeof createProxy> {
   return createProxy({ apiOrigin: () => "http://api:3001", getSession: () => Promise.resolve("synthetic-session"), fetch: () => Promise.resolve(upstream()), randomId: () => "synthetic-correlation", production: true });
