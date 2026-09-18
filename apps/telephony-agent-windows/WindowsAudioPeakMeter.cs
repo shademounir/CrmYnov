@@ -9,8 +9,9 @@ namespace CrmYnov.TelephonyAgent;
 internal sealed class WindowsAudioPeakMeter : IDisposable
 {
     private IAudioMeterInformation? meter;
+    private float smoothedPeak;
 
-    public bool Select(string? deviceName)
+    public bool Select(string? deviceId, string? deviceName)
     {
         DisposeMeter();
         IMMDeviceEnumerator? enumerator = null;
@@ -26,7 +27,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
             {
                 Marshal.ThrowExceptionForHR(collection.Item(index, out var device));
                 var friendlyName = GetFriendlyName(device);
-                if (Matches(deviceName, friendlyName)) { selected = device; break; }
+                if (Matches(deviceId, deviceName, friendlyName)) { selected = device; break; }
                 Marshal.ReleaseComObject(device);
             }
             if (selected is null)
@@ -57,15 +58,39 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
         try
         {
             Marshal.ThrowExceptionForHR(meter.GetPeakValue(out var peak));
-            return Math.Clamp((int)Math.Round(peak * 100f), 0, 100);
+            // Endpoint peaks are linear and normal speech often stays below 5%.
+            // A square-root scale makes speech visible without inventing signal;
+            // the falling edge is held briefly to keep the gauge readable.
+            var visiblePeak = (float)Math.Sqrt(Math.Clamp(peak, 0f, 1f));
+            smoothedPeak = Math.Max(visiblePeak, smoothedPeak * 0.72f);
+            return Math.Clamp((int)Math.Round(smoothedPeak * 100f), 0, 100);
         }
-        catch { return 0; }
+        catch { smoothedPeak = 0; return 0; }
     }
 
-    private static bool Matches(string? expected, string actual) =>
+    private static bool Matches(string? deviceId, string? deviceName, string actual)
+    {
+        if (ContainsEitherWay(deviceId, actual) || ContainsEitherWay(deviceName, actual)) return true;
+        var expectedTokens = Tokens($"{deviceId} {deviceName}");
+        var actualTokens = Tokens(actual);
+        return expectedTokens.Intersect(actualTokens, StringComparer.OrdinalIgnoreCase).Count() >= 2;
+    }
+
+    private static bool ContainsEitherWay(string? expected, string actual) =>
         !string.IsNullOrWhiteSpace(expected)
         && (actual.Contains(expected, StringComparison.OrdinalIgnoreCase)
             || expected.Contains(actual, StringComparison.OrdinalIgnoreCase));
+
+    private static string[] Tokens(string? value)
+    {
+        var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "audio", "capture", "device", "headset", "microphone", "mic", "input", "usb", "wasapi", "mswasapi"
+        };
+        return System.Text.RegularExpressions.Regex.Split(value ?? string.Empty, "[^A-Za-z0-9]+")
+            .Where(token => token.Length >= 2 && !ignored.Contains(token))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
 
     private static string GetFriendlyName(IMMDevice device)
     {
@@ -86,6 +111,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
     {
         if (meter is not null) Marshal.ReleaseComObject(meter);
         meter = null;
+        smoothedPeak = 0;
     }
 
     public void Dispose() => DisposeMeter();

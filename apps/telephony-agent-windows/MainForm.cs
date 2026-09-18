@@ -24,6 +24,7 @@ internal sealed class MainForm : Form
     private ComboBox? inputDevices;
     private ComboBox? outputDevices;
     private ProgressBar? microphoneLevel;
+    private Label? microphoneLevelText;
     private Button? microphoneTestButton;
     private Button? finishButton;
     private Label? readinessLabel;
@@ -95,7 +96,7 @@ internal sealed class MainForm : Form
     {
         contentHost.SuspendLayout();
         contentHost.Controls.Clear();
-        inputDevices = null; outputDevices = null; microphoneLevel = null; microphoneTestButton = null;
+        inputDevices = null; outputDevices = null; microphoneLevel = null; microphoneLevelText = null; microphoneTestButton = null;
         finishButton = null; readinessLabel = null; crmStatus = null; authorizationStatus = null; sipStatus = null; audioStatus = null;
         callValue = null; durationValue = null; connectButton = null; disconnectButton = null;
         accountDisplayValue = null;
@@ -186,11 +187,13 @@ internal sealed class MainForm : Form
         inputDevices = DeviceCombo(); inputDevices.AccessibleName = "Microphone";
         outputDevices = DeviceCombo(); outputDevices.AccessibleName = "Casque ou haut-parleur";
         microphoneLevel = new ProgressBar { Minimum = 0, Maximum = 100, Width = 520, Height = 20, AccessibleName = "Niveau du microphone" };
+        microphoneLevelText = new Label { AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 0), Text = "Lancez le test puis parlez normalement." };
         var form = FormStack();
         form.Controls.Add(SectionTitle("Choisir et tester mes périphériques", "Les tests sont locaux : aucun appel n’est lancé et aucun son n’est enregistré."));
         form.Controls.Add(Labeled("Microphone", inputDevices));
         form.Controls.Add(Labeled("Casque ou haut-parleur", outputDevices));
         form.Controls.Add(Labeled("Niveau du microphone", microphoneLevel));
+        form.Controls.Add(microphoneLevelText);
         var testRow = ButtonRow();
         var refresh = ActionButton("Actualiser", false); refresh.Click += (_, _) => RefreshDevices();
         microphoneTestButton = ActionButton("Tester le microphone", false); microphoneTestButton.Click += (_, _) => ToggleMicrophoneTest();
@@ -410,6 +413,9 @@ internal sealed class MainForm : Form
         if (connectButton is not null) connectButton.Enabled = !snapshot.Running;
         if (disconnectButton is not null) disconnectButton.Enabled = snapshot.Running;
         if (microphoneLevel is not null) microphoneLevel.Value = Math.Clamp(snapshot.MicrophoneLevel, 0, 100);
+        if (microphoneLevelText is not null) microphoneLevelText.Text = snapshot.AudioTestActive
+            ? snapshot.MicrophoneLevel > 0 ? $"Signal détecté · {snapshot.MicrophoneLevel}%" : "Microphone ouvert · parlez normalement…"
+            : "Lancez le test puis parlez normalement.";
         if (microphoneTestButton is not null) microphoneTestButton.Text = snapshot.AudioTestActive ? "Arrêter le test microphone" : "Tester le microphone";
         if (callValue is not null) callValue.Text = CallLabel(snapshot.CallState);
         if (durationValue is not null) durationValue.Text = snapshot.CallDurationSeconds is int seconds ? $"Durée observée : {seconds / 60:00}:{seconds % 60:00}" : "Aucun appel actif";

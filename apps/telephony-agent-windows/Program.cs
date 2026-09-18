@@ -6,7 +6,7 @@ namespace CrmYnov.TelephonyAgent;
 
 internal static class Program
 {
-    private const string Version = "0.3.1-pilot";
+    private const string Version = "0.3.2-pilot";
     private const string SdkVersion = "5.5.21";
     [STAThread]
     public static async Task<int> Main(string[] args)

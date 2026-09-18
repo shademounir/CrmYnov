@@ -8,7 +8,7 @@ namespace CrmYnov.TelephonyAgent;
 
 internal sealed class LinphoneEngine : IDisposable
 {
-    private readonly AgentSettings settings;
+    private AgentSettings settings;
     private readonly string dataDirectory;
     private readonly HashSet<string> configuredRealms = new(StringComparer.Ordinal);
     private readonly WindowsAudioPeakMeter peakMeter = new();
@@ -143,12 +143,13 @@ internal sealed class LinphoneEngine : IDisposable
     public void ApplyDevices(string? inputId, string? outputId)
     {
         if (core is null) return;
+        settings = settings with { InputDeviceId = inputId, OutputDeviceId = outputId };
         var devices = Devices;
         var input = devices.FirstOrDefault(device => device.Id == inputId && device.HasCapability(AudioDeviceCapabilities.CapabilityRecord));
         var output = devices.FirstOrDefault(device => device.Id == outputId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay));
         if (input is not null) core.InputAudioDevice = input;
         if (output is not null) core.OutputAudioDevice = output;
-        if (input is not null) peakMeter.Select(input.DeviceName);
+        if (input is not null) peakMeter.Select(input.Id, input.DeviceName);
         if (activeCall is not null) {
             if (input is not null) activeCall.InputAudioDevice = input;
             if (output is not null) activeCall.OutputAudioDevice = output;
