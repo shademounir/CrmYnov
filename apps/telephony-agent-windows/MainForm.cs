@@ -354,7 +354,7 @@ internal sealed class MainForm : Form
         {
             ApplySelectedDevicesWithoutSaving();
             if (snapshot.AudioTestActive) { runtime.StopMicrophoneTest(); ShowFeedback("Test microphone arrêté. Aucun son n’a été enregistré.", false); }
-            else { runtime.StartMicrophoneTest(); ShowFeedback("Parlez normalement : la jauge doit réagir et votre voix revient localement. Aucun appel n’est lancé.", false); }
+            else { runtime.StartMicrophoneTest(); ShowFeedback("Parlez normalement : la jauge et le pourcentage doivent réagir. Aucun retour de voix, appel ou enregistrement n’est produit.", false); }
         }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
     }

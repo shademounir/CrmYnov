@@ -8,7 +8,7 @@ namespace CrmYnov.TelephonyAgent;
 /// </summary>
 internal sealed class WindowsAudioPeakMeter : IDisposable
 {
-    private IAudioMeterInformation? meter;
+    private readonly List<IAudioMeterInformation> meters = [];
     private float smoothedPeak;
 
     public bool Select(string? deviceId, string? deviceName)
@@ -22,23 +22,21 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
             enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(enumeratorType)!;
             Marshal.ThrowExceptionForHR(enumerator.EnumAudioEndpoints(EDataFlow.Capture, DeviceState.Active, out collection));
             Marshal.ThrowExceptionForHR(collection.GetCount(out var count));
-            IMMDevice? selected = null;
             for (uint index = 0; index < count; index++)
             {
                 Marshal.ThrowExceptionForHR(collection.Item(index, out var device));
-                var friendlyName = GetFriendlyName(device);
-                if (Matches(deviceId, deviceName, friendlyName)) { selected = device; break; }
-                Marshal.ReleaseComObject(device);
+                try
+                {
+                    var friendlyName = GetFriendlyName(device);
+                    var iid = typeof(IAudioMeterInformation).GUID;
+                    Marshal.ThrowExceptionForHR(device.Activate(ref iid, ClsCtx.All, IntPtr.Zero, out var activated));
+                    var endpointMeter = (IAudioMeterInformation)activated;
+                    if (Matches(deviceId, deviceName, friendlyName)) meters.Insert(0, endpointMeter);
+                    else meters.Add(endpointMeter);
+                }
+                finally { Marshal.ReleaseComObject(device); }
             }
-            if (selected is null)
-            {
-                Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(EDataFlow.Capture, ERole.Communications, out selected));
-            }
-            var iid = typeof(IAudioMeterInformation).GUID;
-            Marshal.ThrowExceptionForHR(selected.Activate(ref iid, ClsCtx.All, IntPtr.Zero, out var activated));
-            meter = (IAudioMeterInformation)activated;
-            Marshal.ReleaseComObject(selected);
-            return true;
+            return meters.Count > 0;
         }
         catch
         {
@@ -54,10 +52,15 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
 
     public int ReadPercent()
     {
-        if (meter is null) return 0;
+        if (meters.Count == 0) return 0;
         try
         {
-            Marshal.ThrowExceptionForHR(meter.GetPeakValue(out var peak));
+            var peak = 0f;
+            foreach (var endpointMeter in meters)
+            {
+                Marshal.ThrowExceptionForHR(endpointMeter.GetPeakValue(out var endpointPeak));
+                peak = Math.Max(peak, endpointPeak);
+            }
             // Endpoint peaks are linear and normal speech often stays below 5%.
             // A square-root scale makes speech visible without inventing signal;
             // the falling edge is held briefly to keep the gauge readable.
@@ -109,8 +112,8 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
 
     private void DisposeMeter()
     {
-        if (meter is not null) Marshal.ReleaseComObject(meter);
-        meter = null;
+        foreach (var endpointMeter in meters) Marshal.ReleaseComObject(endpointMeter);
+        meters.Clear();
         smoothedPeak = 0;
     }
 

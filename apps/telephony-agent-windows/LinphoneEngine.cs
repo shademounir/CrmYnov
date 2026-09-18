@@ -25,6 +25,7 @@ internal sealed class LinphoneEngine : IDisposable
     private bool muted;
     private bool stopping;
     private bool audioTestActive;
+    private float? audioTestPlaybackGainDb;
     public bool SdkLoaded { get; private set; }
     public bool SipRegistered { get; private set; }
     public string? CurrentCallState => lastState;
@@ -174,10 +175,18 @@ internal sealed class LinphoneEngine : IDisposable
         // on the successful path. Keep the workaround local and remove it when a
         // corrected official wrapper is adopted.
         try {
+            audioTestPlaybackGainDb = core.PlaybackGainDb;
+            // Keep the capture path active for a real level measurement without
+            // feeding the microphone back to the user's headset.
+            core.PlaybackGainDb = -120f;
             if (NativeAudio.StartEchoTester(core.nativePtr, 48000) != 1)
                 throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED");
         }
-        catch (Exception error) { throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED", error); }
+        catch (Exception error) {
+            if (audioTestPlaybackGainDb is float previousGain) core.PlaybackGainDb = previousGain;
+            audioTestPlaybackGainDb = null;
+            throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED", error);
+        }
         audioTestActive = true;
         StatusChanged?.Invoke("AUDIO_MIC_TEST_RUNNING");
     }
@@ -191,7 +200,12 @@ internal sealed class LinphoneEngine : IDisposable
             if (NativeAudio.StopEchoTester(core.nativePtr) < 0)
                 throw new InvalidOperationException("AUDIO_MICROPHONE_STOP_FAILED");
         }
-        finally { audioTestActive = false; StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED"); }
+        finally {
+            if (audioTestPlaybackGainDb is float previousGain) core.PlaybackGainDb = previousGain;
+            audioTestPlaybackGainDb = null;
+            audioTestActive = false;
+            StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED");
+        }
     }
 
     public void PlayOutputTest()
