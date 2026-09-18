@@ -28,16 +28,42 @@ fois par processus et aucun mot de passe n'est écrit dans `linphonerc`. Une
 ancienne configuration de pilote ayant pu contenir un secret en clair est
 supprimée au démarrage ; `settings.dpapi` reste l'unique stockage du secret.
 
-## Commandes
+## Interface graphique et commandes techniques
+
+Sans argument, l’agent ouvre l’assistant graphique « Relation Ynov » :
+association au CRM, secret SIP masqué, statuts CRM/poste/SIP, périphériques
+audio, niveau micro, appel courant, muet, raccrochage, diagnostic expurgé et
+zone de notification. Le démarrage avec Windows est désactivé par défaut et ne
+s’active que par la case dédiée.
 
 - `CrmYnov.TelephonyAgent pair` : association par code temporaire à usage unique ;
 - `CrmYnov.TelephonyAgent configure-secret` : saisie locale masquée du mot de passe SIP ;
 - `CrmYnov.TelephonyAgent native-check` : charge le SDK sans compte SIP ni appel ;
 - `CrmYnov.TelephonyAgent run` : enregistre le compte SIP et interroge l'API ;
-- sans argument : affiche l'état local sans secret.
+- `CrmYnov.TelephonyAgent self-test <rapport.json>` : vérifie DPAPI, le journal
+  de rejeu et l’export expurgé, sans réseau SIP ni appel.
 
 Pendant `run` : `devices`, `input N`, `output N`, `hangup`, `quit`.
+
+Les commandes console sont conservées pour le diagnostic technique ; le paquet
+commercial utilise l’interface graphique et une instance unique par session.
 
 La réception est refusée et aucun enregistrement audio n'est créé. La durée CRM
 provient exclusivement des événements `ANSWERED` puis terminal observés par le
 SDK ; elle n'est pas certifiée par l'opérateur.
+
+## Paquet pilote, mise à jour et retour arrière
+
+`scripts/telephony-agent/package-windows-agent.ps1` produit un paquet autonome
+`win-x64`, son manifeste SHA-256 et une archive des sources de l’agent. Le
+paquet est portable : extraire chaque version dans un dossier distinct et
+lancer `CrmYnov.TelephonyAgent.exe`. Le fichier DPAPI demeure dans
+`%LOCALAPPDATA%\CRM Ynov\Telephony Agent` et survit à une mise à jour.
+
+Pour revenir en arrière : arrêter l’agent, lancer le dossier de la version
+précédente conservée et vérifier CRM/poste/SIP avant tout appel. Pour
+désinstaller : désactiver le démarrage automatique, quitter l’agent, révoquer
+le poste dans le CRM, puis supprimer le dossier du programme. La suppression
+du dossier DPAPI est une action distincte et irréversible qui exige une décision
+explicite. Le paquet pilote n’est pas signé ; un certificat approuvé reste un
+prérequis de production.

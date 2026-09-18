@@ -6,7 +6,8 @@ namespace CrmYnov.TelephonyAgent;
 
 internal sealed class DpapiStore
 {
-    private readonly string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CRM Ynov", "Telephony Agent");
+    private readonly string directory;
+    public DpapiStore(string? dataDirectory = null) { directory = dataDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CRM Ynov", "Telephony Agent"); }
     private string SettingsPath => Path.Combine(directory, "settings.dpapi");
     public string JournalPath => Path.Combine(directory, "events.jsonl");
     public string DataDirectory => directory;

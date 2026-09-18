@@ -80,6 +80,22 @@ automatiquement au SDK.
 10. seulement après autorisation de la destination, activer le sortant et lancer
     un appel depuis la fiche Lead.
 
+Le paquet reproductible est généré par :
+
+```powershell
+.\scripts\telephony-agent\package-windows-agent.ps1 `
+  -DotnetPath '<dotnet-8>\dotnet.exe' `
+  -SdkRoot '<linphone-sdk-5.5.21>\win64' `
+  -OutputRoot '<dossier-prive-de-sortie>'
+```
+
+Il est autonome pour `win-x64`, n’exige pas l’installation du runtime .NET et
+refuse d’écraser un paquet existant. Son manifeste inventorie les fichiers et
+empreintes. L’archive source couvre le code de l’agent et son runbook ; les
+sources correspondantes exhaustives de toutes les dépendances natives restent
+à constituer avant distribution. La signature Authenticode reste absente du
+pilote et obligatoire avant le passage en production.
+
 Le code d'appairage expire après dix minutes et devient inutilisable après la
 première consommation. La configuration locale est sous
 `%LOCALAPPDATA%\CRM Ynov\Telephony Agent` et reste liée au compte Windows par

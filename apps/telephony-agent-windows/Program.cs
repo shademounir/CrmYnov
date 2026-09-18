@@ -5,14 +5,16 @@ namespace CrmYnov.TelephonyAgent;
 
 internal static class Program
 {
-    private const string Version = "0.1.0-pilot";
+    private const string Version = "0.2.0-pilot";
     private const string SdkVersion = "5.5.21";
+    [STAThread]
     public static async Task<int> Main(string[] args)
     {
-        Console.OutputEncoding = Encoding.UTF8;
-        var command = args.FirstOrDefault()?.ToLowerInvariant() ?? "status";
+        var command = args.FirstOrDefault()?.ToLowerInvariant() ?? "gui";
         try
         {
+            if (command is "gui" or "start") return RunGui();
+            if (command == "self-test") return AgentSelfTest.Run(args.Skip(1).FirstOrDefault());
             // Loading the official SDK must remain a read-only diagnostic: it must
             // not create a local profile or touch a user's protected SIP state.
             if (command == "native-check") return NativeCheck();
@@ -25,6 +27,19 @@ internal static class Program
             };
         }
         catch (Exception error) { Console.Error.WriteLine($"Agent indisponible : {SafeCode(error)}"); return 1; }
+    }
+
+    private static int RunGui()
+    {
+        using var singleInstance = new Mutex(true, "Local\\CRM-Ynov-Telephony-Agent", out var createdNew);
+        if (!createdNew) {
+            MessageBox.Show("L’agent téléphonique CRM Ynov est déjà ouvert dans cette session.", "CRM Ynov", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return 0;
+        }
+        ApplicationConfiguration.Initialize();
+        var store = new DpapiStore(); store.EnsureDirectory();
+        Application.Run(new MainForm(store));
+        return 0;
     }
 
     private static async Task<int> PairAsync(DpapiStore store)
