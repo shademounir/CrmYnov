@@ -14,11 +14,14 @@ internal sealed record AgentSettings(
     string Transport,
     string SipPassword,
     string? InputDeviceId,
-    string? OutputDeviceId);
+    string? OutputDeviceId,
+    string? CrmDisplayName = null,
+    string? CrmEmail = null,
+    string? WorkstationDisplayName = null);
 
 internal sealed record PairRequest(string Code, string PublicId, string DisplayName, string AgentVersion, string SdkVersion);
 internal sealed record PairResponse(string Token, string WorkstationId, AgentProfile Profile);
-internal sealed record AgentProfile(string Id, string WorkstationId, string SipAddress, string? AuthUsername, AgentServer Server, bool InboundEnabled, bool RecordingEnabled);
+internal sealed record AgentProfile(string Id, string WorkstationId, string SipAddress, string? AuthUsername, AgentServer Server, bool InboundEnabled, bool RecordingEnabled, string? CrmDisplayName = null, string? CrmEmail = null);
 internal sealed record AgentServer(string SipDomain, string? ProxyUri, string Transport);
 internal sealed record PollResponse(AgentProfile Profile, AgentCommand? Command);
 internal sealed record AgentCommand(string CommandId, string CallId, string Destination, DateTimeOffset ExpiresAt, int MaxDurationSeconds, bool HangupRequested);
@@ -39,7 +42,25 @@ internal sealed record AgentRuntimeSnapshot(
     int MicrophoneLevel,
     IReadOnlyList<AudioDeviceView> Devices,
     string? InputDeviceId,
-    string? OutputDeviceId);
+    string? OutputDeviceId,
+    string AuthorizationState = "À vérifier",
+    bool AudioInitialized = false,
+    bool AudioTestActive = false,
+    bool InputDeviceAvailable = false,
+    bool OutputDeviceAvailable = false,
+    string? CrmDisplayName = null,
+    string? CrmEmail = null);
+
+internal static class AgentReadiness
+{
+    public static bool IsReady(AgentRuntimeSnapshot snapshot) =>
+        snapshot.Running
+        && snapshot.CrmConnected
+        && snapshot.AuthorizationState == "Autorisée"
+        && snapshot.SipRegistered
+        && snapshot.InputDeviceAvailable
+        && snapshot.OutputDeviceAvailable;
+}
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(AgentSettings))]

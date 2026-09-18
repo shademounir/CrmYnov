@@ -30,15 +30,31 @@ supprimée au démarrage ; `settings.dpapi` reste l'unique stockage du secret.
 
 ## Interface graphique et commandes techniques
 
-Sans argument, l’agent ouvre l’assistant graphique « Relation Ynov » :
-association au CRM, secret SIP masqué, statuts CRM/poste/SIP, périphériques
-audio, niveau micro, appel courant, muet, raccrochage, diagnostic expurgé et
-zone de notification. Le démarrage avec Windows est désactivé par défaut et ne
-s’active que par la case dédiée.
+Sans argument, l’agent ouvre l’interface graphique « Relation Ynov ». La
+première utilisation suit cinq étapes : compte CRM, profil attribué, mot de
+passe téléphonique protégé par Windows, audio local, puis disponibilité réelle.
+Une fois le profil complet, les ouvertures suivantes arrivent directement sur
+le tableau de bord ; le code temporaire n’est plus demandé.
+
+Le Core Liblinphone est initialisé d’abord sans compte SIP pour découvrir et
+tester les périphériques. Le test micro utilise l’écho local du SDK et un
+vumètre de point de terminaison Windows, sans enregistrer de fichier et sans
+changer les réglages Windows. Le son de test utilise le lecteur local
+Liblinphone. La connexion SIP n’est lancée qu’après cette configuration.
+
+« Prêt à appeler » exige simultanément : CRM joignable, poste autorisé, SIP
+enregistré, microphone sélectionné et sortie sélectionnée. Le retrait du
+périphérique retenu est signalé ; pendant un appel il n’est pas remplacé
+silencieusement par un autre périphérique.
+
+Le démarrage avec Windows est désactivé par défaut et ne s’active que par la
+case dédiée.
 
 - `CrmYnov.TelephonyAgent pair` : association par code temporaire à usage unique ;
 - `CrmYnov.TelephonyAgent configure-secret` : saisie locale masquée du mot de passe SIP ;
 - `CrmYnov.TelephonyAgent native-check` : charge le SDK sans compte SIP ni appel ;
+- `CrmYnov.TelephonyAgent audio-check <rapport.json>` : inventorie les capacités
+  audio sans nom ni identifiant de périphérique, sans SIP et sans enregistrement ;
 - `CrmYnov.TelephonyAgent run` : enregistre le compte SIP et interroge l'API ;
 - `CrmYnov.TelephonyAgent self-test <rapport.json>` : vérifie DPAPI, le journal
   de rejeu et l’export expurgé, sans réseau SIP ni appel.

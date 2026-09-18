@@ -38,8 +38,13 @@ internal static class AgentSelfTest
             foreach (var forbidden in new[] { expected.AgentToken, expected.SipPassword, expected.SipAddress, "private-device-id", "Private microphone name" })
                 Require(!diagnosticText.Contains(forbidden, StringComparison.Ordinal), "DIAGNOSTIC_PRIVATE_VALUE_FOUND");
 
+            var ready = new AgentRuntimeSnapshot(true, true, true, true, "SIP_ENREGISTRÉ", null, null, false, 0, [], "input", "output", "Autorisée", true, false, true, true);
+            Require(AgentReadiness.IsReady(ready), "READINESS_COMPLETE_PROFILE_REFUSED");
+            Require(!AgentReadiness.IsReady(ready with { AuthorizationState = "Révoquée" }), "READINESS_REVOKED_WORKSTATION_ACCEPTED");
+            Require(!AgentReadiness.IsReady(ready with { OutputDeviceAvailable = false }), "READINESS_MISSING_OUTPUT_ACCEPTED");
+
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;

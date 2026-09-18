@@ -5,9 +5,13 @@ namespace CrmYnov.TelephonyAgent;
 
 internal sealed class AgentSetup
 {
-    private const string Version = "0.2.0-pilot";
+    private const string Version = "0.3.0-pilot";
     private const string SdkVersion = "5.5.21";
     private readonly DpapiStore store;
+
+    public static string ConfiguredApiBaseUrl =>
+        Environment.GetEnvironmentVariable("CRM_YNOV_TELEPHONY_API_URL")?.Trim()
+        ?? "http://127.0.0.1:43216";
 
     public AgentSetup(DpapiStore store) { this.store = store; }
 
@@ -28,7 +32,10 @@ internal sealed class AgentSetup
             paired.Profile.Server.ProxyUri, paired.Profile.Server.Transport,
             preserveSecret ? existing!.SipPassword : "",
             preserveSecret ? existing!.InputDeviceId : null,
-            preserveSecret ? existing!.OutputDeviceId : null);
+            preserveSecret ? existing!.OutputDeviceId : null,
+            paired.Profile.CrmDisplayName,
+            paired.Profile.CrmEmail,
+            displayName.Trim());
         store.Save(settings);
         return settings;
     }
@@ -40,5 +47,14 @@ internal sealed class AgentSetup
         var updated = settings with { SipPassword = password };
         store.Save(updated);
         return updated;
+    }
+
+    public bool IsProfileComplete(AgentSettings? settings = null)
+    {
+        settings ??= store.Load();
+        return settings is not null
+            && settings.SipPassword.Length > 0
+            && !string.IsNullOrWhiteSpace(settings.InputDeviceId)
+            && !string.IsNullOrWhiteSpace(settings.OutputDeviceId);
     }
 }

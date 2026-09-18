@@ -1,11 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace CrmYnov.TelephonyAgent;
 
 internal static class Program
 {
-    private const string Version = "0.2.0-pilot";
+    private const string Version = "0.3.0-pilot";
     private const string SdkVersion = "5.5.21";
     [STAThread]
     public static async Task<int> Main(string[] args)
@@ -20,6 +21,7 @@ internal static class Program
             if (command == "native-check") return NativeCheck();
             var store = new DpapiStore(); store.EnsureDirectory();
             return command switch {
+                "audio-check" => AudioCheck(store, args.Skip(1).FirstOrDefault()),
                 "pair" => await PairAsync(store),
                 "configure-secret" => ConfigureSecret(store),
                 "run" => await RunAsync(store),
@@ -64,6 +66,30 @@ internal static class Program
         var version = Linphone.LinphoneWrapper.VERSION;
         _ = Linphone.Factory.Instance;
         Console.WriteLine($"Liblinphone chargé : {version}. Aucun compte SIP et aucun appel utilisés."); return 0;
+    }
+    private static int AudioCheck(DpapiStore store, string? reportPath)
+    {
+        if (string.IsNullOrWhiteSpace(reportPath)) throw new InvalidOperationException("AUDIO_REPORT_PATH_REQUIRED");
+        var settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
+        store.RemoveLegacyCoreConfig();
+        using var engine = new LinphoneEngine(settings, store.DataDirectory);
+        engine.StartAudio();
+        for (var index = 0; index < 20; index++) { engine.Iterate(); Thread.Sleep(25); }
+        var devices = engine.Devices;
+        var report = new {
+            generatedAt = DateTimeOffset.UtcNow,
+            passed = devices.Any(item => item.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityRecord))
+                && devices.Any(item => item.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityPlay)),
+            sdkLoaded = engine.SdkLoaded,
+            sipRegistered = engine.SipRegistered,
+            inputCount = devices.Count(item => item.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityRecord)),
+            outputCount = devices.Count(item => item.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityPlay)),
+            selectedInputAvailable = devices.Any(item => item.Id == settings.InputDeviceId && item.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityRecord)),
+            selectedOutputAvailable = devices.Any(item => item.Id == settings.OutputDeviceId && item.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityPlay)),
+            privacy = "No device names, identifiers, SIP registration or audio recording included",
+        };
+        File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        return report.passed ? 0 : 1;
     }
     private static int Status(DpapiStore store)
     {

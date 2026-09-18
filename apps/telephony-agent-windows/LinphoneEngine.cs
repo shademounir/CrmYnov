@@ -10,8 +10,11 @@ internal sealed class LinphoneEngine : IDisposable
     private readonly AgentSettings settings;
     private readonly string dataDirectory;
     private readonly HashSet<string> configuredRealms = new(StringComparer.Ordinal);
+    private readonly WindowsAudioPeakMeter peakMeter = new();
     private Config? volatileConfig;
     private Core? core;
+    private Account? account;
+    private Player? localPlayer;
     private Call? activeCall;
     private string? activeCommandId;
     private string? activeCallId;
@@ -20,13 +23,16 @@ internal sealed class LinphoneEngine : IDisposable
     private int? lastDurationSeconds;
     private bool muted;
     private bool stopping;
+    private bool audioTestActive;
     public bool SdkLoaded { get; private set; }
     public bool SipRegistered { get; private set; }
     public string? CurrentCallState => lastState;
     public int? CallDurationSeconds => answeredAt is null ? lastDurationSeconds : Math.Max(0, (int)(DateTimeOffset.UtcNow - answeredAt.Value).TotalSeconds);
     public bool Muted => muted;
+    public bool AudioTestActive => audioTestActive;
     public int MicrophoneLevel {
         get {
+            if (audioTestActive) return peakMeter.ReadPercent();
             if (activeCall is null || lastState != "ANSWERED" || muted) return 0;
             var dbm0 = activeCall.RecordVolume;
             if (float.IsNaN(dbm0) || float.IsInfinity(dbm0) || dbm0 <= -120) return 0;
@@ -39,8 +45,9 @@ internal sealed class LinphoneEngine : IDisposable
     public LinphoneEngine(AgentSettings settings, string dataDirectory) { this.settings = settings; this.dataDirectory = dataDirectory; }
     public IReadOnlyList<AudioDevice> Devices => core?.ExtendedAudioDevices.ToList() ?? [];
 
-    public void Start()
+    public void StartAudio()
     {
+        if (core is not null) return;
         var factory = Factory.Instance;
         factory.DataDir = dataDirectory;
         factory.ConfigDir = dataDirectory;
@@ -84,8 +91,25 @@ internal sealed class LinphoneEngine : IDisposable
             StatusChanged?.Invoke($"SIP_{state.ToString().ToUpperInvariant()}");
         };
         core.Listener.OnCallStateChanged = (_, call, state, _) => OnCallState(call, state);
-        core.Listener.OnAudioDevicesListUpdated = _ => StatusChanged?.Invoke("AUDIO_DEVICES_UPDATED");
+        core.Listener.OnAudioDevicesListUpdated = _ => {
+            ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
+            var missing = MissingSelectedDevice();
+            if (missing is not null && activeCall is not null) {
+                StatusChanged?.Invoke("AUDIO_DEVICE_REMOVED_DURING_CALL");
+                activeCall.Terminate();
+            } else StatusChanged?.Invoke(missing ?? "AUDIO_DEVICES_UPDATED");
+        };
         core.Start(); SdkLoaded = true;
+        ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
+        StatusChanged?.Invoke("AUDIO_READY");
+    }
+
+    public void ConnectSip()
+    {
+        StartAudio();
+        if (account is not null) return;
+        if (settings.SipPassword.Length == 0) throw new InvalidOperationException("SIP_SECRET_MISSING");
+        var factory = Factory.Instance;
         var parameters = core.CreateAccountParams();
         parameters.PushNotificationAllowed = false;
         parameters.RemotePushNotificationAllowed = false;
@@ -94,15 +118,19 @@ internal sealed class LinphoneEngine : IDisposable
         var server = factory.CreateAddress(proxy) ?? throw new InvalidOperationException("SIP_PROXY_INVALID");
         server.Transport = settings.Transport.ToUpperInvariant() switch { "UDP" => TransportType.Udp, "TCP" => TransportType.Tcp, _ => TransportType.Tls };
         parameters.ServerAddress = server; parameters.RegisterEnabled = true;
-        var account = core.CreateAccount(parameters); core.AddAccount(account); core.DefaultAccount = account;
+        account = core.CreateAccount(parameters); core.AddAccount(account); core.DefaultAccount = account;
         ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
     }
+
+    public void Start() { StartAudio(); ConnectSip(); }
 
     public void Iterate() => core?.Iterate();
     public void StartCall(AgentCommand command)
     {
         if (core is null || !SipRegistered) throw new InvalidOperationException("SIP_NOT_REGISTERED");
         if (activeCall is not null) throw new InvalidOperationException("WORKSTATION_BUSY");
+        var missing = MissingSelectedDevice();
+        if (missing is not null) throw new InvalidOperationException(missing);
         activeCommandId = command.CommandId; activeCallId = command.CallId; lastState = null; answeredAt = null; lastDurationSeconds = null; muted = false;
         if (!Regex.IsMatch(command.Destination, @"^\+[1-9]\d{7,14}$", RegexOptions.CultureInvariant)) throw new InvalidOperationException("DESTINATION_INVALID");
         var address = Factory.Instance.CreateAddress($"sip:{command.Destination}@{settings.SipDomain}") ?? throw new InvalidOperationException("DESTINATION_INVALID");
@@ -119,10 +147,59 @@ internal sealed class LinphoneEngine : IDisposable
         var output = devices.FirstOrDefault(device => device.Id == outputId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay));
         if (input is not null) core.InputAudioDevice = input;
         if (output is not null) core.OutputAudioDevice = output;
+        if (input is not null) peakMeter.Select(input.DeviceName);
         if (activeCall is not null) {
             if (input is not null) activeCall.InputAudioDevice = input;
             if (output is not null) activeCall.OutputAudioDevice = output;
         }
+    }
+
+    public void ReloadAudioDevices()
+    {
+        core?.ReloadSoundDevices();
+        ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
+    }
+
+    public void StartMicrophoneTest()
+    {
+        if (core is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
+        if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
+        if (MissingSelectedDevice() is not null) throw new InvalidOperationException("AUDIO_DEVICE_UNAVAILABLE");
+        if (audioTestActive) return;
+        try { core.StartEchoTester(16000); }
+        catch (Exception error) { throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED", error); }
+        audioTestActive = true;
+        StatusChanged?.Invoke("AUDIO_MIC_TEST_RUNNING");
+    }
+
+    public void StopMicrophoneTest()
+    {
+        if (!audioTestActive || core is null) return;
+        try { core.StopEchoTester(); } finally { audioTestActive = false; StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED"); }
+    }
+
+    public void PlayOutputTest()
+    {
+        if (core is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
+        if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
+        var output = Devices.FirstOrDefault(device => device.Id == settings.OutputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay));
+        if (output is null) throw new InvalidOperationException("AUDIO_OUTPUT_UNAVAILABLE");
+        localPlayer?.Close();
+        localPlayer = core.CreateLocalPlayer(output.DeviceName, null!, IntPtr.Zero) ?? throw new InvalidOperationException("AUDIO_PLAYER_UNAVAILABLE");
+        var path = Path.Combine(AppContext.BaseDirectory, "share", "sounds", "linphone", "hello16000.wav");
+        if (!File.Exists(path)) throw new InvalidOperationException("AUDIO_TEST_FILE_MISSING");
+        localPlayer.Open(path);
+        localPlayer.Start();
+        StatusChanged?.Invoke("AUDIO_OUTPUT_TEST_PLAYING");
+    }
+
+    private string? MissingSelectedDevice()
+    {
+        if (string.IsNullOrWhiteSpace(settings.InputDeviceId) || string.IsNullOrWhiteSpace(settings.OutputDeviceId)) return "AUDIO_DEVICE_NOT_CONFIGURED";
+        var devices = Devices;
+        if (!devices.Any(device => device.Id == settings.InputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityRecord))) return "AUDIO_INPUT_UNAVAILABLE";
+        if (!devices.Any(device => device.Id == settings.OutputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay))) return "AUDIO_OUTPUT_UNAVAILABLE";
+        return null;
     }
     private void OnCallState(Call call, CallState state)
     {
@@ -164,7 +241,7 @@ internal sealed class LinphoneEngine : IDisposable
     public void Dispose()
     {
         if (stopping) return; stopping = true;
-        try { activeCall?.Terminate(); core?.Stop(); for (var i = 0; i < 25; i++) { core?.Iterate(); Thread.Sleep(20); } } catch { /* shutdown remains best effort */ }
-        configuredRealms.Clear(); activeCall = null; core = null; volatileConfig = null;
+        try { StopMicrophoneTest(); localPlayer?.Close(); activeCall?.Terminate(); core?.Stop(); for (var i = 0; i < 25; i++) { core?.Iterate(); Thread.Sleep(20); } } catch { /* shutdown remains best effort */ }
+        peakMeter.Dispose(); configuredRealms.Clear(); activeCall = null; account = null; localPlayer = null; core = null; volatileConfig = null;
     }
 }

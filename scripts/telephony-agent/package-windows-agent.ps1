@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$DotnetPath,
     [Parameter(Mandatory = $true)][string]$SdkRoot,
     [Parameter(Mandatory = $true)][string]$OutputRoot,
-    [string]$Version = '0.2.0-pilot'
+    [string]$Version = '0.3.0-pilot'
 )
 
 $ErrorActionPreference = 'Stop'
