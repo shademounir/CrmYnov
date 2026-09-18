@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$DotnetPath,
     [Parameter(Mandatory = $true)][string]$SdkRoot,
     [Parameter(Mandatory = $true)][string]$OutputRoot,
-    [string]$Version = '0.3.0-pilot'
+    [Parameter(Mandatory = $true)][string]$Version
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,6 +38,11 @@ $env:LIBLINPHONE_SDK_ROOT = $sdkRootResolved
 if ($LASTEXITCODE -ne 0) { throw "DOTNET_RESTORE_FAILED: $LASTEXITCODE" }
 & $dotnetResolved publish $project -c Release -r win-x64 --self-contained true --no-restore -o $packageDirectory
 if ($LASTEXITCODE -ne 0) { throw "DOTNET_PUBLISH_FAILED: $LASTEXITCODE" }
+$publishedExecutable = Join-Path $packageDirectory 'CrmYnov.TelephonyAgent.exe'
+$publishedVersion = (Get-Item -LiteralPath $publishedExecutable).VersionInfo.ProductVersion
+if (-not $publishedVersion.StartsWith("$Version+", [System.StringComparison]::OrdinalIgnoreCase) -and $publishedVersion -ne $Version) {
+    throw "PACKAGE_VERSION_MISMATCH: requested=$Version executable=$publishedVersion"
+}
 
 $documentation = Join-Path $packageDirectory 'documentation'
 $notices = Join-Path $packageDirectory 'notices'
@@ -69,6 +74,7 @@ $manifestDocument = [ordered]@{
     version = $Version
     runtime = 'win-x64-self-contained'
     liblinphoneSdk = '5.5.21'
+    executableProductVersion = $publishedVersion
     signed = $false
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
     files = $manifest

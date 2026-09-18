@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
 using Linphone;
 
 namespace CrmYnov.TelephonyAgent;
@@ -24,17 +24,20 @@ internal sealed class LinphoneEngine : IDisposable
     private int? lastDurationSeconds;
     private bool muted;
     private bool stopping;
-    private bool audioTestActive;
-    private float? audioTestPlaybackGainDb;
+    private bool localMonitoringActive;
     public bool SdkLoaded { get; private set; }
     public bool SipRegistered { get; private set; }
     public string? CurrentCallState => lastState;
     public int? CallDurationSeconds => answeredAt is null ? lastDurationSeconds : Math.Max(0, (int)(DateTimeOffset.UtcNow - answeredAt.Value).TotalSeconds);
     public bool Muted => muted;
-    public bool AudioTestActive => audioTestActive;
+    public bool AudioTestActive => peakMeter.IsRunning || localMonitoringActive;
+    public bool LocalMonitoringActive => localMonitoringActive;
+    public int LastMicrophonePeak => peakMeter.LastPeakPercent;
+    public long MicrophoneSampleCount => peakMeter.SampleCount;
+    public string? AudioMeterErrorCode => peakMeter.ErrorCode;
     public int MicrophoneLevel {
         get {
-            if (audioTestActive) return peakMeter.ReadPercent();
+            if (peakMeter.IsRunning) return peakMeter.ReadPercent();
             if (activeCall is null || lastState != "ANSWERED" || muted) return 0;
             var dbm0 = activeCall.RecordVolume;
             if (float.IsNaN(dbm0) || float.IsInfinity(dbm0) || dbm0 <= -120) return 0;
@@ -131,26 +134,30 @@ internal sealed class LinphoneEngine : IDisposable
     {
         if (core is null || !SipRegistered) throw new InvalidOperationException("SIP_NOT_REGISTERED");
         if (activeCall is not null) throw new InvalidOperationException("WORKSTATION_BUSY");
+        if (peakMeter.IsRunning || localMonitoringActive) throw new InvalidOperationException("AUDIO_TEST_ACTIVE");
         var missing = MissingSelectedDevice();
         if (missing is not null) throw new InvalidOperationException(missing);
-        activeCommandId = command.CommandId; activeCallId = command.CallId; lastState = null; answeredAt = null; lastDurationSeconds = null; muted = false;
         if (!Regex.IsMatch(command.Destination, @"^\+[1-9]\d{7,14}$", RegexOptions.CultureInvariant)) throw new InvalidOperationException("DESTINATION_INVALID");
         var address = Factory.Instance.CreateAddress($"sip:{command.Destination}@{settings.SipDomain}") ?? throw new InvalidOperationException("DESTINATION_INVALID");
         var callParams = core.CreateCallParams(null!); callParams.VideoEnabled = false;
-        activeCall = core.InviteAddressWithParams(address, callParams) ?? throw new InvalidOperationException("SDK_CALL_NOT_CREATED");
+        var createdCall = core.InviteAddressWithParams(address, callParams) ?? throw new InvalidOperationException("SDK_CALL_NOT_CREATED");
+        activeCommandId = command.CommandId; activeCallId = command.CallId; lastState = null; answeredAt = null; lastDurationSeconds = null; muted = false;
+        activeCall = createdCall;
     }
     public void Hangup() { if (activeCall is not null) activeCall.Terminate(); }
     public void SetMuted(bool value) { if (activeCall is null) return; activeCall.MicrophoneMuted = value; muted = activeCall.MicrophoneMuted; }
     public void ApplyDevices(string? inputId, string? outputId)
     {
         if (core is null) return;
+        if (peakMeter.IsRunning || localMonitoringActive) StopMicrophoneTest();
         settings = settings with { InputDeviceId = inputId, OutputDeviceId = outputId };
         var devices = Devices;
         var input = devices.FirstOrDefault(device => device.Id == inputId && device.HasCapability(AudioDeviceCapabilities.CapabilityRecord));
         var output = devices.FirstOrDefault(device => device.Id == outputId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay));
         if (input is not null) core.InputAudioDevice = input;
         if (output is not null) core.OutputAudioDevice = output;
-        if (input is not null) peakMeter.Select(input.Id, input.DeviceName);
+        if (!peakMeter.Select(input?.Id, input?.DeviceName) && input is not null)
+            StatusChanged?.Invoke(peakMeter.ErrorCode ?? "AUDIO_CAPTURE_MAPPING_UNRESOLVED");
         if (activeCall is not null) {
             if (input is not null) activeCall.InputAudioDevice = input;
             if (output is not null) activeCall.OutputAudioDevice = output;
@@ -163,55 +170,60 @@ internal sealed class LinphoneEngine : IDisposable
         ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
     }
 
-    public void StartMicrophoneTest()
+    public void StartMicrophoneTest(bool localMonitoring = false)
     {
         if (core is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
-        if (MissingSelectedDevice() is not null) throw new InvalidOperationException("AUDIO_DEVICE_UNAVAILABLE");
-        if (audioTestActive) return;
-        // Liblinphone 5.5 returns 1 when the echo tester starts successfully and
-        // -1 on failure. The generated C# wrapper treats every non-zero value as
-        // an exception, so calling Core.StartEchoTester() reports a false failure
-        // on the successful path. Keep the workaround local and remove it when a
-        // corrected official wrapper is adopted.
-        try {
-            audioTestPlaybackGainDb = core.PlaybackGainDb;
-            // Keep the capture path active for a real level measurement without
-            // feeding the microphone back to the user's headset.
-            core.PlaybackGainDb = -120f;
-            if (NativeAudio.StartEchoTester(core.nativePtr, 48000) != 1)
-                throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED");
+        var missingInput = MissingSelectedInputDevice();
+        if (missingInput is not null) throw new InvalidOperationException(missingInput);
+        if (localMonitoring && MissingSelectedDevice() is not null) throw new InvalidOperationException("AUDIO_OUTPUT_UNAVAILABLE");
+        if (peakMeter.IsRunning || localMonitoringActive) return;
+        // Use a Windows shared capture session for the local level meter. The
+        // Liblinphone echo tester intentionally loops capture back to playback,
+        // which creates a robotic echo and is not suitable for this UX.
+        if (!peakMeter.Start()) throw new InvalidOperationException(peakMeter.ErrorCode ?? "AUDIO_MICROPHONE_OPEN_FAILED");
+        if (localMonitoring)
+        {
+            try
+            {
+                if (NativeAudio.StartEchoTester(core.nativePtr, 48000) != 1)
+                    throw new InvalidOperationException("AUDIO_LOCAL_MONITORING_UNAVAILABLE");
+                localMonitoringActive = true;
+            }
+            catch (Exception error)
+            {
+                peakMeter.Stop();
+                throw new InvalidOperationException("AUDIO_LOCAL_MONITORING_UNAVAILABLE", error);
+            }
         }
-        catch (Exception error) {
-            if (audioTestPlaybackGainDb is float previousGain) core.PlaybackGainDb = previousGain;
-            audioTestPlaybackGainDb = null;
-            throw new InvalidOperationException("AUDIO_MICROPHONE_OPEN_FAILED", error);
-        }
-        audioTestActive = true;
         StatusChanged?.Invoke("AUDIO_MIC_TEST_RUNNING");
     }
 
     public void StopMicrophoneTest()
     {
-        if (!audioTestActive || core is null) return;
-        try {
-            // 5.5.x builds have returned both 0 and 1 on a successful stop;
-            // only the documented negative status is a failure.
-            if (NativeAudio.StopEchoTester(core.nativePtr) < 0)
-                throw new InvalidOperationException("AUDIO_MICROPHONE_STOP_FAILED");
+        if (!peakMeter.IsRunning && !localMonitoringActive && peakMeter.ErrorCode is null) return;
+        Exception? monitoringError = null;
+        if (localMonitoringActive && core is not null)
+        {
+            try
+            {
+                if (NativeAudio.StopEchoTester(core.nativePtr) < 0)
+                    monitoringError = new InvalidOperationException("AUDIO_LOCAL_MONITORING_STOP_FAILED");
+            }
+            catch (Exception error) { monitoringError = error; }
+            finally { localMonitoringActive = false; }
         }
-        finally {
-            if (audioTestPlaybackGainDb is float previousGain) core.PlaybackGainDb = previousGain;
-            audioTestPlaybackGainDb = null;
-            audioTestActive = false;
-            StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED");
-        }
+        peakMeter.Stop();
+        StatusChanged?.Invoke("AUDIO_MIC_TEST_STOPPED");
+        if (monitoringError is not null)
+            throw new InvalidOperationException("AUDIO_LOCAL_MONITORING_STOP_FAILED", monitoringError);
     }
 
     public void PlayOutputTest()
     {
         if (core is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
+        if (peakMeter.IsRunning || localMonitoringActive) throw new InvalidOperationException("AUDIO_TEST_ACTIVE");
         var output = Devices.FirstOrDefault(device => device.Id == settings.OutputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay));
         if (output is null) throw new InvalidOperationException("AUDIO_OUTPUT_UNAVAILABLE");
         localPlayer?.Close();
@@ -231,6 +243,14 @@ internal sealed class LinphoneEngine : IDisposable
         if (!devices.Any(device => device.Id == settings.InputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityRecord))) return "AUDIO_INPUT_UNAVAILABLE";
         if (!devices.Any(device => device.Id == settings.OutputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityPlay))) return "AUDIO_OUTPUT_UNAVAILABLE";
         return null;
+    }
+
+    private string? MissingSelectedInputDevice()
+    {
+        if (string.IsNullOrWhiteSpace(settings.InputDeviceId)) return "AUDIO_DEVICE_NOT_CONFIGURED";
+        return Devices.Any(device => device.Id == settings.InputDeviceId && device.HasCapability(AudioDeviceCapabilities.CapabilityRecord))
+            ? null
+            : "AUDIO_INPUT_UNAVAILABLE";
     }
     private void OnCallState(Call call, CallState state)
     {

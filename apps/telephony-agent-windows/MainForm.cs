@@ -26,6 +26,7 @@ internal sealed class MainForm : Form
     private ProgressBar? microphoneLevel;
     private Label? microphoneLevelText;
     private Button? microphoneTestButton;
+    private CheckBox? localMonitoring;
     private Button? finishButton;
     private Label? readinessLabel;
     private Label? crmStatus;
@@ -96,7 +97,7 @@ internal sealed class MainForm : Form
     {
         contentHost.SuspendLayout();
         contentHost.Controls.Clear();
-        inputDevices = null; outputDevices = null; microphoneLevel = null; microphoneLevelText = null; microphoneTestButton = null;
+        inputDevices = null; outputDevices = null; microphoneLevel = null; microphoneLevelText = null; microphoneTestButton = null; localMonitoring = null;
         finishButton = null; readinessLabel = null; crmStatus = null; authorizationStatus = null; sipStatus = null; audioStatus = null;
         callValue = null; durationValue = null; connectButton = null; disconnectButton = null;
         accountDisplayValue = null;
@@ -194,6 +195,21 @@ internal sealed class MainForm : Form
         form.Controls.Add(Labeled("Casque ou haut-parleur", outputDevices));
         form.Controls.Add(Labeled("Niveau du microphone", microphoneLevel));
         form.Controls.Add(microphoneLevelText);
+        localMonitoring = new CheckBox {
+            AutoSize = true,
+            Checked = false,
+            Text = "Écouter ma voix pendant le test (optionnel)",
+            AccessibleName = "Activer l’écoute locale du microphone",
+            ForeColor = Navy,
+            Margin = new Padding(0, 8, 0, 2),
+        };
+        form.Controls.Add(localMonitoring);
+        form.Controls.Add(new Label {
+            AutoSize = true,
+            ForeColor = Muted,
+            MaximumSize = new Size(720, 0),
+            Text = "Désactivée par défaut. Cette écoute locale peut produire un retour ou une latence ; elle ne mesure pas la qualité d’un appel.",
+        });
         var testRow = ButtonRow();
         var refresh = ActionButton("Actualiser", false); refresh.Click += (_, _) => RefreshDevices();
         microphoneTestButton = ActionButton("Tester le microphone", false); microphoneTestButton.Click += (_, _) => ToggleMicrophoneTest();
@@ -352,9 +368,15 @@ internal sealed class MainForm : Form
     {
         try
         {
-            ApplySelectedDevicesWithoutSaving();
             if (snapshot.AudioTestActive) { runtime.StopMicrophoneTest(); ShowFeedback("Test microphone arrêté. Aucun son n’a été enregistré.", false); }
-            else { runtime.StartMicrophoneTest(); ShowFeedback("Parlez normalement : la jauge et le pourcentage doivent réagir. Aucun retour de voix, appel ou enregistrement n’est produit.", false); }
+            else {
+                ApplySelectedDevicesWithoutSaving();
+                var listenLocally = localMonitoring?.Checked == true;
+                runtime.StartMicrophoneTest(listenLocally);
+                ShowFeedback(listenLocally
+                    ? "Parlez normalement : la jauge doit réagir. L’écoute locale optionnelle est active ; aucun appel ni enregistrement n’est produit."
+                    : "Parlez normalement : la jauge et le pourcentage doivent réagir. Aucun retour de voix, appel ou enregistrement n’est produit.", false);
+            }
         }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
     }
@@ -412,10 +434,13 @@ internal sealed class MainForm : Form
         if (finishButton is not null) finishButton.Enabled = ready;
         if (connectButton is not null) connectButton.Enabled = !snapshot.Running;
         if (disconnectButton is not null) disconnectButton.Enabled = snapshot.Running;
-        if (microphoneLevel is not null) microphoneLevel.Value = Math.Clamp(snapshot.MicrophoneLevel, 0, 100);
-        if (microphoneLevelText is not null) microphoneLevelText.Text = snapshot.AudioTestActive
-            ? snapshot.MicrophoneLevel > 0 ? $"Signal détecté · {snapshot.MicrophoneLevel}%" : "Microphone ouvert · parlez normalement…"
-            : "Lancez le test puis parlez normalement.";
+        var displayedMicrophoneLevel = snapshot.AudioTestActive ? snapshot.MicrophoneLevel : snapshot.LastMicrophonePeak;
+        if (microphoneLevel is not null) microphoneLevel.Value = Math.Clamp(displayedMicrophoneLevel, 0, 100);
+        if (microphoneLevelText is not null) microphoneLevelText.Text = snapshot.AudioMeterErrorCode is not null
+            ? "Mesure interrompue · actualisez les périphériques puis réessayez."
+            : snapshot.AudioTestActive
+                ? snapshot.MicrophoneLevel > 0 ? $"Signal détecté · {snapshot.MicrophoneLevel}%" : "Microphone ouvert · parlez normalement…"
+                : snapshot.LastMicrophonePeak > 0 ? $"Pic du dernier test · {snapshot.LastMicrophonePeak}%" : "Lancez le test puis parlez normalement.";
         if (microphoneTestButton is not null) microphoneTestButton.Text = snapshot.AudioTestActive ? "Arrêter le test microphone" : "Tester le microphone";
         if (callValue is not null) callValue.Text = CallLabel(snapshot.CallState);
         if (durationValue is not null) durationValue.Text = snapshot.CallDurationSeconds is int seconds ? $"Durée observée : {seconds / 60:00}:{seconds % 60:00}" : "Aucun appel actif";
@@ -470,7 +495,10 @@ internal sealed class MainForm : Form
         InvalidOperationException invalid when invalid.Message is "AUDIO_DEVICE_UNAVAILABLE" or "AUDIO_INPUT_UNAVAILABLE" or "AUDIO_OUTPUT_UNAVAILABLE" => "Le périphérique sélectionné n’est plus disponible. Actualisez la liste et choisissez un périphérique connecté.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_NOT_INITIALIZED" => "Le service audio local n’est pas encore disponible. Rouvrez l’étape Audio.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_TEST_CALL_ACTIVE" => "Terminez l’appel en cours avant de lancer un test audio local.",
+        InvalidOperationException invalid when invalid.Message == "AUDIO_TEST_ACTIVE" => "Arrêtez le test microphone avant de lancer un appel ou un autre test audio.",
+        InvalidOperationException invalid when invalid.Message.StartsWith("AUDIO_LOCAL_MONITORING", StringComparison.Ordinal) => "L’écoute locale n’a pas pu être activée. Décochez-la pour tester uniquement la jauge, sans retour de voix.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_MICROPHONE_OPEN_FAILED" => "Le microphone n’a pas pu être ouvert. Vérifiez qu’il est connecté et que Windows autorise l’accès au microphone.",
+        InvalidOperationException invalid when invalid.Message.StartsWith("AUDIO_CAPTURE_", StringComparison.Ordinal) => "Le niveau du microphone ne peut pas être mesuré sur ce périphérique. Actualisez la liste, sélectionnez explicitement le micro puis réessayez.",
         InvalidOperationException invalid when invalid.Message is "AUDIO_PLAYER_UNAVAILABLE" or "AUDIO_TEST_FILE_MISSING" => "Le son de test n’a pas pu être envoyé vers la sortie choisie. Actualisez les périphériques puis réessayez.",
         _ => "L’opération n’a pas pu être confirmée. Aucun appel n’a été lancé.",
     };

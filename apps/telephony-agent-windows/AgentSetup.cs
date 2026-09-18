@@ -5,8 +5,11 @@ namespace CrmYnov.TelephonyAgent;
 
 internal sealed class AgentSetup
 {
-    private const string Version = "0.3.0-pilot";
-    private const string SdkVersion = "5.5.21";
+    private static string Version => (typeof(AgentSetup).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
+        .SingleOrDefault()?.InformationalVersion ?? "unknown").Split('+', 2)[0];
+    private static string SdkVersion => Linphone.LinphoneWrapper.VERSION;
     private readonly DpapiStore store;
 
     public static string ConfiguredApiBaseUrl =>

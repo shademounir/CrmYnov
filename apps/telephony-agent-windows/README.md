@@ -37,10 +37,20 @@ Une fois le profil complet, les ouvertures suivantes arrivent directement sur
 le tableau de bord ; le code temporaire n’est plus demandé.
 
 Le Core Liblinphone est initialisé d’abord sans compte SIP pour découvrir et
-tester les périphériques. Le test micro utilise l’écho local du SDK et un
-vumètre de point de terminaison Windows, sans enregistrer de fichier et sans
-changer les réglages Windows. Le son de test utilise le lecteur local
-Liblinphone. La connexion SIP n’est lancée qu’après cette configuration.
+tester les périphériques. Le test micro utilise une capture Windows locale en
+mémoire pour calculer uniquement un niveau : aucun retour de voix et aucun
+fichier audio ne sont produits, et les réglages Windows ne sont pas modifiés.
+Une écoute locale distincte peut être activée explicitement pour ce test ; elle
+est désactivée par défaut, peut introduire un retour ou une latence, et ne
+constitue pas une mesure de qualité d’appel. Le son de test utilise séparément
+le lecteur local Liblinphone. La connexion SIP n’est lancée qu’après cette
+configuration.
+
+La capture du pilote associe aujourd’hui le périphérique Liblinphone à l’entrée
+WinMM par un nom unique. Elle refuse le test si cette correspondance est absente
+ou ambiguë, au lieu d’utiliser silencieusement le microphone Windows par défaut.
+Cette stratégie sûre reste une limite du pilote pour les noms Windows tronqués ;
+une version distribuable devra cibler l’identifiant MMDevice exact via WASAPI.
 
 « Prêt à appeler » exige simultanément : CRM joignable, poste autorisé, SIP
 enregistré, microphone sélectionné et sortie sélectionnée. Le retrait du

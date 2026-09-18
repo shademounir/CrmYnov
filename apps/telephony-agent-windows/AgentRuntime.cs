@@ -6,6 +6,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
 {
     private readonly DpapiStore store;
     private readonly SemaphoreSlim lifecycle = new(1, 1);
+    private readonly object engineGate = new();
     private CancellationTokenSource? cancellation;
     private Task? loop;
     private LinphoneEngine? engine;
@@ -27,11 +28,13 @@ internal sealed class AgentRuntime : IAsyncDisposable
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
-            if (engine is not null) { engine.Iterate(); Publish(); return; }
+            if (engine is not null) { lock (engineGate) engine.Iterate(); Publish(); return; }
             settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
             store.RemoveLegacyCoreConfig();
-            engine = CreateEngine(settings);
-            engine.StartAudio();
+            lock (engineGate) {
+                engine = CreateEngine(settings);
+                engine.StartAudio();
+            }
             statusCode = "AUDIO_PRÊT";
             Publish();
         }
@@ -58,9 +61,11 @@ internal sealed class AgentRuntime : IAsyncDisposable
             settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
             if (settings.SipPassword.Length == 0) throw new InvalidOperationException("SIP_SECRET_MISSING");
             store.RemoveLegacyCoreConfig();
-            engine ??= CreateEngine(settings);
-            engine.StartAudio();
-            engine.ConnectSip();
+            lock (engineGate) {
+                engine ??= CreateEngine(settings);
+                engine.StartAudio();
+                engine.ConnectSip();
+            }
             journal = new EventJournal(store.JournalPath);
             pending = new Queue<AgentEvent>(journal.Pending);
             client = new CrmAgentClient(settings.ApiBaseUrl, settings.AgentToken);
@@ -102,12 +107,12 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public void TickAudio()
     {
         if (Running || engine is null) return;
-        engine.Iterate();
+        lock (engineGate) engine.Iterate();
         Publish();
     }
 
-    public void Hangup() => engine?.Hangup();
-    public void SetMuted(bool muted) { engine?.SetMuted(muted); Publish(); }
+    public void Hangup() { lock (engineGate) engine?.Hangup(); }
+    public void SetMuted(bool muted) { lock (engineGate) engine?.SetMuted(muted); Publish(); }
 
     public void ApplyDevices(string? inputId, string? outputId)
     {
@@ -115,35 +120,37 @@ internal sealed class AgentRuntime : IAsyncDisposable
         if (settings is null) throw new InvalidOperationException("AGENT_NOT_PAIRED");
         settings = settings with { InputDeviceId = inputId, OutputDeviceId = outputId };
         store.Save(settings);
-        engine?.ApplyDevices(inputId, outputId);
+        lock (engineGate) engine?.ApplyDevices(inputId, outputId);
         Publish();
     }
 
     public void RefreshAudioDevices()
     {
         if (engine is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
-        engine.ReloadAudioDevices();
-        engine.Iterate();
+        lock (engineGate) {
+            engine.ReloadAudioDevices();
+            engine.Iterate();
+        }
         Publish();
     }
 
-    public void StartMicrophoneTest()
+    public void StartMicrophoneTest(bool localMonitoring = false)
     {
         if (engine is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
-        engine.StartMicrophoneTest();
+        lock (engineGate) engine.StartMicrophoneTest(localMonitoring);
         Publish();
     }
 
     public void StopMicrophoneTest()
     {
-        engine?.StopMicrophoneTest();
+        lock (engineGate) engine?.StopMicrophoneTest();
         Publish();
     }
 
     public void PlayOutputTest()
     {
         if (engine is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
-        engine.PlayOutputTest();
+        lock (engineGate) engine.PlayOutputTest();
         Publish();
     }
 
@@ -164,7 +171,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
             var nextUi = DateTimeOffset.MinValue;
             while (!token.IsCancellationRequested)
             {
-                engine?.Iterate();
+                lock (engineGate) engine?.Iterate();
                 var now = DateTimeOffset.UtcNow;
                 if (now >= nextStatus) {
                     await SendStatusAsync(token).ConfigureAwait(true);
@@ -182,8 +189,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch
         {
-            try { engine?.Hangup(); engine?.Dispose(); } catch { }
-            engine = null;
+            try { lock (engineGate) { engine?.Hangup(); engine?.Dispose(); engine = null; } } catch { engine = null; }
             client?.Dispose(); client = null;
             crmConnected = false;
             statusCode = "AGENT_ÉCHEC";
@@ -236,11 +242,11 @@ internal sealed class AgentRuntime : IAsyncDisposable
             RefreshProfileIdentity(response.Profile);
             var command = response.Command;
             if (command is null) return;
-            if (command.HangupRequested) { engine.Hangup(); return; }
+            if (command.HangupRequested) { lock (engineGate) engine.Hangup(); return; }
             if (command.ExpiresAt <= DateTimeOffset.UtcNow) { await RejectAsync(command, "COMMAND_EXPIRED", token).ConfigureAwait(true); return; }
             if (journal.HasSeen(command.CommandId)) { await RejectAsync(command, "LOCAL_REPLAY_BLOCKED", token).ConfigureAwait(true); return; }
             journal.MarkCommand(command.CommandId);
-            try { engine.StartCall(command); }
+            try { lock (engineGate) engine.StartCall(command); }
             catch (InvalidOperationException error) { await RejectAsync(command, SafeCode(error), token).ConfigureAwait(true); }
         }
         catch (HttpRequestException error) { HandleTransportError(error); }
@@ -294,31 +300,39 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     private AgentRuntimeSnapshot BuildSnapshot()
     {
-        var devices = engine?.Devices.Select(device => new AudioDeviceView(
-            device.Id, device.DeviceName,
-            device.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityRecord),
-            device.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityPlay))).ToArray() ?? [];
-        var inputAvailable = !string.IsNullOrWhiteSpace(settings?.InputDeviceId)
-            && devices.Any(device => device.Id == settings.InputDeviceId && device.CanRecord);
-        var outputAvailable = !string.IsNullOrWhiteSpace(settings?.OutputDeviceId)
-            && devices.Any(device => device.Id == settings.OutputDeviceId && device.CanPlay);
-        return new AgentRuntimeSnapshot(
-            Running, crmConnected, engine?.SdkLoaded == true, engine?.SipRegistered == true,
-            statusCode, engine?.CurrentCallState, engine?.CallDurationSeconds, engine?.Muted == true,
-            engine?.MicrophoneLevel ?? 0, devices, settings?.InputDeviceId, settings?.OutputDeviceId,
-            authorizationState, engine?.SdkLoaded == true, engine?.AudioTestActive == true,
-            inputAvailable, outputAvailable, settings?.CrmDisplayName, settings?.CrmEmail);
+        lock (engineGate)
+        {
+            var devices = engine?.Devices.Select(device => new AudioDeviceView(
+                device.Id, device.DeviceName,
+                device.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityRecord),
+                device.HasCapability(Linphone.AudioDeviceCapabilities.CapabilityPlay))).ToArray() ?? [];
+            var inputAvailable = !string.IsNullOrWhiteSpace(settings?.InputDeviceId)
+                && devices.Any(device => device.Id == settings.InputDeviceId && device.CanRecord);
+            var outputAvailable = !string.IsNullOrWhiteSpace(settings?.OutputDeviceId)
+                && devices.Any(device => device.Id == settings.OutputDeviceId && device.CanPlay);
+            return new AgentRuntimeSnapshot(
+                Running, crmConnected, engine?.SdkLoaded == true, engine?.SipRegistered == true,
+                statusCode, engine?.CurrentCallState, engine?.CallDurationSeconds, engine?.Muted == true,
+                engine?.MicrophoneLevel ?? 0, devices, settings?.InputDeviceId, settings?.OutputDeviceId,
+                authorizationState, engine?.SdkLoaded == true, engine?.AudioTestActive == true,
+                inputAvailable, outputAvailable, settings?.CrmDisplayName, settings?.CrmEmail,
+                engine?.LastMicrophonePeak ?? 0, engine?.MicrophoneSampleCount ?? 0, engine?.AudioMeterErrorCode,
+                engine?.LocalMonitoringActive == true);
+        }
     }
 
     private void Publish() => SnapshotChanged?.Invoke(BuildSnapshot());
 
     private void DisposeEngine()
     {
-        if (engine is null) return;
-        engine.EventObserved -= OnEventObserved;
-        engine.StatusChanged -= OnEngineStatus;
-        engine.Dispose();
-        engine = null;
+        lock (engineGate)
+        {
+            if (engine is null) return;
+            engine.EventObserved -= OnEventObserved;
+            engine.StatusChanged -= OnEngineStatus;
+            engine.Dispose();
+            engine = null;
+        }
     }
 
     private async Task DisposeRuntimeAsync()

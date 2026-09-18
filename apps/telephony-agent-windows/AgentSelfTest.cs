@@ -37,6 +37,18 @@ internal static class AgentSelfTest
             var diagnosticText = File.ReadAllText(diagnostic);
             foreach (var forbidden in new[] { expected.AgentToken, expected.SipPassword, expected.SipAddress, "private-device-id", "Private microphone name" })
                 Require(!diagnosticText.Contains(forbidden, StringComparison.Ordinal), "DIAGNOSTIC_PRIVATE_VALUE_FOUND");
+            using (var diagnosticJson = JsonDocument.Parse(diagnosticText)) {
+                var rootElement = diagnosticJson.RootElement;
+                var expectedVersion = typeof(AgentSelfTest).Assembly
+                    .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                    .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
+                    .Single().InformationalVersion;
+                Require(rootElement.GetProperty("agentVersion").GetString() == expectedVersion, "DIAGNOSTIC_VERSION_MISMATCH");
+                var runtime = rootElement.GetProperty("runtime");
+                Require(runtime.TryGetProperty("MicrophoneLevel", out _), "DIAGNOSTIC_MIC_LEVEL_MISSING");
+                Require(runtime.TryGetProperty("LastMicrophonePeak", out _), "DIAGNOSTIC_MIC_PEAK_MISSING");
+                Require(runtime.TryGetProperty("MicrophoneSampleCount", out _), "DIAGNOSTIC_MIC_SAMPLES_MISSING");
+            }
 
             var ready = new AgentRuntimeSnapshot(true, true, true, true, "SIP_ENREGISTRÉ", null, null, false, 0, [], "input", "output", "Autorisée", true, false, true, true);
             Require(AgentReadiness.IsReady(ready), "READINESS_COMPLETE_PROFILE_REFUSED");

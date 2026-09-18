@@ -86,7 +86,8 @@ Le paquet reproductible est généré par :
 .\scripts\telephony-agent\package-windows-agent.ps1 `
   -DotnetPath '<dotnet-8>\dotnet.exe' `
   -SdkRoot '<linphone-sdk-5.5.21>\win64' `
-  -OutputRoot '<dossier-prive-de-sortie>'
+  -OutputRoot '<dossier-prive-de-sortie>' `
+  -Version '<version-agent-du-projet>'
 ```
 
 Il est autonome pour `win-x64`, n’exige pas l’installation du runtime .NET et

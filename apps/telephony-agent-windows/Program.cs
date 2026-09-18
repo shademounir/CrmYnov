@@ -6,8 +6,11 @@ namespace CrmYnov.TelephonyAgent;
 
 internal static class Program
 {
-    private const string Version = "0.3.3-pilot";
-    private const string SdkVersion = "5.5.21";
+    private static string Version => (typeof(Program).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
+        .SingleOrDefault()?.InformationalVersion ?? "unknown").Split('+', 2)[0];
+    private static string SdkVersion => Linphone.LinphoneWrapper.VERSION;
     [STAThread]
     public static async Task<int> Main(string[] args)
     {
@@ -103,26 +106,44 @@ internal static class Program
         Iterate(engine, 20);
         var microphoneOpened = false;
         var microphonePeakPercent = 0;
+        var microphoneSampleCount = 0L;
+        var microphoneCyclesCompleted = 0;
+        string? microphoneErrorCode = null;
         var outputDispatchSucceeded = false;
-        try {
-            engine.StartMicrophoneTest();
-            microphoneOpened = true;
-            for (var index = 0; index < 60; index++) {
-                engine.Iterate();
-                microphonePeakPercent = Math.Max(microphonePeakPercent, engine.MicrophoneLevel);
-                Thread.Sleep(25);
+        for (var cycle = 0; cycle < 3; cycle++)
+        {
+            try {
+                engine.StartMicrophoneTest(localMonitoring: false);
+                microphoneOpened = true;
+                for (var index = 0; index < 60; index++) {
+                    engine.Iterate();
+                    microphonePeakPercent = Math.Max(microphonePeakPercent, engine.MicrophoneLevel);
+                    Thread.Sleep(25);
+                }
             }
+            finally { engine.StopMicrophoneTest(); }
+            microphoneSampleCount += engine.MicrophoneSampleCount;
+            microphoneErrorCode = engine.AudioMeterErrorCode;
+            if (engine.MicrophoneSampleCount == 0 || microphoneErrorCode is not null) break;
+            microphoneCyclesCompleted++;
         }
-        finally { engine.StopMicrophoneTest(); }
         Iterate(engine, 10);
         engine.PlayOutputTest();
         outputDispatchSucceeded = true;
         Iterate(engine, 80);
         var report = new {
             generatedAt = DateTimeOffset.UtcNow,
-            passed = microphoneOpened && outputDispatchSucceeded,
+            passed = microphoneOpened
+                && microphoneCyclesCompleted == 3
+                && microphoneSampleCount > 0
+                && microphoneErrorCode is null
+                && outputDispatchSucceeded,
             microphoneOpened,
             microphonePeakPercent,
+            microphoneSampleCount,
+            microphoneCyclesCompleted,
+            microphoneErrorCode,
+            microphonePlaybackOpened = false,
             outputDispatchSucceeded,
             outputAudibilityRequiresHumanConfirmation = true,
             privacy = "No call, recording, device name, identifier or SIP secret included",

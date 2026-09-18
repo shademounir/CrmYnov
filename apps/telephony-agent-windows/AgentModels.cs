@@ -49,7 +49,11 @@ internal sealed record AgentRuntimeSnapshot(
     bool InputDeviceAvailable = false,
     bool OutputDeviceAvailable = false,
     string? CrmDisplayName = null,
-    string? CrmEmail = null);
+    string? CrmEmail = null,
+    int LastMicrophonePeak = 0,
+    long MicrophoneSampleCount = 0,
+    string? AudioMeterErrorCode = null,
+    bool LocalMonitoringActive = false);
 
 internal static class AgentReadiness
 {
