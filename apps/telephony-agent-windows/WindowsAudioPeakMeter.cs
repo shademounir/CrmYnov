@@ -21,6 +21,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
     private CancellationTokenSource? pumpCancellation;
     private Task? pumpTask;
     private bool started;
+    private bool poisoned;
     private float displayedLevel;
     private string? errorCode;
     private long sampleCount;
@@ -28,6 +29,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
     private int lastPeakPercent;
 
     public bool IsRunning { get { lock (gate) return started; } }
+    public bool IsPoisoned { get { lock (gate) return poisoned; } }
     public string? ErrorCode { get { lock (gate) return errorCode; } }
     public long SampleCount { get { lock (gate) return sampleCount; } }
     public int LastPeakPercent { get { lock (gate) return lastPeakPercent; } }
@@ -37,6 +39,11 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
         Stop();
         lock (gate)
         {
+            if (poisoned)
+            {
+                errorCode ??= "AUDIO_CAPTURE_RESTART_REQUIRED";
+                return false;
+            }
             errorCode = null;
             selectionValid = false;
             sampleCount = 0;
@@ -77,6 +84,11 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
 
         lock (gate)
         {
+            if (poisoned)
+            {
+                errorCode ??= "AUDIO_CAPTURE_RESTART_REQUIRED";
+                return false;
+            }
             if (!selectionValid)
             {
                 errorCode ??= "AUDIO_CAPTURE_MAPPING_UNRESOLVED";
@@ -133,6 +145,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
                 {
                     quarantinedSessions.Add(candidate);
                     errorCode = cleanupError;
+                    poisoned = true;
                     return false;
                 }
             }
@@ -163,6 +176,14 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
         {
             try { pump.GetAwaiter().GetResult(); }
             catch (OperationCanceledException) { }
+            catch
+            {
+                lock (gate)
+                {
+                    errorCode = "AUDIO_CAPTURE_PUMP_FAILED";
+                    poisoned = true;
+                }
+            }
         }
 
         lock (gate)
@@ -173,6 +194,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
                 {
                     quarantinedSessions.Add(session);
                     errorCode = cleanupError;
+                    poisoned = true;
                 }
                 session = null;
             }
@@ -228,6 +250,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
                         {
                             quarantinedSessions.Add(ownedSession);
                             errorCode = cleanupError;
+                            poisoned = true;
                         }
                         session = null;
                         currentLevelPercent = 0;

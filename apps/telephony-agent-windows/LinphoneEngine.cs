@@ -134,6 +134,7 @@ internal sealed class LinphoneEngine : IDisposable
     {
         if (core is null || !SipRegistered) throw new InvalidOperationException("SIP_NOT_REGISTERED");
         if (activeCall is not null) throw new InvalidOperationException("WORKSTATION_BUSY");
+        if (peakMeter.IsPoisoned) throw new InvalidOperationException("AUDIO_CAPTURE_RESTART_REQUIRED");
         if (peakMeter.IsRunning || localMonitoringActive) throw new InvalidOperationException("AUDIO_TEST_ACTIVE");
         var missing = MissingSelectedDevice();
         if (missing is not null) throw new InvalidOperationException(missing);
@@ -336,7 +337,13 @@ internal sealed class LinphoneEngine : IDisposable
     public void Dispose()
     {
         if (stopping) return; stopping = true;
-        try { StopMicrophoneTest(); localPlayer?.Close(); activeCall?.Terminate(); core?.Stop(); for (var i = 0; i < 25; i++) { core?.Iterate(); Thread.Sleep(20); } } catch { /* shutdown remains best effort */ }
+        try { StopMicrophoneTest(); } catch { /* continue with core shutdown */ }
+        try { localPlayer?.Close(); } catch { /* continue with core shutdown */ }
+        try { activeCall?.Terminate(); } catch { /* continue with core shutdown */ }
+        try {
+            core?.Stop();
+            for (var i = 0; i < 25; i++) { core?.Iterate(); Thread.Sleep(20); }
+        } catch { /* shutdown remains best effort */ }
         peakMeter.Dispose(); configuredRealms.Clear(); activeCall = null; account = null; localPlayer = null; core = null; volatileConfig = null;
     }
 }
