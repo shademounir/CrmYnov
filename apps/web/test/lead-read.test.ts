@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import LeadsPage, { leadPageMode } from "../app/leads/page.js";
+import LeadsPage from "../app/leads/page.js";
+import { leadPageMode } from "../app/leads/lead-page-mode.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
