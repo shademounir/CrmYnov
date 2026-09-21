@@ -1,8 +1,11 @@
-import { BadRequestException, Body, Controller, Get, Headers, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { isRole, type AuthenticatedRequest, type Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { TelephonyService, type AssociationCandidate, type CallRecord, type TelephonyBridgeEvent, type TelephonyConfiguration, type TelephonyConfigurationView } from "./telephony.service.js";
 import { TelephonyAgentRepository } from "./telephony-agent.repository.js";
+import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
+import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
+import { campusContext } from "../permissions/dynamic-context.js";
 
 @Controller() @UseGuards(RbacGuard) @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
 export class TelephonyController {
@@ -58,10 +61,28 @@ export class TelephonyAgentController {
   constructor(
     @Inject(TelephonyAgentRepository) private readonly agents: TelephonyAgentRepository,
     @Inject(TelephonyService) private readonly telephony: TelephonyService,
+    @Inject(DynamicPermissionRepository) private readonly permissions: DynamicPermissionRepository,
   ) {}
   @Post("pair") pair(@Body() body: Parameters<TelephonyAgentRepository["pair"]>[0]): Promise<Record<string, unknown>> { return this.agents.pair(body); }
   @Post("status") async status(@Headers("x-telephony-agent-token") token: string | undefined, @Body() body: Parameters<TelephonyAgentRepository["status"]>[1]): Promise<Record<string, unknown>> { return this.agents.status(await this.agents.authenticate(token), body); }
   @Post("poll") async poll(@Headers("x-telephony-agent-token") token: string | undefined): ReturnType<TelephonyAgentRepository["poll"]> { return this.agents.poll(await this.agents.authenticate(token)); }
+  @Post("commands/:commandId/claim") async claim(
+    @Headers("x-telephony-agent-token") token: string | undefined,
+    @Param("commandId") commandId: string,
+  ): ReturnType<TelephonyAgentRepository["claim"]> { return this.agents.claim(await this.agents.authenticate(token), commandId); }
+  @Post("free-calls") async freeCall(
+    @Headers("x-telephony-agent-token") token: string | undefined,
+    @Body() body: { phone?: string; purposeCode?: string; comment?: string; idempotencyKey?: string },
+    @Headers("x-correlation-id") correlationId: string | undefined,
+  ): Promise<CallRecord> {
+    const identity = await this.agents.authenticate(token);
+    const roles = identity.roles.filter(isRole);
+    const scopes: Principal["scopes"] = identity.campusId ? [{ kind: "CAMPUS", id: identity.campusId }] : roles.includes("SUPER_ADMIN") ? [{ kind: "GLOBAL" }] : [];
+    const principal: Principal = { userId: identity.userId, roles, scopes, sessionId: `agent-${identity.workstationId}` };
+    const allowed = await this.permissions.readTransaction(async (tx) => evaluatePermission(principal, "telephony.free-call.create", await this.permissions.snapshots(tx), campusContext(principal, identity.campusId ?? "GLOBAL")).allowed);
+    if (!allowed) throw new ForbiddenException({ code: "telephony_free_call_forbidden" });
+    return this.telephony.initiateFreeForApi(body, principal, correlationId ?? `agent-free-${identity.workstationId}`);
+  }
   @Post("events") async event(
     @Headers("x-telephony-agent-token") token: string | undefined,
     @Body() body: { schemaVersion?: string; commandId?: string; callId?: string; eventId?: string; state?: string; occurredAt?: string; reasonCode?: string },

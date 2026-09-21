@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace CrmYnov.TelephonyAgent;
 
@@ -10,6 +11,7 @@ namespace CrmYnov.TelephonyAgent;
 /// </summary>
 internal sealed class WindowsAudioPeakMeter : IDisposable
 {
+    private const int RetainedSeconds = 5;
     private const uint WaveHeaderDone = 0x00000001;
     private const uint WaveHeaderPrepared = 0x00000002;
     private const uint WaveErrorStillPlaying = 33;
@@ -27,6 +29,8 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
     private long sampleCount;
     private int currentLevelPercent;
     private int lastPeakPercent;
+    private MemoryStream? retainedPcm;
+    private WaveFormatEx? retainedFormat;
 
     public bool IsRunning { get { lock (gate) return started; } }
     public bool IsPoisoned { get { lock (gate) return poisoned; } }
@@ -77,7 +81,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
         }
     }
 
-    public bool Start()
+    public bool Start(bool retainForPlayback = false)
     {
         if (IsRunning) return true;
         Stop();
@@ -100,6 +104,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
             currentLevelPercent = 0;
             lastPeakPercent = 0;
             displayedLevel = 0;
+            ClearRetainedSample();
 
             foreach (var candidateFormat in new[] {
                 NewFormat(48000, 1), NewFormat(48000, 2), NewFormat(44100, 1), NewFormat(16000, 1)
@@ -118,6 +123,11 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
 
                     var cancellation = new CancellationTokenSource();
                     session = candidate;
+                    if (retainForPlayback)
+                    {
+                        retainedPcm = new MemoryStream((int)Math.Min(int.MaxValue, candidate.Format.AverageBytesPerSecond * RetainedSeconds));
+                        retainedFormat = candidate.Format;
+                    }
                     started = true;
                     errorCode = null;
                     pumpCancellation = cancellation;
@@ -158,6 +168,23 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
     public int ReadPercent()
     {
         lock (gate) return currentLevelPercent;
+    }
+
+    public CapturedAudio? TakeRetainedSample()
+    {
+        lock (gate)
+        {
+            if (retainedPcm is null || retainedFormat is null || retainedPcm.Length == 0)
+            {
+                ClearRetainedSample();
+                return null;
+            }
+
+            var bytes = retainedPcm.ToArray();
+            var format = retainedFormat.Value;
+            ClearRetainedSample();
+            return new CapturedAudio(bytes, format.SamplesPerSecond, format.Channels, format.BitsPerSample);
+        }
     }
 
     public void Stop()
@@ -271,6 +298,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
             if ((header.Flags & WaveHeaderDone) == 0) continue;
 
             var bytes = Math.Min(header.BytesRecorded, header.BufferLength);
+            RetainForPlayback(header.Data, bytes, ownedSession.Format);
             for (var offset = 0; offset + 1 < bytes; offset += 2)
             {
                 var normalized = Marshal.ReadInt16(header.Data, offset) / 32768d;
@@ -295,6 +323,31 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
             : Math.Max(normalizedLevel, displayedLevel * 0.78f);
         currentLevelPercent = Math.Clamp((int)Math.Round(displayedLevel * 100f), 0, 100);
         lastPeakPercent = Math.Max(lastPeakPercent, currentLevelPercent);
+    }
+
+    private void RetainForPlayback(IntPtr source, uint bytes, WaveFormatEx format)
+    {
+        if (retainedPcm is null || bytes == 0) return;
+        var maximum = checked((long)format.AverageBytesPerSecond * RetainedSeconds);
+        var remaining = maximum - retainedPcm.Length;
+        if (remaining <= 0) return;
+        var count = (int)Math.Min(bytes, remaining);
+        var copy = new byte[count];
+        Marshal.Copy(source, copy, 0, count);
+        retainedPcm.Write(copy, 0, copy.Length);
+        CryptographicOperations.ZeroMemory(copy);
+    }
+
+    private void ClearRetainedSample()
+    {
+        if (retainedPcm is not null)
+        {
+            if (retainedPcm.TryGetBuffer(out var buffer) && buffer.Array is not null)
+                CryptographicOperations.ZeroMemory(buffer.Array.AsSpan(buffer.Offset, buffer.Count));
+            retainedPcm.Dispose();
+        }
+        retainedPcm = null;
+        retainedFormat = null;
     }
 
     private static void AllocateBuffers(CaptureSession target)
@@ -419,6 +472,7 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
         Stop();
         lock (gate)
         {
+            ClearRetainedSample();
             foreach (var abandoned in quarantinedSessions.ToArray())
                 if (TryReleaseSession(abandoned, out _)) quarantinedSessions.Remove(abandoned);
             // Any session still present is intentionally retained until process
@@ -499,4 +553,13 @@ internal sealed class WindowsAudioPeakMeter : IDisposable
     [DllImport("winmm.dll")] private static extern uint waveInStop(IntPtr waveIn);
     [DllImport("winmm.dll")] private static extern uint waveInReset(IntPtr waveIn);
     [DllImport("winmm.dll")] private static extern uint waveInClose(IntPtr waveIn);
+}
+
+internal sealed class CapturedAudio(byte[] pcm, uint samplesPerSecond, ushort channels, ushort bitsPerSample) : IDisposable
+{
+    public byte[] Pcm { get; } = pcm;
+    public uint SamplesPerSecond { get; } = samplesPerSecond;
+    public ushort Channels { get; } = channels;
+    public ushort BitsPerSample { get; } = bitsPerSample;
+    public void Dispose() => CryptographicOperations.ZeroMemory(Pcm);
 }

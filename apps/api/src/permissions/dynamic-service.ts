@@ -74,7 +74,7 @@ export class DynamicPermissionService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     if (!this.repository.enabled) return;
-    await this.repository.upgradeQualificationCatalogue();
+    await this.repository.upgradeCurrentCatalogue();
   }
 
   async decision(actor: Principal, key: string, resource: ResourceContext): Promise<PermissionDecision> {

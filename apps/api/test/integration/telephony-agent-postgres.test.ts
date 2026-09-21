@@ -40,7 +40,10 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
     assert.equal(await client.telephonyAgentCommand.count({ where: { callId } }), 1);
     const stored = await client.telephonyAgentCommand.findUniqueOrThrow({ where: { callId } });
     assert.equal(JSON.stringify(stored).includes("+212600000165"), false);
-    const firstPoll = await repository.poll(identity); assert.equal(firstPoll.command?.destination, "+212600000165");
+    const commandId = (await client.telephonyCall.findUniqueOrThrow({ where: { id: callId } })).externalId;
+    const claimedByProtocol = await repository.claim(identity, commandId); assert.equal(claimedByProtocol.command.destination, "+212600000165");
+    const claimedAgain = await repository.claim(identity, commandId); assert.equal(claimedAgain.command.callId, callId, "protocol activation and polling must share one idempotent command");
+    const firstPoll = claimedByProtocol;
     await client.telephonyCall.create({ data: { id: busyCallId, provider: "LINPHONE", externalId: randomUUID(), direction: "OUTBOUND", state: "REQUESTED", phoneFingerprint: "b".repeat(64), maskedPhone: "***166", dispatchState: "ACCEPTED", dispatchUpdatedAt: new Date(), matchState: "MATCHED", requestedAt: new Date(), createdBy: userId } });
     await assert.rejects(() => repository.enqueue(busyCallId, userId, "+212600000166"), errorCode("telephony_workstation_busy"));
     assert.equal(await client.telephonyAgentCommand.count({ where: { callId: busyCallId } }), 0, "two CRM windows must not create two dialing commands");

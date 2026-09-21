@@ -99,6 +99,66 @@ export class DynamicPermissionRepository {
       return upgraded;
     });
   }
+  /** Catalogue v3: free calls default to Super Admin globally and Admin in
+   * campus scope. Every other role stays denied until explicitly delegated. */
+  async upgradeFreeCallCatalogue(): Promise<number> {
+    return this.transaction(async (tx) => {
+      const rows = await tx.rolePermissionConfiguration.findMany({ include: { versions: { orderBy: { number: "desc" }, take: 1, include: { grants: true } } } });
+      let upgraded = 0;
+      for (const row of rows) {
+        const latest = row.versions.find((version) => version.number === row.version);
+        if (!latest || latest.grants.some((grant) => grant.permission === "telephony.free-call.create")) continue;
+        const target = { kind: row.kind, role: row.role, campus: row.campus } as ConfigurationTarget;
+        validateTarget(target);
+        const previous = historicalGrants(Object.fromEntries(latest.grants.map((grant) => [grant.permission, grant.scope])), target);
+        let scope: PermissionScope = "NONE";
+        if (target.kind === "CEILING" || target.role === "SUPER_ADMIN") scope = target.campus === "GLOBAL" ? "GLOBAL" : "CAMPUS";
+        else if (target.role === "ADMIN") scope = "CAMPUS";
+        const next = { ...previous, "telephony.free-call.create": scope };
+        const version = row.version + 1;
+        await tx.rolePermissionConfiguration.update({ where: { id: row.id, version: row.version }, data: { version } });
+        await tx.rolePermissionVersion.create({ data: {
+          configurationId: row.id, number: version,
+          grants: { create: Object.entries(next).map(([permission, grantScope]) => ({ permission, scope: grantScope })) },
+          audits: { create: { actorId: "00000000-0000-4000-8000-000000000165", actorRoles: ["SYSTEM"], reason: "CATALOGUE_UPGRADE", previous, next } },
+        } });
+        upgraded += 1;
+      }
+      return upgraded;
+    });
+  }
+  async upgradeCurrentCatalogue(): Promise<number> {
+    return this.transaction(async (tx) => {
+      const rows = await tx.rolePermissionConfiguration.findMany({ include: { versions: { orderBy: { number: "desc" }, take: 1, include: { grants: true } } } });
+      let upgraded = 0;
+      for (const row of rows) {
+        const latest = row.versions.find((version) => version.number === row.version);
+        if (!latest) continue;
+        const existing = new Set(latest.grants.map((grant) => grant.permission));
+        const missingQualification = !existing.has("lead.qualification.update");
+        const missingFreeCall = !existing.has("telephony.free-call.create");
+        if (!missingQualification && !missingFreeCall) continue;
+        const target = { kind: row.kind, role: row.role, campus: row.campus } as ConfigurationTarget;
+        validateTarget(target);
+        const previous = historicalGrants(Object.fromEntries(latest.grants.map((grant) => [grant.permission, grant.scope])), target);
+        const defaultScope = (): PermissionScope => target.kind === "CEILING" || target.role === "SUPER_ADMIN"
+          ? target.campus === "GLOBAL" ? "GLOBAL" : "CAMPUS"
+          : target.role === "ADMIN" ? "CAMPUS" : "NONE";
+        const next = { ...previous };
+        if (missingQualification) next["lead.qualification.update"] = defaultScope();
+        if (missingFreeCall) next["telephony.free-call.create"] = defaultScope();
+        const version = row.version + 1;
+        await tx.rolePermissionConfiguration.update({ where: { id: row.id, version: row.version }, data: { version } });
+        await tx.rolePermissionVersion.create({ data: {
+          configurationId: row.id, number: version,
+          grants: { create: Object.entries(next).map(([permission, grantScope]) => ({ permission, scope: grantScope })) },
+          audits: { create: { actorId: "00000000-0000-4000-8000-000000000165", actorRoles: ["SYSTEM"], reason: "CATALOGUE_UPGRADE", previous, next } },
+        } });
+        upgraded += 1;
+      }
+      return upgraded;
+    });
+  }
   async append(tx: PermissionTransaction, input: ConfigurationInput, previous: Grants, actor: Principal): Promise<number> {
     const id = configurationKey(input), version = input.expectedVersion + 1;
     if (input.expectedVersion === 0) {

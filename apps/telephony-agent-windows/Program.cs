@@ -14,10 +14,14 @@ internal static class Program
     [STAThread]
     public static async Task<int> Main(string[] args)
     {
-        var command = args.FirstOrDefault()?.ToLowerInvariant() ?? "gui";
+        var rawCommand = args.FirstOrDefault();
+        var isProtocolRequest = ProtocolRequest.TryParse(rawCommand, out var protocolRequest)
+            && (string.Equals(rawCommand, "open", StringComparison.OrdinalIgnoreCase)
+                || rawCommand?.StartsWith($"{ProtocolRequest.Scheme}:", StringComparison.OrdinalIgnoreCase) == true);
+        var command = isProtocolRequest ? "gui" : rawCommand?.ToLowerInvariant() ?? "gui";
         try
         {
-            if (command is "gui" or "start") return RunGui();
+            if (command is "gui" or "start") return await RunGuiAsync(isProtocolRequest ? protocolRequest : null);
             if (command == "self-test") return AgentSelfTest.Run(args.Skip(1).FirstOrDefault());
             // Loading the official SDK must remain a read-only diagnostic: it must
             // not create a local profile or touch a user's protected SIP state.
@@ -35,16 +39,17 @@ internal static class Program
         catch (Exception error) { Console.Error.WriteLine($"Agent indisponible : {SafeCode(error)}"); return 1; }
     }
 
-    private static int RunGui()
+    private static async Task<int> RunGuiAsync(ProtocolRequest? request)
     {
         using var singleInstance = new Mutex(true, "Local\\CRM-Ynov-Telephony-Agent", out var createdNew);
         if (!createdNew) {
-            MessageBox.Show("L’agent téléphonique CRM Ynov est déjà ouvert dans cette session.", "CRM Ynov", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            if (!await ProtocolBroker.SendAsync(request ?? ProtocolRequest.Open))
+                MessageBox.Show("L’agent est déjà ouvert mais n’a pas pu être réactivé. Ouvrez-le depuis la zone de notification.", "CRM Ynov", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return 0;
         }
         ApplicationConfiguration.Initialize();
         var store = new DpapiStore(); store.EnsureDirectory();
-        Application.Run(new MainForm(store));
+        Application.Run(new MainForm(store, request));
         return 0;
     }
 

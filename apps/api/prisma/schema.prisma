@@ -751,6 +751,8 @@ model TelephonyCall {
   endedAt          DateTime?                   @map("ended_at") @db.Timestamptz(6)
   durationSeconds  Int?                        @map("duration_seconds")
   createdBy        String                      @map("created_by") @db.VarChar(64)
+  purposeCode      String?                     @map("purpose_code") @db.VarChar(64)
+  purposeComment   String?                     @map("purpose_comment") @db.VarChar(500)
   recordingId      String?                     @map("recording_id") @db.Uuid
   lead             Lead?                       @relation(fields: [leadId], references: [id], onDelete: Restrict)
   events           TelephonyCallEvent[]

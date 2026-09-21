@@ -55,8 +55,14 @@ internal static class AgentSelfTest
             Require(!AgentReadiness.IsReady(ready with { AuthorizationState = "Révoquée" }), "READINESS_REVOKED_WORKSTATION_ACCEPTED");
             Require(!AgentReadiness.IsReady(ready with { OutputDeviceAvailable = false }), "READINESS_MISSING_OUTPUT_ACCEPTED");
 
+            Require(ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000", out var protocol)
+                && protocol.CommandId == Guid.Parse("123e4567-e89b-42d3-a456-426614174000"), "PROTOCOL_COMMAND_REFUSED");
+            Require(ProtocolRequest.TryParse("crmynov-telephony://open", out var openProtocol) && openProtocol.CommandId is null, "PROTOCOL_OPEN_REFUSED");
+            Require(!ProtocolRequest.TryParse("crmynov-telephony://command/+212600000165", out _), "PROTOCOL_PHONE_ACCEPTED");
+            Require(!ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000?token=secret", out _), "PROTOCOL_QUERY_ACCEPTED");
+
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "opaque-protocol-contract" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;

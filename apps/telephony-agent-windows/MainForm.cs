@@ -5,6 +5,7 @@ namespace CrmYnov.TelephonyAgent;
 
 internal sealed class MainForm : Form
 {
+    private static readonly Icon ProductIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
     private static readonly Color Navy = Color.FromArgb(7, 34, 68);
     private static readonly Color Teal = Color.FromArgb(21, 177, 168);
     private static readonly Color Surface = Color.FromArgb(246, 249, 251);
@@ -15,6 +16,8 @@ internal sealed class MainForm : Form
     private readonly DpapiStore store;
     private readonly AgentSetup setup;
     private readonly AgentRuntime runtime;
+    private readonly ProtocolBroker protocolBroker;
+    private readonly ProtocolRequest? startupRequest;
     private readonly NotifyIcon tray;
     private readonly Panel contentHost = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly Label feedback = new() { AutoSize = true, MaximumSize = new Size(760, 0), ForeColor = Muted, Margin = new Padding(0, 10, 0, 0) };
@@ -41,19 +44,25 @@ internal sealed class MainForm : Form
     private TextBox? pairingCode;
     private TextBox? workstationName;
     private TextBox? sipPassword;
+    private TextBox? freeCallPhone;
+    private TextBox? freeCallComment;
+    private ComboBox? freeCallPurpose;
+    private Button? freeCallButton;
     private bool wizardVisible;
     private int wizardStep;
     private bool allowClose;
 
-    public MainForm(DpapiStore store)
+    public MainForm(DpapiStore store, ProtocolRequest? startupRequest = null)
     {
         this.store = store;
+        this.startupRequest = startupRequest;
         setup = new AgentSetup(store);
         runtime = new AgentRuntime(store);
         runtime.SnapshotChanged += OnSnapshotChanged;
+        protocolBroker = new ProtocolBroker(HandleBrokerRequestAsync);
 
         Text = "CRM Ynov · Agent téléphonique";
-        Icon = SystemIcons.Application;
+        Icon = ProductIcon;
         BackColor = Surface;
         ForeColor = Navy;
         Font = new Font("Segoe UI", 9.5f);
@@ -63,7 +72,7 @@ internal sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
 
         tray = new NotifyIcon {
-            Icon = SystemIcons.Application,
+            Icon = ProductIcon,
             Text = "CRM Ynov · Agent téléphonique",
             Visible = true,
             ContextMenuStrip = BuildTrayMenu(),
@@ -91,6 +100,34 @@ internal sealed class MainForm : Form
             try { await runtime.EnsureAudioAsync(); }
             catch (Exception error) { ShowFeedback(HumanError(error), true); }
         }
+        if (startupRequest is not null) await HandleProtocolRequestAsync(startupRequest);
+    }
+
+    private Task HandleBrokerRequestAsync(ProtocolRequest request)
+    {
+        if (IsDisposed) return Task.CompletedTask;
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        BeginInvoke(async () => {
+            try { await HandleProtocolRequestAsync(request); completion.SetResult(); }
+            catch (Exception error) { completion.SetException(error); }
+        });
+        return completion.Task;
+    }
+
+    private async Task HandleProtocolRequestAsync(ProtocolRequest request)
+    {
+        RestoreWindow();
+        if (request.CommandId is not Guid commandId) {
+            ShowFeedback("Agent ouvert. Connectez le poste avant de confirmer un appel dans le CRM.", false);
+            return;
+        }
+        try
+        {
+            ShowFeedback("Commande CRM reçue. Vérification du poste et de l’autorisation…", false);
+            await runtime.HandleProtocolCommandAsync(commandId);
+            ShowFeedback("Commande vérifiée auprès du CRM. La numérotation dépend maintenant des événements Liblinphone.", false);
+        }
+        catch (Exception error) { ShowFeedback(HumanError(error), true); }
     }
 
     private void Render()
@@ -190,7 +227,7 @@ internal sealed class MainForm : Form
         microphoneLevel = new ProgressBar { Minimum = 0, Maximum = 100, Width = 520, Height = 20, AccessibleName = "Niveau du microphone" };
         microphoneLevelText = new Label { AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 0), Text = "Lancez le test puis parlez normalement." };
         var form = FormStack();
-        form.Controls.Add(SectionTitle("Choisir et tester mes périphériques", "Les tests sont locaux : aucun appel n’est lancé et aucun son n’est enregistré."));
+        form.Controls.Add(SectionTitle("Choisir et tester mes périphériques", "Les tests sont locaux : aucun appel n’est lancé et aucun fichier audio n’est créé."));
         form.Controls.Add(Labeled("Microphone", inputDevices));
         form.Controls.Add(Labeled("Casque ou haut-parleur", outputDevices));
         form.Controls.Add(Labeled("Niveau du microphone", microphoneLevel));
@@ -198,8 +235,8 @@ internal sealed class MainForm : Form
         localMonitoring = new CheckBox {
             AutoSize = true,
             Checked = false,
-            Text = "Écouter ma voix pendant le test (optionnel)",
-            AccessibleName = "Activer l’écoute locale du microphone",
+            Text = "Réécouter un court échantillon après le test (optionnel)",
+            AccessibleName = "Réécouter un court échantillon du microphone après le test",
             ForeColor = Navy,
             Margin = new Padding(0, 8, 0, 2),
         };
@@ -208,7 +245,7 @@ internal sealed class MainForm : Form
             AutoSize = true,
             ForeColor = Muted,
             MaximumSize = new Size(720, 0),
-            Text = "Désactivée par défaut. Cette écoute locale peut produire un retour ou une latence ; elle ne mesure pas la qualité d’un appel.",
+            Text = "Désactivée par défaut. Jusqu’à cinq secondes restent uniquement en mémoire, puis sont rejouées une fois et effacées. Aucun retour en direct ni fichier audio.",
         });
         var testRow = ButtonRow();
         var refresh = ActionButton("Actualiser", false); refresh.Click += (_, _) => RefreshDevices();
@@ -270,9 +307,47 @@ internal sealed class MainForm : Form
         root.Controls.Add(BuildCallCard());
         var tabs = new TabControl { Dock = DockStyle.Top, Height = 420, Padding = new Point(14, 7), Margin = new Padding(0, 0, 0, 16) };
         tabs.TabPages.Add(Tab("Audio", BuildAudioStep(false)));
+        tabs.TabPages.Add(Tab("Composer", BuildDialPad()));
         tabs.TabPages.Add(Tab("Diagnostic", BuildDiagnosticPage()));
         root.Controls.Add(tabs);
         return root;
+    }
+
+    private Control BuildDialPad()
+    {
+        var form = FormStack();
+        form.Controls.Add(SectionTitle("Appeler un numéro autorisé", "Ce parcours reste relié au CRM : droit, motif, commande et événements sont vérifiés côté serveur. Les destinations marocaines sont autorisées par défaut."));
+        freeCallPhone = Field(""); freeCallPhone.AccessibleName = "Numéro à appeler"; freeCallPhone.PlaceholderText = "06 00 00 00 00";
+        form.Controls.Add(Labeled("Numéro marocain", freeCallPhone));
+        var keypad = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 0, 0, 12) };
+        var keys = new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "⌫" };
+        for (var index = 0; index < keys.Length; index++) {
+            var label = keys[index];
+            var key = ActionButton(label, false); key.Width = 94; key.AccessibleName = label == "⌫" ? "Effacer le dernier chiffre" : $"Chiffre {label}";
+            key.Click += (_, _) => { if (freeCallPhone is null) return; if (label == "⌫") { if (freeCallPhone.TextLength > 0) freeCallPhone.Text = freeCallPhone.Text[..^1]; } else freeCallPhone.AppendText(label); freeCallPhone.Focus(); freeCallPhone.SelectionStart = freeCallPhone.TextLength; };
+            keypad.Controls.Add(key, index % 3, index / 3);
+        }
+        form.Controls.Add(keypad);
+        freeCallPurpose = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, AccessibleName = "Motif de l’appel" };
+        freeCallPurpose.Items.AddRange([new PurposeItem("PROSPECT_CALLBACK", "Rappel d’un prospect"), new PurposeItem("PARTNER", "Partenaire autorisé"), new PurposeItem("OTHER_AUTHORIZED", "Autre appel professionnel autorisé")]);
+        freeCallPurpose.SelectedIndex = 0; form.Controls.Add(Labeled("Motif obligatoire", freeCallPurpose));
+        freeCallComment = Field(""); freeCallComment.AccessibleName = "Commentaire facultatif"; freeCallComment.MaxLength = 500;
+        form.Controls.Add(Labeled("Commentaire facultatif", freeCallComment));
+        freeCallButton = ActionButton("Vérifier et appeler", true); freeCallButton.Click += async (_, _) => await StartFreeCallAsync(); form.Controls.Add(freeCallButton);
+        form.Controls.Add(InfoBox("Traçabilité", "Le numéro n’est jamais placé dans le protocole Windows ni dans le diagnostic. Un appel sans Lead reste dans la file « À vérifier » jusqu’à un rapprochement manuel audité."));
+        return form;
+    }
+
+    private async Task StartFreeCallAsync()
+    {
+        if (freeCallPhone is null || freeCallPurpose?.SelectedItem is not PurposeItem purpose) return;
+        freeCallButton!.Enabled = false;
+        try {
+            await runtime.StartFreeCallAsync(freeCallPhone.Text, purpose.Code, freeCallComment?.Text);
+            ShowFeedback("Demande enregistrée et vérifiée. La numérotation est maintenant suivie par Liblinphone.", false);
+        }
+        catch (Exception error) { ShowFeedback(HumanError(error), true); }
+        finally { freeCallButton.Enabled = AgentReadiness.IsReady(snapshot); }
     }
 
     private Control BuildFourStatusCards()
@@ -374,7 +449,7 @@ internal sealed class MainForm : Form
                 var listenLocally = localMonitoring?.Checked == true;
                 runtime.StartMicrophoneTest(listenLocally);
                 ShowFeedback(listenLocally
-                    ? "Parlez normalement : la jauge doit réagir. L’écoute locale optionnelle est active ; aucun appel ni enregistrement n’est produit."
+                    ? "Parlez normalement puis arrêtez le test : un court échantillon sera rejoué une fois, sans boucle d’écho ni fichier audio."
                     : "Parlez normalement : la jauge et le pourcentage doivent réagir. Aucun retour de voix, appel ou enregistrement n’est produit.", false);
             }
         }
@@ -438,16 +513,19 @@ internal sealed class MainForm : Form
         if (microphoneLevel is not null) microphoneLevel.Value = Math.Clamp(displayedMicrophoneLevel, 0, 100);
         if (microphoneLevelText is not null) microphoneLevelText.Text = snapshot.AudioMeterErrorCode is not null
             ? "Mesure interrompue · actualisez les périphériques puis réessayez."
+            : snapshot.LocalMonitoringActive
+                ? "Réécoute du court échantillon en cours…"
             : snapshot.AudioTestActive
                 ? snapshot.MicrophoneLevel > 0 ? $"Signal détecté · {snapshot.MicrophoneLevel}%" : "Microphone ouvert · parlez normalement…"
                 : snapshot.LastMicrophonePeak > 0 ? $"Pic du dernier test · {snapshot.LastMicrophonePeak}%" : "Lancez le test puis parlez normalement.";
-        if (microphoneTestButton is not null) microphoneTestButton.Text = snapshot.AudioTestActive ? "Arrêter le test microphone" : "Tester le microphone";
+        if (microphoneTestButton is not null) microphoneTestButton.Text = snapshot.LocalMonitoringActive ? "Arrêter la réécoute" : snapshot.AudioTestActive ? "Arrêter le test microphone" : "Tester le microphone";
         if (callValue is not null) callValue.Text = CallLabel(snapshot.CallState);
         if (durationValue is not null) durationValue.Text = snapshot.CallDurationSeconds is int seconds ? $"Durée observée : {seconds / 60:00}:{seconds % 60:00}" : "Aucun appel actif";
         if (accountDisplayValue is not null) accountDisplayValue.Text = !string.IsNullOrWhiteSpace(snapshot.CrmDisplayName) ? snapshot.CrmDisplayName! : !string.IsNullOrWhiteSpace(snapshot.CrmEmail) ? snapshot.CrmEmail! : AccountLabel(setup.Settings);
         var mute = FindControl("mute") as Button; var hangup = FindControl("hangup") as Button;
         if (mute is not null) { mute.Text = snapshot.Muted ? "Rétablir le micro" : "Couper le micro"; mute.Enabled = snapshot.CallState == "ANSWERED"; }
         if (hangup is not null) hangup.Enabled = snapshot.CallState is "DIALING" or "RINGING" or "ANSWERED" or "REQUESTED";
+        if (freeCallButton is not null) freeCallButton.Enabled = ready && snapshot.CallState is not ("DIALING" or "RINGING" or "ANSWERED" or "REQUESTED");
         if (inputDevices is not null && outputDevices is not null && inputDevices.Items.Count == 0 && snapshot.Devices.Count > 0) FillDeviceCombos();
     }
 
@@ -468,7 +546,7 @@ internal sealed class MainForm : Form
     private async void OnFormClosing(object? sender, FormClosingEventArgs eventArgs)
     {
         if (!allowClose && eventArgs.CloseReason == CloseReason.UserClosing) { eventArgs.Cancel = true; Hide(); tray.ShowBalloonTip(1500, "CRM Ynov", "L’agent reste accessible dans la zone de notification.", ToolTipIcon.Info); return; }
-        audioTimer.Stop(); tray.Visible = false; await runtime.DisposeAsync();
+        audioTimer.Stop(); tray.Visible = false; await protocolBroker.DisposeAsync(); await runtime.DisposeAsync();
     }
 
     private ContextMenuStrip BuildTrayMenu()
@@ -496,7 +574,8 @@ internal sealed class MainForm : Form
         InvalidOperationException invalid when invalid.Message == "AUDIO_NOT_INITIALIZED" => "Le service audio local n’est pas encore disponible. Rouvrez l’étape Audio.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_TEST_CALL_ACTIVE" => "Terminez l’appel en cours avant de lancer un test audio local.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_TEST_ACTIVE" => "Arrêtez le test microphone avant de lancer un appel ou un autre test audio.",
-        InvalidOperationException invalid when invalid.Message.StartsWith("AUDIO_LOCAL_MONITORING", StringComparison.Ordinal) => "L’écoute locale n’a pas pu être activée. Décochez-la pour tester uniquement la jauge, sans retour de voix.",
+        InvalidOperationException invalid when invalid.Message is "AGENT_NOT_READY" or "AGENT_NOT_CONNECTED" => "Connectez le poste et attendez les quatre contrôles avant de lancer l’appel.",
+        InvalidOperationException invalid when invalid.Message.StartsWith("AUDIO_PLAYBACK", StringComparison.Ordinal) => "Le court échantillon n’a pas pu être rejoué sur cette sortie. Décochez l’option pour tester uniquement la jauge, puis vérifiez la sortie séparément.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_MICROPHONE_OPEN_FAILED" => "Le microphone n’a pas pu être ouvert. Vérifiez qu’il est connecté et que Windows autorise l’accès au microphone.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_CAPTURE_RESTART_REQUIRED" => "Windows n’a pas libéré le microphone en toute sécurité. Quittez puis relancez l’agent avant un nouvel essai ou appel.",
         InvalidOperationException invalid when invalid.Message.StartsWith("AUDIO_CAPTURE_", StringComparison.Ordinal) => "Le niveau du microphone ne peut pas être mesuré sur ce périphérique. Actualisez la liste, sélectionnez explicitement le micro puis réessayez.",
@@ -556,4 +635,5 @@ internal sealed class MainForm : Form
     private static Button ActionButton(string text, bool primary) { var button = new Button { AutoSize = true, Text = text, FlatStyle = FlatStyle.Flat, Padding = new Padding(13, 7, 13, 7), Margin = new Padding(0, 0, 8, 0), BackColor = primary ? Teal : Color.White, ForeColor = primary ? Navy : Navy, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), UseVisualStyleBackColor = false }; button.FlatAppearance.BorderColor = primary ? Teal : Color.FromArgb(188, 202, 213); return button; }
     private static void FillDevices(ComboBox combo, IEnumerable<AudioDeviceView> devices, string? selectedId) { combo.Items.Clear(); foreach (var item in devices) combo.Items.Add(new AudioDeviceItem(item.Id, item.Name)); var selected = combo.Items.Cast<AudioDeviceItem>().FirstOrDefault(item => item.Id == selectedId); combo.SelectedItem = selected ?? (combo.Items.Count > 0 ? combo.Items[0] : null); }
     private sealed record AudioDeviceItem(string Id, string Label) { public override string ToString() => Label; }
+    private sealed record PurposeItem(string Code, string Label) { public override string ToString() => Label; }
 }

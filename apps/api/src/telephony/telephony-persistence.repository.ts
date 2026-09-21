@@ -81,7 +81,7 @@ export class TelephonyPersistenceRepository {
           dispatchUpdatedAt: record.dispatchUpdatedAt ? new Date(record.dispatchUpdatedAt) : null,
           matchState: record.matchState, requestedAt: new Date(record.requestedAt), answeredAt: record.answeredAt ? new Date(record.answeredAt) : null,
           endedAt: record.endedAt ? new Date(record.endedAt) : null, durationSeconds: record.durationSeconds ?? null,
-          createdBy: record.createdBy, recordingId: record.recording.recordingId,
+          createdBy: record.createdBy, purposeCode: record.purposeCode ?? null, purposeComment: record.purposeComment ?? null, recordingId: record.recording.recordingId,
         } });
         await this.event(tx, event);
         if (record.leadId) await this.activity(tx, record.leadId, "CRM_CALL", "CALL_REQUESTED", event, principal, correlationId);
@@ -178,6 +178,7 @@ export class TelephonyPersistenceRepository {
       matchState: row.matchState as CallRecord["matchState"], requestedAt: row.requestedAt.toISOString(),
       ...(row.answeredAt ? { answeredAt: row.answeredAt.toISOString() } : {}), ...(row.endedAt ? { endedAt: row.endedAt.toISOString() } : {}),
       ...(row.durationSeconds !== null ? { durationSeconds: row.durationSeconds } : {}), createdBy: row.createdBy,
+      ...(row.purposeCode ? { purposeCode: row.purposeCode } : {}), ...(row.purposeComment ? { purposeComment: row.purposeComment } : {}),
       recording: { recordingId: recording.id, state: recording.state as CallRecord["recording"]["state"],
         ...(recording.durationSeconds !== null ? { durationSeconds: recording.durationSeconds } : {}), provider: recording.provider as CallRecord["provider"],
         ...(recording.storageReference ? { storageReference: recording.storageReference } : {}), authorizedRoles: recording.authorizedRoles as CallRecord["recording"]["authorizedRoles"] },

@@ -52,11 +52,12 @@ test("AUDITOR-only remains nonmutative even if an erroneous row grants GLOBAL", 
 });
 
 test("complete historical catalogues retain every old decision and deny all new sharing capabilities", () => {
-  const original = Object.fromEntries(Object.entries(defaultConfiguration(target)).filter(([key]) => !(viewGrantKeys as readonly string[]).includes(key)));
+  const original = Object.fromEntries(Object.entries(defaultConfiguration(target)).filter(([key]) => key !== "telephony.free-call.create" && !(viewGrantKeys as readonly string[]).includes(key)));
   const before = structuredClone(original), resolved = historicalGrants(original, target);
   assert.deepEqual(original, before);
   for (const [key, value] of Object.entries(original)) assert.equal(resolved[key], value);
   for (const key of viewGrantKeys) assert.equal(resolved[key], "NONE");
+  assert.equal(resolved["telephony.free-call.create"], "NONE");
   assert.equal(Object.keys(resolved).length, permissionCatalogue.length);
   assert.equal(evaluatePermission(principal("MANAGER"), "lead.views.share.team", [{ ...target, id: configurationKey(target), version: 1, grants: resolved }], context).allowed, false);
 });

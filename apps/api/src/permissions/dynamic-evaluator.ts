@@ -31,6 +31,11 @@ export function defaultRoleScope(role: Role, permission: string): PermissionScop
     if (role === "ADMIN") return "CAMPUS";
     return "NONE";
   }
+  if (permission === "telephony.free-call.create") {
+    if (role === "SUPER_ADMIN") return "GLOBAL";
+    if (role === "ADMIN") return "CAMPUS";
+    return "NONE";
+  }
   const viewScope = viewDefaultScope(role, permission);
   if (viewScope !== undefined) return viewScope;
   if (role === "SUPER_ADMIN") return "GLOBAL";

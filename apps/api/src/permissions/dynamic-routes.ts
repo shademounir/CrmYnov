@@ -23,7 +23,7 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   SavedLeadViewController: { list: ["lead.view"], create: ["lead.edit"], update: ["lead.edit"], remove: ["lead.edit"] },
   NotificationController: { list: ["lead.view"], markAll: ["notification.manage"], markRead: ["notification.manage"] },
   ManagerDashboardController: { read: ["reporting.view"], export: ["reporting.export"] },
-  TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
+  TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], freeCall: ["telephony.free-call.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
   TelephonyProvisioningController: { list: [], server: [], user: [], pairing: [], revoke: [] },
 };
 const grouped: Readonly<Record<string, string>> = {

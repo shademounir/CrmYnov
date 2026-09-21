@@ -40,11 +40,12 @@ Le Core Liblinphone est initialisé d’abord sans compte SIP pour découvrir et
 tester les périphériques. Le test micro utilise une capture Windows locale en
 mémoire pour calculer uniquement un niveau : aucun retour de voix et aucun
 fichier audio ne sont produits, et les réglages Windows ne sont pas modifiés.
-Une écoute locale distincte peut être activée explicitement pour ce test ; elle
-est désactivée par défaut, peut introduire un retour ou une latence, et ne
-constitue pas une mesure de qualité d’appel. Le son de test utilise séparément
-le lecteur local Liblinphone. La connexion SIP n’est lancée qu’après cette
-configuration.
+Une réécoute distincte peut être activée explicitement pour ce test. Elle est
+désactivée par défaut, conserve au maximum cinq secondes uniquement en mémoire,
+puis les rejoue une fois sur la sortie choisie et efface le tampon. Elle ne crée
+aucun fichier et ne forme aucune boucle audio en direct. Le son de test utilise
+séparément le lecteur local Liblinphone. La connexion SIP n’est lancée qu’après
+cette configuration.
 
 La capture du pilote associe aujourd’hui le périphérique Liblinphone à l’entrée
 WinMM par un nom unique. Elle refuse le test si cette correspondance est absente
@@ -85,14 +86,30 @@ SDK ; elle n'est pas certifiée par l'opérateur.
 
 `scripts/telephony-agent/package-windows-agent.ps1` produit un paquet autonome
 `win-x64`, son manifeste SHA-256 et une archive des sources de l’agent. Le
-paquet est portable : extraire chaque version dans un dossier distinct et
-lancer `CrmYnov.TelephonyAgent.exe`. Le fichier DPAPI demeure dans
-`%LOCALAPPDATA%\CRM Ynov\Telephony Agent` et survit à une mise à jour.
+paquet reste utilisable en mode portable : extraire chaque version dans un
+dossier distinct et lancer `CrmYnov.TelephonyAgent.exe`.
+
+Pour le pilote installé, `scripts/telephony-agent/install-windows-agent.ps1`
+crée sans privilège administrateur l’entrée « Applications installées », le
+raccourci du menu Démarrer et le protocole
+`crmynov-telephony://command/{id}`. Le protocole ne transporte qu’un UUID : le
+numéro est relu côté serveur après authentification du poste. Les versions
+restent côte à côte pour un retour arrière explicite. Le fichier DPAPI demeure
+dans `%LOCALAPPDATA%\CRM Ynov\Telephony Agent` et survit à une mise à jour.
+
+Une première installation enregistre également l’agent au démarrage de la
+session Windows, lance l’assistant d’association et conserve ensuite le profil,
+le secret DPAPI et les périphériques choisis. Au premier appel depuis le CRM,
+le navigateur peut demander une confirmation de sécurité pour ouvrir le
+protocole `crmynov-telephony`. L’utilisateur peut choisir « Toujours autoriser »
+pour l’origine CRM attendue ; l’installeur ne contourne pas ce consentement du
+navigateur. Les raccourcis téléphone de la fiche passent par le panneau CRM et
+non par le protocole Windows générique `tel:`.
 
 Pour revenir en arrière : arrêter l’agent, lancer le dossier de la version
 précédente conservée et vérifier CRM/poste/SIP avant tout appel. Pour
-désinstaller : désactiver le démarrage automatique, quitter l’agent, révoquer
-le poste dans le CRM, puis supprimer le dossier du programme. La suppression
+désinstaller : désactiver le démarrage automatique, quitter l’agent, puis
+utiliser l’entrée Windows de désinstallation. La suppression
 du dossier DPAPI est une action distincte et irréversible qui exige une décision
 explicite. Le paquet pilote n’est pas signé ; un certificat approuvé reste un
 prérequis de production.

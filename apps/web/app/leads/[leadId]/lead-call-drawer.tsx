@@ -5,7 +5,7 @@ import { PhoneCall, PhoneDisconnect, X } from "@phosphor-icons/react";
 
 type CallState = "REQUESTED" | "DIALING" | "RINGING" | "ANSWERED" | "ENDED" | "FAILED" | "MISSED" | "CANCELLED";
 type DispatchState = "PENDING" | "ACCEPTED" | "UNCERTAIN" | "REJECTED";
-interface CallRecord { id: string; state: CallState; dispatchState: DispatchState; maskedPhone: string; durationSeconds?: number }
+interface CallRecord { id: string; externalId: string; state: CallState; dispatchState: DispatchState; maskedPhone: string; durationSeconds?: number }
 interface ConfigurationPayload { mode?: string; clickToCallEnabled?: boolean; outboundEnabled?: boolean; outboundReadiness?: { available?: boolean; reason?: string; sdkLoaded?: boolean; sipRegistered?: boolean; identityLabel?: string } }
 
 function maskPhone(phone: string): string { const digits = phone.replace(/\D/g, ""); return digits.length >= 3 ? `••• ${digits.slice(-3)}` : "numéro masqué"; }
@@ -15,7 +15,16 @@ export function callStateLabel(state: CallState): string {
 function isCall(value: unknown): value is CallRecord {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.id === "string" && typeof candidate.state === "string" && typeof candidate.dispatchState === "string" && typeof candidate.maskedPhone === "string";
+  return typeof candidate.id === "string" && typeof candidate.externalId === "string" && /^[0-9a-f-]{36}$/iu.test(candidate.externalId)
+    && typeof candidate.state === "string" && typeof candidate.dispatchState === "string" && typeof candidate.maskedPhone === "string";
+}
+export function agentCommandUri(commandId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(commandId)) throw new Error("invalid_command_id");
+  return `crmynov-telephony://command/${commandId}`;
+}
+function openAgent(uri: string): void {
+  const link = document.createElement("a"); link.href = uri; link.hidden = true; link.rel = "noreferrer";
+  document.body.append(link); link.click(); link.remove();
 }
 function stateLabel(call: CallRecord): string {
   if (call.dispatchState === "UNCERTAIN") return "La numérotation a peut-être été transmise. Ne relancez pas automatiquement : vérifiez le poste Windows.";
@@ -33,7 +42,7 @@ function readinessLabel(configuration: ConfigurationPayload | undefined, hasPhon
   return "L’agent Windows est injoignable ou indisponible.";
 }
 
-export function LeadCallDrawer({ leadId, leadCode, phone, onCompleted }: Readonly<{ leadId: string; leadCode: string; phone?: string; onCompleted?: () => void }>): React.JSX.Element {
+export function LeadCallDrawer({ leadId, leadCode, phone, triggerId, onCompleted }: Readonly<{ leadId: string; leadCode: string; phone?: string; triggerId?: string; onCompleted?: () => void }>): React.JSX.Element {
   const dialog = useRef<HTMLDialogElement>(null); const trigger = useRef<HTMLButtonElement>(null);
   const idempotency = useRef<string | undefined>(undefined); const submitting = useRef(false); const [configuration, setConfiguration] = useState<ConfigurationPayload>();
   const [call, setCall] = useState<CallRecord>(); const [loading, setLoading] = useState(false); const [error, setError] = useState<string>();
@@ -57,7 +66,7 @@ export function LeadCallDrawer({ leadId, leadCode, phone, onCompleted }: Readonl
       const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/calls`, { method: "POST", credentials: "same-origin", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify({ idempotencyKey: idempotency.current }) });
       const payload = await response.json() as unknown;
       if (!response.ok || !isCall(payload)) throw new Error(`call_${response.status}`);
-      setCall(payload); onCompleted?.();
+      setCall(payload); onCompleted?.(); openAgent(agentCommandUri(payload.externalId));
     } catch { setError("La commande n’a pas été confirmée. Vérifiez l’état de l’agent avant toute nouvelle tentative."); }
     finally { submitting.current = false; setLoading(false); }
   }
@@ -83,7 +92,7 @@ export function LeadCallDrawer({ leadId, leadCode, phone, onCompleted }: Readonl
   }, [call]);
 
   const unavailable = !loading && !callable;
-  return <><button ref={trigger} className="secondary-button" type="button" onClick={open}><PhoneCall size={18} aria-hidden="true" /> Appeler</button>
+  return <><button ref={trigger} id={triggerId} className="secondary-button" type="button" onClick={open}><PhoneCall size={18} aria-hidden="true" /> Appeler</button>
     <dialog ref={dialog} className="lead-assignment-dialog lead-call-dialog" aria-labelledby="lead-call-title">
       <header className="lead-assignment-dialog__header"><div><p className="eyebrow">Téléphonie sortante</p><h2 id="lead-call-title">Appeler depuis le CRM</h2><p>{leadCode} · agent Windows et SDK Liblinphone requis.</p></div><button className="icon-button" type="button" onClick={close} aria-label="Fermer le panneau d’appel"><X size={20} aria-hidden="true" /></button></header>
       <div className="lead-assignment-dialog__form">
@@ -92,6 +101,7 @@ export function LeadCallDrawer({ leadId, leadCode, phone, onCompleted }: Readonl
         {unavailable ? <div className="lead-assignment-dialog__feedback lead-assignment-dialog__feedback--error" role="status">
           {readinessLabel(configuration, Boolean(phone))}
           <br />Aucun repli vers l’appel manuel ou Coovox n’est appliqué.
+          {configuration?.outboundReadiness?.reason === "WORKSTATION_OFFLINE" ? <><br /><a className="text-button" href="crmynov-telephony://open">Ouvrir l’agent Windows</a></> : null}
         </div> : null}
         {!call && callable ? <><p className="lead-assignment-dialog__notice">Confirmez une seule fois. Une commande acceptée ne signifie ni sonnerie ni décroché ; ces états viendront du SDK.</p>{configuration?.outboundReadiness?.identityLabel ? <p className="lead-call-dialog__identity">Identité téléphonique du poste : <strong>{configuration.outboundReadiness.identityLabel}</strong></p> : null}</> : null}
         {call ? <section className={`lead-call-dialog__state lead-call-dialog__state--${call.dispatchState.toLowerCase()}`} aria-live="polite"><p className="eyebrow">État observé</p><h3>{callStateLabel(call.state)}</h3><p>{stateLabel(call)}</p>{typeof call.durationSeconds === "number" ? <p>Durée observée : {call.durationSeconds} s</p> : null}</section> : null}

@@ -226,6 +226,59 @@ export class TelephonyAgentRepository {
     });
   }
 
+  /**
+   * Claim the opaque command referenced by the Windows protocol handler.
+   * The destination is still read from the encrypted server-side command; it
+   * is never accepted from the URI. A command already delivered to this same
+   * workstation is returned idempotently so polling and protocol activation
+   * can race without creating a second dial attempt.
+   */
+  async claim(identity: AgentIdentity, commandId: string): Promise<{ profile: Record<string, unknown>; command: AgentCommandEnvelope }> {
+    const externalId = this.uuid(commandId, "telephony_agent_command_id_invalid");
+    const client = this.requiredClient();
+    return client.$transaction(async (tx) => {
+      const now = new Date();
+      await tx.telephonyWorkstation.update({ where: { id: identity.workstationId }, data: { lastSeenAt: now } });
+      const workstation = await tx.telephonyWorkstation.findUniqueOrThrow({
+        where: { id: identity.workstationId },
+        include: { userProfile: { include: { serverProfile: true } } },
+      });
+      const command = await tx.telephonyAgentCommand.findFirst({
+        where: {
+          workstationId: identity.workstationId,
+          terminalAt: null,
+          state: { in: ["PENDING", "DELIVERED"] },
+          call: { externalId },
+        },
+        include: { call: true },
+      });
+      if (!command) throw new NotFoundException({ code: "telephony_agent_command_not_found" });
+      if (command.expiresAt <= now) {
+        const uncertainDelivery = command.state === "DELIVERED";
+        await tx.telephonyAgentCommand.update({ where: { id: command.id }, data: { state: uncertainDelivery ? "UNCERTAIN" : "EXPIRED", terminalAt: now } });
+        await tx.telephonyCall.updateMany({ where: { id: command.callId, dispatchState: { in: ["PENDING", "ACCEPTED"] } }, data: {
+          dispatchState: "UNCERTAIN", dispatchErrorCode: uncertainDelivery ? "AGENT_RESULT_UNKNOWN" : "AGENT_COMMAND_EXPIRED", dispatchUpdatedAt: now,
+        } });
+        throw new ConflictException({ code: "telephony_agent_command_expired" });
+      }
+      if (command.state === "PENDING") {
+        const claimed = await tx.telephonyAgentCommand.updateMany({ where: { id: command.id, state: "PENDING" }, data: { state: "DELIVERED", claimedAt: now } });
+        if (claimed.count !== 1) throw new ConflictException({ code: "telephony_agent_command_claim_conflict" });
+      }
+      return {
+        profile: this.agentProfile(workstation.userProfile, workstation.id),
+        command: {
+          commandId: command.call.externalId,
+          callId: command.callId,
+          destination: this.decrypt(command.destinationCiphertext, command.destinationIv, command.destinationTag),
+          expiresAt: command.expiresAt.toISOString(),
+          maxDurationSeconds: 7200,
+          hangupRequested: false,
+        },
+      };
+    });
+  }
+
   async readiness(userId: string): Promise<{ available: boolean; reason?: string; workstationId?: string; identityLabel?: string }> {
     const client = this.requiredClient();
     const profile = await client.telephonyUserProfile.findUnique({ where: { userId }, include: { user: true, serverProfile: true, workstations: { where: { active: true }, orderBy: { pairedAt: "desc" }, take: 1 } } });

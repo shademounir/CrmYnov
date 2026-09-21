@@ -109,6 +109,19 @@ test("qualification update defaults are limited to Admin and Super Admin scopes"
   assert.equal(evaluatePermission(principal(["AUDITOR"]), permission, [snapshot(roleTarget("AUDITOR"), permission, "GLOBAL")], { ...context, globalAllowed: true }).allowed, false);
 });
 
+test("free calls default to Admin and Super Admin only, with explicit delegation supported", () => {
+  const permission = "telephony.free-call.create";
+  assert.equal(evaluatePermission(principal(["SUPER_ADMIN"]), permission, [], { ...context, globalAllowed: true }).allowed, true);
+  assert.equal(evaluatePermission(principal(["ADMIN"]), permission, [], context).allowed, true);
+  assert.equal(evaluatePermission(principal(["ADMIN"]), permission, [], { ...context, campusAllowed: false }).allowed, false);
+  for (const role of ["MANAGER", "ADMISSIONS", "AUDITOR"] as const) {
+    assert.equal(evaluatePermission(principal([role]), permission, [], context).allowed, false, role);
+  }
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "CAMPUS")], context).allowed, true);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "CAMPUS")], { ...context, campusAllowed: false }).allowed, false);
+  assert.equal(evaluatePermission(principal(["AUDITOR"]), permission, [snapshot(roleTarget("AUDITOR"), permission, "GLOBAL")], { ...context, globalAllowed: true }).allowed, false);
+});
+
 test("CRMY-169 TEAM for a Manager requires explicit responsibility without denying another role's membership", () => {
   const rows = [snapshot(roleTarget("MANAGER"), key, "TEAM"), snapshot(roleTarget("ADMISSIONS"), key, "TEAM")];
   assert.equal(evaluatePermission(principal(), key, rows, { ...context, team: true }).allowed, false);

@@ -14,6 +14,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
     private EventJournal? journal;
     private AgentSettings? settings;
     private Queue<AgentEvent> pending = new();
+    private readonly SemaphoreSlim commandGate = new(1, 1);
     private bool crmConnected;
     private string authorizationState = "À vérifier";
     private string statusCode = "ARRÊTÉ";
@@ -154,6 +155,37 @@ internal sealed class AgentRuntime : IAsyncDisposable
         Publish();
     }
 
+    public async Task HandleProtocolCommandAsync(Guid commandId)
+    {
+        if (!Running) await StartAsync().ConfigureAwait(true);
+        var readyDeadline = DateTimeOffset.UtcNow.AddSeconds(12);
+        while (!AgentReadiness.IsReady(BuildSnapshot()) && DateTimeOffset.UtcNow < readyDeadline)
+            await Task.Delay(100).ConfigureAwait(true);
+        if (!AgentReadiness.IsReady(BuildSnapshot())) throw new InvalidOperationException("AGENT_NOT_READY");
+        await commandGate.WaitAsync().ConfigureAwait(true);
+        try
+        {
+            if (client is null || journal is null || engine is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");
+            var response = await client.ClaimAsync(commandId, CancellationToken.None).ConfigureAwait(true);
+            MarkCrmSuccess();
+            RefreshProfileIdentity(response.Profile);
+            if (response.Command is null) throw new InvalidOperationException("AGENT_COMMAND_MISSING");
+            await ExecuteCommandAsync(response.Command, CancellationToken.None).ConfigureAwait(true);
+        }
+        catch (HttpRequestException error) { HandleTransportError(error); throw; }
+        finally { commandGate.Release(); }
+    }
+
+    public async Task StartFreeCallAsync(string phone, string purposeCode, string? comment)
+    {
+        if (!Running || !AgentReadiness.IsReady(BuildSnapshot())) throw new InvalidOperationException("AGENT_NOT_READY");
+        if (client is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");
+        var idempotencyKey = $"free-{Guid.NewGuid():N}";
+        var created = await client.CreateFreeCallAsync(new FreeCallRequest(phone, purposeCode, string.IsNullOrWhiteSpace(comment) ? null : comment.Trim(), idempotencyKey), CancellationToken.None).ConfigureAwait(true);
+        if (!Guid.TryParse(created.ExternalId, out var commandId)) throw new InvalidOperationException("AGENT_COMMAND_INVALID");
+        await HandleProtocolCommandAsync(commandId).ConfigureAwait(true);
+    }
+
     private LinphoneEngine CreateEngine(AgentSettings current)
     {
         var next = new LinphoneEngine(current, store.DataDirectory);
@@ -240,16 +272,22 @@ internal sealed class AgentRuntime : IAsyncDisposable
             var response = await client.PollAsync(token).ConfigureAwait(true);
             MarkCrmSuccess();
             RefreshProfileIdentity(response.Profile);
-            var command = response.Command;
-            if (command is null) return;
-            if (command.HangupRequested) { lock (engineGate) engine.Hangup(); return; }
-            if (command.ExpiresAt <= DateTimeOffset.UtcNow) { await RejectAsync(command, "COMMAND_EXPIRED", token).ConfigureAwait(true); return; }
-            if (journal.HasSeen(command.CommandId)) { await RejectAsync(command, "LOCAL_REPLAY_BLOCKED", token).ConfigureAwait(true); return; }
-            journal.MarkCommand(command.CommandId);
-            try { lock (engineGate) engine.StartCall(command); }
-            catch (InvalidOperationException error) { await RejectAsync(command, SafeCode(error), token).ConfigureAwait(true); }
+            if (response.Command is not null) await ExecuteCommandAsync(response.Command, token).ConfigureAwait(true);
         }
         catch (HttpRequestException error) { HandleTransportError(error); }
+    }
+
+    private async Task ExecuteCommandAsync(AgentCommand command, CancellationToken token)
+    {
+        if (journal is null || engine is null) return;
+        if (command.HangupRequested) { lock (engineGate) engine.Hangup(); return; }
+        if (command.ExpiresAt <= DateTimeOffset.UtcNow) { await RejectAsync(command, "COMMAND_EXPIRED", token).ConfigureAwait(true); return; }
+        // Polling and protocol activation may legitimately deliver the same
+        // command. The local journal is the final no-redial guard.
+        if (journal.HasSeen(command.CommandId)) return;
+        journal.MarkCommand(command.CommandId);
+        try { lock (engineGate) engine.StartCall(command); }
+        catch (InvalidOperationException error) { await RejectAsync(command, SafeCode(error), token).ConfigureAwait(true); }
     }
 
     private async Task RejectAsync(AgentCommand command, string reason, CancellationToken token)
@@ -365,5 +403,5 @@ internal sealed class AgentRuntime : IAsyncDisposable
         _ => state,
     };
 
-    public async ValueTask DisposeAsync() { await StopAsync().ConfigureAwait(true); lifecycle.Dispose(); }
+    public async ValueTask DisposeAsync() { await StopAsync().ConfigureAwait(true); lifecycle.Dispose(); commandGate.Dispose(); }
 }

@@ -11,11 +11,12 @@
     <NoWarn>$(NoWarn);CS0612;CS0618;CS8600;CS8601;CS8602;CS8603;CS8618;CS8625;CS8765</NoWarn>
     <AssemblyName>CrmYnov.TelephonyAgent</AssemblyName>
     <RootNamespace>CrmYnov.TelephonyAgent</RootNamespace>
-    <AgentVersion>0.3.4-pilot</AgentVersion>
-    <Version>0.3.4</Version>
-    <AssemblyVersion>0.3.4.0</AssemblyVersion>
-    <FileVersion>0.3.4.0</FileVersion>
-    <InformationalVersion>0.3.4-pilot</InformationalVersion>
+    <AgentVersion>0.4.7-pilot</AgentVersion>
+    <Version>0.4.7</Version>
+    <AssemblyVersion>0.4.7.0</AssemblyVersion>
+    <FileVersion>0.4.7.0</FileVersion>
+    <InformationalVersion>0.4.7-pilot</InformationalVersion>
+    <ApplicationIcon>Assets\agent-icon.ico</ApplicationIcon>
     <LiblinphoneSdkRoot Condition="'$(LiblinphoneSdkRoot)' == ''">$(LIBLINPHONE_SDK_ROOT)</LiblinphoneSdkRoot>
   </PropertyGroup>
 

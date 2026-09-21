@@ -27,6 +27,7 @@ export interface CallRecord {
   id: string; provider: TelephonyProvider; externalId: string; direction: CallDirection; state: CallState; leadId?: string;
   phoneFingerprint: string; maskedPhone: string; matchState: MatchState; requestedAt: string; answeredAt?: string; endedAt?: string;
   durationSeconds?: number; createdBy: string; dispatchState: DispatchState; dispatchErrorCode?: string; dispatchUpdatedAt?: string;
+  purposeCode?: string; purposeComment?: string;
   recording: RecordingMetadata; events: CallEvent[];
 }
 export interface AssociationCandidate { id: string; leadCode: string; displayName: string; campus: string }
@@ -128,6 +129,40 @@ export class TelephonyService implements OnModuleInit {
       // not complete.  UNCERTAIN is deliberately fail-closed: the client must
       // inspect the agent state and must not redial automatically.
       try { await this.persistence.persistDispatch(record.id, "PENDING", "UNCERTAIN", "AGENT_DISPATCH_FAILED"); } catch { /* another transition already won */ }
+      await this.refreshAfterPersistentMutation(); throw error;
+    }
+  }
+
+  async initiateFreeForApi(input: { phone?: string; purposeCode?: string; comment?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): Promise<CallRecord> {
+    await this.preparePersistentMutation();
+    if (!this.persistence?.enabled || !this.agents?.enabled) throw new ServiceUnavailableException({ code: "telephony_persistence_required" });
+    this.assertContributor(principal);
+    if (this.config.mode === "DISABLED" || !this.config.outboundEnabled || !this.config.clickToCallEnabled) throw new ServiceUnavailableException({ code: "telephony_provider_disabled" });
+    if (!input.idempotencyKey || !/^[A-Za-z0-9_-]{8,128}$/u.test(input.idempotencyKey)) throw new BadRequestException({ code: "telephony_idempotency_invalid" });
+    if (!input.purposeCode || !["PROSPECT_CALLBACK", "PARTNER", "OTHER_AUTHORIZED"].includes(input.purposeCode)) throw new BadRequestException({ code: "telephony_free_call_purpose_invalid" });
+    const comment = input.comment?.trim();
+    if (comment && (comment.length > 500 || /[\r\n\0]/u.test(comment))) throw new BadRequestException({ code: "telephony_free_call_comment_invalid" });
+    const normalized = this.normalizeMoroccoPhone(input.phone ?? "");
+    const replayId = this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`);
+    if (replayId) return this.copy(this.calls.get(replayId)!);
+    const readiness = await this.agents.readiness(principal.userId);
+    if (!readiness.available) throw new ServiceUnavailableException({ code: "telephony_bridge_not_ready", reason: readiness.reason });
+    const commandId = randomUUID();
+    const record = this.createCall({ provider: "LINPHONE", externalId: commandId, direction: "OUTBOUND", phone: normalized,
+      matchState: "UNMATCHED", principal, idempotencyKey: input.idempotencyKey, correlationId, dispatchState: "PENDING",
+      purposeCode: input.purposeCode, ...(comment ? { purposeComment: comment } : {}) });
+    const event = record.events.find((item) => item.idempotencyKey === input.idempotencyKey);
+    if (!event) throw new Error("telephony_create_event_missing");
+    try {
+      const created = await this.persistence.persistCreate(record, event, principal, correlationId);
+      await this.refreshAfterPersistentMutation();
+      if (!created) return this.copy(this.calls.get(this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`)!)!);
+      await this.agents.enqueue(record.id, principal.userId, normalized);
+      await this.persistence.persistDispatch(record.id, "PENDING", "ACCEPTED");
+      await this.refreshAfterPersistentMutation();
+      return this.copy(this.calls.get(record.id)!);
+    } catch (error) {
+      try { await this.persistence.persistDispatch(record.id, "PENDING", "UNCERTAIN", "AGENT_DISPATCH_FAILED"); } catch { /* a concurrent terminal transition won */ }
       await this.refreshAfterPersistentMutation(); throw error;
     }
   }
@@ -341,11 +376,11 @@ export class TelephonyService implements OnModuleInit {
     const expected = `sha256=${createHmac("sha256", syntheticSecret).update(`${timestamp}.${payload}`).digest("hex")}`; return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
   }
 
-  private createCall(input: { provider: TelephonyProvider; externalId: string; direction: CallDirection; leadId?: string; phone: string; matchState: MatchState; principal: Principal; idempotencyKey: string; correlationId: string; occurredAt?: string; dispatchState?: DispatchState }): CallRecord {
+  private createCall(input: { provider: TelephonyProvider; externalId: string; direction: CallDirection; leadId?: string; phone: string; matchState: MatchState; principal: Principal; idempotencyKey: string; correlationId: string; occurredAt?: string; dispatchState?: DispatchState; purposeCode?: string; purposeComment?: string }): CallRecord {
     const key = `${input.provider}:${input.externalId}`; const existing = this.callByProviderId.get(key); if (existing) return this.copy(this.calls.get(existing)!);
     const occurredAt = this.timestamp(input.occurredAt, "telephony_call_timestamp_invalid"); const id = randomUUID(); const event = this.event(id, input.idempotencyKey, "STATE", "REQUESTED", occurredAt, input.principal.userId);
     const recording: RecordingMetadata = { recordingId: randomUUID(), state: "UNAVAILABLE", provider: input.provider, authorizedRoles: ["MANAGER", "ADMIN", "SUPER_ADMIN"] };
-    const call: Readonly<CallRecord> = Object.freeze({ id, provider: input.provider, externalId: input.externalId, direction: input.direction, state: "REQUESTED", ...(input.leadId ? { leadId: input.leadId } : {}), phoneFingerprint: this.fingerprint(input.phone), maskedPhone: this.mask(input.phone), dispatchState: input.dispatchState ?? "ACCEPTED", dispatchUpdatedAt: occurredAt, matchState: input.matchState, requestedAt: occurredAt, createdBy: input.principal.userId, recording, events: [event] });
+    const call: Readonly<CallRecord> = Object.freeze({ id, provider: input.provider, externalId: input.externalId, direction: input.direction, state: "REQUESTED", ...(input.leadId ? { leadId: input.leadId } : {}), phoneFingerprint: this.fingerprint(input.phone), maskedPhone: this.mask(input.phone), dispatchState: input.dispatchState ?? "ACCEPTED", dispatchUpdatedAt: occurredAt, matchState: input.matchState, requestedAt: occurredAt, createdBy: input.principal.userId, ...(input.purposeCode ? { purposeCode: input.purposeCode } : {}), ...(input.purposeComment ? { purposeComment: input.purposeComment } : {}), recording, events: [event] });
     this.calls.set(id, call); this.callByProviderId.set(key, id); this.eventReceipts.set(input.idempotencyKey, event); if (input.leadId) this.leads.addActivity(input.leadId, { type: "CRM_CALL", result: "CALL_REQUESTED" }, input.principal, input.correlationId);
     this.audit.record({ eventType: "TELEPHONY_CALL_REQUESTED", actorId: input.principal.userId, actorRoles: input.principal.roles, sessionId: input.principal.sessionId, correlationId: input.correlationId, after: { callId: id, provider: input.provider, direction: input.direction, matchState: input.matchState }, result: "SUCCESS", idempotencyKey: `telephony-call:${input.provider}:${input.externalId}` }); return this.copy(call);
   }
@@ -358,6 +393,12 @@ export class TelephonyService implements OnModuleInit {
     try { this.scopedLead(call.leadId, principal, "telephony-queue"); return true; } catch { return false; }
   }
   private normalizePhone(value: string): string { const normalized = value.replace(/[^+\d]/g, ""); if (!/^\+?\d{8,15}$/.test(normalized)) throw new BadRequestException({ code: "telephony_phone_invalid" }); return normalized; }
+  private normalizeMoroccoPhone(value: string): string {
+    const compact = value.replace(/[\s().-]/gu, "");
+    const normalized = /^0\d{9}$/u.test(compact) ? `+212${compact.slice(1)}` : /^212\d{9}$/u.test(compact) ? `+${compact}` : compact;
+    if (!/^\+212\d{9}$/u.test(normalized)) throw new BadRequestException({ code: "telephony_free_call_destination_refused" });
+    return normalized;
+  }
   private fingerprint(value: string): string { return createHash("sha256").update(value).digest("hex"); }
   private mask(value: string): string { return `***${value.replace(/\D/g, "").slice(-3)}`; }
   private timestamp(value: string | undefined, code: string): string { const date = value ? new Date(value) : new Date(); if (Number.isNaN(date.valueOf())) throw new BadRequestException({ code }); return date.toISOString(); }

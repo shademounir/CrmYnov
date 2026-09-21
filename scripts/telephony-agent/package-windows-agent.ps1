@@ -50,6 +50,7 @@ New-Item -ItemType Directory -Path $documentation,$notices | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows\README.md') -Destination $documentation
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows\THIRD-PARTY-NOTICES.md') -Destination $notices
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\runbooks\linphone-windows-bridge.md') -Destination $documentation
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\telephony-agent\install-windows-agent.ps1') -Destination $packageDirectory
 $noticeSources = @(
     'share\doc\linphone-sdk\LICENSE.md',
     'share\doc\mediastreamer2-5.5.0\html\mediastreamer2_license.html',
@@ -104,8 +105,12 @@ New-DeterministicZip $packageDirectory $zipPath @(Get-ChildItem -LiteralPath $pa
 $sourceFiles = @(
     Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows') -Recurse -File |
         Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
+    Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-installer-windows') -Recurse -File |
+        Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
     Get-Item -LiteralPath (Join-Path $repositoryRoot 'docs\runbooks\linphone-windows-bridge.md')
     Get-Item -LiteralPath $PSCommandPath
+    Get-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\telephony-agent\install-windows-agent.ps1')
+    Get-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\telephony-agent\build-windows-installer.ps1')
 )
 New-DeterministicZip $repositoryRoot $sourceZipPath $sourceFiles
 
