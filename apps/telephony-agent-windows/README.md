@@ -107,7 +107,11 @@ navigateur. Les raccourcis téléphone de la fiche passent par le panneau CRM et
 non par le protocole Windows générique `tel:`.
 
 Pour revenir en arrière : arrêter l’agent, lancer le dossier de la version
-précédente conservée et vérifier CRM/poste/SIP avant tout appel. Pour
+précédente conservée et vérifier CRM/poste/SIP avant tout appel. Une première
+installation laisse le démarrage Windows désactivé ; l'utilisateur l'active
+explicitement dans le diagnostic. Une mise à jour ou un rollback conserve ce
+choix et actualise uniquement le chemin de la version active. La connexion SIP
+reste une action explicite depuis l'agent. Pour
 désinstaller : désactiver le démarrage automatique, quitter l’agent, puis
 utiliser l’entrée Windows de désinstallation. La suppression
 du dossier DPAPI est une action distincte et irréversible qui exige une décision

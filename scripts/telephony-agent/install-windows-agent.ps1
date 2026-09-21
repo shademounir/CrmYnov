@@ -52,9 +52,14 @@ function Set-Activation([string]$Executable, [string]$ActiveVersion) {
     $shortcut.Description = $productName
     $shortcut.Save()
 
+    # Preserve the user's explicit startup preference on upgrades and rollbacks.
+    # A fresh installation must not silently opt the user into Windows startup;
+    # the checkbox in the agent remains the single source of that choice.
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    New-Item -Path $runKey -Force | Out-Null
-    New-ItemProperty -Path $runKey -Name $productName -Value ('"{0}"' -f $Executable) -PropertyType String -Force | Out-Null
+    $startupValue = Get-ItemPropertyValue -LiteralPath $runKey -Name $productName -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($startupValue)) {
+        New-ItemProperty -Path $runKey -Name $productName -Value ('"{0}"' -f $Executable) -PropertyType String -Force | Out-Null
+    }
 
     $installedScript = Join-Path $installRoot 'install-windows-agent.ps1'
     New-Item -Path $uninstallKey -Force | Out-Null
@@ -114,7 +119,8 @@ Set-Activation $installedExecutable $Version
 Write-Warning "Le binaire pilote n'est pas signé. Un certificat de signature est requis avant diffusion générale."
 Write-Output ("Agent installé pour l'utilisateur courant : " + $installedExecutable)
 Write-Output ('Protocole enregistré : ' + $scheme + '://command/{id}')
-Write-Output 'Démarrage automatique enregistré pour la session Windows courante.'
+$startupEnabled = -not [string]::IsNullOrWhiteSpace((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $productName -ErrorAction SilentlyContinue))
+Write-Output $(if ($startupEnabled) { 'Préférence de démarrage Windows conservée : activée.' } else { 'Démarrage Windows désactivé jusqu’au choix explicite de l’utilisateur.' })
 if (-not $NoLaunch) {
     Start-Process -FilePath $installedExecutable -WorkingDirectory (Split-Path -Parent $installedExecutable)
     Write-Output 'Agent lancé. Le premier démarrage ouvre l’assistant d’association et de configuration audio.'

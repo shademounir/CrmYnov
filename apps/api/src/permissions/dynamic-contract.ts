@@ -33,16 +33,19 @@ export function historicalGrants(value: Record<string, string>, target: Configur
   const qualificationKey = "lead.qualification.update";
   const freeCallKey = "telephony.free-call.create";
   const version2Keys = keys.filter((key) => key !== freeCallKey);
+  const currentBeforeQualificationKeys = keys.filter((key) => key !== qualificationKey);
   const beforeQualificationKeys = version2Keys.filter((key) => key !== qualificationKey);
   const beforeViewsKeys = version2Keys.filter((key) => !(viewGrantKeys as readonly string[]).includes(key));
   const beforeViewsAndQualificationKeys = beforeViewsKeys.filter((key) => key !== qualificationKey);
   const names = Object.keys(value);
   const isExactCatalogue = (catalogue: readonly string[]): boolean => names.length === catalogue.length && catalogue.every((key) => Object.hasOwn(value, key));
   const version2 = isExactCatalogue(version2Keys);
+  const currentBeforeQualification = isExactCatalogue(currentBeforeQualificationKeys);
   const beforeViews = isExactCatalogue(beforeViewsKeys);
   const beforeViewsAndQualification = isExactCatalogue(beforeViewsAndQualificationKeys);
   const beforeQualification = isExactCatalogue(beforeQualificationKeys);
   const expanded = version2 ? { [freeCallKey]: "NONE", ...value }
+    : currentBeforeQualification ? { [qualificationKey]: "NONE", ...value }
     : beforeViews || beforeViewsAndQualification
       ? { ...Object.fromEntries(viewGrantKeys.map((key) => [key, "NONE"])), ...(beforeViewsAndQualification ? { [qualificationKey]: "NONE" } : {}), [freeCallKey]: "NONE", ...value }
       : beforeQualification ? { [qualificationKey]: "NONE", [freeCallKey]: "NONE", ...value } : value;

@@ -71,3 +71,11 @@ test("partial, unknown and invalid historical grants stay fail-closed", () => {
   assert.throws(() => historicalGrants({ ...original, "lead.view": "UNBOUNDED" }, target));
   assert.throws(() => historicalGrants({ ...original, "lead.views.share.team": "GLOBAL" }, { ...target, role: "AUDITOR" }));
 });
+
+test("a complete current catalogue predating qualification remains upgradeable", () => {
+  const currentBeforeQualification = Object.fromEntries(Object.entries(defaultConfiguration(target)).filter(([key]) => key !== "lead.qualification.update"));
+  const resolved = historicalGrants(currentBeforeQualification, target);
+  assert.equal(resolved["lead.qualification.update"], "NONE");
+  assert.equal(resolved["telephony.free-call.create"], currentBeforeQualification["telephony.free-call.create"]);
+  assert.equal(Object.keys(resolved).length, permissionCatalogue.length);
+});
