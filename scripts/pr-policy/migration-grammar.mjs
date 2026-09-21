@@ -103,6 +103,11 @@ function tableDefinitionParts(tokens) {
 }
 
 export function recognizedForeignKeyWords(tokens) {
+  if (keyword(tokens[0], "ALTER") && keyword(tokens[1], "TABLE") && identifier(tokens[2]) && keyword(tokens[3], "ADD")) {
+    const definition = tokens.slice(4);
+    if (!foreignKeyActions(definition)) return new Set();
+    return new Set(definition.filter(token => keyword(token, "DELETE") || keyword(token, "UPDATE")));
+  }
   if (!keyword(tokens[0], "CREATE") || !keyword(tokens[1], "TABLE") || !identifier(tokens[2]) || !symbol(tokens[3], "(")) return new Set();
   const parts = tableDefinitionParts(tokens);
   return new Set(parts.filter(foreignKeyActions).flat().filter(token => keyword(token, "DELETE") || keyword(token, "UPDATE")));
@@ -130,8 +135,9 @@ function boundedCheck(input, column) {
 
 function columnType(input) {
   const type = input.take();
-  if (type?.kind !== "word" || !["TEXT", "UUID", "JSON", "JSONB", "BOOLEAN", "INTEGER", "INT", "BIGINT", "SMALLINT", "VARCHAR", "CHAR", "TIMESTAMP", "TIMESTAMPTZ", "DATE", "NUMERIC", "DECIMAL", "REAL", "DOUBLE"].includes(type.value.toUpperCase())) return false;
+  if (type?.kind !== "word" || !["TEXT", "UUID", "JSON", "JSONB", "BOOLEAN", "INTEGER", "INT", "BIGINT", "SMALLINT", "VARCHAR", "CHAR", "CHARACTER", "TIMESTAMP", "TIMESTAMPTZ", "DATE", "NUMERIC", "DECIMAL", "REAL", "DOUBLE"].includes(type.value.toUpperCase())) return false;
   if (type.value.toUpperCase() === "DOUBLE" && !input.word("PRECISION")) return false;
+  if (type.value.toUpperCase() === "CHARACTER" && !input.word("VARYING")) return false;
   if (input.symbol("(")) {
     const size = input.take();
     if (size?.kind !== "number" || !/^\d+$/u.test(size.value) || !input.symbol(")")) return false;

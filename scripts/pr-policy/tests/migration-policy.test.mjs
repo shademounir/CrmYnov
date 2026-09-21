@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -60,6 +61,57 @@ for (const [name, sql, reason] of [
 test("requires explicit uniqueness proof", () => {
   assert.ok(analyzeMigrationSql(`${markers}CREATE UNIQUE INDEX users_email_key ON users(email);`).reasons.includes("migration_unique_index_proof_missing"));
   assert.equal(analyzeMigrationSql(`${markers}-- prisma-policy: uniqueness-validated\nCREATE UNIQUE INDEX users_email_key ON users(email);`).approved, true);
+});
+
+test("accepts bounded PostgreSQL grammar used by additive telephony migrations", () => {
+  const sql = `${markers}
+CREATE TABLE "profiles" ("id" UUID NOT NULL, CONSTRAINT "profiles_pkey" PRIMARY KEY ("id"));
+ALTER TABLE "profiles" ADD COLUMN "state" CHARACTER VARYING(16) NOT NULL DEFAULT 'READY', ADD COLUMN "updated_at" TIMESTAMPTZ(6);
+ALTER TABLE "profiles" ADD CONSTRAINT "profiles_parent_fkey" FOREIGN KEY ("id") REFERENCES "profiles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;`;
+  assert.deepEqual(analyzeMigrationSql(sql).reasons, []);
+});
+
+test("accepts checksum-bound policy evidence for an immutable applied migration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "crmynov-migration-policy-"));
+  const id = "20260917_widen_state";
+  const directory = join(root, "apps", "api", "prisma", "migrations", id);
+  const workflowDirectory = join(root, ".github", "workflows");
+  const sql = 'ALTER TABLE "profiles" ALTER COLUMN "state" TYPE VARCHAR(40);\n';
+  await mkdir(directory, { recursive: true });
+  await mkdir(workflowDirectory, { recursive: true });
+  await writeFile(join(directory, "migration.sql"), sql);
+  await writeFile(join(directory, "rollback.md"), "Rollback applicatif sans réduction destructive de la colonne.");
+  await writeFile(join(directory, "policy.json"), JSON.stringify({
+    schemaVersion: 1,
+    migration: id,
+    migrationSha256: createHash("sha256").update(sql).digest("hex"),
+    markers: ["additive", "ephemeral-only", "rollback-documented"],
+    safeTypeChanges: [{
+      kind: "varchar-widening",
+      table: "profiles",
+      column: "state",
+      fromLength: 24,
+      toLength: 40,
+      lockRisk: "ACCESS EXCLUSIVE lock for the metadata change.",
+      dataRisk: "Widening preserves every value accepted by VARCHAR(24).",
+    }],
+  }));
+  await writeFile(join(workflowDirectory, "prisma-migration-policy.yml"), ephemeralWorkflow);
+  const changedFiles = [
+    `apps/api/prisma/migrations/${id}/migration.sql`,
+    `apps/api/prisma/migrations/${id}/rollback.md`,
+    `apps/api/prisma/migrations/${id}/policy.json`,
+  ];
+  const assessment = await assessChangedPrismaMigrations({ changedFiles, root });
+  assert.equal(assessment.approved, true);
+
+  const evidencePath = join(directory, "policy.json");
+  const evidence = JSON.parse(await readFile(evidencePath, "utf8"));
+  evidence.migrationSha256 = "0".repeat(64);
+  await writeFile(evidencePath, JSON.stringify(evidence));
+  const mismatched = await assessChangedPrismaMigrations({ changedFiles, root });
+  assert.equal(mismatched.approved, false);
+  assert.ok(mismatched.reasons.includes("migration_policy_evidence_checksum_mismatch"));
 });
 
 test("refuses persistent or secret-backed migration workflows", () => {
