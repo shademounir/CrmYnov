@@ -6,13 +6,14 @@ import { takeCoverage } from "node:v8";
 if (!process.env.NODE_V8_COVERAGE) throw Error("coverage_shutdown_requires_instrumentation");
 const flushAndExit = () => {
   takeCoverage();
+  if (process.connected) process.disconnect();
   process.exit(0);
 };
 
+// Windows does not deliver POSIX termination signals consistently to a child
+// Node process. The coverage-only IPC channel provides the same graceful,
+// counter-flushing shutdown on every CI host.
 process.once("message", (message) => {
-  if (message === "flush-coverage") flushAndExit();
+  if (message === "flush-coverage" || message?.type === "crmy-coverage-shutdown") flushAndExit();
 });
-process.once("SIGTERM", () => {
-  takeCoverage();
-  process.kill(process.pid, "SIGTERM");
-});
+process.once("SIGTERM", flushAndExit);

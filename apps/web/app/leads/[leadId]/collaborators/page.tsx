@@ -1,1 +1,5 @@
-export default function CollaboratorsPage():React.JSX.Element{return <main><h1>Affectataire et collaborateurs</h1><p>Affectataire principal : Conseiller synthétique</p><ul><li>Contributeur inscription — rôle traçable, aucune prime calculée</li></ul><form><label>Collaborateur cible <input required/></label><label>Rôle <select><option>Conseiller</option><option>Support Admissions</option><option>Contributeur inscription</option></select></label><label>Justification <textarea required/></label><button type="button">Demander l’ajout</button><button type="button">Demander le retrait</button></form><section><h2>Validation Manager</h2><span>Pending</span><button type="button">Approuver</button><button type="button">Refuser</button></section><p>Aucun accès supplémentaire avant approbation.</p></main>;}
+"use client";
+import { useParams } from "next/navigation";
+import { LeadWorkflowPage } from "../lead-workflow-page";
+function Route(): React.JSX.Element { const { leadId } = useParams<{ leadId: string }>(); return <LeadWorkflowPage leadId={leadId} surface="assignment" />; }
+export default function CollaboratorsPage(): React.JSX.Element { return <Route />; }

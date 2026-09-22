@@ -15,6 +15,12 @@ import { recordedAssignment, type RecordedAssignmentDecision } from "./recorded-
 
 export interface PersistentAssignmentInput { leadId: string; eventKey: string; assignment: IngestionBatchInput["assignment"] }
 export interface PersistentAssignmentResult { outcome: "ASSIGNED" | "PRESERVED" | "UNASSIGNED"; assignment: SheetAssignment; lead: LeadRecord; replayed: boolean }
+export interface AssignmentCandidateOption {
+  id: string;
+  label: string;
+  activeLeadCount: number;
+  capacity: number;
+}
 
 @Injectable()
 export class PersistentAssignmentService {
@@ -85,6 +91,44 @@ export class PersistentAssignmentService {
         if (selected.selection?.strategy === "ROUND_ROBIN") offsets.set(key, (offsets.get(key) ?? 0) + 1);
       }
       return results;
+    });
+  }
+
+  async candidateOptions(leadId: string, actor: Principal): Promise<AssignmentCandidateOption[]> {
+    return this.repository.readTransaction(async (tx) => {
+      if (!/^[a-f\d-]{36}$/iu.test(leadId)) throw new NotFoundException({ code: "lead_not_found" });
+      const current = await currentPrincipal(tx, actor);
+      const lead = await tx.lead.findUnique({ where: { id: leadId } });
+      if (!lead) throw new NotFoundException({ code: "lead_not_found" });
+      const campus = await canonicalCampus(tx, lead.campus);
+      const context = await resourceEvaluationContext(tx, current, {
+        scope: "CAMPUS",
+        campusKeys: campus.keys,
+        active: true,
+        ...(lead.assignedToId ? { ownerId: lead.assignedToId } : {}),
+      });
+      const snapshots = await this.repository.snapshots(tx);
+      const permission = lead.assignedToId ? "lead.reassign.request" : "lead.assign";
+      if (!context.campusAllowed || !evaluatePermission(current, permission, snapshots, context).allowed) permissionDenied();
+
+      const configuration = await readCampusRules(tx, campus.id);
+      const rule = applicableCampusRule(configuration.rules, lead.source, lead.campaign);
+      if (!rule) return [];
+      const options: AssignmentCandidateOption[] = [];
+      for (const candidate of rule.candidates) {
+        const collaborator = await tx.collaborator.findUnique({ where: { id: candidate.userId } });
+        if (!collaborator?.active || !collaborator.campusId || !collaborator.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER")) continue;
+        if ((await canonicalCampus(tx, collaborator.campusId)).id !== campus.id || !candidate.active || candidate.suspended || candidate.excluded) continue;
+        const activeLeadCount = await tx.lead.count({ where: { assignedToId: collaborator.id, status: { notIn: ["CLOSED_LOST", "ENROLLED"] } } });
+        if (activeLeadCount >= candidate.capacity) continue;
+        options.push({
+          id: collaborator.id,
+          label: collaborator.professionalDisplayName?.trim() || collaborator.professionalEmail,
+          activeLeadCount,
+          capacity: candidate.capacity,
+        });
+      }
+      return options.sort((left, right) => left.label.localeCompare(right.label, "fr") || left.id.localeCompare(right.id));
     });
   }
 

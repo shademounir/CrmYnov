@@ -46,8 +46,11 @@ async function browser(t: TestContext, respond: Reply): Promise<AuditBrowser> {
   const click = async (element: HTMLElement): Promise<void> => { await act(async () => { element.click(); await Promise.resolve(); }); };
   const button = (name: string): HTMLButtonElement => { const found = [...doc.querySelectorAll("button")].find((node) => node.textContent === name); assert.ok(found, name); return found; };
   const field = (name: string): HTMLInputElement | HTMLSelectElement => { const found = doc.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`); assert.ok(found, name); return found; };
-  const submit = async (): Promise<void> => { const form = doc.querySelector("form"); assert.ok(form); await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await Promise.resolve(); }); };
+  const submit = async (): Promise<void> => { const form = doc.querySelector("form"); assert.ok(form); await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => dom.window.setTimeout(resolve, 25)); }); };
   await act(async () => { root.render(createElement(AuditPageView)); await Promise.resolve(); });
+  await act(async () => {
+    await new Promise<void>((resolve) => dom.window.setTimeout(resolve, 25));
+  });
   return { dom, doc, root, act, click, button, field, submit, requests };
 }
 

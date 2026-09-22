@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import type { AuditEvent, Lead, LeadActivity, LeadCollaborationRequest, LeadCollaborator, LeadMutationReceipt, LocalOutboxEvent, PrismaClient } from "@prisma/client";
 
 interface SyntheticAccount { id: string; email: string; password: string; campusId: string }
-export interface LeadAuditFixture { accounts: [SyntheticAccount, SyntheticAccount, SyntheticAccount]; assignmentLeadId: string; assigneeId: string }
+export interface LeadAuditFixture { accounts: [SyntheticAccount, SyntheticAccount, SyntheticAccount]; assignmentLeadId: string; assigneeId: string; outsideAssigneeId: string }
 interface AdditionState {
   lead: Lead;
   collaborators: LeadCollaborator[];
@@ -40,8 +40,10 @@ export async function prepareLeadAuditFixture(client: PrismaClient): Promise<Lea
   const accounts: LeadAuditFixture["accounts"] = [await account(campusA), await account(campusA), await account(campusB)];
   const assigneeId = randomUUID();
   await client.collaborator.create({ data: { id: assigneeId, professionalEmail: `${assigneeId}@example.invalid`, roles: ["ADMISSIONS"], campusId: campusA } });
+  const outsideAssigneeId = randomUUID();
+  await client.collaborator.create({ data: { id: outsideAssigneeId, professionalEmail: `${outsideAssigneeId}@example.invalid`, roles: ["ADMISSIONS"], campusId: campusA } });
   const lead = await client.lead.create({ data: { leadCode: "SYNTHETIC-ASSIGNMENT-GATE", firstName: "Lead", lastName: "Synthétique", campus: "SYNTHETIC-A", program: "SYNTHETIC-PROGRAM", campaign: "SYNTHETIC-CAMPAIGN", educationLevel: "BAC", source: "TEST" } });
-  return { accounts, assignmentLeadId: lead.id, assigneeId };
+  return { accounts, assignmentLeadId: lead.id, assigneeId, outsideAssigneeId };
 }
 
 export async function assertLeadAuditCycle(client: PrismaClient, base: string, fixture: LeadAuditFixture, report: (message: string) => void, additionRollbackOnly = false): Promise<void> {
@@ -63,7 +65,24 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
     assert.equal(response.status, status, `${correlation}: expected authenticated success`);
     return response.json() as Promise<T>;
   }
-  await success("/assignment/config", "PUT", { campusId: fixture.accounts[0].campusId, expectedVersion: 0, rules: [{ scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [{ userId: fixture.assigneeId, active: true, capacity: 20, activeLeadCount: 0 }] }] }, "cycle-config", 200);
+  await success("/assignment/config", "PUT", { campusId: fixture.accounts[0].campusId, expectedVersion: 0, rules: [{ scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [
+    { userId: fixture.assigneeId, active: true, capacity: 20, activeLeadCount: 0 },
+    { userId: fixture.outsideAssigneeId, active: true, capacity: 20, activeLeadCount: 0 },
+  ] }] }, "cycle-config", 200);
+  await client.collaborator.update({ where: { id: fixture.outsideAssigneeId }, data: { campusId: fixture.accounts[2].campusId } });
+  const candidateReadBefore = {
+    lead: await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } }),
+    auditCount: await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } }),
+    receiptCount: await client.leadMutationReceipt.count({ where: { leadId: fixture.assignmentLeadId } }),
+  };
+  const candidates = await success<{ candidates: { id: string; label: string; activeLeadCount: number; capacity: number }[] }>(`/leads/${fixture.assignmentLeadId}/assignment-candidates`, "GET", undefined, "cycle-candidates", 200);
+  assert.deepEqual(candidates.candidates.map((candidate) => candidate.id), [fixture.assigneeId], "the server must exclude the otherwise valid adviser from another campus");
+  assert.equal(candidates.candidates[0]?.activeLeadCount, 0); assert.equal(candidates.candidates[0]?.capacity, 20);
+  assert.equal(candidates.candidates[0]?.label.includes("@example.invalid"), true, "the bounded server label is returned without exposing a client-entered identifier");
+  assert.deepEqual(await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } }), candidateReadBefore.lead, "reading candidates must not mutate the Lead");
+  assert.equal(await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } }), candidateReadBefore.auditCount, "reading candidates must not create an audit event");
+  assert.equal(await client.leadMutationReceipt.count({ where: { leadId: fixture.assignmentLeadId } }), candidateReadBefore.receiptCount, "reading candidates must not create a mutation receipt");
+  report("Eligible adviser selector: compiled HTTP API returned one same-campus candidate, excluded the cross-campus candidate and performed no write.");
   await success(`/leads/${fixture.assignmentLeadId}/assignment`, "POST", { targetUserId: fixture.assigneeId, confirmed: true, idempotencyKey: "gate-assignment" }, "gate-assignment", 201);
   assert.equal((await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } })).assignedToId, fixture.assigneeId);
   const gateEvents = await client.auditEvent.findMany({ where: { resourceId: fixture.assignmentLeadId } });
@@ -130,6 +149,31 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   assert.equal(addedAudit[0]?.sessionId, null); assert.equal(addedAudit[0]?.minimizedIp, null);
   report("Normal authenticated ADD retry: one member, one success audit, correct reviewer/campus/correlation and version increment.");
   if (additionRollbackOnly) return;
+  const contacted = await success<{ id: string }>(`/leads/${fixture.assignmentLeadId}/timeline`, "POST", { type: "CRM_CALL", result: "CONNECTED", note: "Contact synthétique" }, "cycle-edit-contact", 201);
+  const beforeEdit = await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } });
+  const beforeEditAudit = await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } });
+  const editBody = { lastName: "Corrigé", email: "edit-cycle@example.invalid", expectedVersion: beforeEdit.version, idempotencyKey: "cycle-edit-replay" };
+  const edited = await success<Lead>(`/leads/${fixture.assignmentLeadId}`, "PATCH", editBody, "cycle-edit-first", 200);
+  const editReplay = await success<Lead>(`/leads/${fixture.assignmentLeadId}`, "PATCH", editBody, "cycle-edit-replay", 200);
+  assert.deepEqual(editReplay, edited);
+  const storedEdit = await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } });
+  assert.equal(storedEdit.id, beforeEdit.id); assert.equal(storedEdit.leadCode, beforeEdit.leadCode);
+  assert.equal(storedEdit.assignedToId, beforeEdit.assignedToId); assert.equal(storedEdit.source, beforeEdit.source);
+  assert.equal(storedEdit.lastName, "Corrigé"); assert.equal(storedEdit.email, "edit-cycle@example.invalid");
+  assert.equal(storedEdit.version, beforeEdit.version + 1);
+  assert.equal(await client.leadActivity.count({ where: { id: contacted.id, leadId: fixture.assignmentLeadId } }), 1, "editing after contact preserves the append-only interaction");
+  assert.equal(await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } }), beforeEditAudit + 1, "edit replay appends one audit only");
+  assert.equal(await client.leadMutationReceipt.count({ where: { leadId: fixture.assignmentLeadId, operation: "UPDATE_LEAD" } }), 1, "edit replay keeps one receipt");
+  const collisionLead = await client.lead.create({ data: { leadCode: "SYNTHETIC-EDIT-COLLISION", firstName: "Autre", lastName: "Prospect", email: "collision-cycle@example.invalid", phone: "+212600000099", campus: "SYNTHETIC-A", program: "SYNTHETIC-PROGRAM", campaign: "SYNTHETIC-CAMPAIGN", educationLevel: "BAC", source: "TEST" } });
+  const beforeCollision = await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } });
+  const collisionAudit = await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } });
+  const collision = await request(`/leads/${fixture.assignmentLeadId}`, "PATCH", { email: collisionLead.email?.toUpperCase(), expectedVersion: beforeCollision.version, idempotencyKey: "cycle-edit-collision" }, "cycle-edit-collision");
+  assert.equal(collision.status, 409); assert.deepEqual(await collision.json(), { code: "lead_contact_collision", fields: ["email"] });
+  assert.deepEqual(await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } }), beforeCollision);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } }), collisionAudit);
+  const cleared = await success<Lead>(`/leads/${fixture.assignmentLeadId}`, "PATCH", { email: "", expectedVersion: beforeCollision.version, idempotencyKey: "cycle-edit-clear" }, "cycle-edit-clear", 200);
+  assert.equal(cleared.email, undefined); assert.equal(cleared.phone, beforeCollision.phone ?? undefined);
+  report("Lead correction HTTP/PostgreSQL: allowed after contact, exact replay, explicit clear, collision refusal, preserved identity/relations and one audit.");
   const input = { firstName: "Lead", lastName: "Synthétique", email: "audit-cycle@example.invalid", campus: "SYNTHETIC-A", program: "SYNTHETIC-PROGRAM", campaign: "SYNTHETIC-CAMPAIGN", educationLevel: "BAC", source: "TEST" };
   const initialAuditCount = await client.auditEvent.count();
   const spoof = await request("/leads", "POST", { ...input, actorId: outsider.id }, "cycle-spoof");
@@ -172,6 +216,14 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   // Test-only DDL: exclusively the newly-created tmpfs database, never a production migration.
   await client.$executeRawUnsafe("CREATE FUNCTION crmy54_fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.correlation_id = 'cycle-audit-failure' THEN RAISE EXCEPTION 'synthetic_audit_write_failure'; END IF; RETURN NEW; END $$");
   await client.$executeRawUnsafe("CREATE TRIGGER crmy54_audit_failure BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION crmy54_fail_audit()");
+  const editBeforeFailure = await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } });
+  const editAuditBeforeFailure = await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } });
+  const failedEdit = await request(`/leads/${fixture.assignmentLeadId}`, "PATCH", { firstName: "Doit être annulé", expectedVersion: editBeforeFailure.version, idempotencyKey: "cycle-edit-rollback" }, "cycle-audit-failure");
+  assert.equal(failedEdit.status, 503);
+  assert.deepEqual(await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } }), editBeforeFailure);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } }), editAuditBeforeFailure);
+  assert.equal(await client.leadMutationReceipt.count({ where: { idempotencyKey: `lead:update:${fixture.assignmentLeadId}:cycle-edit-rollback` } }), 0);
+  report("Lead correction audit failure: PostgreSQL rolled back fields, version, receipt, outbox and audit atomically.");
   const removal = await success<{ id: string }>(`/leads/${id}/collaboration-requests`, "POST", { targetUserId: reviewer.id, action: "REMOVE", role: "ADVISER", justification: "Test rollback synthétique" }, "cycle-removal-request", 201);
   const beforeFailure = await state();
   try {

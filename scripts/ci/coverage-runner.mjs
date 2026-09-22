@@ -56,7 +56,20 @@ async function postgresProofs() {
   } finally { if (container) docker(["rm", "-f", container]); }
 }
 
+function leadWorkflowPostgresProofs() {
+  for (const [testFile, enabledFlag] of [
+    ["lead-qualification-postgres.test.ts", "CRMY_QUALIFICATION_POSTGRES"],
+    ["follow-up-postgres.test.ts", "CRMY_FOLLOW_UP_POSTGRES"],
+  ]) {
+    run(process.execPath, ["--import", "tsx", "--test", `test/${testFile}`], {
+      cwd: "apps/api",
+      env: { ...process.env, [enabledFlag]: "true" },
+    });
+  }
+}
+
 if (!process.env.NODE_V8_COVERAGE) throw Error("coverage_instrumentation_required");
 if (process.env.DATABASE_URL) throw Error("coverage_must_not_inherit_database");
 npm(["test"]);
 await postgresProofs();
+leadWorkflowPostgresProofs();

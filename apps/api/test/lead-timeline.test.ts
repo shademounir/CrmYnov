@@ -12,7 +12,7 @@ const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify((e
 test("appends immutable, server-timestamped activities in deterministic order", () => {
   const audit = new AuditService(); const service = new LeadService(audit); const lead = service.registerLocalLead(leadInput);
   const first = service.addActivity(lead.id, { type: "CRM_CALL", result: "Answered" }, admissions, "corr-1");
-  const second = service.addActivity(lead.id, { type: "COMMENT", result: "Follow-up", nextActionAt: "2026-09-01T09:00:00Z" }, admissions, "corr-2");
+  const second = service.addActivity(lead.id, { type: "COMMENT", result: "Follow-up", nextActionAt: "2099-09-01T09:00:00Z" }, admissions, "corr-2");
   const events = service.timeline(lead.id, admissions);
   assert.equal(events.length, 2); assert.ok(events.some((event) => event.id === first.id)); assert.ok(events.some((event) => event.id === second.id));
   assert.equal(audit.list().filter((event) => event.eventType === "LEAD_ACTIVITY_ADDED").length, 2);
@@ -24,6 +24,7 @@ test("refuses unauthorized writers and invalid activity types", () => {
   assert.throws(() => service.addActivity(lead.id, { type: "COMMENT", result: "x" }, { ...admissions, roles: ["AUDITOR"] }, "corr"), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("role_forbidden"));
   assert.throws(() => service.addActivity(lead.id, { type: "SIP_SECRET", result: "x" }, admissions, "corr"), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("activity_invalid"));
   assert.throws(() => service.addActivity(lead.id, { type: "COMMENT", result: "x", nextActionAt: "not-a-date" }, admissions, "corr"), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("next_action_invalid"));
+  assert.throws(() => service.addActivity(lead.id, { type: "COMMENT", result: "x", nextActionAt: "2020-01-01T00:00:00Z" }, admissions, "corr-past"), hasCode("next_action_chronology_invalid"));
   assert.throws(() => service.timeline("00000000-0000-4000-8000-000000000099", admissions), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("lead_not_found"));
 });
 

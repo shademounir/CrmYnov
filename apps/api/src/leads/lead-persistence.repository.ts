@@ -10,6 +10,25 @@ import type { ActivityCorrection, CorrectionReasonCode, LeadActivityRecord, Lead
 
 type StoredLead = LeadRecord & { version: number };
 type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[] }>;
+type SnapshotLeadRow = Prisma.LeadGetPayload<{ include: { collaborators: true; commercialQualifications: true } }>;
+type PersistMutationInput = Readonly<{
+  before: StoredLead;
+  after: StoredLead;
+  activities: readonly LeadActivityRecord[];
+  idempotencyKey: string;
+  operation: string;
+  fingerprint: string;
+  principal: Principal;
+  correlationId: string;
+  eventType: string;
+  assignmentAudit?: AssignmentAudit;
+}>;
+const temperatureLabels: Readonly<Record<string, string>> = {
+  COLD: "Froid",
+  WARM: "Tiède",
+  HOT: "Chaud",
+  UNEVALUATED: "Non évalué",
+};
 const mutationEvents: Readonly<Record<string, string>> = {
   UPDATE_LEAD: "LEAD_UPDATED", ADD_ACTIVITY: "LEAD_ACTIVITY_ADDED", CORRECT_ACTIVITY: "LEAD_ACTIVITY_COMPENSATED",
   CHANGE_STATUS: "LEAD_STATUS_CHANGED", ASSIGN: "LEAD_ASSIGNED", REASSIGN: "LEAD_REASSIGNED", COLLABORATOR: "LEAD_COLLABORATOR_CHANGED",
@@ -36,32 +55,14 @@ export class LeadPersistenceRepository {
     const client = this.prisma.client;
     if (!client) return { leads: [], activities: [] };
     const [rows, activities] = await client.$transaction([
-      client.lead.findMany({ include: { collaborators: { where: { active: true }, orderBy: { userId: "asc" } } } }),
+      client.lead.findMany({ include: {
+        collaborators: { where: { active: true }, orderBy: { userId: "asc" } },
+        commercialQualifications: { orderBy: [{ version: "desc" }, { id: "desc" }], take: 1 },
+      } }),
       client.leadActivity.findMany({ orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
     ]);
     return {
-      leads: rows.map((row) => ({
-        id: row.id,
-        leadCode: row.leadCode,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        ...(row.email ? { email: row.email } : {}),
-        ...(row.phone ? { phone: row.phone } : {}),
-        campus: row.campus,
-        campaign: row.campaign,
-        educationLevel: row.educationLevel,
-        program: row.program,
-        source: row.source,
-        status: row.status as LeadRecord["status"],
-        ...(row.assignedToId ? { assignedToId: row.assignedToId } : {}),
-        collaboratorIds: row.collaborators.map((item) => item.userId),
-        ...(row.assignmentMode ? { assignmentMode: row.assignmentMode } : {}),
-        ...(row.importBatchId ? { importBatchId: row.importBatchId } : {}),
-        ...(row.nextActionAt ? { nextActionAt: row.nextActionAt.toISOString() } : {}),
-        ...(row.lastActivityAt ? { lastActivityAt: row.lastActivityAt.toISOString() } : {}),
-        createdAt: row.createdAt.toISOString(),
-        version: row.version,
-      })),
+      leads: rows.map((row) => this.mapStoredLead(row)),
       activities: activities.map((row): LeadActivityRecord => ({
         id: row.id,
         leadId: row.leadId,
@@ -128,6 +129,13 @@ export class LeadPersistenceRepository {
     return row ? this.mapActivity(row) : undefined;
   }
 
+  async findMutationReplay(idempotencyKey: string, fingerprint: string): Promise<StoredLead | undefined> {
+    const client = this.prisma.client;
+    if (!client) return undefined;
+    const receipt = await client.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
+    return receipt ? this.replay(receipt.fingerprint, fingerprint, receipt.result) : undefined;
+  }
+
   async persistMutation(
     before: StoredLead,
     after: StoredLead,
@@ -143,48 +151,123 @@ export class LeadPersistenceRepository {
     const eventType = mutationEvents[operation];
     if (!eventType) throw new Error("lead_audit_operation_unknown");
     const client = this.requiredClient();
-    return client.$transaction(async (tx) => {
-      const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
-      if (receipt) return this.replay(receipt.fingerprint, fingerprint, receipt.result);
-      const references = await validateLeadReferences(tx, after, before);
-      after = { ...after, ...references };
-      const updated = await tx.lead.updateMany({
-        where: { id: before.id, version: before.version },
-        data: {
-          firstName: after.firstName,
-          lastName: after.lastName,
-          email: after.email ?? null,
-          phone: after.phone ?? null,
-          campus: after.campus,
-          campaign: after.campaign,
-          educationLevel: after.educationLevel,
-          program: after.program,
-          source: after.source,
-          status: after.status,
-          assignedToId: after.assignedToId ?? null,
-          assignmentMode: after.assignmentMode ?? null,
-          nextActionAt: after.nextActionAt ? new Date(after.nextActionAt) : null,
-          lastActivityAt: after.lastActivityAt ? new Date(after.lastActivityAt) : null,
-          version: { increment: 1 },
-        },
-      });
-      if (updated.count !== 1) throw new ConflictException({ code: "lead_concurrent_mutation" });
-      for (const [index, activity] of activities.entries()) await tx.leadActivity.create({ data: this.activityData(activity, activities.length === 1 ? idempotencyKey : `${idempotencyKey}:${index}`) });
-      const result: StoredLead = { ...after, version: before.version + 1 };
-      if (operation === "COLLABORATOR") await this.replaceCollaboratorsInTransaction(tx, after.id, after.collaboratorIds ?? []);
-      await this.auditMutation(tx, eventType, after.id, result.version, idempotencyKey, principal, correlationId, operation === "ASSIGN" ? assignmentAudit : undefined);
-      await tx.leadMutationReceipt.create({
-        data: { leadId: after.id, idempotencyKey, fingerprint, operation, result: result as unknown as Prisma.InputJsonValue },
-      });
-      await this.outbox?.enqueueInTransaction(tx, {
-        topic: "LEAD.MUTATED",
-        aggregateType: "LEAD",
-        aggregateId: after.id,
-        idempotencyKey: `outbox:${idempotencyKey}`,
-        payload: { operation, status: result.status, version: result.version, activityTypes: activities.map((activity) => activity.type) },
-      });
-      return result;
-    }, { isolationLevel: "Serializable" });
+    const input: PersistMutationInput = {
+      before, after, activities, idempotencyKey, operation, fingerprint, principal, correlationId, eventType,
+      ...(assignmentAudit ? { assignmentAudit } : {}),
+    };
+    return client.$transaction((tx) => this.persistMutationInTransaction(tx, input), { isolationLevel: "Serializable" });
+  }
+
+  private mapStoredLead(row: SnapshotLeadRow): StoredLead {
+    const qualification = row.commercialQualifications?.[0];
+    const temperature = (qualification?.temperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>;
+    return {
+      id: row.id,
+      leadCode: row.leadCode,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      ...(row.email ? { email: row.email } : {}),
+      ...(row.phone ? { phone: row.phone } : {}),
+      campus: row.campus,
+      campaign: row.campaign,
+      educationLevel: row.educationLevel,
+      program: row.program,
+      source: row.source,
+      status: row.status as LeadRecord["status"],
+      ...(row.assignedToId ? { assignedToId: row.assignedToId } : {}),
+      collaboratorIds: row.collaborators.map((item) => item.userId),
+      ...(row.assignmentMode ? { assignmentMode: row.assignmentMode } : {}),
+      ...(row.importBatchId ? { importBatchId: row.importBatchId } : {}),
+      ...(row.nextActionAt ? { nextActionAt: row.nextActionAt.toISOString() } : {}),
+      ...(row.lastActivityAt ? { lastActivityAt: row.lastActivityAt.toISOString() } : {}),
+      createdAt: row.createdAt.toISOString(),
+      version: row.version,
+      temperature,
+      temperatureLabel: temperatureLabels[temperature] ?? "Non évalué",
+      qualificationVersion: qualification?.version ?? 0,
+      ...(qualification?.reason ? { qualificationReason: qualification.reason } : {}),
+      ...(qualification?.comment ? { qualificationComment: qualification.comment } : {}),
+      ...(qualification?.createdAt ? { qualifiedAt: qualification.createdAt.toISOString() } : {}),
+      ...(qualification?.authorId ? { qualifiedBy: qualification.authorId } : {}),
+    };
+  }
+
+  private async persistMutationInTransaction(tx: Prisma.TransactionClient, input: PersistMutationInput): Promise<StoredLead> {
+    const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
+    if (receipt) return this.replay(receipt.fingerprint, input.fingerprint, receipt.result);
+    const references = await validateLeadReferences(tx, input.after, input.before);
+    const after = { ...input.after, ...references };
+    await this.assertNoContactCollision(tx, input.operation, after);
+    await this.updateLeadVersion(tx, input.before, after);
+    await this.appendActivities(tx, input.activities, input.idempotencyKey);
+    const result: StoredLead = { ...after, version: input.before.version + 1 };
+    await this.persistMutationRelations(tx, input, result);
+    return result;
+  }
+
+  private async assertNoContactCollision(tx: Prisma.TransactionClient, operation: string, after: StoredLead): Promise<void> {
+    if (operation !== "UPDATE_LEAD" || (!after.email && !after.phone)) return;
+    const alternatives = [
+      ...(after.email ? [{ email: { equals: after.email, mode: "insensitive" as const } }] : []),
+      ...(after.phone ? [{ phone: after.phone }] : []),
+    ];
+    const collision = await tx.lead.findFirst({
+      where: { id: { not: after.id }, OR: alternatives },
+      select: { email: true, phone: true },
+    });
+    if (!collision) return;
+    const fields = [
+      collision.email?.toLowerCase() === after.email?.toLowerCase() ? "email" : undefined,
+      collision.phone === after.phone ? "phone" : undefined,
+    ].filter((field): field is string => Boolean(field));
+    throw new ConflictException({ code: "lead_contact_collision", fields });
+  }
+
+  private async updateLeadVersion(tx: Prisma.TransactionClient, before: StoredLead, after: StoredLead): Promise<void> {
+    const updated = await tx.lead.updateMany({
+      where: { id: before.id, version: before.version },
+      data: {
+        firstName: after.firstName,
+        lastName: after.lastName,
+        email: after.email ?? null,
+        phone: after.phone ?? null,
+        campus: after.campus,
+        campaign: after.campaign,
+        educationLevel: after.educationLevel,
+        program: after.program,
+        source: after.source,
+        status: after.status,
+        assignedToId: after.assignedToId ?? null,
+        assignmentMode: after.assignmentMode ?? null,
+        nextActionAt: after.nextActionAt ? new Date(after.nextActionAt) : null,
+        lastActivityAt: after.lastActivityAt ? new Date(after.lastActivityAt) : null,
+        version: { increment: 1 },
+      },
+    });
+    if (updated.count !== 1) throw new ConflictException({ code: "lead_concurrent_mutation" });
+  }
+
+  private async appendActivities(tx: Prisma.TransactionClient, activities: readonly LeadActivityRecord[], idempotencyKey: string): Promise<void> {
+    for (const [index, activity] of activities.entries()) {
+      const key = activities.length === 1 ? idempotencyKey : `${idempotencyKey}:${index}`;
+      await tx.leadActivity.create({ data: this.activityData(activity, key) });
+    }
+  }
+
+  private async persistMutationRelations(tx: Prisma.TransactionClient, input: PersistMutationInput, result: StoredLead): Promise<void> {
+    if (input.operation === "COLLABORATOR") await this.replaceCollaboratorsInTransaction(tx, result.id, result.collaboratorIds ?? []);
+    const assignment = input.operation === "ASSIGN" ? input.assignmentAudit : undefined;
+    await this.auditMutation(tx, input.eventType, result.id, result.version, input.idempotencyKey, input.principal, input.correlationId, assignment);
+    await tx.leadMutationReceipt.create({
+      data: { leadId: result.id, idempotencyKey: input.idempotencyKey, fingerprint: input.fingerprint, operation: input.operation, result: result as unknown as Prisma.InputJsonValue },
+    });
+    await this.outbox?.enqueueInTransaction(tx, {
+      topic: "LEAD.MUTATED",
+      aggregateType: "LEAD",
+      aggregateId: result.id,
+      idempotencyKey: `outbox:${input.idempotencyKey}`,
+      payload: { operation: input.operation, status: result.status, version: result.version, activityTypes: input.activities.map((activity) => activity.type) },
+    });
   }
 
   async replaceCollaborators(leadId: string, userIds: readonly string[]): Promise<void> {

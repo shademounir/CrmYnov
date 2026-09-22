@@ -123,10 +123,15 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
   await service.onModuleInit();
   assert.equal(service.persistenceEnabled(), true);
 
-  const created = await service.createLeadForApi({ firstName: "Nora", lastName: "Synthétique", email: "nora@example.invalid",
+  const creationInput = { firstName: "Nora", lastName: "Synthétique", email: "nora@example.invalid",
     phone: "+212600000299", campus: "SYNTHETIC", campaign: "SYNTHETIC", educationLevel: "BAC",
-    program: "SYNTHETIC", source: "TEST" }, principal, "persistent-create");
+    program: "SYNTHETIC", source: "TEST", idempotencyKey: "lead-create-ui-replay-0001" };
+  const created = await service.createLeadForApi(creationInput, principal, "persistent-create");
   const id = created.lead.id;
+  const replayedCreation = await service.createLeadForApi(creationInput, principal, "persistent-create-retry");
+  assert.equal(replayedCreation.lead.id, id);
+  assert.equal(state.leads.length, 1); assert.equal(state.activities.length, 1); assert.equal(state.audits.length, 1);
+  await assert.rejects(() => service.createLeadForApi({ ...creationInput, lastName: "Différent" }, principal, "persistent-create-conflict"), hasCode("lead_idempotency_conflict"));
   assert.equal((await service.listLeadsForApi({ page: 1, pageSize: 20 }, principal, "persistent-list")).total, 1);
   assert.equal((await service.getLeadForApi(id, principal, "persistent-get")).id, id);
   assert.equal((await service.findLocalLeadForApi(id))?.id, id);
@@ -134,6 +139,12 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
 
   const interaction = await service.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_NOTE" }, principal, "persistent-activity");
   assert.equal((await service.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_NOTE" }, principal, "persistent-activity")).id, interaction.id);
+  const restartedService = new LeadService(new AuditService(), repository);
+  await restartedService.onModuleInit();
+  assert.equal((await restartedService.timelineForApi(id, principal)).filter((event) => event.id === interaction.id).length, 1);
+  const stateBeforeInvalidChronology = JSON.stringify(state);
+  await assert.rejects(() => restartedService.addActivityForApi(id, { type: "COMMENT", result: "SYNTHETIC_PAST", nextActionAt: "2020-01-01T00:00:00Z" }, principal, "persistent-past"), hasCode("next_action_chronology_invalid"));
+  assert.equal(JSON.stringify(state), stateBeforeInvalidChronology);
   const correction = await service.correctActivityForApi(id, interaction.id, { idempotencyKey: "persistent-correction", expectedCorrectionCount: 0,
     operation: "CANCEL", reasonCode: "DUPLICATE_ENTRY" }, principal, "persistent-correction");
   assert.equal(correction.correction?.operation, "CANCEL");

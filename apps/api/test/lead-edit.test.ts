@@ -30,6 +30,24 @@ test("preserves absent optional fields and clears only explicit empty optional c
   assert.equal(cleared.email, undefined); assert.equal(cleared.phone, undefined);
 });
 
+test("allows a correction after contact while preserving the append-only interaction", async () => {
+  const { leads, leadId } = fixture();
+  await leads.addActivityForApi(leadId, { type: "CRM_CALL", result: "CONNECTED", note: "Contexte synthétique" }, adviser, "corr-contact");
+  const before = leads.timeline(leadId, adviser);
+  const updated = await leads.updateLeadForApi(leadId, { lastName: "Corrigé", expectedVersion: leads.findLocalLead(leadId)?.version ?? 1, idempotencyKey: "edit-after-contact" }, adviser, "corr-edit-after-contact");
+  assert.equal(updated.lastName, "Corrigé");
+  assert.deepEqual(leads.timeline(leadId, adviser), before);
+});
+
+test("rejects contact collisions without exposing or merging the other Lead", async () => {
+  const { audit, leads, leadId } = fixture();
+  leads.registerLocalLead({ leadCode: "LD-EDIT-002", firstName: "Autre", lastName: "Prospect", email: "collision@example.invalid", phone: "+212600000099", campus: "Campus A", campaign: "Campaign", educationLevel: "BAC", program: "Program", source: "TEST", version: 1 });
+  await assert.rejects(() => leads.updateLeadForApi(leadId, { email: " COLLISION@EXAMPLE.INVALID ", idempotencyKey: "edit-collision-email" }, adviser, "corr-collision-email"), hasCode("lead_contact_collision"));
+  await assert.rejects(() => leads.updateLeadForApi(leadId, { phone: "+212 600 000 099", idempotencyKey: "edit-collision-phone" }, adviser, "corr-collision-phone"), hasCode("lead_contact_collision"));
+  assert.equal(leads.findLocalLead(leadId)?.email, "ALEX@EXAMPLE.INVALID");
+  assert.equal(audit.list().filter((event) => event.eventType === "LEAD_UPDATED").length, 0);
+});
+
 test("rejects invalid input, stale versions, unknown leads, and records no success audit on failure", async () => {
   const { audit, leads, leadId } = fixture();
   await assert.rejects(() => leads.updateLeadForApi(leadId, { email: "invalid", idempotencyKey: "edit-invalid-email" }, adviser, "corr-invalid"), hasCode("lead_email_invalid"));

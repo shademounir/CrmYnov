@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ImportProfilePage, { LegacyQualityPanel } from "../app/imports/profile/page.js";
+import ImportProfilePage from "../app/imports/profile/page.js";
+import { LegacyQualityPanel } from "../app/imports/profile/legacy-quality-panel.js";
 
 test("renders a non-mutating CSV/XLSX profiling journey", () => {
   const rendered = renderToStaticMarkup(createElement(ImportProfilePage));

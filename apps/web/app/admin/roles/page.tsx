@@ -14,7 +14,9 @@ export default function RolesPage(): React.JSX.Element {
   const [versions, setVersions] = useState<Version[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [explanation, setExplanation] = useState<Explanation | null>(null);
-  const [leadId, setLeadId] = useState(""); const [reason, setReason] = useState("ACCESS_REVIEW");
+  const [leadId, setLeadId] = useState("");
+  const [leadOptions, setLeadOptions] = useState<Array<{ id: string; leadCode: string; firstName: string; lastName: string }>>([]);
+  const [reason, setReason] = useState("ACCESS_REVIEW");
   const [confirmed, setConfirmed] = useState(false); const [restoreVersion, setRestoreVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(true); const [error, setError] = useState(""); const [success, setSuccess] = useState("");
   const [revision, setRevision] = useState(0);
@@ -29,6 +31,15 @@ export default function RolesPage(): React.JSX.Element {
     }).catch((error_: unknown) => { if (current) { setError(message(error_)); setBusy(false); } });
     return (): void => { current = false; };
   }, [campus, role, revision]);
+  useEffect(() => {
+    if (!configuration) { setLeadOptions([]); return; }
+    const controller = new AbortController();
+    const query = new URLSearchParams({ page: "1", pageSize: "100" });
+    void fetch(`/api/crm/leads?${query}`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => { if (!response.ok) throw new Error("leads_unavailable"); const body = await response.json() as { items?: unknown }; const items = Array.isArray(body.items) ? body.items : []; setLeadOptions(items.flatMap((item): Array<{ id: string; leadCode: string; firstName: string; lastName: string }> => item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string" && typeof (item as { leadCode?: unknown }).leadCode === "string" ? [{ id: (item as { id: string }).id, leadCode: (item as { leadCode: string }).leadCode, firstName: typeof (item as { firstName?: unknown }).firstName === "string" ? (item as { firstName: string }).firstName : "", lastName: typeof (item as { lastName?: unknown }).lastName === "string" ? (item as { lastName: string }).lastName : "" }] : [])); })
+      .catch((failure: unknown) => { if (!(failure instanceof DOMException && failure.name === "AbortError")) setLeadOptions([]); });
+    return (): void => controller.abort();
+  }, [configuration]);
   const editable = Boolean(catalogue && (catalogue.global || catalogue.roles.find((item) => item.role === role)?.editable));
   function payload(): Record<string, unknown> {
     if (!configuration) throw new Error("Rechargez la configuration avant de continuer.");
@@ -61,7 +72,7 @@ export default function RolesPage(): React.JSX.Element {
       {preview ? <><ChangePreview preview={preview} /><section className="panel permission-toolbar"><label className="permission-toggle"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />Je confirme les modifications et leurs conséquences sur les accès.</label><button disabled={busy || !editable || !confirmed || !preview.changes.length} type="button" onClick={() => void save()}>Enregistrer la nouvelle version</button></section></> : null}
       <PermissionHistory versions={versions} busy={busy} editable={editable} onRestore={setRestoreVersion} />
       {restoreVersion !== null ? <section className="panel" aria-label="Confirmation de restauration"><h2>Confirmer la restauration de v{restoreVersion} ?</h2><p>Cette action réapplique les validations actuelles et ajoute une version. L’historique restera intact.</p><button disabled={busy} type="button" onClick={() => void restore()}>Confirmer la restauration</button><button disabled={busy} type="button" onClick={() => setRestoreVersion(null)}>Annuler la restauration</button></section> : null}
-      <section className="panel permission-toolbar"><label>Identifiant technique du lead (facultatif)<input value={leadId} maxLength={36} onChange={(event) => { setLeadId(event.target.value); setExplanation(null); }} /></label><button disabled={busy} type="button" onClick={() => void operation(async () => {
+      <section className="panel permission-toolbar"><label>Contexte Lead (facultatif)<select value={leadId} onChange={(event) => { setLeadId(event.target.value); setExplanation(null); }}><option value="">Droits généraux du campus</option>{leadOptions.map((lead) => <option key={lead.id} value={lead.id}>{lead.leadCode} — {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || "Prospect"}</option>)}</select></label><button disabled={busy} type="button" onClick={() => void operation(async () => {
         const query = new URLSearchParams({ campus: configuration.campus });
         if (leadId) { query.set("leadId", leadId); }
         setExplanation(await permissionRequest<Explanation>(`effective?${query}`));

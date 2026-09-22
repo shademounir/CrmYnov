@@ -22,23 +22,23 @@ test("CRMY-169 mandatory Super Admin capacity and reserved global permissions re
 test("CRMY-169 preview explains business changes and never claims a save", () => {
   const changes = [{ permission: "lead.edit", from: "NONE" as const, to: "OWN" as const, widening: true, sensitive: true }];
   const html = renderToStaticMarkup(createElement(ChangePreview, { preview: { changes, affectedUsers: 3, expectedVersion: 2, mutated: false } }));
-  assert.match(html, /3 utilisateurs/); assert.match(html, /Ajout/); assert.match(html, /aucune mutation effectuée/);
+  assert.match(html, /3 utilisateurs/); assert.match(html, /Ajout/); assert.match(html, /aucune modification enregistrée/); assert.doesNotMatch(html, /lead\.edit/);
   assert.equal(changeLabel({ ...changes[0]!, from: "CAMPUS", to: "NONE" }), "Retrait");
   assert.equal(changeLabel({ ...changes[0]!, from: "OWN", to: "TEAM" }), "Élargissement / changement de ressources");
   assert.equal(changeLabel({ ...changes[0]!, from: "CAMPUS", to: "OWN", widening: false }), "Réduction");
   assert.match(renderToStaticMarkup(createElement(ChangePreview, { preview: { changes: [], affectedUsers: 0, expectedVersion: 0, mutated: false } })), /Aucun changement/);
 });
-test("CRMY-169 history exposes minimized author and restoration as a new immutable version", () => {
+test("CRMY-169 history hides technical identifiers and restores as a new immutable version", () => {
   const versions = [{ number: 2, createdAt: "2026-09-02T12:00:00Z", audits: [{ actorId: "synthetic-admin-id", actorRoles: ["SUPER_ADMIN"], reason: "ACCESS_REVIEW", createdAt: "2026-09-02T12:00:00Z" }] }];
   const html = renderToStaticMarkup(createElement(PermissionHistory, { versions, busy: false, editable: true, onRestore: () => {} }));
-  assert.match(html, /synthetic-admin-id/); assert.match(html, /Restaurer la version 2/); assert.match(html, /nouvelle version/);
+  assert.doesNotMatch(html, /synthetic-admin-id/); assert.match(html, /Modification auditée/); assert.match(html, /Restaurer la version 2/); assert.match(html, /nouvelle version/);
   assert.match(renderToStaticMarkup(createElement(PermissionHistory, { versions: [], busy: true, editable: false, onRestore: () => {} })), /Aucune version/);
 });
 test("CRMY-169 multi-role explanation identifies the role which actually grants access", () => {
   const explanation = { businessRules: "Validation Manager obligatoire.", permissions: [{ permission: "lead.edit", allowed: true, restriction: null, sources: [{ role: "AUDITOR", sourceScope: "NONE" as const, globalCeiling: "GLOBAL" as const, campusCeiling: "CAMPUS" as const, campusGrant: "NONE" as const, allowed: false, restriction: "auditor_read_only" }, { role: "MANAGER", sourceScope: "TEAM" as const, globalCeiling: "GLOBAL" as const, campusCeiling: "CAMPUS" as const, campusGrant: "TEAM" as const, allowed: true, restriction: null }] }] };
   const html = renderToStaticMarkup(createElement(EffectivePermissions, { explanation }));
-  assert.match(html, /MANAGER/); assert.match(html, /auditor_read_only/); assert.match(html, /Validation Manager obligatoire/); assert.match(html, /plafond global/);
-  assert.match(renderToStaticMarkup(createElement(EffectivePermissions, { explanation: { ...explanation, permissions: [{ ...explanation.permissions[0]!, allowed: false, restriction: "campus_forbidden" }] } })), /campus_forbidden/);
+  assert.match(html, /MANAGER/); assert.match(html, /Rôle Lecteur limité/); assert.doesNotMatch(html, /auditor_read_only/); assert.match(html, /Validation Manager obligatoire/); assert.match(html, /plafond global/);
+  assert.match(renderToStaticMarkup(createElement(EffectivePermissions, { explanation: { ...explanation, permissions: [{ ...explanation.permissions[0]!, allowed: false, restriction: "campus_forbidden" }] } })), /Une règle métier limite cette action/);
   assert.equal(scopeLabels.OWN, "Affecté ou collaborateur actif");
 });
 test("CRMY-169 no-store same-origin requests, version conflict and fail-closed errors", async (context) => {

@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import NewLeadPage from "../app/leads/new/page.js";
+import { LeadCreationDrawer } from "../app/leads/lead-creation.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { JSDOM } from "jsdom";
 
 test("renders the complete normalized lead creation form", () => {
-  const page = NewLeadPage(); const rendered = JSON.stringify(page);
-  assert.equal(page.type, "main"); assert.match(rendered, /Créer un lead/); assert.match(rendered, /déduplication/); assert.match(rendered, /\/api\/crm\/leads/); assert.doesNotMatch(rendered, /name":"program/);
+  const page = NewLeadPage();
+  assert.equal(page.type, "main");
   const html = renderToStaticMarkup(createElement(NewLeadPage));
-  assert.match(html, /Référentiels gouvernés/); assert.match(html, /select name="program"/); assert.match(html, /Formation/);
+  assert.match(html, /Créer un Lead/); assert.match(html, /correspondance de coordonnées/); assert.match(html, /Référentiels autorisés/); assert.match(html, /select name="program"/); assert.match(html, /Formation/);
+  const dom = new JSDOM(html);
+  for (const field of ["firstName", "lastName", "educationLevel", "source", "campus", "program", "campaign"]) assert.equal(dom.window.document.querySelector(`[name="${field}"]`)?.hasAttribute("required"), true);
+  dom.window.close();
+  assert.match(html, /type="email"/); assert.match(html, /type="tel"/); assert.match(html, /Annuler/);
+  const drawer = renderToStaticMarkup(createElement(LeadCreationDrawer));
+  assert.match(drawer, /lead-create-trigger/); assert.match(drawer, /Nouveau Lead/); assert.match(drawer, /aria-haspopup="dialog"/);
 });

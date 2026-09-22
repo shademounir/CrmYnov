@@ -7,7 +7,15 @@ test("synthetic governed reference form and tags are responsive and keyboard-acc
   const campus = { id: "00000000-0000-4000-8000-000000000441", code: "SYNTHETIC", label: "Campus synthétique", kind: "CAMPUS", scope: "GLOBAL", campusId: null, state: "ACTIVE", version: 1 };
   const tag = { ...campus, id: "00000000-0000-4000-8000-000000000442", code: "TEST", kind: "TAG", label: "Tag synthétique" };
   await page.route("**/api/crm/references?*", async (route) => { const kind = new URL(route.request().url()).searchParams.get("kind"); await route.fulfill({ json: { items: [kind === "TAG" ? tag : { ...campus, kind, code: kind === "PROGRAM" ? "B1" : "SYNTHETIC" }] } }); });
-  await page.route("**/api/crm/leads", async (route) => { expect(route.request().postDataJSON()).toMatchObject({ campus: "SYNTHETIC", program: "B1", campaign: "SYNTHETIC" }); await route.fulfill({ status: 201, json: { lead: { id: "synthetic-lead" } } }); });
+  await page.route("**/api/crm/leads", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({
+      campus: "SYNTHETIC",
+      program: "B1",
+      campaign: "SYNTHETIC",
+      idempotencyKey: expect.stringMatching(/^lead-create-[0-9a-f-]{36}$/u),
+    });
+    await route.fulfill({ status: 201, json: { lead: { id: "synthetic-lead", leadCode: "LD-SYNTHETIC" } } });
+  });
   await page.route("**/api/crm/leads/*/tags", async (route) => {
     if (route.request().method() === "PATCH") { expect(route.request().postDataJSON()).toMatchObject({ tagIds: [tag.id], expectedVersion: 1 }); await route.fulfill({ json: { tagIds: [tag.id], version: 2 } }); }
     else await route.fulfill({ json: { items: [], version: 1, canAssign: true } });
@@ -17,14 +25,39 @@ test("synthetic governed reference form and tags are responsive and keyboard-acc
   await expect(page.getByRole("combobox", { name: "Formation", exact: true })).toBeEnabled(); await page.getByRole("combobox", { name: "Formation", exact: true }).selectOption("B1");
   const select = page.getByRole("combobox", { name: "Formation", exact: true }); await select.focus(); await expect(select).toBeFocused(); expect((await select.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await page.getByRole("combobox", { name: "Campagne", exact: true }).selectOption("SYNTHETIC");
-  for (const [label, value] of [["Prénom", "Lead"], ["Nom", "Synthétique"], ["Niveau", "BAC"], ["Source", "TEST"]] as const) await page.getByRole("textbox", { name: label, exact: true }).fill(value);
-  await page.getByRole("button", { name: "Créer le lead", exact: true }).click(); await expect(page.getByText("Enregistrement confirmé par l’API.", { exact: true })).toBeVisible();
+  for (const [label, value] of [["Prénom", "Lead"], ["Nom", "Synthétique"], ["Niveau d’études", "BAC"], ["Source du Lead", "TEST"]] as const) await page.getByRole("textbox", { name: label, exact: true }).fill(value);
+  await page.getByRole("button", { name: "Créer le Lead", exact: true }).click(); await expect(page.getByText("LD-SYNTHETIC a bien été créé.", { exact: true })).toBeVisible();
   await page.goto("/leads/00000000-0000-4000-8000-000000000443/tags");
   await expect(page.getByLabel("Tag synthétique", { exact: true })).toBeEnabled(); await page.getByLabel("Tag synthétique", { exact: true }).check();
   await page.getByRole("button", { name: "Enregistrer les tags", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Tags du lead" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test("the creation drawer opens the filtered list with a document navigation", async ({ page }) => {
+  const campus = { id: "00000000-0000-4000-8000-000000000461", code: "SYNTHETIC", label: "Campus synthétique", kind: "CAMPUS", scope: "GLOBAL", campusId: null, state: "ACTIVE", version: 1 };
+  const lead = { id: "00000000-0000-4000-8000-000000000462", leadCode: "LD-SYNTHETIC-LIST", firstName: "Lead", lastName: "Liste", status: "PROSPECT", temperature: "UNEVALUATED", temperatureLabel: "Non évalué", program: "B1" };
+  await page.route("**/api/crm/**", (route) => route.fulfill({ json: { items: [] } }));
+  await page.route("**/api/crm/lead-views", (route) => route.fulfill({ json: [] }));
+  await page.route(/\/api\/crm\/view-sharing\/(?:received|audiences|history)$/u, (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/crm/references?*", async (route) => { const kind = new URL(route.request().url()).searchParams.get("kind"); await route.fulfill({ json: { items: [{ ...campus, kind, code: kind === "PROGRAM" ? "B1" : "SYNTHETIC" }] } }); });
+  await page.route("**/api/crm/leads*", async (route) => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 201, json: { lead } });
+    else await route.fulfill({ json: { items: [lead] } });
+  });
+  await page.setViewportSize({ width: 820, height: 900 });
+  await page.goto("/leads"); await page.getByRole("button", { name: "Nouveau Lead", exact: true }).click();
+  await page.getByRole("combobox", { name: "Campus", exact: true }).selectOption("SYNTHETIC");
+  await page.getByRole("combobox", { name: "Formation", exact: true }).selectOption("B1");
+  await page.getByRole("combobox", { name: "Campagne", exact: true }).selectOption("SYNTHETIC");
+  for (const [label, value] of [["Prénom", "Lead"], ["Nom", "Liste"], ["Niveau d’études", "BAC"], ["Source du Lead", "TEST"]] as const) await page.getByRole("textbox", { name: label, exact: true }).fill(value);
+  await page.getByRole("button", { name: "Créer le Lead", exact: true }).click();
+  await expect(page.getByText("LD-SYNTHETIC-LIST a bien été créé.", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Voir dans la liste", exact: true }).click();
+  await expect(page).toHaveURL(/\/leads\?search=LD-SYNTHETIC-LIST$/u);
+  await expect(page.getByRole("dialog", { name: "Créer un Lead" })).toBeHidden();
+  await expect(page.getByText("LD-SYNTHETIC-LIST", { exact: true })).toBeVisible();
 });
 
 test("reference administration archives/restores and uses the server availability version", async ({ page }) => {

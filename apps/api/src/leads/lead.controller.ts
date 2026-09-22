@@ -68,7 +68,7 @@ export class LeadController {
       query = { ...view.filters, page: query.page ?? "1" };
     }
     const normalized: LeadListQuery = { page: Number(query.page ?? 1), pageSize: Number(query.pageSize ?? 25) };
-    for (const key of ["search", "assignedToId", "collaboratorId", "status", "source", "channel", "program", "campaign", "campus", "createdFrom", "createdTo", "assignmentMode", "importBatchId", "view", "savedView", "sortBy", "sortDirection"] as const) {
+    for (const key of ["search", "assignedToId", "collaboratorId", "status", "temperature", "source", "channel", "program", "campaign", "campus", "createdFrom", "createdTo", "assignmentMode", "importBatchId", "view", "savedView", "sortBy", "sortDirection"] as const) {
       if (query[key] !== undefined) normalized[key] = query[key];
     }
     return this.leads.listLeadsForApi(normalized, request.principal, request.header("x-correlation-id") ?? "missing-correlation");

@@ -1,7 +1,7 @@
 import { ConflictException, HttpException, Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
-import { configurationKey, historicalGrants, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants } from "./dynamic-contract.js";
+import { configurationKey, historicalGrants, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget, type Grants, type PermissionScope } from "./dynamic-contract.js";
 import type { Principal } from "../auth/auth.types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { acquirePermissionFence, type PermissionTransactionMode } from "./permission-fence.js";
@@ -23,6 +23,7 @@ function retryFenceOrThrow(error: unknown, handlerStarted: boolean, attempt: num
 export class DynamicPermissionRepository {
   private readonly execution = new AsyncLocalStorage<{ tx: PermissionTransaction; mode: PermissionTransactionMode }>();
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  get enabled(): boolean { return this.prisma.enabled; }
   readTransaction<T>(action: (tx: PermissionTransaction) => Promise<T>): Promise<T> {
     return this.transaction(action, "read");
   }
@@ -57,6 +58,45 @@ export class DynamicPermissionRepository {
       if (versions.length !== 1) throw new Error("permission_version_missing");
       const grants = historicalGrants(Object.fromEntries(versions[0]!.grants.map((grant) => [grant.permission, grant.scope])), target);
       return { ...target, id: row.id, version: row.version, grants };
+    });
+  }
+  /**
+   * Append-only catalogue v2 adoption. The global write fence serializes startup
+   * across instances; a second instance observes the new grant and performs no write.
+   */
+  async upgradeQualificationCatalogue(): Promise<number> {
+    return this.transaction(async (tx) => {
+      const rows = await tx.rolePermissionConfiguration.findMany({
+        include: { versions: { orderBy: { number: "desc" }, take: 1, include: { grants: true } } },
+      });
+      let upgraded = 0;
+      for (const row of rows) {
+        const latest = row.versions.find((version) => version.number === row.version);
+        if (!latest || latest.grants.some((grant) => grant.permission === "lead.qualification.update")) continue;
+        const target = { kind: row.kind, role: row.role, campus: row.campus } as ConfigurationTarget;
+        validateTarget(target);
+        const previous = historicalGrants(Object.fromEntries(latest.grants.map((grant) => [grant.permission, grant.scope])), target);
+        let scope: PermissionScope = "NONE";
+        if (target.kind === "CEILING" || target.role === "SUPER_ADMIN") scope = target.campus === "GLOBAL" ? "GLOBAL" : "CAMPUS";
+        else if (target.role === "ADMIN") scope = "CAMPUS";
+        const next = { ...previous, "lead.qualification.update": scope };
+        const version = row.version + 1;
+        await tx.rolePermissionConfiguration.update({ where: { id: row.id, version: row.version }, data: { version } });
+        await tx.rolePermissionVersion.create({ data: {
+          configurationId: row.id,
+          number: version,
+          grants: { create: Object.entries(next).map(([permission, grantScope]) => ({ permission, scope: grantScope })) },
+          audits: { create: {
+            actorId: "00000000-0000-4000-8000-000000000171",
+            actorRoles: ["SYSTEM"],
+            reason: "CATALOGUE_UPGRADE",
+            previous,
+            next,
+          } },
+        } });
+        upgraded += 1;
+      }
+      return upgraded;
     });
   }
   async append(tx: PermissionTransaction, input: ConfigurationInput, previous: Grants, actor: Principal): Promise<number> {

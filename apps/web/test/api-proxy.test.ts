@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { apiOrigin, MAX_BODY_BYTES, safePath } from "../app/api/crm/proxy-policy.js";
-import { createProxy } from "../app/api/crm/[...path]/route.js";
+import { createProxy } from "../app/api/crm/proxy.js";
 
 function context(...path: string[]): { params: Promise<{ path: string[] }> } {
   return { params: Promise.resolve({ path }) };

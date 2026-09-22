@@ -132,7 +132,7 @@ function ReportingFilters({ filters }: Readonly<{ filters: Record<string, string
       <Link href="/manager/reports/dashboard?period=30d" className={!filters.period || filters.period === "30d" ? "active" : ""}>Ce mois</Link>
       <Link href="/manager/reports/dashboard?period=90d" className={filters.period === "90d" ? "active" : ""}>Ce trimestre</Link>
     </nav>
-    <details className="reporting-filter-popover"><summary>Filtres avancés</summary><form method="get" action="/manager/reports/dashboard" aria-label="Filtres interactifs du reporting">
+    <details className="reporting-filter-popover" suppressHydrationWarning><summary>Filtres avancés</summary><form method="get" action="/manager/reports/dashboard" aria-label="Filtres interactifs du reporting">
     <label>Période <select name="period" defaultValue={filters.period ?? "30d"}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option><option value="custom">Personnalisée</option></select></label>
     <label>Du <input name="from" type="date" defaultValue={filters.from?.slice(0, 10)} /></label><label>Au <input name="to" type="date" defaultValue={filters.to?.slice(0, 10)} /></label>
     <label>Campus <input name="campus" defaultValue={filters.campus} /></label><label>Campagne <input name="campaign" defaultValue={filters.campaign} /></label>

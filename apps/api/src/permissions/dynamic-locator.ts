@@ -17,14 +17,14 @@ export class DynamicResourceLocator {
     @Inject(FollowUpService) private readonly followUps: FollowUpService,
     @Inject(TelephonyService) private readonly telephony: TelephonyService,
   ) {}
-  leadIds(controller: string, handler: string, request: AuthenticatedRequest): string[] {
+  async leadIds(controller: string, handler: string, request: AuthenticatedRequest): Promise<string[]> {
     const scalar = (value: unknown): string => typeof value === "string" ? value : permissionDenied();
     if (controller === "ChatController" && handler === "convertToActivity") {
       if (!request.principal) permissionDenied();
       return [this.chat.permissionLeadId(scalar(request.params.messageId), request.principal)];
     }
-    if (controller === "FollowUpController" && handler === "decide") return [this.followUps.permissionLeadId(scalar(request.params.id))];
-    if (controller === "AppointmentController" && request.params.id) return [this.appointments.permissionLeadId(scalar(request.params.id))];
+    if (controller === "FollowUpController" && handler === "decide") return [await this.followUps.permissionLeadIdForApi(scalar(request.params.id))];
+    if (controller === "AppointmentController" && request.params.id) return [await this.appointments.permissionLeadIdForApi(scalar(request.params.id))];
     if (controller !== "TelephonyController" || !request.params.callId) return [];
     const existing = this.telephony.permissionLeadId(scalar(request.params.callId));
     const ids = existing ? [existing] : [];

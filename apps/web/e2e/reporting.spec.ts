@@ -19,10 +19,19 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
 async function mockReporting(page: Page): Promise<void> {
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
   await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
+  await page.route("**/api/crm/leads?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }));
+  await page.route("**/api/crm/lead-views", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route("**/api/crm/view-sharing/received", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route("**/api/crm/view-sharing/audiences", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route("**/api/crm/view-sharing/history", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route("**/reports/manager-dashboard/export?*", (route) => route.fulfill({ status: 200, contentType: "text/csv", headers: { "content-disposition": "attachment; filename=crm-manager-dashboard-v1.csv" }, body: "schemaVersion,timezone,period\nmanager-dashboard-export-v1,Africa/Casablanca,7d\nsection,dimension,value,count\nkpi,uniqueLeads,,3\n" }));
 }
 
 test("manager filters, charts, drill-down, return and aggregate export stay coherent", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
+  });
   await page.context().addCookies([{ name: "crm_session", value: "synthetic-manager-session", domain: "localhost", path: "/" }]);
   await mockReporting(page); await page.goto("/manager/reports/dashboard");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "crm_session")).toBe(true);
@@ -41,6 +50,7 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("link", { name: "Exporter les agrégats CSV" }).click(); const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("crm-manager-dashboard-v1.csv");
   await expect(page.locator("body")).not.toContainText(/@example|LD-SYNTH|\+212/u);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("personal scope, empty and error states fail closed", async ({ page }) => {

@@ -6,6 +6,7 @@ import { LeadPersistenceRepository } from "./lead-persistence.repository.js";
 import type { AssignmentAudit } from "../assignment/assignment-audit.js";
 import { ReferenceService } from "../references/reference.service.js";
 import { strictBody } from "../references/reference.contract.js";
+import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -35,6 +36,8 @@ export interface LeadRecord {
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
   nextActionAt?: string; lastActivityAt?: string; createdAt: string; version?: number;
+  temperature?: LeadTemperature; temperatureLabel?: string; qualificationVersion?: number;
+  qualificationReason?: string; qualificationComment?: string; qualifiedAt?: string; qualifiedBy?: string;
 }
 
 export interface LeadActivityRecord {
@@ -42,7 +45,7 @@ export interface LeadActivityRecord {
   nextActionAt?: string; correlationId: string; occurredAt: string; correction?: ActivityCorrection;
 }
 
-export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status">;
+export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status"> & { idempotencyKey?: string };
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
 export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">> & { expectedVersion?: number; idempotencyKey: string };
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
@@ -54,6 +57,7 @@ export interface LeadReportingRow {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
   assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
   activities: Array<{ type: ActivityType; result: string; authorId: string; occurredAt: string }>;
+  temperature: LeadTemperature;
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
@@ -61,10 +65,46 @@ export interface LeadListQuery {
   program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
   assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
   savedView?: string;
+  temperature?: string;
 }
 export type LeadWorkView = "ALL" | "MINE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
 export type LeadSavedView = typeof leadSavedViews[number];
+type ValidatedLeadListQuery = Readonly<{
+  page: number;
+  pageSize: number;
+  status?: LeadStatus | undefined;
+  temperature?: LeadTemperature | undefined;
+  sortBy: LeadSortField;
+  sortDirection: "asc" | "desc";
+  createdFrom?: string | undefined;
+  createdTo?: string | undefined;
+  search?: string | undefined;
+  view: LeadWorkView;
+  savedView?: LeadSavedView | undefined;
+  channel?: string | undefined;
+}>;
+
+function assertListPagination(page: number, pageSize: number): void {
+  const valid = [Number.isInteger(page), page >= 1, Number.isInteger(pageSize), pageSize >= 1, pageSize <= 100];
+  if (!valid.every(Boolean)) throw new BadRequestException({ code: "lead_pagination_invalid" });
+}
+
+function normalizedOptionalChoice<T extends string>(value: string | undefined, allowed: readonly string[], errorCode: string): T | undefined {
+  const normalized = value?.toUpperCase() as T | undefined;
+  if (normalized && !allowed.includes(normalized)) throw new BadRequestException({ code: errorCode });
+  return normalized;
+}
+
+function requiredChoice<T extends string>(value: T | undefined, fallback: T, allowed: readonly string[], errorCode: string): T {
+  const resolved = value ?? fallback;
+  if (!allowed.includes(resolved)) throw new BadRequestException({ code: errorCode });
+  return resolved;
+}
+
+function assertListDateRange(createdFrom: string | undefined, createdTo: string | undefined): void {
+  if (createdFrom && createdTo && createdFrom > createdTo) throw new BadRequestException({ code: "lead_date_range_invalid" });
+}
 
 @Injectable()
 export class LeadService implements OnModuleInit {
@@ -90,18 +130,30 @@ export class LeadService implements OnModuleInit {
   }
 
   async createLeadForApi(input: CreateLeadInput, principal: Principal, correlationId: string): Promise<CreateLeadResult> {
-    strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "nextActionAt"]);
-    await this.references?.validateForLead(input, principal);
-    if (!this.persistence?.enabled) return this.createLead(input, principal, correlationId);
+    strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "nextActionAt", "idempotencyKey"]);
+    const idempotencyKey = input.idempotencyKey?.trim();
+    if (idempotencyKey !== undefined && !/^[A-Za-z0-9:_-]{8,128}$/.test(idempotencyKey)) throw new BadRequestException({ code: "lead_create_idempotency_invalid" });
+    const leadInput = { ...input };
+    delete leadInput.idempotencyKey;
+    await this.references?.validateForLead(leadInput, principal);
+    if (!this.persistence?.enabled) return this.createLead(leadInput, principal, correlationId);
     await this.refreshPersistentState();
-    const fingerprint = this.persistence.fingerprint({ input, actorId: principal.userId });
+    const fingerprint = this.persistence.fingerprint({ input: leadInput, actorId: principal.userId });
+    const receiptKey = `lead:create:${principal.userId}:${idempotencyKey ?? correlationId}`;
+    const replay = await this.persistence.findMutationReplay(receiptKey, fingerprint);
+    if (replay) {
+      const duplicateCandidates = [...this.leads.values()].filter((lead) => lead.id !== replay.id
+        && Boolean((replay.email && lead.email === replay.email) || (replay.phone && lead.phone === replay.phone)))
+        .map((lead) => lead.leadCode).sort((left, right) => left.localeCompare(right));
+      return { lead: this.visibleLead(replay, principal), duplicateCandidates };
+    }
     const activityIds = new Set(this.activities.map((item) => item.id));
-    const result = this.createLead(input, principal, correlationId, true);
+    const result = this.createLead(leadInput, principal, correlationId, true);
     const lead = { ...result.lead, version: 1 };
     const activity = this.activities.find((item) => item.leadId === lead.id && !activityIds.has(item.id));
     if (!activity) throw new Error("lead_create_activity_missing");
     try {
-      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, `lead:create:${principal.userId}:${correlationId}`, fingerprint, principal, correlationId);
+      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, receiptKey, fingerprint, principal, correlationId);
       await this.refreshPersistentState();
       this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `lead-created:${stored.id}`, after: { leadId: stored.id, leadCode: stored.leadCode, duplicateCandidateCount: result.duplicateCandidates.length } });
       return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };
@@ -125,7 +177,12 @@ export class LeadService implements OnModuleInit {
     strictBody(input, ["firstName", "lastName", "email", "phone", "campus", "campaign", "educationLevel", "program", "source", "expectedVersion", "idempotencyKey"]);
     await this.references?.validateForLead(input, principal, leadId);
     if (!principal.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))) throw new ForbiddenException({ code: "role_forbidden" });
-    const result = await this.persistApiMutation(leadId, `lead:update:${leadId}:${input.idempotencyKey}`, "UPDATE_LEAD", input, () => {
+    const receiptKey = `lead:update:${leadId}:${input.idempotencyKey}`;
+    if (this.persistence?.enabled) {
+      const replay = await this.persistence.findMutationReplay(receiptKey, this.persistence.fingerprint({ input, leadId, operation: "UPDATE_LEAD" }));
+      if (replay) return this.visibleLead(replay, principal);
+    }
+    const result = await this.persistApiMutation(leadId, receiptKey, "UPDATE_LEAD", input, () => {
       const current = this.leads.get(leadId); if (!current) throw new NotFoundException({ code: "lead_not_found" });
       const globalScope = principal.scopes.some((scope) => scope.kind === "GLOBAL");
       const campusScope = principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === current.campus);
@@ -134,6 +191,9 @@ export class LeadService implements OnModuleInit {
       if (!elevated && current.assignedToId !== principal.userId && !current.collaboratorIds?.includes(principal.userId)) throw new ForbiddenException({ code: "lead_collaboration_required" });
       if (input.expectedVersion !== undefined && current.version !== undefined && input.expectedVersion !== current.version) throw new ConflictException({ code: "lead_version_conflict" });
       const updated = Object.freeze(this.normalizeLeadUpdate(current, input));
+      const collision = this.findIdentityMatches(updated.email, updated.phone);
+      const fields = [collision.emailLeadId && collision.emailLeadId !== leadId ? "email" : null, collision.phoneLeadId && collision.phoneLeadId !== leadId ? "phone" : null].filter((field): field is string => Boolean(field));
+      if (fields.length) throw new ConflictException({ code: "lead_contact_collision", fields });
       this.leads.set(leadId, updated);
       return updated;
     }, principal, correlationId);
@@ -327,53 +387,88 @@ export class LeadService implements OnModuleInit {
 
   listLeads(query: LeadListQuery, principal: Principal, correlationId: string): LeadPage {
     this.assertReadRole(principal);
-    const { page, pageSize } = query;
-    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new BadRequestException({ code: "lead_pagination_invalid" });
-    const status = query.status?.toUpperCase();
-    if (status && !leadStatuses.includes(status as LeadStatus)) throw new BadRequestException({ code: "lead_status_filter_invalid" });
-    const sortBy = (query.sortBy ?? "createdAt") as LeadSortField;
-    if (!["createdAt", "leadCode", "lastName", "status"].includes(sortBy)) throw new BadRequestException({ code: "lead_sort_invalid" });
-    const sortDirection = query.sortDirection ?? "desc";
-    if (sortDirection !== "asc" && sortDirection !== "desc") throw new BadRequestException({ code: "lead_sort_direction_invalid" });
-    const createdFrom = this.parseBoundary(query.createdFrom, "lead_created_from_invalid");
-    const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
-    if (createdFrom && createdTo && createdFrom > createdTo) throw new BadRequestException({ code: "lead_date_range_invalid" });
-    const search = query.search?.trim().toLocaleLowerCase("fr");
-    const view = (query.view ?? "ALL").toUpperCase() as LeadWorkView;
-    if (!["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"].includes(view)) throw new BadRequestException({ code: "lead_view_invalid" });
-    const savedView = query.savedView?.toUpperCase() as LeadSavedView | undefined;
-    if (savedView && !leadSavedViews.includes(savedView)) throw new BadRequestException({ code: "lead_saved_view_invalid" });
+    const validated = this.validateListQuery(query);
+    const { page, pageSize, sortBy, sortDirection } = validated;
     const now = new Date().toISOString();
     const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
     const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
-    const channel = query.channel?.toUpperCase();
-    if (channel && !["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"].includes(channel)) throw new BadRequestException({ code: "lead_channel_filter_invalid" });
-    const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
-    const filtered = [...this.leads.values()].filter((lead) => {
-      const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
-        .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
-      return (global || allowedCampuses.has(lead.campus))
-        && (principal.permissionLeadIds === undefined || principal.permissionLeadIds.has(lead.id))
-        && (!search || searchable.some((value) => value.includes(search)))
-        && this.matchesView(lead, view, principal, now)
-        && this.matchesSavedView(lead, savedView)
-        && (!query.assignedToId || lead.assignedToId === query.assignedToId)
-        && (!query.collaboratorId || lead.collaboratorIds?.includes(query.collaboratorId))
-        && (!status || lead.status === status)
-        && matches(lead.source, query.source) && (!channel || this.sourceChannel(lead.source) === channel) && matches(lead.program, query.program)
-        && matches(lead.campaign, query.campaign) && matches(lead.campus, query.campus)
-        && matches(lead.assignmentMode, query.assignmentMode) && matches(lead.importBatchId, query.importBatchId)
-        && (!createdFrom || lead.createdAt >= createdFrom) && (!createdTo || lead.createdAt <= createdTo);
-    });
-    const direction = sortDirection === "asc" ? 1 : -1;
-    const ordered = filtered.sort((left, right) => view === "FOLLOW_UP"
-      ? (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr")
-      : direction * left[sortBy].localeCompare(right[sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr"));
+    const filtered = [...this.leads.values()].filter((lead) => this.matchesListFilters(lead, query, validated, principal, now, global, allowedCampuses));
+    const ordered = filtered.sort((left, right) => this.compareListedLeads(left, right, validated));
     const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
     this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { page, pageSize, resultCount: items.length, filterCount: Object.values(query).filter((value) => value !== undefined).length - 2,
         sortBy, sortDirection }, result: "SUCCESS", idempotencyKey: `leads-listed:${randomUUID()}` });
     return { items, page, pageSize, total: ordered.length };
+  }
+
+  private validateListQuery(query: LeadListQuery): ValidatedLeadListQuery {
+    const { page, pageSize } = query;
+    assertListPagination(page, pageSize);
+    const status = normalizedOptionalChoice<LeadStatus>(query.status, leadStatuses, "lead_status_filter_invalid");
+    const temperature = normalizedOptionalChoice<LeadTemperature>(query.temperature, leadTemperatures, "lead_temperature_filter_invalid");
+    const sortBy = requiredChoice<LeadSortField>(query.sortBy as LeadSortField | undefined, "createdAt", ["createdAt", "leadCode", "lastName", "status"], "lead_sort_invalid");
+    const sortDirection = requiredChoice<"asc" | "desc">(query.sortDirection as "asc" | "desc" | undefined, "desc", ["asc", "desc"], "lead_sort_direction_invalid");
+    const createdFrom = this.parseBoundary(query.createdFrom, "lead_created_from_invalid");
+    const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
+    assertListDateRange(createdFrom, createdTo);
+    const search = query.search?.trim().toLocaleLowerCase("fr");
+    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"], "lead_view_invalid");
+    const savedView = normalizedOptionalChoice<LeadSavedView>(query.savedView, leadSavedViews, "lead_saved_view_invalid");
+    const channel = normalizedOptionalChoice<string>(query.channel, ["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"], "lead_channel_filter_invalid");
+    return {
+      page,
+      pageSize,
+      sortBy,
+      sortDirection,
+      view,
+      status,
+      temperature,
+      createdFrom,
+      createdTo,
+      search,
+      savedView,
+      channel,
+    };
+  }
+
+  private matchesListFilters(
+    lead: Readonly<LeadRecord>,
+    query: LeadListQuery,
+    validated: ValidatedLeadListQuery,
+    principal: Principal,
+    now: string,
+    global: boolean,
+    allowedCampuses: ReadonlySet<string>,
+  ): boolean {
+    const matches = (value: string | undefined, expected: string | undefined): boolean => !expected || value?.toLocaleLowerCase("fr") === expected.trim().toLocaleLowerCase("fr");
+    const searchable = [lead.leadCode, lead.firstName, lead.lastName, lead.email, lead.phone]
+      .filter((value): value is string => Boolean(value)).map((value) => value.toLocaleLowerCase("fr"));
+    return (global || allowedCampuses.has(lead.campus))
+      && (principal.permissionLeadIds === undefined || principal.permissionLeadIds.has(lead.id))
+      && (!validated.search || searchable.some((value) => value.includes(validated.search as string)))
+      && this.matchesView(lead, validated.view, principal, now)
+      && this.matchesSavedView(lead, validated.savedView)
+      && (!query.assignedToId || lead.assignedToId === query.assignedToId)
+      && (!query.collaboratorId || Boolean(lead.collaboratorIds?.includes(query.collaboratorId)))
+      && (!validated.status || lead.status === validated.status)
+      && (!validated.temperature || (lead.temperature ?? "UNEVALUATED") === validated.temperature)
+      && matches(lead.source, query.source)
+      && (!validated.channel || this.sourceChannel(lead.source) === validated.channel)
+      && matches(lead.program, query.program)
+      && matches(lead.campaign, query.campaign)
+      && matches(lead.campus, query.campus)
+      && matches(lead.assignmentMode, query.assignmentMode)
+      && matches(lead.importBatchId, query.importBatchId)
+      && (!validated.createdFrom || lead.createdAt >= validated.createdFrom)
+      && (!validated.createdTo || lead.createdAt <= validated.createdTo);
+  }
+
+  private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {
+    if (query.view === "FOLLOW_UP") {
+      return (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr");
+    }
+    const direction = query.sortDirection === "asc" ? 1 : -1;
+    return direction * left[query.sortBy].localeCompare(right[query.sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr");
   }
 
   private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
@@ -492,8 +587,9 @@ export class LeadService implements OnModuleInit {
     return [...this.leads.values()]
       .filter((lead) => (global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId }) => ({
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, temperature }) => ({
         id, status, campus, campaign, program, source, createdAt,
+        temperature: temperature ?? "UNEVALUATED",
         ...(assignedToId ? { assignedToId } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
         ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
         ...(importBatchId ? { importBatchId } : {}),
@@ -544,24 +640,29 @@ export class LeadService implements OnModuleInit {
   }
 
   private visibleLead(lead: Readonly<LeadRecord>, principal: Principal): LeadRecord {
-    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS" || role === "MANAGER")) return { ...lead };
-    return { ...lead, email: "***", phone: "***" };
+    const visible = { ...lead, temperature: lead.temperature ?? "UNEVALUATED", temperatureLabel: lead.temperatureLabel ?? leadTemperatureLabels[lead.temperature ?? "UNEVALUATED"], qualificationVersion: lead.qualificationVersion ?? 0 };
+    if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS" || role === "MANAGER")) return visible;
+    return { ...visible, email: "***", phone: "***" };
   }
 
-  addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): LeadActivityRecord {
+  addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string; clearNextAction?: boolean }, principal: Principal, correlationId: string): LeadActivityRecord {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const lead = this.leads.get(leadId);
     if (!lead) throw new NotFoundException({ code: "lead_not_found" });
     if (!(activityTypes as readonly string[]).includes(input.type) || !input.result?.trim()) throw new BadRequestException({ code: "activity_invalid" });
+    const occurredAt = new Date();
     const nextActionAt = input.nextActionAt ? new Date(input.nextActionAt) : undefined;
     if (nextActionAt && Number.isNaN(nextActionAt.valueOf())) throw new BadRequestException({ code: "next_action_invalid" });
+    if (nextActionAt && nextActionAt.valueOf() <= occurredAt.valueOf()) throw new BadRequestException({ code: "next_action_chronology_invalid" });
     const activity: LeadActivityRecord = Object.freeze({
       id: randomUUID(), leadId, type: input.type as ActivityType, result: input.result.trim(),
       ...(input.note?.trim() ? { note: input.note.trim() } : {}), authorId: principal.userId,
-      ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: new Date().toISOString(),
+      ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}), correlationId, occurredAt: occurredAt.toISOString(),
     });
     this.activities = [...this.activities, activity];
-    this.leads.set(leadId, Object.freeze({ ...lead, lastActivityAt: activity.occurredAt, ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) }));
+    const updatedLead: LeadRecord = { ...lead, lastActivityAt: activity.occurredAt, ...(activity.nextActionAt ? { nextActionAt: activity.nextActionAt } : {}) };
+    if (input.clearNextAction) delete updatedLead.nextActionAt;
+    this.leads.set(leadId, Object.freeze(updatedLead));
     this.audit.record({ eventType: "LEAD_ACTIVITY_ADDED", actorId: principal.userId, actorRoles: principal.roles,
       sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, type: activity.type }, result: "SUCCESS",
       idempotencyKey: `lead-activity:${activity.id}` });

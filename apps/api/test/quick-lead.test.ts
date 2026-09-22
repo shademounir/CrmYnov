@@ -36,7 +36,8 @@ test("attaches an activity to a reliable match without changing canonical owners
   const existing = leads.registerLocalLead({ leadCode: "LD-SYNTH-001", firstName: "Lead", lastName: "Existant", email: "known@example.invalid",
     campus: "Campus synthétique", campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme", source: "WEB_FORM",
     assignedToId: adviser, status: "CONTACTED" });
-  const result = service.submit({ ...input("PHONE_CALL", "quick-existing-1"), email: "known@example.invalid", nextActionAt: "2026-09-01T10:00:00Z" }, manager, "corr-existing");
+  const futureNextActionAt = new Date(Date.now() + 60_000).toISOString();
+  const result = service.submit({ ...input("PHONE_CALL", "quick-existing-1"), email: "known@example.invalid", nextActionAt: futureNextActionAt }, manager, "corr-existing");
   assert.equal(result.outcome, "EXISTING"); assert.equal(result.lead.id, existing.id); assert.equal(result.lead.source, "WEB_FORM");
   assert.equal(result.lead.status, "CONTACTED"); assert.equal(result.lead.assignedToId, adviser);
   assert.equal(ingestion.listProvenance(existing.id, manager).length, 1);
