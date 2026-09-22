@@ -227,6 +227,7 @@ export class AppointmentService implements OnModuleInit {
   }
 
   private async refreshAfterPersistentMutation(): Promise<void> {
+    await this.notifications.flush();
     await this.leads.refreshReportingForApi();
     await this.refreshPersistentState();
   }

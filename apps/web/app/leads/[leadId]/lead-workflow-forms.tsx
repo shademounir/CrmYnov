@@ -15,6 +15,20 @@ export interface FollowUpBody { dueAt: string; reason: string }
 export interface ClosureBody { target: string; reason: string; comment: string; evidence: string[] }
 export interface AssignmentCandidate { id: string; label: string; activeLeadCount: number; capacity: number }
 export interface FollowUpRecord { id: string; leadId: string; dueAt: string; state: "SCHEDULED" | "DUE" | "COMPLETED" | "CANCELLED"; reason: string; version: number }
+export interface ClosureRequestRecord {
+  id: string;
+  leadId: string;
+  target: "ENROLLED" | "CLOSED_LOST";
+  reason: string;
+  comment: string;
+  evidence: string[];
+  requesterId: string;
+  state: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+  version: number;
+  createdAt: string;
+  decidedAt?: string;
+  decisionReason?: string;
+}
 
 type Feedback = { kind: "idle" } | { kind: "preview" | "success" | "error"; message: string };
 type CommonProps = {
@@ -55,12 +69,14 @@ export function closureBody(form: FormData): ClosureBody {
   return { target: formText(form, "target"), reason: formText(form, "reason"), comment: formText(form, "comment"), evidence: formText(form, "evidence").split(/\r?\n/u).map((value) => value.trim()).filter(Boolean) };
 }
 
-type Operation = "assignment" | "interaction" | "status" | "follow-up";
+type Operation = "assignment" | "interaction" | "status" | "follow-up" | "closure-request" | "closure-decision";
 const operationLabels: Readonly<Record<Operation, string>> = {
   assignment: "L’affectation",
   interaction: "L’interaction",
   status: "Le changement de statut",
   "follow-up": "La relance",
+  "closure-request": "La demande de clôture",
+  "closure-decision": "La décision de clôture",
 };
 const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Record<string, string>>>>> = {
   interaction: {
@@ -77,6 +93,17 @@ const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Reco
     follow_up_invalid: "La relance nécessite une date future, un motif et un conseiller responsable.",
     follow_up_due_invalid: "Choisissez une nouvelle échéance située dans le futur.",
     follow_up_concurrent: "Cette relance a changé depuis son affichage. Actualisez-la avant de réessayer.",
+  },
+  "closure-request": {
+    closure_request_invalid: "La demande nécessite un motif, un commentaire et au moins une preuve métier.",
+    closure_source_status_invalid: "Cette clôture n’est pas disponible depuis l’étape commerciale actuelle.",
+    closure_pending: "Une demande de clôture est déjà en attente pour ce Lead.",
+  },
+  "closure-decision": {
+    closure_self_approval_forbidden: "Le demandeur ne peut pas valider sa propre demande. Connectez un Manager ou un Administrateur distinct.",
+    closure_approval_forbidden: "La décision est réservée à un Manager ou un Administrateur autorisé.",
+    closure_concurrent_decision: "Cette demande a déjà changé. Actualisez son état avant de réessayer.",
+    closure_decision_invalid: "Choisissez une décision et indiquez son motif.",
   },
 };
 const httpFailureMessages: Readonly<Record<number, string>> = {
@@ -389,7 +416,7 @@ export function ClosureWorkflowForm({ leadId, onCancel, onCompleted, onDirtyChan
     event.preventDefault(); if (busy) return; setBusy(true); setFeedback({ kind: "idle" });
     try {
       const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/closure-requests`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(closureBody(new FormData(event.currentTarget))) });
-      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("status", response) }); return; }
+      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("closure-request", response) }); return; }
       dirty.clearDirty(); setFeedback({ kind: "success", message: "Demande envoyée au Manager. Le statut du Lead reste inchangé jusqu’à la décision." }); onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
     finally { setBusy(false); }
@@ -402,4 +429,101 @@ export function ClosureWorkflowForm({ leadId, onCancel, onCompleted, onDirtyChan
     <p className="lead-assignment-dialog__notice">La demande n’applique pas elle-même la clôture. La séparation des rôles et les validations serveur restent obligatoires.</p>
     <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Soumettre au Manager" {...(onCancel ? { onCancel } : {})} />
   </form>;
+}
+
+export function parseClosureRequests(value: unknown, leadId: string): ClosureRequestRecord[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const items = (value as { items?: unknown }).items;
+  if (!Array.isArray(items)) return [];
+  return items.filter((item): item is ClosureRequestRecord => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const row = item as Partial<ClosureRequestRecord>;
+    return row.leadId === leadId
+      && typeof row.id === "string"
+      && typeof row.requesterId === "string"
+      && typeof row.comment === "string"
+      && typeof row.reason === "string"
+      && typeof row.createdAt === "string"
+      && typeof row.version === "number"
+      && Array.isArray(row.evidence)
+      && ["ENROLLED", "CLOSED_LOST"].includes(row.target ?? "")
+      && ["PENDING", "APPROVED", "REJECTED", "CANCELLED"].includes(row.state ?? "");
+  });
+}
+
+function closureTargetLabel(target: ClosureRequestRecord["target"]): string {
+  return target === "ENROLLED" ? "Inscrit" : "Sans suite";
+}
+
+function closureStateLabel(state: ClosureRequestRecord["state"]): string {
+  return { PENDING: "En attente", APPROVED: "Approuvée", REJECTED: "Refusée", CANCELLED: "Annulée" }[state];
+}
+
+function closureReasonLabel(reason: string): string {
+  return ({
+    ADMISSION_CONFIRMED: "Admission confirmée",
+    REGISTRATION_COMPLETE: "Inscription complète",
+    NOT_INTERESTED: "Non intéressé",
+    UNREACHABLE: "Injoignable après le parcours prévu",
+    OTHER_PROGRAM: "Autre programme choisi",
+  } as Readonly<Record<string, string>>)[reason] ?? reason;
+}
+
+export function ClosureHistory({ leadId, onCompleted }: Readonly<{ leadId: string; onCompleted?: () => void }>): React.JSX.Element {
+  const [items, setItems] = useState<ClosureRequestRecord[]>([]);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [busyId, setBusyId] = useState<string>();
+  const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" });
+  const decisionLocks = useRef(new Set<string>());
+
+  async function load(): Promise<void> {
+    setState("loading");
+    try {
+      const response = await fetch("/api/crm/closure-requests", { cache: "no-store", credentials: "same-origin" });
+      if (!response.ok) throw new Error(`closure_${response.status}`);
+      setItems(parseClosureRequests(await response.json(), leadId));
+      setState("ready");
+    } catch { setState("error"); }
+  }
+
+  useEffect(() => { void load(); }, [leadId]);
+
+  async function decide(event: React.FormEvent<HTMLFormElement>, item: ClosureRequestRecord): Promise<void> {
+    event.preventDefault();
+    if (decisionLocks.current.has(item.id)) return;
+    const form = new FormData(event.currentTarget);
+    const body = { decision: formText(form, "decision"), reason: formText(form, "reason"), expectedVersion: item.version };
+    decisionLocks.current.add(item.id);
+    setBusyId(item.id); setFeedback({ kind: "idle" });
+    try {
+      const response = await fetch(`/api/crm/closure-requests/${encodeURIComponent(item.id)}/decision`, { method: "PATCH", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("closure-decision", response) }); return; }
+      setFeedback({ kind: "success", message: body.decision === "APPROVE" ? "Décision approuvée. Le statut du Lead a été actualisé." : "Demande refusée. Le statut du Lead reste inchangé." });
+      await load();
+      onCompleted?.();
+    } catch { setFeedback({ kind: "error", message: "Le service est indisponible. La décision n’a pas été renvoyée automatiquement." }); }
+    finally { decisionLocks.current.delete(item.id); setBusyId(undefined); }
+  }
+
+  if (state === "loading") return <p role="status">Chargement des demandes de clôture…</p>;
+  if (state === "error") return <div className="lead-closure-history__state" role="alert"><p>Les demandes de clôture sont indisponibles.</p><button className="secondary-button" type="button" onClick={() => void load()}>Réessayer</button></div>;
+  return <div className="lead-closure-history">
+    <FormFeedback feedback={feedback} />
+    {!items.length ? <p>Aucune demande de clôture enregistrée pour ce Lead.</p> : <ol>{items.map((item) => <li key={item.id}>
+      <div>
+        <span className={`lead-closure-history__state lead-closure-history__state--${item.state.toLowerCase()}`}>{closureStateLabel(item.state)}</span>
+        <strong>{closureTargetLabel(item.target)}</strong>
+        <span>{closureReasonLabel(item.reason)}</span>
+        <time dateTime={item.createdAt}>Demandée le {new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.createdAt))}</time>
+        <p>{item.comment}</p>
+        {item.decisionReason ? <p><strong>Motif de décision :</strong> {item.decisionReason}</p> : null}
+      </div>
+      {item.state === "PENDING" ? <form onSubmit={(event) => void decide(event, item)}>
+        <label>Décision du responsable<select name="decision" defaultValue="APPROVE" disabled={busyId === item.id}><option value="APPROVE">Approuver la clôture</option><option value="REJECT">Refuser la demande</option></select></label>
+        <label>Motif de la décision<textarea name="reason" required minLength={3} maxLength={1000} rows={3} disabled={busyId === item.id} placeholder="Justifiez la décision sans données superflues." /></label>
+        <button className="secondary-button" type="submit" disabled={busyId === item.id}>{busyId === item.id ? "Décision en cours…" : "Confirmer la décision"}</button>
+      </form> : null}
+    </li>)}</ol>}
+    <p className="lead-assignment-dialog__notice">La décision est contrôlée par le serveur : le demandeur ne peut pas approuver sa propre clôture, et une version déjà décidée ne peut pas être rejouée.</p>
+  </div>;
 }

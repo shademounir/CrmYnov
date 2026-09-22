@@ -11,10 +11,17 @@ const errorCode = (expected: string) => (failure: unknown): boolean => JSON.stri
 test("pairs one workstation, encrypts and claims one command, then revokes its token", { skip: !enabled }, async () => {
   const database = new URL(process.env.DATABASE_URL ?? "");
   assert.ok(["127.0.0.1", "localhost"].includes(database.hostname));
-  assert.equal(database.pathname, "/crmy165_telephony_preview_20260916");
+  const coverageDatabase = database.pathname === "/crmy171_synthetic";
+  assert.ok(coverageDatabase || database.pathname === "/crmy165_telephony_preview_20260916");
   const previousKey = process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY;
   process.env.TELEPHONY_COMMAND_ENCRYPTION_KEY = randomBytes(32).toString("base64");
   const prisma = new PrismaService(); const client = prisma.client; assert.ok(client);
+  if (coverageDatabase) {
+    const nonce = process.env.CRMY171_DATABASE_NONCE;
+    assert.match(nonce ?? "", /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
+    const identity = await client.$queryRaw<Array<{ nonce: string }>>`SELECT nonce FROM crmy171_test_identity.marker`;
+    assert.deepEqual(identity, [{ nonce }]);
+  }
   const repository = new TelephonyAgentRepository(prisma);
   const suffix = randomUUID().slice(0, 8); const userId = randomUUID(); const callId = randomUUID(); const busyCallId = randomUUID(); const expiredCallId = randomUUID();
   const principal: Principal = { userId, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: randomUUID() };

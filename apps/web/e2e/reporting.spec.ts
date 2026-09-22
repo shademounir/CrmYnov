@@ -17,6 +17,8 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
   contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
 
 async function mockReporting(page: Page): Promise<void> {
+  // Reporting is isolated from the API; include the shared shell's notification query.
+  await page.route("**/api/crm/notifications?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], unread: 0, total: 0, page: 1, pageSize: 1 }) }));
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
   await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
   await page.route("**/api/crm/leads?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }));

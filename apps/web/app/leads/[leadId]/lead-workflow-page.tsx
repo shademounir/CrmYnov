@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, CalendarBlank, Clock, NotePencil, UserSwitch } from "@phosphor-icons/react";
 import { ConnectedResource } from "../../_components/connected-resource";
-import { AssignmentWorkflowForm, ClosureWorkflowForm, FollowUpHistory, FollowUpWorkflowForm, InteractionWorkflowForm, StatusWorkflowForm } from "./lead-workflow-forms";
+import { AssignmentWorkflowForm, ClosureHistory, ClosureWorkflowForm, FollowUpHistory, FollowUpWorkflowForm, InteractionWorkflowForm, StatusWorkflowForm } from "./lead-workflow-forms";
 
 type Surface = "assignment" | "interaction" | "status" | "follow-up" | "closure";
 type LeadContext = { leadCode: string; firstName: string; lastName: string; status: string; assignedToId?: string };
@@ -34,7 +34,6 @@ function ResourceForSurface({ leadId, surface, refreshKey }: Readonly<{ leadId: 
   if (surface === "interaction") return <ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} />;
   if (surface === "follow-up") return <FollowUpHistory key={`${leadId}:${refreshKey}`} leadId={leadId} />;
   if (surface === "assignment") return <ConnectedResource key={`${leadId}:${refreshKey}:assignment`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/reassignment-requests`} ariaLabel="Historique des demandes de réaffectation" emptyMessage="Aucune demande de réaffectation." fields={[{ key: "status", label: "État" }, { key: "reason", label: "Motif" }, { key: "requestedAt", label: "Demandée le" }, { key: "decisionReason", label: "Décision" }]} />;
-  if (surface === "closure") return <ConnectedResource key={`${leadId}:${refreshKey}:closure`} endpoint="/api/crm/closure-requests" ariaLabel="Demandes de clôture autorisées" emptyMessage="Aucune demande de clôture." fields={[{ key: "target", label: "Résultat visé" }, { key: "reason", label: "Motif" }, { key: "state", label: "État" }, { key: "createdAt", label: "Demandée le" }]} />;
   return null;
 }
 
@@ -98,7 +97,8 @@ function WorkflowAction({ leadId, surface, context, contextState, onCompleted }:
   return null;
 }
 
-function WorkflowHistory({ leadId, surface, refreshKey }: Readonly<{ leadId: string; surface: Surface; refreshKey: number }>): React.JSX.Element {
+function WorkflowHistory({ leadId, surface, refreshKey, onCompleted }: Readonly<{ leadId: string; surface: Surface; refreshKey: number; onCompleted: () => void }>): React.JSX.Element {
+  if (surface === "closure") return <ClosureHistory key={`${leadId}:${refreshKey}:closure`} leadId={leadId} onCompleted={onCompleted} />;
   if (surface !== "status") return <ResourceForSurface leadId={leadId} surface={surface} refreshKey={refreshKey} />;
   return <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique. Une clôture reste soumise au parcours dédié.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></>;
 }
@@ -121,7 +121,7 @@ export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string;
         <WorkflowAction leadId={leadId} surface={surface} {...(context ? { context } : {})} contextState={contextState} onCompleted={refresh} />
       </section>
       <section className="panel lead-workflow-page__history" aria-labelledby="workflow-history-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Traçabilité</p><h2 id="workflow-history-title">{surface === "status" ? "Règles de transition" : "Éléments enregistrés"}</h2></div>
-        <WorkflowHistory leadId={leadId} surface={surface} refreshKey={refreshKey} />
+        <WorkflowHistory leadId={leadId} surface={surface} refreshKey={refreshKey} onCompleted={refresh} />
       </section>
     </div>
   </main>;

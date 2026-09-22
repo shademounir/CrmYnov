@@ -97,8 +97,8 @@ numéro est relu côté serveur après authentification du poste. Les versions
 restent côte à côte pour un retour arrière explicite. Le fichier DPAPI demeure
 dans `%LOCALAPPDATA%\CRM Ynov\Telephony Agent` et survit à une mise à jour.
 
-Une première installation enregistre également l’agent au démarrage de la
-session Windows, lance l’assistant d’association et conserve ensuite le profil,
+Une première installation laisse le démarrage Windows désactivé,
+lance l’assistant d’association et conserve ensuite le profil,
 le secret DPAPI et les périphériques choisis. Au premier appel depuis le CRM,
 le navigateur peut demander une confirmation de sécurité pour ouvrir le
 protocole `crmynov-telephony`. L’utilisateur peut choisir « Toujours autoriser »

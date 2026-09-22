@@ -11,8 +11,15 @@ const enabled = process.env.CRMY165_TELEPHONY_TEST === "true";
 test("telephony calls, replay, transitions and human association survive a PostgreSQL restart", { skip: !enabled }, async () => {
   const database = new URL(process.env.DATABASE_URL ?? "");
   assert.ok(["127.0.0.1", "localhost"].includes(database.hostname));
-  assert.match(database.pathname, /^\/crmy165_telephony_recipe_/);
+  const coverageDatabase = database.pathname === "/crmy171_synthetic";
+  assert.ok(coverageDatabase || /^\/crmy165_telephony_recipe_/u.test(database.pathname));
   const prisma = new PrismaService(); const client = prisma.client; assert.ok(client);
+  if (coverageDatabase) {
+    const nonce = process.env.CRMY171_DATABASE_NONCE;
+    assert.match(nonce ?? "", /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
+    const identity = await client.$queryRaw<Array<{ nonce: string }>>`SELECT nonce FROM crmy171_test_identity.marker`;
+    assert.deepEqual(identity, [{ nonce }]);
+  }
   const repository = new TelephonyPersistenceRepository(prisma);
   const marker = randomUUID().slice(0, 8); const actorId = randomUUID(); const sessionId = randomUUID();
   const principal: Principal = { userId: actorId, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId };

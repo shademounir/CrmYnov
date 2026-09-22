@@ -29,6 +29,12 @@ Le contrat de température a été validé par le PO puis implémenté : migrati
 
 La complétude documentaire reste distincte et non approuvée. Le runtime `CandidateDocumentService` utilise encore des `Map` pour checklists, documents et événements malgré la présence de tables Prisma. Aucun état ou pourcentage réel ne doit donc être revendiqué avant sélection persistante d’un catalogue versionné et raccordement du service runtime.
 
+## CRMY-165 — Notifications validées dans leur périmètre
+
+Le 16 septembre 2026, le PO a validé personnellement la page Notifications après une recette connectée. La preuve couvre la création dédupliquée d'une notification de relance échue pour un conseiller synthétique, son compteur non lu, la lecture individuelle, la persistance après actualisation et redémarrage API, l'audit unique et l'ouverture de la relance cible. Le responsive a été contrôlé à 1280, 820 et 390 px sans débordement horizontal.
+
+Cette validation est limitée au centre de notifications internes et au producteur de relance échue. Elle ne valide ni les canaux externes, ni la téléphonie, ni tous les producteurs déclarés dans le contrat, ni l'ensemble de CRMY-165.
+
 ## Backlog Jira
 
 La lecture Jira authentifiée a confirmé CRMY-164 (« Refonte de la fiche lead, timeline et affectations »), rattachée à l’epic CRMY-158 et bloquée par CRMY-163. Elle a également confirmé CRMY-43 (« Modifier les informations autorisées d’un lead »), rattachée à l’epic métier CRMY-5. Une recherche ciblée sur la qualification et la température commerciale n’a retourné aucun doublon. La story dédiée autorisée reste à créer sous CRMY-5, avec liens vers CRMY-164 et le socle Lead ; aucun lien existant n’a été supprimé ou modifié.
