@@ -1,0 +1,48 @@
+.notifications-page { width: min(100%, 1180px) !important; margin: 0 auto !important; }
+.notifications-page__header { margin-bottom: 14px; }
+.notifications-page__icon { width: 48px; height: 48px; border-radius: 14px; background: var(--teal-soft); color: var(--teal-dark); display: grid; place-items: center; }
+.notifications-center { overflow: hidden; }
+.notifications-center__toolbar { min-height: 82px; padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.notifications-center__toolbar h2 { font-size: 18px; }
+.notifications-center__toolbar p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+.notifications-center__title { width: 190px; height: 22px; }
+.notifications-center__skeleton { padding: 12px 18px 18px; display: grid; gap: 10px; }
+.notifications-center__skeleton span { height: 76px; border-radius: 10px; }
+.notifications-list { margin: 0; padding: 0; list-style: none; }
+.notifications-list li { min-height: 92px; padding: 14px 18px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 13px; }
+.notifications-list li:last-child { border-bottom: 0; }
+.notifications-list li.is-unread { background: linear-gradient(90deg, var(--teal-soft), #fff 26%); box-shadow: inset 3px 0 var(--teal); }
+.notifications-list__priority { width: 36px; height: 36px; border-radius: 10px; background: #f0f3f4; color: #67737a; display: grid; place-items: center; }
+.notifications-list__priority--high { background: var(--red-soft); color: var(--red); }
+.notifications-list__priority--low { background: var(--blue-soft); color: var(--blue); }
+.notifications-list__copy { min-width: 0; }
+.notifications-list__copy > div { display: flex; align-items: center; gap: 8px; }
+.notifications-list__copy h3 { margin: 0; font-size: 12px; }
+.notifications-list__copy p { margin: 5px 0 4px; color: #536168; font-size: 10px; }
+.notifications-list__copy time { color: #78838a; font-size: 8px; }
+.notifications-list__actions { display: flex; align-items: center; gap: 11px; }
+.notifications-list__actions .secondary-button { min-height: 40px; text-decoration: none; font-size: 10px; }
+.notifications-list__read { color: var(--green); display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 700; }
+.notifications-center__pagination { min-height: 54px; padding: 8px 18px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: center; gap: 18px; }
+.notifications-center__pagination span { color: var(--muted); font-size: 9px; }
+.notifications-center--empty { min-height: 260px; padding: 36px; display: grid; grid-template-columns: 58px minmax(0, 460px); place-content: center; gap: 18px; }
+.notifications-center__empty-icon { width: 58px; height: 58px; border-radius: 18px; background: var(--teal-soft); color: var(--teal-dark); display: grid; place-items: center; }
+.notifications-center--empty h2 { margin-bottom: 6px; font-size: 18px; }
+.notifications-center--empty p:last-child { margin: 0; color: var(--muted); font-size: 11px; }
+.notifications-center__state { min-height: 260px; }
+
+@media (max-width: 820px) {
+  .notifications-list li { grid-template-columns: 38px minmax(0, 1fr); }
+  .notifications-list__actions { grid-column: 2; justify-content: flex-end; }
+}
+@media (max-width: 560px) {
+  .notifications-page__header { align-items: flex-start; }
+  .notifications-page__icon { display: none; }
+  .notifications-center__toolbar { align-items: stretch; flex-direction: column; }
+  .notifications-center__toolbar .secondary-button { width: 100%; }
+  .notifications-list li { min-height: 0; padding: 15px; grid-template-columns: 34px minmax(0, 1fr); align-items: start; }
+  .notifications-list__priority { width: 32px; height: 32px; }
+  .notifications-list__actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; }
+  .notifications-list__actions .text-button, .notifications-list__actions .secondary-button { width: 100%; justify-content: center; }
+  .notifications-center--empty { padding: 28px 20px; grid-template-columns: 1fr; justify-items: center; text-align: center; }
+}

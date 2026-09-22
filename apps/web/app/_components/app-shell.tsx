@@ -90,6 +90,14 @@ export async function loadSearchResults(
   return items.length ? { kind: "ready", items } : { kind: "empty", items: [] };
 }
 
+export async function loadUnreadNotificationCount(request: typeof fetch = fetch): Promise<number | undefined> {
+  const response = await request("/api/crm/notifications?page=1&pageSize=1", { credentials: "same-origin", cache: "no-store", headers: { accept: "application/json" } });
+  if (!response.ok) return undefined;
+  const payload = await response.json() as ApiValue;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.unread !== "number") return undefined;
+  return Math.max(0, Math.floor(payload.unread));
+}
+
 export function AppShell({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
   return <AppShellClient pathname={usePathname()} locationSearch={useSearchParams().toString()}>{children}</AppShellClient>;
 }
@@ -100,6 +108,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   const [profileOpen, setProfileOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<SearchState>({ kind: "closed", items: [] });
+  const [unreadNotifications, setUnreadNotifications] = useState<number>();
   const isAuthPath = authPaths.has(pathname);
 
   useEffect(() => {
@@ -123,6 +132,14 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     return (): void => { globalThis.clearTimeout(timeout); controller.abort(); };
   }, [isAuthPath, query]);
 
+  useEffect(() => {
+    if (isAuthPath) return;
+    void loadUnreadNotificationCount().then(setUnreadNotifications).catch(() => setUnreadNotifications(undefined));
+    const update = (event: Event): void => setUnreadNotifications((event as CustomEvent<number>).detail);
+    globalThis.addEventListener("crm:notifications-changed", update);
+    return (): void => { globalThis.removeEventListener("crm:notifications-changed", update); };
+  }, [isAuthPath, pathname]);
+
   if (isAuthPath) return <>{children}</>;
 
   return <AppShellView
@@ -133,6 +150,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     profileOpen={profileOpen}
     query={query}
     search={search}
+    unreadNotifications={unreadNotifications}
     onCollapse={() => setCollapsed((value) => !value)}
     onMobileOpen={() => setMobileOpen(true)}
     onMobileClose={() => setMobileOpen(false)}
@@ -151,6 +169,7 @@ type AppShellViewProps = Readonly<{
   profileOpen: boolean;
   query: string;
   search: SearchState;
+  unreadNotifications?: number | undefined;
   onCollapse: () => void;
   onMobileOpen: () => void;
   onMobileClose: () => void;
@@ -168,6 +187,7 @@ export function AppShellView({
   profileOpen,
   query,
   search,
+  unreadNotifications,
   onCollapse,
   onMobileOpen,
   onMobileClose,
@@ -201,7 +221,7 @@ export function AppShellView({
         </label>
         <div className="topbar-actions">
           <button type="button" className="campus-button" aria-label="Campus sélectionné : Casablanca"><MapPin size={19} aria-hidden="true" /><span>Casablanca</span><CaretDown size={15} aria-hidden="true" /></button>
-          <Link className="icon-button" href="/notifications" aria-label="Ouvrir les notifications"><Bell size={22} /><span className="notification-dot" aria-label="Notifications non lues">3</span></Link>
+          <Link className="icon-button" href="/notifications" aria-label={unreadNotifications ? `Ouvrir les notifications, ${unreadNotifications} non lue${unreadNotifications > 1 ? "s" : ""}` : "Ouvrir les notifications"}><Bell size={22} />{unreadNotifications ? <span className="notification-dot" aria-hidden="true">{unreadNotifications > 99 ? "99+" : unreadNotifications}</span> : null}</Link>
           <div className="popover-anchor">
             <button type="button" className="user-button" onClick={onProfileToggle} aria-expanded={profileOpen} aria-label="Ouvrir le menu de la session locale"><span className="avatar">SL</span><span>Session locale<small>Accès contrôlé</small></span><CaretDown size={15} aria-hidden="true" /></button>
             {profileOpen ? <div className="user-menu" role="menu"><Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link><Link href="/" role="menuitem">Se déconnecter</Link></div> : null}

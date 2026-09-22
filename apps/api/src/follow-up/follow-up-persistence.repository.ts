@@ -39,6 +39,39 @@ export class FollowUpPersistenceRepository {
     return receipt ? this.replay(receipt.fingerprint, fingerprint, receipt.result) : undefined;
   }
 
+  /**
+   * Atomically claims elapsed reminders. The state fence makes concurrent API
+   * instances harmless; only the instance that changed the row emits the
+   * corresponding notification.
+   */
+  async markDue(now: Date, limit = 50): Promise<FollowUpRecord[]> {
+    const client = this.requiredClient();
+    return client.$transaction(async (tx) => {
+      const candidates = await tx.leadFollowUp.findMany({
+        where: { state: "SCHEDULED", dueAt: { lte: now } },
+        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+        take: limit,
+      });
+      const claimed: FollowUpRecord[] = [];
+      for (const candidate of candidates) {
+        const changed = await tx.leadFollowUp.updateMany({
+          where: { id: candidate.id, state: "SCHEDULED", version: candidate.version },
+          data: { state: "DUE", version: { increment: 1 }, updatedAt: now },
+        });
+        if (changed.count !== 1) continue;
+        const current = this.map(await tx.leadFollowUp.findUniqueOrThrow({ where: { id: candidate.id } }));
+        await tx.auditEvent.create({ data: {
+          eventType: "FOLLOW_UP_DUE", resourceType: "LEAD", resourceId: current.leadId,
+          actorId: "system:follow-up-scheduler", actorRoles: [], correlationId: `follow-up-due:${current.id}`,
+          result: "SUCCESS", idempotencyKey: `follow-up-due:${current.id}`,
+          after: { followUpId: current.id, state: current.state, dueAt: current.dueAt, version: current.version },
+        } });
+        claimed.push(current);
+      }
+      return claimed;
+    }, { isolationLevel: "Serializable" });
+  }
+
   async schedule(
     record: FollowUpRecord,
     mutation: FollowUpMutationInput,

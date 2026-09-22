@@ -193,6 +193,25 @@ model AuditEvent {
   @@map("audit_events")
 }
 
+model InternalNotification {
+  id               String    @id @default(uuid()) @db.Uuid
+  recipientId      String    @map("recipient_id") @db.VarChar(64)
+  type             String    @db.VarChar(40)
+  priority         String    @db.VarChar(16)
+  resourceType     String    @map("resource_type") @db.VarChar(40)
+  resourceId       String    @map("resource_id") @db.VarChar(64)
+  href             String    @db.VarChar(320)
+  deduplicationKey String    @unique @map("deduplication_key") @db.VarChar(160)
+  fingerprint      String    @db.VarChar(64)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  readAt           DateTime? @map("read_at") @db.Timestamptz(6)
+
+  @@index([recipientId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([recipientId, readAt, createdAt(sort: Desc)])
+  @@index([resourceType, resourceId])
+  @@map("internal_notifications")
+}
+
 model Collaborator {
   id                    String                   @id @default(uuid()) @db.Uuid
   professionalDisplayName String?                 @map("professional_display_name") @db.VarChar(120)

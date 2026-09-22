@@ -68,9 +68,11 @@ import { ImportReviewController } from "./import-review/import-review.controller
 import { ImportReviewService } from "./import-review/import-review.service.js";
 import { NotificationController } from "./notifications/notification.controller.js";
 import { NotificationService } from "./notifications/notification.service.js";
+import { NotificationPersistenceRepository } from "./notifications/notification-persistence.repository.js";
 import { FollowUpController } from "./follow-up/follow-up.controller.js";
 import { FollowUpService } from "./follow-up/follow-up.service.js";
 import { FollowUpPersistenceRepository } from "./follow-up/follow-up-persistence.repository.js";
+import { FollowUpDueScheduler } from "./follow-up/follow-up-due.scheduler.js";
 import { ClosureController } from "./closure/closure.controller.js";
 import { ClosureService } from "./closure/closure.service.js";
 import { LeadCollaborationController } from "./collaboration/lead-collaboration.controller.js";
@@ -168,6 +170,7 @@ import { resolve } from "node:path";
     ImportWizardService,
     ImportReviewService,
     NotificationService,
+    NotificationPersistenceRepository,
     ChatService,
     LocalBroadcastPublisher,
     BroadcastService,
@@ -181,6 +184,7 @@ import { resolve } from "node:path";
     AppointmentPersistenceRepository,
     FollowUpService,
     FollowUpPersistenceRepository,
+    FollowUpDueScheduler,
     ClosureService,
     LeadCollaborationService,
     CommercialFunnelService,
