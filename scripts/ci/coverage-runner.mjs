@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { waitForPostgres } from "./postgres-readiness.mjs";
 
 // Invoked inside c8 by the same canonical command locally and in CI. All child
 // processes inherit NODE_V8_COVERAGE; c8 alone produces/remaps the final LCOV.
 const run = (program, args, options = {}) => execFileSync(program, args, { windowsHide: true, stdio: "inherit", timeout: 900_000, ...options });
 const docker = args => run("docker", args, { stdio: "pipe", timeout: 90_000, encoding: "utf8" });
 const npm = args => run(process.execPath, [process.env.npm_execpath, ...args]);
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function verifyDatabase(url, nonce) {
   const { PrismaClient } = await import("@prisma/client");
@@ -19,13 +19,6 @@ async function verifyDatabase(url, nonce) {
   } finally { await client.$disconnect(); }
 }
 
-async function waitForPostgres(container) {
-  for (let n = 0; ; n++) {
-    try { docker(["exec", container, "pg_isready", "-U", "postgres"]); return; }
-    catch { if (n >= 60) throw Error("coverage_postgres_not_ready"); await delay(250); }
-  }
-}
-
 async function postgresProofs() {
   let container;
   const precreated = process.env.CRMY171_COVERAGE_PRECREATED === "true";
@@ -36,12 +29,12 @@ async function postgresProofs() {
     if (!precreated) {
       container = `crmy171-coverage-${randomUUID()}`;
       docker(["run", "-d", "--name", container, "--publish", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data:rw", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17.6-bookworm"]);
-      await waitForPostgres(container);
+      await waitForPostgres(container, docker);
       port = docker(["port", container, "5432"]).trim().split(":").at(-1);
       if (!/^\d+$/u.test(port ?? "")) throw Error("coverage_postgres_port_invalid");
       for (const database of ["crmy171_synthetic", "crmy171_http_synthetic"]) {
-        docker(["exec", container, "createdb", "-U", "postgres", database]);
-        docker(["exec", container, "psql", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", database, "-c", `CREATE SCHEMA crmy171_test_identity; CREATE TABLE crmy171_test_identity.marker(nonce text NOT NULL); INSERT INTO crmy171_test_identity.marker VALUES ('${nonce}');`]);
+        docker(["exec", container, "createdb", "-h", "127.0.0.1", "-U", "postgres", database]);
+        docker(["exec", container, "psql", "-h", "127.0.0.1", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", database, "-c", `CREATE SCHEMA crmy171_test_identity; CREATE TABLE crmy171_test_identity.marker(nonce text NOT NULL); INSERT INTO crmy171_test_identity.marker VALUES ('${nonce}');`]);
       }
     }
     const direct = `postgresql://postgres@127.0.0.1:${port}/crmy171_synthetic`;
