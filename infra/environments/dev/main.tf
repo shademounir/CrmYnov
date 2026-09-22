@@ -9,7 +9,7 @@ locals {
     managed-by  = "terraform"
   }
   services = toset([
-    "artifactregistry.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com",
+    "artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "cloudresourcemanager.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com",
     "run.googleapis.com", "secretmanager.googleapis.com", "servicenetworking.googleapis.com",
     "serviceusage.googleapis.com", "sqladmin.googleapis.com", "cloudscheduler.googleapis.com",
   ])
@@ -706,10 +706,6 @@ resource "google_billing_budget" "dev" {
       threshold_percent = threshold_rules.value
       spend_basis       = "CURRENT_SPEND"
     }
-  }
-  all_updates_rule {
-    monitoring_notification_channels = var.budget_notification_channels
-    disable_default_iam_recipients   = false
   }
   lifecycle {
     precondition {

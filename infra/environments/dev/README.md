@@ -32,9 +32,11 @@ The expected first deployment has Cloud Run scale-to-zero services and a zonal
 `db-f1-micro`. At the prices reviewed on 2026-09-22, the database compute is
 about USD 7.67/month before storage/backups; Cloud Run is usage-based and its
 free tier can cover a lightly used DEV service. Reserve USD 25-60/month for the
-pilot and keep the USD 150 budget alert as the hard approval boundary. Shared
-core Cloud SQL has no SLA and is DEV-only.
+pilot. The managed USD 150 monthly budget alerts default IAM recipients at 50%,
+80%, and 100%; it is a governance signal, not a spending cap. Shared-core Cloud
+SQL has no SLA and is DEV-only. Keep `manage_budget=false` in committed examples
+because the billing account remains an apply-time sensitive value; the deployed
+DEV state owns the enabled budget.
 
 Inspect every saved plan for replacement or destruction. Cloud SQL and Cloud Run
-use deletion protection. Budgets alert but do not cap spending; budget management
-stays disabled until the existing Foundation budget is reconciled.
+use deletion protection. Budgets alert but do not cap spending.

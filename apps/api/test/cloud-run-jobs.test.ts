@@ -70,3 +70,39 @@ test("runtime database grant validates the allowlist and executes the bounded gr
   assert.match(runtimeDatabaseGrantFailure(null), /crm_runtime_database_grant_failed/u);
   assert.match(runtimeDatabaseGrantFailure(new Error("crm_runtime_database_role_invalid")), /crm_runtime_database_role_invalid/u);
 });
+
+test("runtime database grant reports a safe failing stage and Cloud Run correlation without leaking the connection", async () => {
+  let statement = 0;
+  await assert.rejects(
+    runRuntimeDatabaseGrantJob({
+      runtimeRole: "crm_runtime",
+      createClient: () => ({
+        $executeRaw: (): Promise<unknown> => {
+          statement += 1;
+          if (statement === 4) return Promise.reject(Object.assign(new Error("postgresql://private:secret@host/db"), { code: "P1001" }));
+          return Promise.resolve(1);
+        },
+        $disconnect: (): Promise<void> => Promise.resolve(),
+      }),
+      write: () => undefined,
+    }),
+    (error: unknown) => {
+      const event = JSON.parse(runtimeDatabaseGrantFailure(error, {
+        CLOUD_RUN_EXECUTION: "crm-dev-grant-runtime-database-safe1",
+        CLOUD_RUN_TASK_INDEX: "0",
+        CLOUD_RUN_TASK_ATTEMPT: "2",
+      })) as Record<string, unknown>;
+      assert.deepEqual(event, {
+        job: "grant-runtime-database",
+        completed: false,
+        code: "P1001",
+        stage: "grant_database_connect",
+        execution: "crm-dev-grant-runtime-database-safe1",
+        taskIndex: "0",
+        taskAttempt: "2",
+      });
+      assert.doesNotMatch(JSON.stringify(event), /secret|postgresql|private/u);
+      return true;
+    },
+  );
+});

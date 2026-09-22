@@ -81,7 +81,3 @@ variable "budget_amount_usd" {
     error_message = "DEV estimate authorization is limited to 150 USD/month."
   }
 }
-variable "budget_notification_channels" {
-  type    = set(string)
-  default = []
-}

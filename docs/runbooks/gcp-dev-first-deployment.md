@@ -87,7 +87,10 @@ USD 0,0105/heure, soit environ USD 7,67 pour 730 heures, avant stockage,
 sauvegardes et réseau. Cloud Run est facturé à l'usage et scale à zéro. Artifact
 Registry inclut les premiers 0,5 Gio/mois. La borne d'autorisation reste une
 alerte mensuelle de USD 150 ; une alerte ne bloque pas automatiquement les
-dépenses. `db-f1-micro` n'a pas de SLA et ne convient qu'à DEV.
+dépenses. L'alerte DEV gérée par Terraform prévient les destinataires IAM par
+défaut à 50 %, 80 % et 100 %. Le compte de facturation est une variable sensible
+d'apply et n'est pas commité. `db-f1-micro` n'a pas de SLA et ne convient qu'à
+DEV.
 
 Références officielles :
 
@@ -107,6 +110,36 @@ Références officielles :
   lisibilité d'une sauvegarde.
 - En cas d'échec avant smoke test, laisser le Scheduler en pause et ne pas
   exposer un service partiellement initialisé.
+
+## Diagnostic de démarrage des jobs PostgreSQL
+
+Les jobs n'ont aucun retry implicite pour la migration, l'octroi des droits ou
+le seed. Un échec n'autorise pas un rejeu aveugle. Il faut d'abord conserver
+l'exécution Cloud Run, son horodatage et l'événement applicatif expurgé.
+
+Le job `grant-runtime-database` émet uniquement : étape SQL bornée, code Prisma
+public lorsqu'il existe, nom d'exécution, index de tâche et tentative. Il ne
+journalise jamais l'exception brute, l'URL PostgreSQL ou un secret. Une nouvelle
+tentative n'est justifiée qu'après qualification de l'une des catégories
+suivantes : configuration, connectivité/initialisation Prisma, permission SQL,
+ou incident de plateforme. Les anciens échecs sans cette télémétrie restent
+« cause indéterminée » ; leur succès ultérieur ne constitue pas un diagnostic.
+
+## Frontière Storage et Pub/Sub de CRMY-30
+
+Le cahier des charges impose un bucket privé pour les documents candidats et un
+transport asynchrone fondé sur outbox, consommation idempotente, retries bornés
+et DLQ. Leur activation ne se réduit pas à créer une ressource vide :
+
+- CRMY-90 porte la promotion antivirus et le stockage documentaire actif ;
+- CRMY-87 porte la publication outbox, Pub/Sub, reprise et déduplication ;
+- le bucket `runtime/dev` contient exclusivement l'état Terraform et ne satisfait
+  aucun de ces besoins métier.
+
+CRMY-30 prouve la plateforme de données PostgreSQL. La création du bucket métier,
+du topic, de la souscription et de la DLQ attend les contrats de CRMY-90/87 et
+leurs tests de bout en bout. Aucun faux événement ou objet vide n'est créé pour
+fermer artificiellement CRMY-30.
 
 ## Preuve CRMY-30 : migration N-1
 
