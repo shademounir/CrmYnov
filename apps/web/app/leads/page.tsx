@@ -9,12 +9,7 @@ import DashboardReturnLink from "./dashboard-return-link";
 import { LeadDirectory } from "./lead-directory";
 import { SavedViews } from "./saved-views";
 import { LeadCreationDrawer } from "./lead-creation";
-
-type LeadPageMode = "directory" | "follow-up";
-
-export function leadPageMode(view: string | null | undefined): LeadPageMode {
-  return view?.trim().toUpperCase() === "FOLLOW_UP" ? "follow-up" : "directory";
-}
+import { leadPageMode, type LeadPageMode } from "./lead-page-mode";
 
 function LeadResults({ queryString, mode }: Readonly<{ queryString: string; mode: LeadPageMode }>): React.JSX.Element {
   const query = new URLSearchParams(queryString);

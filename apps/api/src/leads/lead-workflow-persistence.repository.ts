@@ -1,6 +1,7 @@
 import { ConflictException, Inject, Injectable } from "@nestjs/common";
 import type { LeadClosureRequest as PrismaClosureRequest, LeadCollaborationRequest as PrismaCollaborationRequest, Prisma, ReassignmentRequest as PrismaReassignmentRequest } from "@prisma/client";
 import type { ReassignmentRequest } from "../assignment/reassignment.service.js";
+import type { Principal } from "../auth/auth.types.js";
 import type { ClosureRequest } from "../closure/closure.service.js";
 import type { CollaborationRequest } from "../collaboration/lead-collaboration.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
@@ -9,6 +10,12 @@ type WorkflowSnapshot = Readonly<{
   reassignments: ReassignmentRequest[];
   collaborations: CollaborationRequest[];
   closures: ClosureRequest[];
+}>;
+
+type ClosureAuditContext = Readonly<{
+  eventType: "CLOSURE_REQUESTED" | "CLOSURE_APPROVED" | "CLOSURE_REJECTED" | "CLOSURE_CANCELLED";
+  principal: Principal;
+  correlationId: string;
 }>;
 
 @Injectable()
@@ -104,19 +111,40 @@ export class LeadWorkflowPersistenceRepository {
     }, { isolationLevel: "Serializable" });
   }
 
-  async saveClosure(item: ClosureRequest, expectedVersion?: number): Promise<ClosureRequest> {
+  async saveClosure(item: ClosureRequest, expectedVersion?: number, audit?: ClosureAuditContext): Promise<ClosureRequest> {
     const client = this.requiredClient();
     return client.$transaction(async (tx) => {
       if (expectedVersion === undefined) {
-        return this.mapClosure(await tx.leadClosureRequest.create({ data: this.closureData(item) }));
+        const row = await tx.leadClosureRequest.create({ data: this.closureData(item) });
+        if (audit) await this.auditClosure(tx, item, audit);
+        return this.mapClosure(row);
       }
       const updated = await tx.leadClosureRequest.updateMany({ where: { id: item.id, state: "PENDING", version: expectedVersion }, data: {
         state: item.state, version: { increment: 1 }, decidedAt: item.decidedAt ? new Date(item.decidedAt) : null,
         decidedBy: item.decidedBy ?? null, decisionReason: item.decisionReason ?? null,
       } });
       if (updated.count !== 1) throw new ConflictException({ code: "closure_concurrent_decision" });
-      return this.mapClosure(await tx.leadClosureRequest.findUniqueOrThrow({ where: { id: item.id } }));
+      const row = await tx.leadClosureRequest.findUniqueOrThrow({ where: { id: item.id } });
+      if (audit) await this.auditClosure(tx, item, audit);
+      return this.mapClosure(row);
     }, { isolationLevel: "Serializable" });
+  }
+
+  private async auditClosure(tx: Prisma.TransactionClient, item: ClosureRequest, context: ClosureAuditContext): Promise<void> {
+    const lead = await tx.lead.findUniqueOrThrow({ where: { id: item.leadId }, select: { campus: true } });
+    await tx.auditEvent.create({ data: {
+      eventType: context.eventType,
+      campusId: lead.campus,
+      resourceType: "LEAD",
+      resourceId: item.leadId,
+      actorId: context.principal.userId,
+      actorRoles: [...context.principal.roles],
+      sessionId: context.principal.sessionId,
+      correlationId: context.correlationId.slice(0, 64),
+      result: "SUCCESS",
+      idempotencyKey: `closure-audit:${context.eventType}:${item.id}:${item.version}`,
+      after: { requestId: item.id, leadId: item.leadId, target: item.target, state: item.state, version: item.version, evidenceCount: item.evidence.length },
+    } });
   }
 
   private requiredClient(): NonNullable<PrismaService["client"]> {

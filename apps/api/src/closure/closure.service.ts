@@ -28,7 +28,7 @@ export class ClosureService implements OnModuleInit {
     if (!this.persistence?.enabled) return this.request(leadId, input, principal, correlationId);
     await this.refreshPersistentState();
     const record = this.request(leadId, input, principal, correlationId);
-    const stored = await this.persistence.saveClosure(record);
+    const stored = await this.persistence.saveClosure(record, undefined, { eventType: "CLOSURE_REQUESTED", principal, correlationId });
     await this.refreshPersistentState(); return stored;
   }
 
@@ -41,7 +41,9 @@ export class ClosureService implements OnModuleInit {
       () => this.decide(id, input, principal, correlationId),
       principal, correlationId,
     );
-    const stored = await this.persistence.saveClosure(updated, current.version);
+    const stored = await this.persistence.saveClosure(updated, current.version, {
+      eventType: updated.state === "APPROVED" ? "CLOSURE_APPROVED" : "CLOSURE_REJECTED", principal, correlationId,
+    });
     await this.refreshPersistentState(); return stored;
   }
 
@@ -50,7 +52,7 @@ export class ClosureService implements OnModuleInit {
     await this.refreshPersistentState();
     const current = this.requests.get(id); if (!current) throw new NotFoundException({ code: "closure_request_not_found" });
     const updated = this.cancel(id, principal, correlationId);
-    const stored = await this.persistence.saveClosure(updated, current.version);
+    const stored = await this.persistence.saveClosure(updated, current.version, { eventType: "CLOSURE_CANCELLED", principal, correlationId });
     await this.refreshPersistentState(); return stored;
   }
 

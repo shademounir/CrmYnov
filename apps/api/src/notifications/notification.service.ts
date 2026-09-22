@@ -49,7 +49,7 @@ export class NotificationService implements OnModuleInit, OnModuleDestroy {
 
   async flush(): Promise<void> {
     await this.persistenceQueue;
-    if (this.persistenceFailure) { const failure = this.persistenceFailure; this.persistenceFailure = undefined; throw failure; }
+    if (this.persistenceFailure) { const failure = this.persistenceFailure; this.persistenceFailure = undefined; throw failure instanceof Error ? failure : new Error("notification_persistence_failed", { cause: failure }); }
   }
 
   list(principal: Principal, page: number, pageSize: number): NotificationPage {

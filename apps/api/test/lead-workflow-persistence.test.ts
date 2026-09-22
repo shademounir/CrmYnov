@@ -4,6 +4,7 @@ import test from "node:test";
 import type { PrismaService } from "../src/persistence/prisma.service.js";
 import { LeadWorkflowPersistenceRepository } from "../src/leads/lead-workflow-persistence.repository.js";
 import type { ReassignmentRequest } from "../src/assignment/reassignment.service.js";
+import type { Principal } from "../src/auth/auth.types.js";
 import type { CollaborationRequest } from "../src/collaboration/lead-collaboration.service.js";
 import type { ClosureRequest } from "../src/closure/closure.service.js";
 
@@ -15,8 +16,8 @@ const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify((e
 
 type Row = Record<string, unknown> & { id: string };
 
-function fakeRepository(): { repository: LeadWorkflowPersistenceRepository; rows: { reassignments: Row[]; collaborations: Row[]; closures: Row[] } } {
-  const rows = { reassignments: [] as Row[], collaborations: [] as Row[], closures: [] as Row[] };
+function fakeRepository(): { repository: LeadWorkflowPersistenceRepository; rows: { reassignments: Row[]; collaborations: Row[]; closures: Row[]; audits: Row[] } } {
+  const rows = { reassignments: [] as Row[], collaborations: [] as Row[], closures: [] as Row[], audits: [] as Row[] };
   const delegate = (items: Row[], kind: "reassignment" | "collaboration" | "closure") => ({
     findMany: async () => [...items],
     findUnique: async ({ where }: { where: Record<string, unknown> }) => items.find((item) => Object.entries(where).every(([key, value]) => item[key] === value)) ?? null,
@@ -41,6 +42,8 @@ function fakeRepository(): { repository: LeadWorkflowPersistenceRepository; rows
     reassignmentRequest: delegate(rows.reassignments, "reassignment"),
     leadCollaborationRequest: delegate(rows.collaborations, "collaboration"),
     leadClosureRequest: delegate(rows.closures, "closure"),
+    lead: { findUniqueOrThrow: async () => ({ campus: "SYNTHETIC-CAMPUS" }) },
+    auditEvent: { create: async ({ data }: { data: Row }) => { const row = { ...data, id: data.id ?? `audit-${rows.audits.length + 1}` } as Row; rows.audits.push(row); return row; } },
     $transaction: async (value: unknown) => typeof value === "function" ? (value as (tx: unknown) => unknown)(client) : Promise.all(value as Promise<unknown>[]),
   };
   const prisma = { enabled: true, client } as unknown as PrismaService;
@@ -53,6 +56,7 @@ const collaboration = (): CollaborationRequest => ({ id: "00000000-0000-4000-800
   action: "ADD", role: "ADVISER", justification: "Collaboration synthétique", requesterId: ownerId, state: "PENDING", version: 1, createdAt: now.toISOString() });
 const closure = (): ClosureRequest => ({ id: "00000000-0000-4000-8000-000000000206", leadId, target: "ENROLLED", reason: "ADMISSION_CONFIRMED",
   comment: "Clôture synthétique", evidence: ["SYNTHETIC_CHECK"], requesterId: ownerId, state: "PENDING", version: 1, createdAt: now.toISOString() });
+const requester: Principal = { userId: ownerId, roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "00000000-0000-4000-8000-000000000207" };
 
 test("persists workflow requests, hydrates them and replays reassignment idempotently", async () => {
   const { repository } = fakeRepository();
@@ -88,6 +92,19 @@ test("uses optimistic versions for collaboration and closure decisions", async (
   const rejected = await repository.saveClosure({ ...closureRecord, state: "REJECTED", version: 2, decidedAt: now.toISOString(), decidedBy: targetId, decisionReason: "Justification synthétique" }, 1);
   assert.equal(rejected.state, "REJECTED");
   await assert.rejects(() => repository.saveClosure(rejected, 1), hasCode("closure_concurrent_decision"));
+});
+
+test("persists closure workflow audits atomically with their request and decision", async () => {
+  const { repository, rows } = fakeRepository();
+  const requested = await repository.saveClosure(closure(), undefined, { eventType: "CLOSURE_REQUESTED", principal: requester, correlationId: "closure-request-correlation" });
+  assert.equal(rows.audits.length, 1);
+  assert.deepEqual(rows.audits[0]?.after, { requestId: requested.id, leadId, target: "ENROLLED", state: "PENDING", version: 1, evidenceCount: 1 });
+  assert.equal(rows.audits[0]?.eventType, "CLOSURE_REQUESTED");
+  await repository.saveClosure({ ...requested, state: "APPROVED", version: 2, decidedAt: now.toISOString(), decidedBy: targetId, decisionReason: "Validation synthétique" }, 1,
+    { eventType: "CLOSURE_APPROVED", principal: { ...requester, userId: targetId, roles: ["MANAGER"] }, correlationId: "closure-decision-correlation" });
+  assert.equal(rows.audits.length, 2);
+  assert.equal(rows.audits[1]?.eventType, "CLOSURE_APPROVED");
+  assert.equal((rows.audits[1]?.after as { version?: number }).version, 2);
 });
 
 test("fails closed without a configured local PostgreSQL client", async () => {

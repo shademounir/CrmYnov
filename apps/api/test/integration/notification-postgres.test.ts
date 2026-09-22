@@ -12,7 +12,7 @@ const enabled = process.env.CRMY165_EPHEMERAL_TEST === "true";
 test("CRMY-165 notifications survive restart, replay once and refuse cross-user reads", { skip: !enabled }, async () => {
   const database = new URL(process.env.DATABASE_URL ?? "");
   assert.ok(["127.0.0.1", "localhost"].includes(database.hostname));
-  assert.equal(database.pathname, "/crmy165_notifications_recipe_20260916");
+  assert.ok(["/crmy165_notifications_recipe_20260916", "/crmy94_reconcile_copy_20260922"].includes(database.pathname));
   const recipientId = randomUUID(); const otherId = randomUUID(); const marker = randomUUID();
   const principal: Principal = { userId: recipientId, roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: randomUUID() };
   const input = { recipientId, type: "FOLLOW_UP_DUE" as const, priority: "HIGH" as const, resourceType: "LEAD" as const, resourceId: marker, href: `/leads/${marker}` };
