@@ -22,7 +22,8 @@ export async function createApplication(logLevel: "error" | "warn" | "log" = "er
 export function configureApplication(app: INestApplication): void {
   app.use(correlationMiddleware);
   app.use(authenticationMiddleware(app.get(SessionService)));
-  app.enableCors({ origin: "http://localhost:3000", methods: ["GET", "POST", "DELETE", "PATCH"] });
+  const corsOrigin = process.env.CRM_CORS_ORIGIN?.trim();
+  if (corsOrigin) app.enableCors({ origin: corsOrigin, methods: ["GET", "POST", "DELETE", "PATCH"] });
   app.enableShutdownHooks();
   const openApi = {
     openapi: "3.0.3",

@@ -1,0 +1,9 @@
+project_id = "crmynov-dev-n7x4q2"
+region     = "europe-west1"
+api_image  = ""
+web_image  = ""
+deploy_services = false
+scheduler_paused = true
+wif_deploy_principal = ""
+manage_budget = false
+budget_amount_usd = 150

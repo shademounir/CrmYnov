@@ -1,0 +1,4 @@
+project_id  = "crmynov-dev-n7x4q2"
+region      = "europe-west1"
+bucket_name = "crmynov-runtime-tfstate-dev-n7x4q2"
+state_iam_bindings = {}

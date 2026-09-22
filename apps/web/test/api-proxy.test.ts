@@ -61,6 +61,18 @@ test("proxy forwards a bounded authenticated mutation and strips upstream tokens
   assert.deepEqual(await response.json(), { id: "lead-synthetic" });
 });
 
+test("proxy keeps application authorization separate from Cloud Run service identity", async () => {
+  let observed = new Headers();
+  const proxy = proxyWith({
+    getServiceAuthorization: () => Promise.resolve("Bearer google-id-token"),
+    fetch: (_input, init) => { observed = new Headers(init?.headers); return Promise.resolve(Response.json({ ok: true })); },
+  });
+  const response = await proxy(jsonRequest("leads"), context("leads"));
+  assert.equal(response.status, 200);
+  assert.equal(observed.get("authorization"), "Bearer synthetic-session");
+  assert.equal(observed.get("x-serverless-authorization"), "Bearer google-id-token");
+});
+
 test("proxy stores a successful login token only in a secure server cookie", async () => {
   const proxy = proxyWith({
     getSession: () => Promise.resolve(undefined),

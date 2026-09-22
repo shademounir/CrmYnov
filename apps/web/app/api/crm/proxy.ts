@@ -8,6 +8,7 @@ export interface ProxyDependencies {
   apiOrigin: () => string;
   fetch: typeof fetch;
   getSession: () => Promise<string | undefined>;
+  getServiceAuthorization?: (audience: string) => Promise<string | undefined>;
   production: boolean;
   randomId: () => string;
 }
@@ -26,6 +27,8 @@ export function createProxy(dependencies: Readonly<ProxyDependencies>) {
       const correlationId = dependencies.randomId();
       const headers = new Headers({ accept: "application/json", "x-correlation-id": correlationId });
       if (session) headers.set("authorization", `Bearer ${session}`);
+      const serviceAuthorization = await dependencies.getServiceAuthorization?.(dependencies.apiOrigin());
+      if (serviceAuthorization) headers.set("x-serverless-authorization", serviceAuthorization);
       let body: ArrayBuffer | undefined;
       if (METHODS_WITH_BODY.has(request.method)) {
         body = await request.arrayBuffer();

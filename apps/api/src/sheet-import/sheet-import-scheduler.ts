@@ -15,7 +15,7 @@ export class SheetImportScheduler implements OnModuleInit, OnModuleDestroy {
     @Inject(ScheduledSheetExecutor) private readonly executor: ScheduledSheetExecutor) {}
 
   onModuleInit(): void {
-    if (this.prisma.enabled) this.schedule();
+    if (this.prisma.enabled && process.env.CRM_BACKGROUND_WORKERS !== "external") this.schedule();
   }
 
   async onModuleDestroy(): Promise<void> {

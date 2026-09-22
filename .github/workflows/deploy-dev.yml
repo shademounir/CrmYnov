@@ -1,0 +1,182 @@
+name: Deploy integrated CRM to GCP DEV
+
+on:
+  workflow_dispatch:
+    inputs:
+      integrated_sha:
+        description: Exact origin/develop SHA reviewed for DEV
+        required: true
+        type: string
+      run_synthetic_seed:
+        description: Run the idempotent synthetic-only seed
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: gcp-dev-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy exact integrated SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+    env:
+      PROJECT_ID: crmynov-dev-n7x4q2
+      REGION: europe-west1
+      REPOSITORY: crm-ynov-dev
+      TF_ROOT: infra/environments/dev
+      TF_IN_AUTOMATION: "true"
+      INTEGRATED_SHA: ${{ inputs.integrated_sha }}
+      TF_VAR_wif_deploy_principal: ${{ vars.GCP_WIF_DEPLOY_PRINCIPAL }}
+    steps:
+      - name: Check out the exact reviewed revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ inputs.integrated_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse a SHA other than current develop
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin develop
+          test "$(git rev-parse HEAD)" = "${INTEGRATED_SHA}"
+          test "$(git rev-parse origin/develop)" = "${INTEGRATED_SHA}"
+
+      - name: Authenticate keylessly through the reviewed WIF provider
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: crmynov-dev-n7x4q2
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          version: ">= 552.0.0"
+
+      - name: Install Terraform 1.15.8
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Initialize reviewed remote state
+        shell: bash
+        run: terraform -chdir="${TF_ROOT}" init -input=false -lockfile=readonly -backend-config="bucket=${{ vars.GCP_DEV_STATE_BUCKET }}" -backend-config="prefix=runtime/dev"
+
+      - name: Plan and apply foundational DEV resources without services
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" plan -input=false -out=foundation.tfplan -var='api_image=' -var='web_image=' -var='deploy_services=false' -var='scheduler_paused=true'
+          terraform -chdir="${TF_ROOT}" show -json foundation.tfplan > foundation.json
+          test "$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' foundation.json)" = "0"
+          terraform -chdir="${TF_ROOT}" apply -input=false foundation.tfplan
+          rm -f "${TF_ROOT}/foundation.tfplan" "${TF_ROOT}/foundation.json"
+
+      - name: Configure Artifact Registry authentication
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push exact API and Web images
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/api:${INTEGRATED_SHA}"
+          WEB_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/web:${INTEGRATED_SHA}"
+          docker build --file apps/api/Dockerfile --tag "${API_TAG}" .
+          docker build --file apps/web/Dockerfile --tag "${WEB_TAG}" .
+          docker push "${API_TAG}"
+          docker push "${WEB_TAG}"
+          API_DIGEST="$(gcloud artifacts docker images describe "${API_TAG}" --format='value(image_summary.digest)')"
+          WEB_DIGEST="$(gcloud artifacts docker images describe "${WEB_TAG}" --format='value(image_summary.digest)')"
+          echo "API_IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/api@${API_DIGEST}" >> "${GITHUB_ENV}"
+          echo "WEB_IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/web@${WEB_DIGEST}" >> "${GITHUB_ENV}"
+
+      - name: Scan final pushed images
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.API_IMAGE }}
+          version: v0.70.0
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+
+      - name: Scan final Web image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.WEB_IMAGE }}
+          version: v0.70.0
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+
+      - name: Create jobs using immutable image digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" plan -input=false -out=jobs.tfplan -var="api_image=${API_IMAGE}" -var="web_image=${WEB_IMAGE}" -var='deploy_services=false' -var='scheduler_paused=true'
+          terraform -chdir="${TF_ROOT}" show -json jobs.tfplan > jobs.json
+          test "$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' jobs.json)" = "0"
+          terraform -chdir="${TF_ROOT}" apply -input=false jobs.tfplan
+          rm -f "${TF_ROOT}/jobs.tfplan" "${TF_ROOT}/jobs.json"
+
+      - name: Migrate and grant runtime privileges
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run jobs execute crm-dev-migrate --project="${PROJECT_ID}" --region="${REGION}" --wait
+          gcloud run jobs execute crm-dev-grant-runtime-database --project="${PROJECT_ID}" --region="${REGION}" --wait
+
+      - name: Seed synthetic DEV identities
+        if: ${{ inputs.run_synthetic_seed }}
+        run: gcloud run jobs execute crm-dev-seed-synthetic --project="${PROJECT_ID}" --region="${REGION}" --wait
+
+      - name: Create services with Scheduler still paused
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" plan -input=false -out=services.tfplan -var="api_image=${API_IMAGE}" -var="web_image=${WEB_IMAGE}" -var='deploy_services=true' -var='scheduler_paused=true'
+          terraform -chdir="${TF_ROOT}" show -json services.tfplan > services.json
+          test "$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' services.json)" = "0"
+          terraform -chdir="${TF_ROOT}" apply -input=false services.tfplan
+          rm -f "${TF_ROOT}/services.tfplan" "${TF_ROOT}/services.json"
+
+      - name: Smoke-test the public Web BFF
+        shell: bash
+        run: |
+          set -euo pipefail
+          WEB_URL="$(terraform -chdir="${TF_ROOT}" output -raw web_uri)"
+          test -n "${WEB_URL}"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "${WEB_URL}/api/health" >/dev/null
+          echo "WEB_URL=${WEB_URL}" >> "${GITHUB_ENV}"
+
+      - name: Enable the verified due-job schedule
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="${TF_ROOT}" plan -input=false -out=scheduler.tfplan -var="api_image=${API_IMAGE}" -var="web_image=${WEB_IMAGE}" -var='deploy_services=true' -var='scheduler_paused=false'
+          terraform -chdir="${TF_ROOT}" show -json scheduler.tfplan > scheduler.json
+          test "$(jq '[.resource_changes[]? | select(.change.actions | index("delete"))] | length' scheduler.json)" = "0"
+          terraform -chdir="${TF_ROOT}" apply -input=false scheduler.tfplan
+          rm -f "${TF_ROOT}/scheduler.tfplan" "${TF_ROOT}/scheduler.json"
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          {
+            echo '### GCP DEV deployment'
+            echo "- Integrated SHA: \`${INTEGRATED_SHA}\`"
+            echo "- Web: ${WEB_URL}"
+            echo '- Sheets, inbound telephony and audio recording remain disabled.'
+          } >> "${GITHUB_STEP_SUMMARY}"

@@ -272,8 +272,24 @@ test("state buckets are isolated and fail closed", () => {
   assert.doesNotMatch(stateModule, /retention_policy/);
 });
 
-test("Phase 2 runtime resources are absent", () => {
-  assert.doesNotMatch(terraform, /resource\s+"google_(cloud_run|sql|artifact_registry|secret_manager|compute_network)/);
+test("Foundation roots remain free of Phase 2 runtime resources", () => {
+  const bootstrapTerraform = filesBelow(path.join(infra, "bootstrap"), (file) => file.endsWith(".tf"))
+    .filter((file) => !file.includes(`${path.sep}dev-runtime-state${path.sep}`))
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+  assert.doesNotMatch(bootstrapTerraform, /resource\s+"google_(cloud_run|sql|artifact_registry|secret_manager|compute_network)/);
+});
+
+test("DEV runtime is isolated, deletion-protected and uses immutable images", () => {
+  const devRoot = path.join(infra, "environments", "dev");
+  const dev = filesBelow(devRoot, (file) => file.endsWith(".tf")).map((file) => readFileSync(file, "utf8")).join("\n");
+  assert.match(dev, /crmynov-dev-n7x4q2/);
+  assert.doesNotMatch(dev, /crmynov-(stg|prod)-n7x4q2/);
+  assert.match(dev, /deletion_protection\s*=\s*true/);
+  assert.match(dev, /prevent_destroy\s*=\s*true/);
+  assert.match(dev, /@sha256:\[0-9a-f\]\{64\}/);
+  assert.match(dev, /CRM_BACKGROUND_WORKERS/);
+  assert.match(dev, /FORMINATOR_WEBHOOK_ENABLED[\s\S]*false/);
 });
 
 test("billing identifiers and credential artifacts are absent", () => {
