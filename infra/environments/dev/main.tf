@@ -340,7 +340,7 @@ resource "google_cloud_run_v2_service" "api" {
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.database_url.secret_id
-            version = "latest"
+            version = google_secret_manager_secret_version.database_url_private.version
           }
         }
       }
@@ -492,7 +492,7 @@ resource "google_cloud_run_v2_job" "migrate" {
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.migration_database_url.secret_id
-              version = "latest"
+              version = google_secret_manager_secret_version.migration_database_url_private.version
             }
           }
         }
@@ -541,7 +541,7 @@ resource "google_cloud_run_v2_job" "grant_runtime_database" {
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.migration_database_url.secret_id
-              version = "latest"
+              version = google_secret_manager_secret_version.migration_database_url_private.version
             }
           }
         }
@@ -587,7 +587,7 @@ resource "google_cloud_run_v2_job" "seed_synthetic" {
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.database_url.secret_id
-              version = "latest"
+              version = google_secret_manager_secret_version.database_url_private.version
             }
           }
         }
@@ -650,7 +650,7 @@ resource "google_cloud_run_v2_job" "follow_up_due" {
           value_source {
             secret_key_ref {
               secret  = google_secret_manager_secret.database_url.secret_id
-              version = "latest"
+              version = google_secret_manager_secret_version.database_url_private.version
             }
           }
         }
