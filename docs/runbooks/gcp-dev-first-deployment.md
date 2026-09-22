@@ -79,3 +79,54 @@ Références officielles :
   lisibilité d'une sauvegarde.
 - En cas d'échec avant smoke test, laisser le Scheduler en pause et ne pas
   exposer un service partiellement initialisé.
+
+## Preuve CRMY-30 : migration N-1
+
+La preuve reproductible utilise uniquement PostgreSQL 17.6 éphémère et des
+données synthétiques :
+
+```powershell
+$env:CRMY171_MIGRATION_TEST = "true"
+node --test scripts/pr-policy/tests/migration-postgres.test.mjs
+```
+
+Le test crée une base vierge et une base antérieure peuplée, applique les
+migrations restantes, compare les lignes antérieures avant/après et contrôle
+les contraintes. Il ne touche ni la base de recette, ni `_prisma_migrations`
+d'une base persistante.
+
+## Preuve CRMY-30 : sauvegarde et restauration Cloud SQL
+
+Cette preuve ne peut être exécutée qu'après la création de l'instance Cloud SQL
+DEV. Elle n'est pas un prérequis technique à la fusion du code Terraform ; elle
+est une validation d'exploitation post-apply. Tant qu'elle n'est pas exécutée,
+le critère Jira correspondant reste ouvert.
+
+1. Vérifier le projet `crmynov-dev-n7x4q2`, la région `europe-west1`, le SHA
+   intégré et l'absence de données réelles. Laisser le Scheduler en pause et
+   arrêter les producteurs DEV avant la sauvegarde.
+2. Relever l'identité exacte de l'instance source, sa configuration de
+   sauvegarde, l'heure serveur, le nombre de migrations appliquées et des
+   compteurs exclusivement synthétiques. Ne jamais consigner de secret ou de
+   chaîne de connexion.
+3. Créer une sauvegarde Cloud SQL à la demande et conserver son identifiant, son
+   état final, ses horodatages, le projet et l'identité de l'instance. Une
+   sauvegarde seulement lisible ne constitue pas une restauration testée.
+4. Restaurer cette sauvegarde dans une instance temporaire distincte, privée,
+   dans le même projet DEV et la même région. Ne jamais restaurer sur l'instance
+   source et ne jamais modifier son historique Prisma.
+5. Avec une identité de vérification au moindre privilège, confirmer la version
+   PostgreSQL, l'intégrité du schéma, le nombre et les checksums des migrations,
+   puis comparer les compteurs synthétiques attendus. Exécuter une lecture
+   métier bornée ; aucune mutation n'est nécessaire pour prouver la restauration.
+6. Conserver une preuve expurgée : commandes sans credentials, identifiants des
+   opérations, résultats, horodatages, compteurs et erreurs éventuelles. Relier
+   la preuve au SHA exact déployé et à CRMY-30.
+7. Garder l'instance temporaire isolée jusqu'à revue de la preuve. Sa suppression
+   est une opération séparée et contrôlée ; elle ne doit jamais viser la source,
+   ses sauvegardes ou l'état Terraform du runtime.
+
+Échec ou ambiguïté : laisser les producteurs arrêtés, ne pas rejouer une
+restauration sur la source et conserver les deux instances pour diagnostic. Le
+retour arrière applicatif reste le redéploiement des digests précédents ; une
+restauration de données n'est jamais déclenchée automatiquement.
