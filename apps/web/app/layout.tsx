@@ -11,6 +11,8 @@ import "./leads/shared-views.css";
 import "./leads/lead-creation-pilot.css";
 import "./leads/lead-profile.css";
 import "./manager/reports/commercial-funnel/pipeline-pilot.css";
+import "./calls/queue/calls.css";
+import "./admin/telephony/telephony.css";
 import "./notifications/notifications.css";
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {

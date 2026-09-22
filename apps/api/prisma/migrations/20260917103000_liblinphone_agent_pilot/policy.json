@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "migration": "20260917103000_liblinphone_agent_pilot",
+  "migrationSha256": "9dbb907da5768e831c9b97c4971b46de0e9a17cb48d715ea365b660e3ead4bb5",
+  "markers": ["additive", "ephemeral-only", "rollback-documented", "uniqueness-validated"]
+}

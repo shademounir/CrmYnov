@@ -1,2 +1,21 @@
+import { PhoneCall } from "@phosphor-icons/react/dist/ssr";
 import React from "react";
-export default function CallQueuePage(): React.JSX.Element { return <main><h1>Appels à traiter</h1><nav aria-label="Vues d’appels"><a href="?view=missed">Appels manqués</a> <a href="?view=verify">À vérifier</a></nav><p>Les appels sans correspondance ou avec collision attendent une confirmation humaine. Aucun lead n’est créé ou réaffecté automatiquement.</p><table><caption>File synthétique sans numéro en clair</caption><thead><tr><th>Direction</th><th>Numéro</th><th>État</th><th>Rapprochement</th></tr></thead><tbody><tr><td>Entrant</td><td>***123</td><td>MISSED</td><td>À vérifier</td></tr></tbody></table></main>; }
+import { CallQueue } from "./call-queue";
+
+export default function CallQueuePage(): React.JSX.Element {
+  return <main className="calls-page">
+    <header className="ui-page-header calls-page__header">
+      <div>
+        <p className="eyebrow">Travail quotidien · Téléphonie</p>
+        <h1>Appels à traiter</h1>
+        <p>Retrouvez les appels manqués et les rapprochements qui nécessitent une décision humaine.</p>
+      </div>
+      <span className="calls-page__icon" aria-hidden="true"><PhoneCall size={24} /></span>
+    </header>
+    <aside className="ui-note calls-page__safeguard" role="note">
+      <strong>Mode manuel local</strong>
+      <span>Aucun appel, webhook ou enregistrement audio réel n’est déclenché depuis cet écran.</span>
+    </aside>
+    <CallQueue />
+  </main>;
+}

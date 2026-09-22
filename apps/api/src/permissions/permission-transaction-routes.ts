@@ -28,7 +28,7 @@ const readers: Readonly<Record<string, readonly string[]>> = {
   SourceEffectivenessController: ["read"],
   SharedContributionController: ["read"],
   OperationalRiskController: ["read"],
-  TelephonyController: ["configuration", "detail", "queue", "recording", "webhookStatus"],
+  TelephonyController: ["configuration", "listLeadCalls", "detail", "associationCandidates", "queue", "recording", "webhookStatus"],
   FollowUpController: ["list"],
   AppointmentController: ["list", "availability", "kpis", "detail"],
   ChatController: ["listConversations", "listMessages"],

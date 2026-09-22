@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The official generated 5.5.21 wrapper contains deprecated members and
+         pre-nullability annotations. Keep warnings visible without rewriting it. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS0612;CS0618;CS8600;CS8601;CS8602;CS8603;CS8618;CS8625;CS8765</NoWarn>
+    <AssemblyName>CrmYnov.TelephonyAgent</AssemblyName>
+    <RootNamespace>CrmYnov.TelephonyAgent</RootNamespace>
+    <AgentVersion>0.4.8-pilot</AgentVersion>
+    <Version>0.4.8</Version>
+    <AssemblyVersion>0.4.8.0</AssemblyVersion>
+    <FileVersion>0.4.8.0</FileVersion>
+    <InformationalVersion>0.4.8-pilot</InformationalVersion>
+    <ApplicationIcon>Assets\agent-icon.ico</ApplicationIcon>
+    <LiblinphoneSdkRoot Condition="'$(LiblinphoneSdkRoot)' == ''">$(LIBLINPHONE_SDK_ROOT)</LiblinphoneSdkRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs')">
+    <Compile Include="$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs" Link="Generated\LinphoneWrapper.cs" />
+  </ItemGroup>
+
+  <Target Name="VerifyLiblinphoneSdk" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs')" Text="Set LIBLINPHONE_SDK_ROOT to the extracted official win64 SDK root." />
+    <Error Condition="!Exists('$(LiblinphoneSdkRoot)\bin\liblinphone.dll')" Text="The selected SDK root does not contain bin\liblinphone.dll." />
+  </Target>
+
+  <Target Name="CopyLiblinphoneRuntime" AfterTargets="Build">
+    <ItemGroup>
+      <LiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*" />
+      <!-- The OpenH264 plugin requires a separately distributed Cisco binary
+           which is neither needed nor licensed for this audio-only pilot. -->
+      <LiblinphonePlugins Include="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\**\*"
+                           Exclude="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\libmsopenh264.*" />
+      <LiblinphoneSounds Include="$(LiblinphoneSdkRoot)\share\sounds\**\*" />
+      <LiblinphoneImages Include="$(LiblinphoneSdkRoot)\share\images\**\*" />
+      <LiblinphoneGrammars Include="$(LiblinphoneSdkRoot)\share\belr\grammars\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LiblinphoneRuntime)" DestinationFiles="@(LiblinphoneRuntime->'$(OutDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(LiblinphonePlugins)" DestinationFiles="@(LiblinphonePlugins->'$(OutDir)plugins\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(LiblinphoneSounds)" DestinationFiles="@(LiblinphoneSounds->'$(OutDir)share\sounds\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(LiblinphoneImages)" DestinationFiles="@(LiblinphoneImages->'$(OutDir)share\images\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(LiblinphoneGrammars)" DestinationFiles="@(LiblinphoneGrammars->'$(OutDir)share\belr\grammars\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyLiblinphoneRuntimeToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedLiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*" />
+      <PublishedLiblinphonePlugins Include="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\**\*"
+                                   Exclude="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\libmsopenh264.*" />
+      <PublishedLiblinphoneSounds Include="$(LiblinphoneSdkRoot)\share\sounds\**\*" />
+      <PublishedLiblinphoneImages Include="$(LiblinphoneSdkRoot)\share\images\**\*" />
+      <PublishedLiblinphoneGrammars Include="$(LiblinphoneSdkRoot)\share\belr\grammars\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PublishedLiblinphoneRuntime)" DestinationFiles="@(PublishedLiblinphoneRuntime->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishedLiblinphonePlugins)" DestinationFiles="@(PublishedLiblinphonePlugins->'$(PublishDir)plugins\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishedLiblinphoneSounds)" DestinationFiles="@(PublishedLiblinphoneSounds->'$(PublishDir)share\sounds\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishedLiblinphoneImages)" DestinationFiles="@(PublishedLiblinphoneImages->'$(PublishDir)share\images\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishedLiblinphoneGrammars)" DestinationFiles="@(PublishedLiblinphoneGrammars->'$(PublishDir)share\belr\grammars\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

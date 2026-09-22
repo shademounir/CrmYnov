@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "migration": "20260916163500_persist_telephony_dispatch",
+  "migrationSha256": "9c4aac1bf25a3e21b67ae93b4401181e8c6b74578afdb27a73bb1d1356894234",
+  "markers": ["additive", "ephemeral-only", "rollback-documented"]
+}

@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import { LeadAssignmentDrawer } from "./lead-assignment-drawer";
 import { LeadFollowUpDrawer } from "./lead-follow-up-drawer";
 import { LeadInteractionDrawer } from "./lead-interaction-drawer";
+import { LeadCallDrawer } from "./lead-call-drawer";
 import { LeadQualificationDrawer } from "./lead-qualification-drawer";
 import { LeadStatusDrawer } from "./lead-status-drawer";
 import { LeadEditDrawer } from "./lead-edit-workflow";
@@ -248,6 +249,14 @@ const resultLabels: Readonly<Record<string, string>> = {
   COMPLETED: "Action terminée",
   FOLLOW_UP_REQUIRED: "Relance nécessaire",
   INFORMATION_RECORDED: "Information enregistrée",
+  CALL_REQUESTED: "Demande d’appel enregistrée",
+  CALL_DIALING: "Numérotation en cours",
+  CALL_RINGING: "Sonnerie en cours",
+  CALL_ANSWERED: "Appel décroché",
+  CALL_ENDED: "Appel terminé",
+  CALL_MISSED: "Appel sans réponse",
+  CALL_FAILED: "Appel en échec",
+  CALL_CANCELLED: "Appel annulé",
 };
 
 export function interactionResultLabel(result: string): string {
@@ -282,21 +291,25 @@ function RelationRow({ icon, label, value, href }: Readonly<{ icon: React.ReactN
   return href ? <Link className="lead-profile__relation-row" href={href}>{content}</Link> : <div className="lead-profile__relation-row">{content}</div>;
 }
 
-function ContactShortcuts({ lead, name }: Readonly<{ lead: LeadProfileRecord; name: string }>): React.JSX.Element | null {
+function openCallPanel(triggerId: string): void {
+  document.getElementById(triggerId)?.click();
+}
+
+function ContactShortcuts({ lead, name, callTriggerId }: Readonly<{ lead: LeadProfileRecord; name: string; callTriggerId: string }>): React.JSX.Element | null {
   if (!lead.email && !lead.phone) return null;
   return <nav className="lead-profile__contact-shortcuts" aria-label="Contacter le prospect">
     <div className="lead-profile__contact-actions">
       {lead.email ? <a href={`mailto:${lead.email}`} aria-label={`Envoyer un email à ${name}`}><EnvelopeSimple size={20} aria-hidden="true" /></a> : null}
-      {lead.phone ? <a href={`tel:${lead.phone}`} aria-label={`Appeler ${name}`}><Phone size={20} aria-hidden="true" /></a> : null}
+      {lead.phone ? <button className="lead-profile__call-shortcut" type="button" aria-label={`Appeler ${name} depuis le CRM`} onClick={() => openCallPanel(callTriggerId)}><Phone size={20} aria-hidden="true" /></button> : null}
     </div>
     <div className="lead-profile__contact-details">
       {lead.email ? <a href={`mailto:${lead.email}`}><EnvelopeSimple size={15} aria-hidden="true" /><bdi dir="auto">{lead.email}</bdi></a> : null}
-      {lead.phone ? <a href={`tel:${lead.phone}`}><Phone size={15} aria-hidden="true" /><bdi dir="auto">{lead.phone}</bdi></a> : null}
+      {lead.phone ? <button className="lead-profile__call-shortcut" type="button" aria-label={`Appeler ${name} depuis le CRM`} onClick={() => openCallPanel(callTriggerId)}><Phone size={15} aria-hidden="true" /><bdi dir="auto">{lead.phone}</bdi></button> : null}
     </div>
   </nav>;
 }
 
-function ProfileHeader({ lead, name, nameNeedsReview }: Readonly<{ lead: LeadProfileRecord; name: string; nameNeedsReview: boolean }>): React.JSX.Element {
+function ProfileHeader({ lead, name, nameNeedsReview, callTriggerId }: Readonly<{ lead: LeadProfileRecord; name: string; nameNeedsReview: boolean; callTriggerId: string }>): React.JSX.Element {
   return <header className="lead-profile__header">
     <div>
       <p className="eyebrow">Lead · {lead.leadCode}</p>
@@ -304,7 +317,7 @@ function ProfileHeader({ lead, name, nameNeedsReview }: Readonly<{ lead: LeadPro
       {nameNeedsReview ? <p className="lead-profile__name-warning">Une partie du nom source est à vérifier.</p> : null}
       <p>Dossier prospect centralisé : informations, actions et historique dans une seule vue.</p>
     </div>
-    <ContactShortcuts lead={lead} name={name} />
+    <ContactShortcuts lead={lead} name={name} callTriggerId={callTriggerId} />
   </header>;
 }
 
@@ -322,14 +335,16 @@ function completionProps(onLeadChanged: ((message: string) => void) | undefined,
   return onLeadChanged ? { onCompleted: () => onLeadChanged(message) } : {};
 }
 
-function ProfileActions({ lead, onLeadChanged, onLeadEdited }: Readonly<{
+function ProfileActions({ lead, callTriggerId, onLeadChanged, onLeadEdited }: Readonly<{
   lead: LeadProfileRecord;
+  callTriggerId: string;
   onLeadChanged?: (message: string) => void;
   onLeadEdited?: (lead: LeadProfileRecord) => void;
 }>): React.JSX.Element {
   const assignmentTriggerId = `lead-assignment-${lead.id}`;
   return <nav className="lead-profile__actions" aria-label="Actions principales du lead">
     <LeadEditDrawer lead={lead} {...(onLeadEdited ? { onCompleted: onLeadEdited } : {})} />
+    <LeadCallDrawer leadId={lead.id} leadCode={lead.leadCode} triggerId={callTriggerId} {...(lead.phone ? { phone: lead.phone } : {})} {...completionProps(onLeadChanged, "Commande d’appel enregistrée et état relu depuis le serveur.")} />
     <LeadInteractionDrawer leadId={lead.id} leadCode={lead.leadCode} {...completionProps(onLeadChanged, "Interaction enregistrée dans l’historique protégé.")} />
     <LeadAssignmentDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} triggerId={assignmentTriggerId} {...completionProps(onLeadChanged, lead.assignedToId ? "Demande de réaffectation enregistrée." : "Affectation enregistrée.")} />
     <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...completionProps(onLeadChanged, "Étape commerciale enregistrée.")} />
@@ -339,7 +354,7 @@ function ProfileActions({ lead, onLeadChanged, onLeadEdited }: Readonly<{
   </nav>;
 }
 
-function RelationPanel({ lead }: Readonly<{ lead: LeadProfileRecord }>): React.JSX.Element {
+function RelationPanel({ lead, callTriggerId }: Readonly<{ lead: LeadProfileRecord; callTriggerId: string }>): React.JSX.Element {
   const contactVisible = Boolean(lead.email || lead.phone);
   const collaboratorCount = lead.collaboratorIds.length;
   const collaborators = collaboratorCount ? `${collaboratorCount} collaborateur${collaboratorCount > 1 ? "s" : ""}` : "Aucun collaborateur";
@@ -358,7 +373,7 @@ function RelationPanel({ lead }: Readonly<{ lead: LeadProfileRecord }>): React.J
       <h3>Coordonnées</h3>
       {contactVisible ? <div className="lead-profile__contact-list">
         {lead.email ? <a href={`mailto:${lead.email}`}><EnvelopeSimple size={18} aria-hidden="true" /> {lead.email}</a> : null}
-        {lead.phone ? <a href={`tel:${lead.phone}`}><Phone size={18} aria-hidden="true" /> {lead.phone}</a> : null}
+        {lead.phone ? <button className="lead-profile__call-shortcut" type="button" aria-label="Appeler depuis le CRM" onClick={() => openCallPanel(callTriggerId)}><Phone size={18} aria-hidden="true" /> {lead.phone}</button> : null}
       </div> : <p>Masquées ou indisponibles pour cette session.</p>}
     </div>
   </aside>;
@@ -385,17 +400,18 @@ export function LeadProfileView({ lead, events, actionMessage, onLeadChanged, on
   const nameNeedsReview = [lead.firstName, lead.lastName].some((part) => part.trim() && !validNamePart(part));
   const recentEvents = events.slice(0, 6);
   const lastContact = lastContactSummary(events);
+  const callTriggerId = `lead-call-${lead.id}`;
 
   return <main className="lead-profile">
     <Link className="lead-profile__back" href="/leads"><ArrowLeft size={17} aria-hidden="true" /> Retour aux leads</Link>
-    <ProfileHeader lead={lead} name={name} nameNeedsReview={nameNeedsReview} />
+    <ProfileHeader lead={lead} name={name} nameNeedsReview={nameNeedsReview} callTriggerId={callTriggerId} />
     <CommercialPanel lead={lead} lastContact={lastContact} />
-    <ProfileActions lead={lead} {...(onLeadChanged ? { onLeadChanged } : {})} {...(onLeadEdited ? { onLeadEdited } : {})} />
+    <ProfileActions lead={lead} callTriggerId={callTriggerId} {...(onLeadChanged ? { onLeadChanged } : {})} {...(onLeadEdited ? { onLeadEdited } : {})} />
 
     {actionMessage ? <p className="lead-profile__action-feedback" role="status">{actionMessage}</p> : null}
 
     <div className="lead-profile__content-grid">
-      <RelationPanel lead={lead} />
+      <RelationPanel lead={lead} callTriggerId={callTriggerId} />
       <TimelinePanel leadId={lead.id} events={recentEvents} />
     </div>
 

@@ -105,6 +105,8 @@ test("uses business labels and neutral fallbacks", () => {
   assert.equal(timelineEventLabel("UNKNOWN"), "Événement de suivi");
   assert.equal(interactionResultLabel("NO_ANSWER"), "Injoignable");
   assert.equal(interactionResultLabel("FOLLOW_UP_REQUIRED"), "Relance nécessaire");
+  assert.equal(interactionResultLabel("CALL_ANSWERED"), "Appel décroché");
+  assert.equal(interactionResultLabel("CALL_ENDED"), "Appel terminé");
 });
 test("isolates mixed writing directions without altering the lead identity", () => {
   const lead: LeadProfileRecord = {

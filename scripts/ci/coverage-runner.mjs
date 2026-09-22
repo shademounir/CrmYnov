@@ -44,6 +44,11 @@ async function postgresProofs() {
     run(process.execPath, ["--import", "tsx", "--test", "test/integration/notification-postgres.test.ts"], {
       cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY165_EPHEMERAL_TEST: "true", CRMY171_DATABASE_NONCE: nonce },
     });
+    for (const [testFile, flag] of [["telephony-postgres.test.ts", "CRMY165_TELEPHONY_TEST"], ["telephony-agent-postgres.test.ts", "CRMY165_AGENT_TEST"]]) {
+      run(process.execPath, ["--import", "tsx", "--test", `test/integration/${testFile}`], {
+        cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, [flag]: "true", CRMY171_DATABASE_NONCE: nonce },
+      });
+    }
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });
     for (const testFile of ["sheet-local-postgres.test.ts", "sheet-local-executor-postgres.test.ts", "sheet-local-admin-postgres.test.ts"]) {
       run(process.execPath, ["--import", "tsx", "--test", `test/${testFile}`], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });

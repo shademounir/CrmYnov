@@ -38,7 +38,8 @@
 .lead-profile__contact h3 { margin: 0 0 10px; font-size: 12px; }
 .lead-profile__contact p { margin: 0; color: var(--muted); font-size: 10px; }
 .lead-profile__contact-list { display: grid; gap: 8px; }
-.lead-profile__contact-list a { min-width: 0; color: var(--teal-dark); display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; font-size: 10px; font-weight: 700; }
+.lead-profile__contact-list a, .lead-profile__contact-list button { min-width: 0; color: var(--teal-dark); display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; font: inherit; font-size: 10px; font-weight: 700; }
+.lead-profile__call-shortcut { margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .lead-profile__text-link { min-height: 36px; color: var(--teal-dark); display: inline-flex; align-items: center; font-size: 10px; font-weight: 700; }
 .lead-profile__timeline ol { margin: 0; padding: 0 0 0 18px; list-style: none; }
 .lead-profile__timeline li { position: relative; min-height: 77px; padding: 0 0 18px 23px; border-left: 1px solid #cbd5d9; }
@@ -87,6 +88,13 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-assignment-dialog__feedback { margin: 0; padding: 13px 14px; border-radius: 7px; font-size: 11px; font-weight: 700; }
 .lead-assignment-dialog__feedback--preview, .lead-assignment-dialog__feedback--success { background: var(--green-soft); color: var(--green); }
 .lead-assignment-dialog__feedback--error { background: var(--red-soft); color: var(--red); }
+.lead-call-dialog__recipient, .lead-call-dialog__state { padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: #fff; }
+.lead-call-dialog__recipient strong { display: block; margin: 8px 0; font-size: 24px; letter-spacing: .06em; }
+.lead-call-dialog__recipient p:last-child, .lead-call-dialog__state p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.lead-call-dialog__identity { margin: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.lead-call-dialog__state h3 { margin: 7px 0 0; font-size: 20px; }
+.lead-call-dialog__state--uncertain { border-color: #d89322; background: #fff9ee; }
+.lead-call-dialog__state--rejected { border-color: var(--red); background: var(--red-soft); }
 .lead-status-dialog__journey { padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: #f8fafb; display: grid; gap: 10px; }
 .lead-status-dialog__journey h3, .lead-status-dialog__journey p { margin: 0; }
 .lead-status-dialog__journey h3 { font-size: 13px; }
@@ -228,11 +236,11 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-profile__header .lead-profile__name-warning { width: fit-content; margin: 6px 0 0; padding: 3px 8px; border-radius: 999px; background: var(--amber-soft); color: #713d00; font-size: 10px; font-weight: 700; }
 .lead-profile__contact-shortcuts { min-width: 260px; display: grid; justify-items: end; gap: 8px; }
 .lead-profile__contact-actions { display: flex; gap: 8px; }
-.lead-profile__contact-shortcuts a { width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--teal-dark); display: grid; place-items: center; text-decoration: none; }
-.lead-profile__contact-shortcuts a:hover { border-color: var(--teal); background: var(--teal-soft); }
+.lead-profile__contact-shortcuts a, .lead-profile__contact-shortcuts button { width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--teal-dark); display: grid; place-items: center; text-decoration: none; }
+.lead-profile__contact-shortcuts a:hover, .lead-profile__contact-shortcuts button:hover { border-color: var(--teal); background: var(--teal-soft); }
 .lead-profile__contact-details { display: grid; justify-items: end; gap: 4px; }
-.lead-profile__contact-details a { width: auto; height: auto; border: 0; border-radius: 0; background: transparent; display: inline-flex; justify-content: flex-end; gap: 7px; font-size: 11px; font-weight: 600; }
-.lead-profile__contact-details a:hover { border-color: transparent; background: transparent; text-decoration: underline; }
+.lead-profile__contact-details a, .lead-profile__contact-details button { width: auto; height: auto; border: 0; border-radius: 0; background: transparent; display: inline-flex; justify-content: flex-end; gap: 7px; font: inherit; font-size: 11px; font-weight: 600; }
+.lead-profile__contact-details a:hover, .lead-profile__contact-details button:hover { border-color: transparent; background: transparent; text-decoration: underline; }
 .lead-profile__commercial { padding: 0 18px; box-shadow: 0 4px 16px rgb(29 29 30 / 2%); }
 .lead-profile__commercial > dl { min-height: 88px; margin: 0; display: grid; grid-template-columns: .85fr 1.2fr 1fr .9fr 1.2fr; align-items: stretch; }
 .lead-profile__fact { min-width: 0; padding: 16px 20px; border-left: 1px solid var(--border); display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 10px; }
@@ -346,7 +354,7 @@ a.lead-profile__relation-row:hover { color: var(--teal-dark); background: #fbfdf
   .lead-profile__header > div::before { height: 43px; }
   .lead-profile__contact-shortcuts { width: 100%; min-width: 0; justify-items: start; }
   .lead-profile__contact-details { justify-items: start; }
-  .lead-profile__contact-details a { justify-content: flex-start; }
+  .lead-profile__contact-details a, .lead-profile__contact-details button { justify-content: flex-start; }
   .lead-profile__commercial { padding: 0 14px; }
   .lead-profile__commercial > dl { grid-template-columns: 1fr; }
   .lead-profile__fact, .lead-profile__fact:nth-child(3), .lead-profile__fact:nth-child(4), .lead-profile__fact:nth-child(5) { min-height: 63px; padding: 11px 4px; border-top: 1px solid var(--border); border-left: 0; }
@@ -374,7 +382,7 @@ a.lead-profile__relation-row:hover { color: var(--teal-dark); background: #fbfdf
   .lead-profile__relation { order: 5; }
   .lead-profile__timeline { order: 6; }
   .lead-profile__secondary { order: 7; }
-  .lead-profile__contact-actions a { width: 42px; height: 42px; border-radius: 50%; }
+  .lead-profile__contact-actions a, .lead-profile__contact-actions button { width: 42px; height: 42px; border-radius: 50%; }
   .lead-profile__relation-row { min-height: 60px; }
   .lead-profile__timeline-tabs { gap: 18px; overflow-x: auto; }
   .lead-profile__timeline { min-height: 320px; }
