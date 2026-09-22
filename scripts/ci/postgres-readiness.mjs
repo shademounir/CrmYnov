@@ -8,5 +8,5 @@ export async function waitForPostgres(container, docker, delay = ms => new Promi
     } catch { /* Retry only this read-only readiness probe. */ }
     if (attempt < 60) await delay(250);
   }
-  throw Error("coverage_postgres_not_ready");
+  throw new Error("coverage_postgres_not_ready");
 }

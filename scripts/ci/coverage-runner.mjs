@@ -41,6 +41,9 @@ async function postgresProofs() {
     const http = `postgresql://postgres@127.0.0.1:${port}/crmy171_http_synthetic`;
     await verifyDatabase(direct, nonce); await verifyDatabase(http, nonce);
     run(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", "apps/api/prisma/schema.prisma"], { env: { ...process.env, DATABASE_URL: direct } });
+    run(process.execPath, ["--import", "tsx", "--test", "test/integration/notification-postgres.test.ts"], {
+      cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY165_EPHEMERAL_TEST: "true", CRMY171_DATABASE_NONCE: nonce },
+    });
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });
     for (const testFile of ["sheet-local-postgres.test.ts", "sheet-local-executor-postgres.test.ts", "sheet-local-admin-postgres.test.ts"]) {
       run(process.execPath, ["--import", "tsx", "--test", `test/${testFile}`], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });

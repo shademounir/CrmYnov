@@ -34,3 +34,20 @@ These are local proofs, not a substitute for new-SHA CI or Sonar analysis.
 The full CI suite, scans and Sonar must run after publication. PR remains
 Draft/manual-po. No human approval, label, Jira transition, merge or deployment.
 PR93's squash and the separate PR95 worktree are preserved.
+
+## Follow-up after the first remote rerun
+
+At `0c862d50cee87507a077292627dbcf4367ed31f4`, Playwright and LCOV generation
+passed remotely. Sonar actually analyzed this SHA and reported new-code coverage
+74.9% against the unchanged 80% requirement; all other gate conditions passed.
+The Notifications PostgreSQL scenario was not invoked by the coverage runner.
+Invoke it explicitly on the isolated, nonce-verified coverage database, and
+extend its assertions to cover read replay, owned-resource access and refusal,
+fingerprint conflicts, bulk read isolation and unique audit after replay.
+The extended scenario passed on the isolated populated copy (one test, no skip),
+and the 17 CI helper tests passed again. No production database mutation or
+coverage exclusion is needed. New-SHA Sonar confirmation remains required.
+
+Policy run `35714893309` now accepts the audit and refuses with
+`jira_codex_ready_missing`. The unresolved dependency and manual PO prerequisites
+remain visible; no governance state was changed.
