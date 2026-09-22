@@ -58,10 +58,15 @@ test("runtime database grant validates the allowlist and executes the bounded gr
     write: (message) => writes.push(message),
   });
 
-  assert.equal(statements.length, 6);
-  assert.ok(statements.every((statement) => statement.includes('"crm_runtime"')));
+  assert.equal(statements.length, 10);
+  assert.match(statements[0] ?? "", /REVOKE cloudsqlsuperuser/u);
+  assert.match(statements[1] ?? "", /NOCREATEDB NOCREATEROLE CONNECTION LIMIT 20/u);
+  assert.match(statements[2] ?? "", /REVOKE CREATE ON SCHEMA public FROM PUBLIC/u);
+  assert.match(statements[9] ?? "", /REVOKE ALL ON TABLE public\."_prisma_migrations"/u);
   assert.equal(disconnected, 1);
   assert.deepEqual(JSON.parse(writes[0] ?? "{}"), { job: "grant-runtime-database", completed: true, runtimeRole: "crm_runtime" });
-  assert.match(runtimeDatabaseGrantFailure(new Error("synthetic_failure")), /synthetic_failure/u);
-  assert.match(runtimeDatabaseGrantFailure(null), /unknown_error/u);
+  assert.match(runtimeDatabaseGrantFailure(new Error("postgresql://private:secret@host/db")), /crm_runtime_database_grant_failed/u);
+  assert.doesNotMatch(runtimeDatabaseGrantFailure(new Error("postgresql://private:secret@host/db")), /secret|postgresql/u);
+  assert.match(runtimeDatabaseGrantFailure(null), /crm_runtime_database_grant_failed/u);
+  assert.match(runtimeDatabaseGrantFailure(new Error("crm_runtime_database_role_invalid")), /crm_runtime_database_role_invalid/u);
 });

@@ -20,7 +20,7 @@ application initiale et la conservation de son petit état local doivent être
 tracées avant d'initialiser le backend runtime.
 
 Le provider WIF historique du projet Bootstrap reste la cible. Les variables de
-l'environnement GitHub `dev` doivent contenir uniquement ses références :
+l'environnement GitHub `DEV` doivent contenir uniquement ses références :
 
 - `GCP_WIF_PROVIDER` ;
 - `GCP_WIF_DEPLOY_PRINCIPAL` ;
@@ -33,6 +33,34 @@ minimal au Bootstrap pour le consulter et l'administrer ; ne pas recréer le
 projet.
 
 ## Séquence CI/CD
+
+### Exception initiale CRMY-30 autorisée le 22 septembre 2026
+
+Le PO autorise le provisioning DEV avant fusion de PR96 afin de prouver la
+restauration Cloud SQL. Le même backend `runtime/dev` reste seul propriétaire
+des ressources ; aucun `-target` ni état parallèle n'est utilisé. Première phase :
+images vides, `deploy_services=false`, `scheduler_paused=true`. Deuxième phase :
+`job_image` contient uniquement le digest API contrôlé, les images des services
+restent vides. Les jobs ne s'exécutent que sur commande explicite et le Scheduler
+reste en pause. Les services Web/API seront publiés après fusion personnelle.
+
+L'identité humaine existante autorisée peut réaliser cette phase ; cette
+exécution ne prouve pas le fonctionnement du WIF institutionnel. `gh-deploy-dev`
+est géré ici dans DEV ; la racine Bootstrap WIF ne doit pas gérer en parallèle
+cette même identité. Un futur transfert d'état nécessite une opération explicite.
+
+PostgreSQL 17 est explicitement en édition `ENTERPRISE` pour `db-f1-micro`.
+Les jobs utilisent Direct VPC et une connexion TCP privée chiffrée. Les versions
+initiales des secrets de connexion sont conservées ; de nouvelles versions TCP
+privées sont ajoutées sans suppression. Le job de droits retire `cloudsqlsuperuser`,
+CREATEDB et CREATEROLE du compte applicatif, interdit CREATE dans le schéma public,
+borne ses connexions à 20 et refuse son accès à `_prisma_migrations`.
+
+Un déploiement ultérieur conserve les images applicatives existantes pendant
+la phase de migration grâce à `job_image`. Il ne remet pas les services à zéro.
+L'instance de restauration est limitée au même petit gabarit pour au plus
+24 heures : enveloppe ponctuelle de 2 USD, hors rétention normale des sauvegardes.
+Sa suppression seule est autorisée après validation des preuves.
 
 Le workflow `deploy-dev.yml` refuse un SHA différent du HEAD courant de
 `origin/develop`, toute action Terraform de suppression et toute image non liée

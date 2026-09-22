@@ -1,5 +1,7 @@
 locals {
   deploy_images   = var.api_image != "" && var.web_image != ""
+  job_image       = var.job_image != "" ? var.job_image : var.api_image
+  deploy_jobs     = local.job_image != ""
   deploy_services = local.deploy_images && var.deploy_services
   labels = {
     application = "crm-ynov"
@@ -84,6 +86,7 @@ resource "google_sql_database_instance" "postgres" {
   database_version    = "POSTGRES_17"
   deletion_protection = true
   settings {
+    edition           = "ENTERPRISE"
     tier              = "db-f1-micro"
     availability_type = "ZONAL"
     disk_type         = "PD_SSD"
@@ -155,7 +158,7 @@ resource "google_service_account" "scheduler" {
 }
 resource "google_service_account" "deploy" {
   project      = var.project_id
-  account_id   = "crm-dev-deploy"
+  account_id   = "gh-deploy-dev"
   display_name = "CRM DEV keyless deployer"
   description  = "Impersonated only through the existing Bootstrap WIF provider."
 }
@@ -173,6 +176,11 @@ resource "google_secret_manager_secret_version" "database_url" {
   secret      = google_secret_manager_secret.database_url.id
   secret_data = "postgresql://${google_sql_user.runtime.name}:${urlencode(random_password.runtime_database.result)}@localhost/${google_sql_database.crm.name}?host=${urlencode("/cloudsql/${google_sql_database_instance.postgres.connection_name}")}&connection_limit=5"
 }
+resource "google_secret_manager_secret_version" "database_url_private" {
+  secret      = google_secret_manager_secret.database_url.id
+  secret_data = "postgresql://${google_sql_user.runtime.name}:${urlencode(random_password.runtime_database.result)}@${google_sql_database_instance.postgres.private_ip_address}:5432/${google_sql_database.crm.name}?sslmode=require&connection_limit=5"
+  depends_on  = [google_secret_manager_secret_version.database_url]
+}
 resource "google_secret_manager_secret" "migration_database_url" {
   project   = var.project_id
   secret_id = "crm-dev-migration-database-url"
@@ -185,6 +193,11 @@ resource "google_secret_manager_secret" "migration_database_url" {
 resource "google_secret_manager_secret_version" "migration_database_url" {
   secret      = google_secret_manager_secret.migration_database_url.id
   secret_data = "postgresql://${google_sql_user.migrator.name}:${urlencode(random_password.migration_database.result)}@localhost/${google_sql_database.crm.name}?host=${urlencode("/cloudsql/${google_sql_database_instance.postgres.connection_name}")}&connection_limit=2"
+}
+resource "google_secret_manager_secret_version" "migration_database_url_private" {
+  secret      = google_secret_manager_secret.migration_database_url.id
+  secret_data = "postgresql://${google_sql_user.migrator.name}:${urlencode(random_password.migration_database.result)}@${google_sql_database_instance.postgres.private_ip_address}:5432/${google_sql_database.crm.name}?sslmode=require&connection_limit=2"
+  depends_on  = [google_secret_manager_secret_version.migration_database_url]
 }
 resource "google_secret_manager_secret" "telephony_encryption" {
   project   = var.project_id
@@ -443,7 +456,7 @@ resource "google_cloud_run_v2_service_iam_member" "public_web" {
 }
 
 resource "google_cloud_run_v2_job" "migrate" {
-  count               = local.deploy_images ? 1 : 0
+  count               = local.deploy_jobs ? 1 : 0
   project             = var.project_id
   name                = "crm-dev-migrate"
   location            = var.region
@@ -454,6 +467,13 @@ resource "google_cloud_run_v2_job" "migrate" {
       service_account = google_service_account.jobs.email
       timeout         = "900s"
       max_retries     = 0
+      vpc_access {
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.dev.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+      }
       volumes {
         name = "cloudsql"
         cloud_sql_instance {
@@ -461,7 +481,7 @@ resource "google_cloud_run_v2_job" "migrate" {
         }
       }
       containers {
-        image = var.api_image
+        image = local.job_image
         args  = ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema=apps/api/prisma/schema.prisma"]
         volume_mounts {
           name       = "cloudsql"
@@ -481,7 +501,7 @@ resource "google_cloud_run_v2_job" "migrate" {
   }
 }
 resource "google_cloud_run_v2_job" "grant_runtime_database" {
-  count               = local.deploy_images ? 1 : 0
+  count               = local.deploy_jobs ? 1 : 0
   project             = var.project_id
   name                = "crm-dev-grant-runtime-database"
   location            = var.region
@@ -492,6 +512,13 @@ resource "google_cloud_run_v2_job" "grant_runtime_database" {
       service_account = google_service_account.jobs.email
       timeout         = "300s"
       max_retries     = 0
+      vpc_access {
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.dev.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+      }
       volumes {
         name = "cloudsql"
         cloud_sql_instance {
@@ -499,7 +526,7 @@ resource "google_cloud_run_v2_job" "grant_runtime_database" {
         }
       }
       containers {
-        image = var.api_image
+        image = local.job_image
         args  = ["apps/api/dist/jobs/grant-runtime-database.js"]
         volume_mounts {
           name       = "cloudsql"
@@ -524,7 +551,7 @@ resource "google_cloud_run_v2_job" "grant_runtime_database" {
   depends_on = [google_cloud_run_v2_job.migrate]
 }
 resource "google_cloud_run_v2_job" "seed_synthetic" {
-  count               = local.deploy_images ? 1 : 0
+  count               = local.deploy_jobs ? 1 : 0
   project             = var.project_id
   name                = "crm-dev-seed-synthetic"
   location            = var.region
@@ -535,6 +562,13 @@ resource "google_cloud_run_v2_job" "seed_synthetic" {
       service_account = google_service_account.jobs.email
       timeout         = "300s"
       max_retries     = 0
+      vpc_access {
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.dev.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+      }
       volumes {
         name = "cloudsql"
         cloud_sql_instance {
@@ -542,7 +576,7 @@ resource "google_cloud_run_v2_job" "seed_synthetic" {
         }
       }
       containers {
-        image = var.api_image
+        image = local.job_image
         args  = ["apps/api/dist-local/prisma/seed-local.js"]
         volume_mounts {
           name       = "cloudsql"
@@ -572,7 +606,7 @@ resource "google_cloud_run_v2_job" "seed_synthetic" {
   depends_on = [google_cloud_run_v2_job.grant_runtime_database]
 }
 resource "google_cloud_run_v2_job" "follow_up_due" {
-  count               = local.deploy_images ? 1 : 0
+  count               = local.deploy_jobs ? 1 : 0
   project             = var.project_id
   name                = "crm-dev-follow-up-due"
   location            = var.region
@@ -583,6 +617,13 @@ resource "google_cloud_run_v2_job" "follow_up_due" {
       service_account = google_service_account.jobs.email
       timeout         = "120s"
       max_retries     = 1
+      vpc_access {
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.dev.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+      }
       volumes {
         name = "cloudsql"
         cloud_sql_instance {
@@ -590,7 +631,7 @@ resource "google_cloud_run_v2_job" "follow_up_due" {
         }
       }
       containers {
-        image = var.api_image
+        image = local.job_image
         args  = ["apps/api/dist/jobs/follow-up-due.js"]
         volume_mounts {
           name       = "cloudsql"
@@ -618,7 +659,7 @@ resource "google_cloud_run_v2_job" "follow_up_due" {
   }
 }
 resource "google_cloud_run_v2_job_iam_member" "scheduler_runs_due" {
-  count    = local.deploy_images ? 1 : 0
+  count    = local.deploy_jobs ? 1 : 0
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_job.follow_up_due[0].name
@@ -626,7 +667,7 @@ resource "google_cloud_run_v2_job_iam_member" "scheduler_runs_due" {
   member   = google_service_account.scheduler.member
 }
 resource "google_cloud_scheduler_job" "follow_up_due" {
-  count       = local.deploy_images ? 1 : 0
+  count       = local.deploy_jobs ? 1 : 0
   project     = var.project_id
   region      = var.region
   name        = "crm-dev-follow-up-due"

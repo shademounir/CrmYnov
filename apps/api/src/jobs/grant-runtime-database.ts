@@ -28,12 +28,17 @@ export async function runRuntimeDatabaseGrantJob(
 
   const prisma = dependencies.createClient();
   try {
+    // Cloud SQL built-in users can inherit administrative privileges by default.
+    await prisma.$executeRaw`REVOKE cloudsqlsuperuser FROM "crm_runtime"`;
+    await prisma.$executeRaw`ALTER ROLE "crm_runtime" NOCREATEDB NOCREATEROLE CONNECTION LIMIT 20`;
+    await prisma.$executeRaw`REVOKE CREATE ON SCHEMA public FROM PUBLIC`;
     await prisma.$executeRaw`GRANT CONNECT ON DATABASE crmynov_dev TO "crm_runtime"`;
     await prisma.$executeRaw`GRANT USAGE ON SCHEMA public TO "crm_runtime"`;
     await prisma.$executeRaw`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "crm_runtime"`;
     await prisma.$executeRaw`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "crm_runtime"`;
     await prisma.$executeRaw`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "crm_runtime"`;
     await prisma.$executeRaw`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO "crm_runtime"`;
+    await prisma.$executeRaw`REVOKE ALL ON TABLE public."_prisma_migrations" FROM "crm_runtime"`;
     dependencies.write(`${JSON.stringify({ job: "grant-runtime-database", completed: true, runtimeRole })}\n`);
   } finally {
     await prisma.$disconnect();
@@ -41,7 +46,9 @@ export async function runRuntimeDatabaseGrantJob(
 }
 
 export function runtimeDatabaseGrantFailure(error: unknown): string {
-  return `${JSON.stringify({ job: "grant-runtime-database", completed: false, code: error instanceof Error ? error.message : "unknown_error" })}\n`;
+  const code = error instanceof Error && ["crm_runtime_database_role_invalid", "crm_runtime_database_role_not_allowlisted"].includes(error.message)
+    ? error.message : "crm_runtime_database_grant_failed";
+  return `${JSON.stringify({ job: "grant-runtime-database", completed: false, code })}\n`;
 }
 
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/jobs/grant-runtime-database.js")) {

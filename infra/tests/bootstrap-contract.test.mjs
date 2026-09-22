@@ -292,6 +292,24 @@ test("DEV runtime is isolated, deletion-protected and uses immutable images", ()
   assert.match(dev, /FORMINATOR_WEBHOOK_ENABLED[\s\S]*false/);
 });
 
+test("DEV migration phase preserves running services and uses private database connectivity", () => {
+  const dev = readFileSync(path.join(infra, "environments", "dev", "main.tf"), "utf8");
+  const workflow = readFileSync(path.join(repository, ".github", "workflows", "deploy-dev.yml"), "utf8");
+  assert.match(dev, /edition\s*=\s*"ENTERPRISE"/);
+  assert.match(dev, /private_ip_address[\s\S]*sslmode=require/);
+  const jobs = dev.split(/resource "google_cloud_run_v2_job" /).slice(1);
+  assert.equal(jobs.length, 4);
+  for (const job of jobs) {
+    assert.match(job, /count\s*=\s*local\.deploy_jobs/);
+    assert.match(job, /vpc_access\s*\{[\s\S]*PRIVATE_RANGES_ONLY/);
+    assert.match(job, /image\s*=\s*local\.job_image/);
+  }
+  assert.match(workflow, /environment: DEV/);
+  assert.match(workflow, /job_image=\$\{API_IMAGE\}/);
+  assert.match(workflow, /api_image=\$\{CURRENT_API_IMAGE\}/);
+  assert.match(workflow, /deploy_services=\$\{CURRENT_SERVICES\}/);
+});
+
 test("billing identifiers and credential artifacts are absent", () => {
   const sourceFiles = filesBelow(repository, (file) => !/package-lock\.json$/.test(file));
   const billingId = /\b[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}\b/;

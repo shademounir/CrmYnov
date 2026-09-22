@@ -34,6 +34,16 @@ variable "web_image" {
   }
 }
 
+variable "job_image" {
+  description = "Optional immutable API digest for migrations before switching the running services."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.job_image == "" || can(regex("@sha256:[0-9a-f]{64}$", var.job_image))
+    error_message = "job_image must be empty or an immutable digest."
+  }
+}
+
 variable "deploy_services" {
   description = "Create Web/API services only after migrate, grants and synthetic seed jobs have completed successfully."
   type        = bool
