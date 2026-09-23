@@ -9,7 +9,10 @@ function luminance(hex: string): number {
 }
 
 function contrast(foreground: string, background: string): number {
-  const [bright, dark] = [luminance(foreground), luminance(background)].sort((left, right) => right - left);
+  const foregroundLuminance = luminance(foreground);
+  const backgroundLuminance = luminance(background);
+  const bright = Math.max(foregroundLuminance, backgroundLuminance);
+  const dark = Math.min(foregroundLuminance, backgroundLuminance);
   return (bright + 0.05) / (dark + 0.05);
 }
 
