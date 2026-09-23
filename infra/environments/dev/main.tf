@@ -408,10 +408,6 @@ resource "google_cloud_run_v2_service" "web" {
         cpu_idle = true
       }
       env {
-        name  = "PORT"
-        value = "3000"
-      }
-      env {
         name  = "HOSTNAME"
         value = "0.0.0.0"
       }
