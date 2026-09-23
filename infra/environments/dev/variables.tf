@@ -81,3 +81,16 @@ variable "budget_amount_usd" {
     error_message = "DEV estimate authorization is limited to 150 USD/month."
   }
 }
+
+variable "alert_notification_channels" {
+  description = "Existing Cloud Monitoring notification channel resource names. Keep empty until a recipient has been confirmed and the channel has been tested."
+  type        = list(string)
+  default     = []
+  validation {
+    condition = alltrue([
+      for channel in var.alert_notification_channels :
+      can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/notificationChannels/[0-9]+$", channel))
+    ])
+    error_message = "Each notification channel must be an existing full Cloud Monitoring resource name in a project."
+  }
+}
