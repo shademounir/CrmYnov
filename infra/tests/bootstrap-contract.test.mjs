@@ -272,8 +272,42 @@ test("state buckets are isolated and fail closed", () => {
   assert.doesNotMatch(stateModule, /retention_policy/);
 });
 
-test("Phase 2 runtime resources are absent", () => {
-  assert.doesNotMatch(terraform, /resource\s+"google_(cloud_run|sql|artifact_registry|secret_manager|compute_network)/);
+test("Foundation roots remain free of Phase 2 runtime resources", () => {
+  const bootstrapTerraform = filesBelow(path.join(infra, "bootstrap"), (file) => file.endsWith(".tf"))
+    .filter((file) => !file.includes(`${path.sep}dev-runtime-state${path.sep}`))
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+  assert.doesNotMatch(bootstrapTerraform, /resource\s+"google_(cloud_run|sql|artifact_registry|secret_manager|compute_network)/);
+});
+
+test("DEV runtime is isolated, deletion-protected and uses immutable images", () => {
+  const devRoot = path.join(infra, "environments", "dev");
+  const dev = filesBelow(devRoot, (file) => file.endsWith(".tf")).map((file) => readFileSync(file, "utf8")).join("\n");
+  assert.match(dev, /crmynov-dev-n7x4q2/);
+  assert.doesNotMatch(dev, /crmynov-(stg|prod)-n7x4q2/);
+  assert.match(dev, /deletion_protection\s*=\s*true/);
+  assert.match(dev, /prevent_destroy\s*=\s*true/);
+  assert.match(dev, /@sha256:\[0-9a-f\]\{64\}/);
+  assert.match(dev, /CRM_BACKGROUND_WORKERS/);
+  assert.match(dev, /FORMINATOR_WEBHOOK_ENABLED[\s\S]*false/);
+});
+
+test("DEV migration phase preserves running services and uses private database connectivity", () => {
+  const dev = readFileSync(path.join(infra, "environments", "dev", "main.tf"), "utf8");
+  const workflow = readFileSync(path.join(repository, ".github", "workflows", "deploy-dev.yml"), "utf8");
+  assert.match(dev, /edition\s*=\s*"ENTERPRISE"/);
+  assert.match(dev, /private_ip_address[\s\S]*sslmode=require/);
+  const jobs = dev.split(/resource "google_cloud_run_v2_job" /).slice(1);
+  assert.equal(jobs.length, 4);
+  for (const job of jobs) {
+    assert.match(job, /count\s*=\s*local\.deploy_jobs/);
+    assert.match(job, /vpc_access\s*\{[\s\S]*PRIVATE_RANGES_ONLY/);
+    assert.match(job, /image\s*=\s*local\.job_image/);
+  }
+  assert.match(workflow, /environment: DEV/);
+  assert.match(workflow, /job_image=\$\{API_IMAGE\}/);
+  assert.match(workflow, /api_image=\$\{CURRENT_API_IMAGE\}/);
+  assert.match(workflow, /deploy_services=\$\{CURRENT_SERVICES\}/);
 });
 
 test("billing identifiers and credential artifacts are absent", () => {

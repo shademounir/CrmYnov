@@ -59,6 +59,18 @@ jobs:
               -no-color
             terraform -chdir="infra/bootstrap/$root" validate -no-color
           done
+          terraform -chdir="infra/bootstrap/dev-runtime-state" init \
+            -backend=false \
+            -input=false \
+            -lockfile=readonly \
+            -no-color
+          terraform -chdir="infra/bootstrap/dev-runtime-state" validate -no-color
+          terraform -chdir="infra/environments/dev" init \
+            -backend=false \
+            -input=false \
+            -lockfile=readonly \
+            -no-color
+          terraform -chdir="infra/environments/dev" validate -no-color
 
   iac-security:
     name: iac-security

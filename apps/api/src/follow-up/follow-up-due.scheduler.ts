@@ -15,7 +15,7 @@ export class FollowUpDueScheduler implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    if (this.prisma.enabled) this.schedule();
+    if (this.prisma.enabled && process.env.CRM_BACKGROUND_WORKERS !== "external") this.schedule();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -24,14 +24,14 @@ export class FollowUpDueScheduler implements OnModuleInit, OnModuleDestroy {
     await this.pending;
   }
 
-  async tick(now = new Date()): Promise<void> {
-    if (this.stopped) return;
-    await this.followUps.notifyDueForApi(now);
+  async tick(now = new Date()): Promise<{ due: number; notifications: number }> {
+    if (this.stopped) return { due: 0, notifications: 0 };
+    return this.followUps.notifyDueForApi(now);
   }
 
   private schedule(): void {
     this.timer = setTimeout(() => {
-      this.pending = this.tick().catch(() => undefined).finally(() => {
+      this.pending = this.tick().then(() => undefined).catch(() => undefined).finally(() => {
         this.pending = undefined;
         if (!this.stopped) this.schedule();
       });
