@@ -48,6 +48,7 @@ internal sealed class MainForm : Form
     private TextBox? freeCallComment;
     private ComboBox? freeCallPurpose;
     private Button? freeCallButton;
+    private Button? freeCallClearButton;
     private bool wizardVisible;
     private int wizardStep;
     private bool allowClose;
@@ -318,16 +319,30 @@ internal sealed class MainForm : Form
         var form = FormStack();
         form.Controls.Add(SectionTitle("Appeler un numéro autorisé", "Ce parcours reste relié au CRM : droit, motif, commande et événements sont vérifiés côté serveur. Les destinations marocaines sont autorisées par défaut."));
         freeCallPhone = Field(""); freeCallPhone.AccessibleName = "Numéro à appeler"; freeCallPhone.PlaceholderText = "06 00 00 00 00";
+        freeCallPhone.Enter += (_, _) => { if (freeCallPhone.TextLength > 0) freeCallPhone.SelectAll(); };
+        freeCallPhone.TextChanged += (_, _) => {
+            if (freeCallClearButton is not null) freeCallClearButton.Enabled = !AgentCallState.IsActive(snapshot.CallState) && freeCallPhone.TextLength > 0;
+        };
         form.Controls.Add(Labeled("Numéro marocain", freeCallPhone));
         var keypad = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 0, 0, 12) };
         var keys = new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "⌫" };
         for (var index = 0; index < keys.Length; index++) {
             var label = keys[index];
             var key = ActionButton(label, false); key.Width = 94; key.AccessibleName = label == "⌫" ? "Effacer le dernier chiffre" : $"Chiffre {label}";
-            key.Click += (_, _) => { if (freeCallPhone is null) return; if (label == "⌫") { if (freeCallPhone.TextLength > 0) freeCallPhone.Text = freeCallPhone.Text[..^1]; } else freeCallPhone.AppendText(label); freeCallPhone.Focus(); freeCallPhone.SelectionStart = freeCallPhone.TextLength; };
+            key.Click += (_, _) => {
+                if (freeCallPhone is null) return;
+                var edit = DialPadEditor.Apply(freeCallPhone.Text, freeCallPhone.SelectionStart, freeCallPhone.SelectionLength, label);
+                freeCallPhone.Text = edit.Text;
+                freeCallPhone.Focus();
+                freeCallPhone.SelectionStart = edit.Caret;
+            };
             keypad.Controls.Add(key, index % 3, index / 3);
         }
         form.Controls.Add(keypad);
+        freeCallClearButton = ActionButton("Effacer le numéro", false);
+        freeCallClearButton.AccessibleName = "Effacer tout le numéro";
+        freeCallClearButton.Click += (_, _) => { if (freeCallPhone is null) return; freeCallPhone.Clear(); freeCallPhone.Focus(); };
+        form.Controls.Add(freeCallClearButton);
         freeCallPurpose = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, AccessibleName = "Motif de l’appel" };
         freeCallPurpose.Items.AddRange([new PurposeItem("PROSPECT_CALLBACK", "Rappel d’un prospect"), new PurposeItem("PARTNER", "Partenaire autorisé"), new PurposeItem("OTHER_AUTHORIZED", "Autre appel professionnel autorisé")]);
         freeCallPurpose.SelectedIndex = 0; form.Controls.Add(Labeled("Motif obligatoire", freeCallPurpose));
@@ -347,7 +362,7 @@ internal sealed class MainForm : Form
             ShowFeedback("Demande enregistrée et vérifiée. La numérotation est maintenant suivie par Liblinphone.", false);
         }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
-        finally { freeCallButton.Enabled = AgentReadiness.IsReady(snapshot); }
+        finally { freeCallButton.Enabled = AgentReadiness.IsReady(snapshot) && !AgentCallState.IsActive(snapshot.CallState); }
     }
 
     private Control BuildFourStatusCards()
@@ -493,8 +508,13 @@ internal sealed class MainForm : Form
     private void OnSnapshotChanged(AgentRuntimeSnapshot next)
     {
         if (InvokeRequired) { BeginInvoke(() => OnSnapshotChanged(next)); return; }
+        var callJustEnded = AgentCallState.IsActive(snapshot.CallState) && !AgentCallState.IsActive(next.CallState);
         snapshot = next;
         UpdateVisibleState();
+        if (callJustEnded && freeCallPhone is not null) {
+            freeCallPhone.SelectAll();
+            ShowFeedback("Appel terminé. La durée est figée et vous pouvez remplacer le numéro pour un nouvel appel.", false);
+        }
     }
 
     private void UpdateVisibleState()
@@ -520,12 +540,19 @@ internal sealed class MainForm : Form
                 : snapshot.LastMicrophonePeak > 0 ? $"Pic du dernier test · {snapshot.LastMicrophonePeak}%" : "Lancez le test puis parlez normalement.";
         if (microphoneTestButton is not null) microphoneTestButton.Text = snapshot.LocalMonitoringActive ? "Arrêter la réécoute" : snapshot.AudioTestActive ? "Arrêter le test microphone" : "Tester le microphone";
         if (callValue is not null) callValue.Text = CallLabel(snapshot.CallState);
-        if (durationValue is not null) durationValue.Text = snapshot.CallDurationSeconds is int seconds ? $"Durée observée : {seconds / 60:00}:{seconds % 60:00}" : "Aucun appel actif";
+        if (durationValue is not null) durationValue.Text = snapshot.CallDurationSeconds is int seconds
+            ? $"{(AgentCallState.IsActive(snapshot.CallState) ? "Durée en cours" : "Durée finale")} : {seconds / 60:00}:{seconds % 60:00}"
+            : "Aucun appel actif";
         if (accountDisplayValue is not null) accountDisplayValue.Text = !string.IsNullOrWhiteSpace(snapshot.CrmDisplayName) ? snapshot.CrmDisplayName! : !string.IsNullOrWhiteSpace(snapshot.CrmEmail) ? snapshot.CrmEmail! : AccountLabel(setup.Settings);
         var mute = FindControl("mute") as Button; var hangup = FindControl("hangup") as Button;
         if (mute is not null) { mute.Text = snapshot.Muted ? "Rétablir le micro" : "Couper le micro"; mute.Enabled = snapshot.CallState == "ANSWERED"; }
-        if (hangup is not null) hangup.Enabled = snapshot.CallState is "DIALING" or "RINGING" or "ANSWERED" or "REQUESTED";
-        if (freeCallButton is not null) freeCallButton.Enabled = ready && snapshot.CallState is not ("DIALING" or "RINGING" or "ANSWERED" or "REQUESTED");
+        var callActive = AgentCallState.IsActive(snapshot.CallState);
+        if (hangup is not null) hangup.Enabled = callActive;
+        if (freeCallButton is not null) freeCallButton.Enabled = ready && !callActive;
+        if (freeCallClearButton is not null) freeCallClearButton.Enabled = !callActive && freeCallPhone?.TextLength > 0;
+        if (freeCallPhone is not null) freeCallPhone.ReadOnly = callActive;
+        if (freeCallPurpose is not null) freeCallPurpose.Enabled = !callActive;
+        if (freeCallComment is not null) freeCallComment.ReadOnly = callActive;
         if (inputDevices is not null && outputDevices is not null && inputDevices.Items.Count == 0 && snapshot.Devices.Count > 0) FillDeviceCombos();
     }
 

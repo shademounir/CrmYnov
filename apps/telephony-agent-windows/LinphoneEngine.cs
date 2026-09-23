@@ -281,6 +281,9 @@ internal sealed class LinphoneEngine : IDisposable
         if (mapped.Item1 == "ANSWERED" && answeredAt is null) answeredAt = DateTimeOffset.UtcNow;
         if (mapped.Item1 is "ENDED" or "FAILED" or "MISSED" or "CANCELLED") {
             lastDurationSeconds = answeredAt is null ? null : Math.Max(0, (int)(DateTimeOffset.UtcNow - answeredAt.Value).TotalSeconds);
+            // Freeze the observed duration. Keeping answeredAt populated would
+            // make the UI timer continue after Liblinphone has ended the call.
+            answeredAt = null;
         }
         EventObserved?.Invoke(new("1", activeCommandId, activeCallId, $"sdk-{Guid.NewGuid():N}", mapped.Item1, DateTimeOffset.UtcNow, mapped.Item2));
         if (mapped.Item1 is "ENDED" or "FAILED" or "MISSED" or "CANCELLED") { activeCall = null; activeCommandId = null; activeCallId = null; muted = false; }

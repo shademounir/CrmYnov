@@ -55,6 +55,12 @@ internal static class AgentSelfTest
             Require(!AgentReadiness.IsReady(ready with { AuthorizationState = "Révoquée" }), "READINESS_REVOKED_WORKSTATION_ACCEPTED");
             Require(!AgentReadiness.IsReady(ready with { OutputDeviceAvailable = false }), "READINESS_MISSING_OUTPUT_ACCEPTED");
 
+            Require(AgentCallState.IsActive("ANSWERED"), "ACTIVE_CALL_STATE_REFUSED");
+            Require(!AgentCallState.IsActive("ENDED"), "TERMINAL_CALL_STATE_STILL_ACTIVE");
+            Require(DialPadEditor.Apply("0612345678", 0, 10, "7") == new DialPadEdit("7", 1), "DIALPAD_SELECTION_NOT_REPLACED");
+            Require(DialPadEditor.Apply("0612", 2, 2, "⌫") == new DialPadEdit("06", 2), "DIALPAD_SELECTION_NOT_DELETED");
+            Require(DialPadEditor.Apply("0612", 2, 0, "⌫") == new DialPadEdit("012", 1), "DIALPAD_BACKSPACE_FAILED");
+
             Require(ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000", out var protocol)
                 && protocol.CommandId == Guid.Parse("123e4567-e89b-42d3-a456-426614174000"), "PROTOCOL_COMMAND_REFUSED");
             Require(ProtocolRequest.TryParse("crmynov-telephony://open", out var openProtocol) && openProtocol.CommandId is null, "PROTOCOL_OPEN_REFUSED");
@@ -62,7 +68,7 @@ internal static class AgentSelfTest
             Require(!ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000?token=secret", out _), "PROTOCOL_QUERY_ACCEPTED");
 
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "opaque-protocol-contract" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "opaque-protocol-contract" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;
