@@ -8,10 +8,10 @@
     <AssemblyName>CrmYnov.TelephonyAgent.Installer</AssemblyName>
     <RootNamespace>CrmYnov.TelephonyAgent.Installer</RootNamespace>
     <ApplicationIcon>..\telephony-agent-windows\Assets\agent-icon.ico</ApplicationIcon>
-    <Version>0.4.7</Version>
-    <AssemblyVersion>0.4.7.0</AssemblyVersion>
-    <FileVersion>0.4.7.0</FileVersion>
-    <InformationalVersion>0.4.7-pilot</InformationalVersion>
+    <Version>0.4.9</Version>
+    <AssemblyVersion>0.4.9.0</AssemblyVersion>
+    <FileVersion>0.4.9.0</FileVersion>
+    <InformationalVersion>0.4.9-pilot</InformationalVersion>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

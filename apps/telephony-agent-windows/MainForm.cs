@@ -43,6 +43,7 @@ internal sealed class MainForm : Form
     private Button? disconnectButton;
     private TextBox? pairingCode;
     private TextBox? workstationName;
+    private TextBox? crmAddress;
     private TextBox? sipPassword;
     private TextBox? freeCallPhone;
     private TextBox? freeCallComment;
@@ -181,11 +182,13 @@ internal sealed class MainForm : Form
 
     private Control BuildPairingStep()
     {
+        crmAddress = Field(setup.Settings?.ApiBaseUrl ?? AgentSetup.ConfiguredApiBaseUrl); crmAddress.AccessibleName = "Adresse HTTPS du CRM";
         pairingCode = Field(""); pairingCode.UseSystemPasswordChar = true; pairingCode.AccessibleName = "Code d’association temporaire";
         workstationName = Field(Environment.MachineName); workstationName.AccessibleName = "Nom du poste";
         var form = FormStack();
-        form.Controls.Add(SectionTitle("Associer mon compte CRM", "Saisissez le code temporaire fourni dans l’administration Téléphonie. L’adresse du CRM est déjà configurée pour ce pilote."));
-        form.Controls.Add(InfoBox("Environnement CRM", "Recette locale · paramètres techniques gérés par l’administration"));
+        form.Controls.Add(SectionTitle("Associer mon compte CRM", "Vérifiez l’adresse de l’environnement puis saisissez le code temporaire fourni dans l’administration Téléphonie."));
+        form.Controls.Add(Labeled("Adresse du CRM", crmAddress));
+        form.Controls.Add(InfoBox("Changement d’environnement", "Une autre origine exige une nouvelle association. Le jeton, le secret SIP et les périphériques de l’ancien profil ne sont jamais transférés automatiquement."));
         form.Controls.Add(Labeled("Code d’association", pairingCode));
         form.Controls.Add(Labeled("Nom de ce poste", workstationName));
         var button = ActionButton("Associer ce poste", true); button.Click += async (_, _) => await PairAsync(); form.Controls.Add(button);
@@ -292,6 +295,7 @@ internal sealed class MainForm : Form
         var settings = setup.Settings;
         accountDisplayValue = SummaryValue(AccountLabel(settings));
         profileStack.Controls.Add(SummaryRow("Compte CRM", accountDisplayValue));
+        profileStack.Controls.Add(SummaryRow("Environnement CRM", settings is null ? "Non configuré" : AgentSetup.EnvironmentLabel(settings.ApiBaseUrl)));
         profileStack.Controls.Add(SummaryRow("Poste associé", settings?.WorkstationDisplayName ?? Environment.MachineName));
         profileStack.Controls.Add(SummaryRow("Profil téléphonique", settings is null ? "Non configuré" : MaskSip(settings.SipAddress)));
         profileStack.Controls.Add(SummaryRow("Microphone", DeviceLabel(snapshot.InputDeviceId, true)));
@@ -404,12 +408,11 @@ internal sealed class MainForm : Form
 
     private async Task PairAsync()
     {
-        if (pairingCode is null || workstationName is null || string.IsNullOrWhiteSpace(pairingCode.Text) || string.IsNullOrWhiteSpace(workstationName.Text)) { ShowFeedback("Renseignez le code d’association et le nom du poste.", true); return; }
+        if (crmAddress is null || pairingCode is null || workstationName is null || string.IsNullOrWhiteSpace(crmAddress.Text) || string.IsNullOrWhiteSpace(pairingCode.Text) || string.IsNullOrWhiteSpace(workstationName.Text)) { ShowFeedback("Renseignez l’adresse CRM, le code d’association et le nom du poste.", true); return; }
         try
         {
             await runtime.StopAsync();
-            var api = setup.Settings?.ApiBaseUrl ?? AgentSetup.ConfiguredApiBaseUrl;
-            await setup.PairAsync(api, pairingCode.Text, workstationName.Text, CancellationToken.None);
+            await setup.PairAsync(crmAddress.Text, pairingCode.Text, workstationName.Text, CancellationToken.None);
             pairingCode.Clear(); wizardStep = 1; ShowFeedback("Poste associé. Vérifiez maintenant le profil attribué.", false); Render();
         }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
@@ -597,6 +600,8 @@ internal sealed class MainForm : Form
         InvalidOperationException invalid when invalid.Message == "AGENT_NOT_PAIRED" => "Associez d’abord ce poste au CRM.",
         InvalidOperationException invalid when invalid.Message == "SIP_SECRET_MISSING" => "Enregistrez d’abord le mot de passe téléphonique sur ce poste.",
         InvalidOperationException invalid when invalid.Message == "SIP_SECRET_EMPTY" => "Le mot de passe téléphonique ne peut pas être vide.",
+        InvalidOperationException invalid when invalid.Message == "CRM_ADDRESS_INVALID" => "L’adresse CRM doit être une URL complète, sans identifiant, paramètre ni fragment.",
+        InvalidOperationException invalid when invalid.Message == "API_TLS_REQUIRED" => "Utilisez une adresse HTTPS. HTTP est autorisé uniquement pour une recette locale sur ce PC.",
         InvalidOperationException invalid when invalid.Message is "AUDIO_DEVICE_UNAVAILABLE" or "AUDIO_INPUT_UNAVAILABLE" or "AUDIO_OUTPUT_UNAVAILABLE" => "Le périphérique sélectionné n’est plus disponible. Actualisez la liste et choisissez un périphérique connecté.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_NOT_INITIALIZED" => "Le service audio local n’est pas encore disponible. Rouvrez l’étape Audio.",
         InvalidOperationException invalid when invalid.Message == "AUDIO_TEST_CALL_ACTIVE" => "Terminez l’appel en cours avant de lancer un test audio local.",

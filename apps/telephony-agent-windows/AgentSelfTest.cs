@@ -61,6 +61,15 @@ internal static class AgentSelfTest
             Require(DialPadEditor.Apply("0612", 2, 2, "⌫") == new DialPadEdit("06", 2), "DIALPAD_SELECTION_NOT_DELETED");
             Require(DialPadEditor.Apply("0612", 2, 0, "⌫") == new DialPadEdit("012", 1), "DIALPAD_BACKSPACE_FAILED");
 
+            Require(AgentSetup.NormalizeApiBaseUrl("https://crm-dev.example.test/agent") == "https://crm-dev.example.test/agent/", "CRM_ADDRESS_NOT_NORMALIZED");
+            Require(AgentSetup.EnvironmentLabel("https://crm-dev-web.example.a.run.app/agent/").StartsWith("DEV Cloud", StringComparison.Ordinal), "CRM_ENVIRONMENT_NOT_DISPLAYED");
+            RequireThrows(() => AgentSetup.NormalizeApiBaseUrl("http://crm-dev.example.test/agent/"), "CRM_HTTP_REMOTE_ACCEPTED");
+            RequireThrows(() => AgentSetup.NormalizeApiBaseUrl("https://user@crm-dev.example.test/agent/"), "CRM_ADDRESS_CREDENTIAL_ACCEPTED");
+
+            var paired = new PairResponse("new-token", expected.WorkstationId, new AgentProfile(expected.ProfileId, expected.WorkstationId, expected.SipAddress, expected.AuthUsername, new(expected.SipDomain, expected.ProxyUri, expected.Transport), false, false));
+            Require(AgentSetup.CanPreserveLocalProfile(expected, AgentSetup.NormalizeApiBaseUrl(expected.ApiBaseUrl), paired), "SAME_ORIGIN_PROFILE_NOT_PRESERVED");
+            Require(!AgentSetup.CanPreserveLocalProfile(expected, "https://crm-dev.example.test/agent/", paired), "CROSS_ORIGIN_PROFILE_PRESERVED");
+
             Require(ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000", out var protocol)
                 && protocol.CommandId == Guid.Parse("123e4567-e89b-42d3-a456-426614174000"), "PROTOCOL_COMMAND_REFUSED");
             Require(ProtocolRequest.TryParse("crmynov-telephony://open", out var openProtocol) && openProtocol.CommandId is null, "PROTOCOL_OPEN_REFUSED");
@@ -68,7 +77,7 @@ internal static class AgentSelfTest
             Require(!ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000?token=secret", out _), "PROTOCOL_QUERY_ACCEPTED");
 
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "opaque-protocol-contract" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "opaque-protocol-contract" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;
@@ -85,5 +94,6 @@ internal static class AgentSelfTest
     }
 
     private static void Require(bool condition, string code) { if (!condition) throw new InvalidOperationException(code); }
+    private static void RequireThrows(Action action, string code) { try { action(); } catch (InvalidOperationException) { return; } throw new InvalidOperationException(code); }
     private static string SafeCode(Exception error) => System.Text.RegularExpressions.Regex.IsMatch(error.Message, "^[A-Z0-9_]{3,80}$") ? error.Message : "SELF_TEST_FAILED";
 }
