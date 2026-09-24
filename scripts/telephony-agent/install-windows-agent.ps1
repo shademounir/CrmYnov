@@ -34,51 +34,83 @@ function Get-Sha256([string]$Path) {
     }
 }
 
+function Remove-RegistryActivation {
+    try { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree("Software\Classes\$scheme", $false) } catch { }
+    try { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\Microsoft\Windows\CurrentVersion\Uninstall\CRM Ynov Telephony Agent', $false) } catch { }
+}
+
+function Get-StartupPreference {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+    if ($null -eq $key) { return $null }
+    try { return $key.GetValue($productName, $null) }
+    finally { $key.Dispose() }
+}
+
 function Set-Activation([string]$Executable, [string]$ActiveVersion) {
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw "AGENT_EXECUTABLE_MISSING: $Executable" }
-    New-Item -Path $protocolKey -Force | Out-Null
-    Set-Item -Path $protocolKey -Value "URL:$productName"
-    New-ItemProperty -Path $protocolKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
-    New-Item -Path "$protocolKey\DefaultIcon" -Force | Out-Null
-    Set-Item -Path "$protocolKey\DefaultIcon" -Value ('"{0}",0' -f $Executable)
-    New-Item -Path "$protocolKey\shell\open\command" -Force | Out-Null
-    Set-Item -Path "$protocolKey\shell\open\command" -Value ('"{0}" "%1"' -f $Executable)
+    try {
+        $protocol = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Classes\$scheme")
+        if ($null -eq $protocol) { throw 'PROTOCOL_KEY_UNAVAILABLE' }
+        try {
+            $protocol.SetValue('', "URL:$productName", [Microsoft.Win32.RegistryValueKind]::String)
+            $protocol.SetValue('URL Protocol', '', [Microsoft.Win32.RegistryValueKind]::String)
+            $icon = $protocol.CreateSubKey('DefaultIcon')
+            $command = $protocol.CreateSubKey('shell\open\command')
+            if ($null -eq $icon -or $null -eq $command) { throw 'PROTOCOL_CHILD_KEY_UNAVAILABLE' }
+            try {
+                $icon.SetValue('', ('"{0}",0' -f $Executable), [Microsoft.Win32.RegistryValueKind]::String)
+                $command.SetValue('', ('"{0}" "%1"' -f $Executable), [Microsoft.Win32.RegistryValueKind]::String)
+            }
+            finally { $icon.Dispose(); $command.Dispose() }
+        }
+        finally { $protocol.Dispose() }
+    }
+    catch { throw 'INSTALLER_PROTOCOL_REGISTRATION_FAILED' }
 
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($startMenu)
-    $shortcut.TargetPath = $Executable
-    $shortcut.WorkingDirectory = Split-Path -Parent $Executable
-    $shortcut.IconLocation = "$Executable,0"
-    $shortcut.Description = $productName
-    $shortcut.Save()
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $shell.CreateShortcut($startMenu)
+        $shortcut.TargetPath = $Executable
+        $shortcut.WorkingDirectory = Split-Path -Parent $Executable
+        $shortcut.IconLocation = "$Executable,0"
+        $shortcut.Description = $productName
+        $shortcut.Save()
+    }
+    catch { throw 'INSTALLER_START_MENU_FAILED' }
 
     # Preserve the user's explicit startup preference on upgrades and rollbacks.
     # A fresh installation must not silently opt the user into Windows startup;
     # the checkbox in the agent remains the single source of that choice.
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    $startupValue = Get-ItemPropertyValue -LiteralPath $runKey -Name $productName -ErrorAction SilentlyContinue
+    $startupValue = Get-StartupPreference
     if (-not [string]::IsNullOrWhiteSpace($startupValue)) {
         New-ItemProperty -Path $runKey -Name $productName -Value ('"{0}"' -f $Executable) -PropertyType String -Force | Out-Null
     }
 
-    $installedScript = Join-Path $installRoot 'install-windows-agent.ps1'
-    New-Item -Path $uninstallKey -Force | Out-Null
-    Set-ItemProperty -Path $uninstallKey -Name DisplayName -Value $productName
-    Set-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $ActiveVersion
-    Set-ItemProperty -Path $uninstallKey -Name Publisher -Value 'CRM Ynov'
-    Set-ItemProperty -Path $uninstallKey -Name DisplayIcon -Value $Executable
-    Set-ItemProperty -Path $uninstallKey -Name InstallLocation -Value (Split-Path -Parent $Executable)
-    Set-ItemProperty -Path $uninstallKey -Name NoModify -Value 1 -Type DWord
-    Set-ItemProperty -Path $uninstallKey -Name NoRepair -Value 1 -Type DWord
-    Set-ItemProperty -Path $uninstallKey -Name UninstallString -Value ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Uninstall' -f $installedScript)
-    Set-Content -LiteralPath (Join-Path $installRoot 'active-version.txt') -Value $ActiveVersion -Encoding ascii
+    try {
+        $installedScript = Join-Path $installRoot 'install-windows-agent.ps1'
+        $uninstall = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\CRM Ynov Telephony Agent')
+        if ($null -eq $uninstall) { throw 'UNINSTALL_KEY_UNAVAILABLE' }
+        try {
+            $uninstall.SetValue('DisplayName', $productName, [Microsoft.Win32.RegistryValueKind]::String)
+            $uninstall.SetValue('DisplayVersion', $ActiveVersion, [Microsoft.Win32.RegistryValueKind]::String)
+            $uninstall.SetValue('Publisher', 'CRM Ynov', [Microsoft.Win32.RegistryValueKind]::String)
+            $uninstall.SetValue('DisplayIcon', $Executable, [Microsoft.Win32.RegistryValueKind]::String)
+            $uninstall.SetValue('InstallLocation', (Split-Path -Parent $Executable), [Microsoft.Win32.RegistryValueKind]::String)
+            $uninstall.SetValue('NoModify', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+            $uninstall.SetValue('NoRepair', 1, [Microsoft.Win32.RegistryValueKind]::DWord)
+            $uninstall.SetValue('UninstallString', ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{0}" -Uninstall' -f $installedScript), [Microsoft.Win32.RegistryValueKind]::String)
+        }
+        finally { $uninstall.Dispose() }
+        Set-Content -LiteralPath (Join-Path $installRoot 'active-version.txt') -Value $ActiveVersion -Encoding ascii
+    }
+    catch { throw 'INSTALLER_UNINSTALL_REGISTRATION_FAILED' }
 }
 
 Assert-ManagedPath $installRoot
 
 if ($PSCmdlet.ParameterSetName -eq 'Uninstall') {
-    Remove-Item -LiteralPath $protocolKey -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-RegistryActivation
     Remove-Item -LiteralPath $startMenu -Force -ErrorAction SilentlyContinue
     Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'CRM Ynov Telephony Agent' -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $installRoot) { Remove-Item -LiteralPath $installRoot -Recurse -Force }
@@ -114,14 +146,21 @@ if (Test-Path -LiteralPath $destination) { throw "VERSION_ALREADY_INSTALLED: $Ve
 Copy-Item -LiteralPath $source -Destination $destination -Recurse
 Copy-Item -LiteralPath $PSCommandPath -Destination (Join-Path $installRoot 'install-windows-agent.ps1') -Force
 $installedExecutable = Join-Path $destination 'CrmYnov.TelephonyAgent.exe'
-Set-Activation $installedExecutable $Version
+try { Set-Activation $installedExecutable $Version }
+catch {
+    Remove-RegistryActivation
+    Remove-Item -LiteralPath $startMenu -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'CRM Ynov Telephony Agent' -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
+    throw
+}
 
 Write-Warning "Le binaire pilote n'est pas signé. Un certificat de signature est requis avant diffusion générale."
 Write-Output ("Agent installé pour l'utilisateur courant : " + $installedExecutable)
 Write-Output ('Protocole enregistré : ' + $scheme + '://command/{id}')
-$startupEnabled = -not [string]::IsNullOrWhiteSpace((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $productName -ErrorAction SilentlyContinue))
-Write-Output $(if ($startupEnabled) { 'Préférence de démarrage Windows conservée : activée.' } else { 'Démarrage Windows désactivé jusqu’au choix explicite de l’utilisateur.' })
+$startupEnabled = -not [string]::IsNullOrWhiteSpace((Get-StartupPreference))
+Write-Output $(if ($startupEnabled) { 'Préférence de démarrage Windows conservée : activée.' } else { "Démarrage Windows désactivé jusqu’au choix explicite de l’utilisateur." })
 if (-not $NoLaunch) {
     Start-Process -FilePath $installedExecutable -WorkingDirectory (Split-Path -Parent $installedExecutable)
-    Write-Output 'Agent lancé. Le premier démarrage ouvre l’assistant d’association et de configuration audio.'
+    Write-Output "Agent lancé. Le premier démarrage ouvre l’assistant d’association et de configuration audio."
 }

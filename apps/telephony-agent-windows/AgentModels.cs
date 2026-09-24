@@ -68,6 +68,31 @@ internal static class AgentReadiness
         && snapshot.OutputDeviceAvailable;
 }
 
+internal static class AgentCallState
+{
+    public static bool IsActive(string? state) => state is "DIALING" or "RINGING" or "ANSWERED" or "REQUESTED";
+}
+
+internal readonly record struct DialPadEdit(string Text, int Caret);
+
+internal static class DialPadEditor
+{
+    public static DialPadEdit Apply(string text, int selectionStart, int selectionLength, string key)
+    {
+        var start = Math.Clamp(selectionStart, 0, text.Length);
+        var length = Math.Clamp(selectionLength, 0, text.Length - start);
+
+        if (key == "⌫") {
+            if (length > 0) return new(text.Remove(start, length), start);
+            if (start == 0) return new(text, 0);
+            return new(text.Remove(start - 1, 1), start - 1);
+        }
+
+        var updated = text.Remove(start, length).Insert(start, key);
+        return new(updated, start + key.Length);
+    }
+}
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(AgentSettings))]
 [JsonSerializable(typeof(PairRequest))]
