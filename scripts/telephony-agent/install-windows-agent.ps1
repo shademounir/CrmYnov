@@ -39,6 +39,13 @@ function Remove-RegistryActivation {
     try { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\Microsoft\Windows\CurrentVersion\Uninstall\CRM Ynov Telephony Agent', $false) } catch { }
 }
 
+function Get-StartupPreference {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run')
+    if ($null -eq $key) { return $null }
+    try { return $key.GetValue($productName, $null) }
+    finally { $key.Dispose() }
+}
+
 function Set-Activation([string]$Executable, [string]$ActiveVersion) {
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw "AGENT_EXECUTABLE_MISSING: $Executable" }
     try {
@@ -75,7 +82,7 @@ function Set-Activation([string]$Executable, [string]$ActiveVersion) {
     # A fresh installation must not silently opt the user into Windows startup;
     # the checkbox in the agent remains the single source of that choice.
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    $startupValue = Get-ItemPropertyValue -LiteralPath $runKey -Name $productName -ErrorAction SilentlyContinue
+    $startupValue = Get-StartupPreference
     if (-not [string]::IsNullOrWhiteSpace($startupValue)) {
         New-ItemProperty -Path $runKey -Name $productName -Value ('"{0}"' -f $Executable) -PropertyType String -Force | Out-Null
     }
@@ -151,7 +158,7 @@ catch {
 Write-Warning "Le binaire pilote n'est pas signé. Un certificat de signature est requis avant diffusion générale."
 Write-Output ("Agent installé pour l'utilisateur courant : " + $installedExecutable)
 Write-Output ('Protocole enregistré : ' + $scheme + '://command/{id}')
-$startupEnabled = -not [string]::IsNullOrWhiteSpace((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $productName -ErrorAction SilentlyContinue))
+$startupEnabled = -not [string]::IsNullOrWhiteSpace((Get-StartupPreference))
 Write-Output $(if ($startupEnabled) { 'Préférence de démarrage Windows conservée : activée.' } else { "Démarrage Windows désactivé jusqu’au choix explicite de l’utilisateur." })
 if (-not $NoLaunch) {
     Start-Process -FilePath $installedExecutable -WorkingDirectory (Split-Path -Parent $installedExecutable)
