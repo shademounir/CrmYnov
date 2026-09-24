@@ -9,12 +9,21 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $project = Join-Path $repositoryRoot 'apps\telephony-agent-windows\CrmYnov.TelephonyAgent.csproj'
+$installerScript = Join-Path $repositoryRoot 'scripts\telephony-agent\install-windows-agent.ps1'
 $sdkRootResolved = (Resolve-Path -LiteralPath $SdkRoot).Path
 $dotnetResolved = (Resolve-Path -LiteralPath $DotnetPath).Path
 $packageName = "crm-ynov-telephony-agent-$Version-win-x64"
 $packageDirectory = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot "$packageName.zip"
 $sourceZipPath = Join-Path $OutputRoot "$packageName-source.zip"
+
+$syntaxTokens = $null
+$syntaxErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($installerScript, [ref]$syntaxTokens, [ref]$syntaxErrors) | Out-Null
+if ($syntaxErrors.Count -gt 0) {
+    $first = $syntaxErrors[0]
+    throw "INSTALLER_SCRIPT_SYNTAX_INVALID: line=$($first.Extent.StartLineNumber) message=$($first.Message)"
+}
 
 if (Test-Path -LiteralPath $packageDirectory) { throw "PACKAGE_DIRECTORY_ALREADY_EXISTS: $packageDirectory" }
 if (Test-Path -LiteralPath $zipPath) { throw "PACKAGE_ARCHIVE_ALREADY_EXISTS: $zipPath" }
@@ -50,7 +59,7 @@ New-Item -ItemType Directory -Path $documentation,$notices | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows\README.md') -Destination $documentation
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows\THIRD-PARTY-NOTICES.md') -Destination $notices
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\runbooks\linphone-windows-bridge.md') -Destination $documentation
-Copy-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\telephony-agent\install-windows-agent.ps1') -Destination $packageDirectory
+Copy-Item -LiteralPath $installerScript -Destination $packageDirectory
 $noticeSources = @(
     'share\doc\linphone-sdk\LICENSE.md',
     'share\doc\mediastreamer2-5.5.0\html\mediastreamer2_license.html',

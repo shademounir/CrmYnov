@@ -89,6 +89,9 @@ internal static class Program
         if (source.Contains("VERSION_ALREADY_INSTALLED", StringComparison.Ordinal)) return "VERSION_ALREADY_INSTALLED";
         if (source.Contains("PACKAGE_HASH_MISMATCH", StringComparison.Ordinal)) return "PACKAGE_HASH_MISMATCH";
         if (source.Contains("PACKAGE_FILE_MISSING", StringComparison.Ordinal)) return "PACKAGE_FILE_MISSING";
+        if (source.Contains("INSTALLER_PROTOCOL_REGISTRATION_FAILED", StringComparison.Ordinal)) return "INSTALLER_PROTOCOL_REGISTRATION_FAILED";
+        if (source.Contains("INSTALLER_START_MENU_FAILED", StringComparison.Ordinal)) return "INSTALLER_START_MENU_FAILED";
+        if (source.Contains("INSTALLER_UNINSTALL_REGISTRATION_FAILED", StringComparison.Ordinal)) return "INSTALLER_UNINSTALL_REGISTRATION_FAILED";
         return "INSTALLER_SCRIPT_FAILED";
     }
 
