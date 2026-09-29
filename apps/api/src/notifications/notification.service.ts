@@ -16,6 +16,7 @@ export class NotificationService implements OnModuleInit, OnModuleDestroy {
   private readonly deduplication = new Map<string, string>();
   private persistenceQueue: Promise<void> = Promise.resolve();
   private persistenceFailure: unknown;
+  private lastCreatedAtMs = 0;
 
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
@@ -26,7 +27,7 @@ export class NotificationService implements OnModuleInit, OnModuleDestroy {
     if (!this.persistence?.enabled) return;
     const snapshot = await this.persistence.snapshot();
     this.notifications.clear(); this.deduplication.clear();
-    for (const item of snapshot) { this.notifications.set(item.record.id, Object.freeze({ ...item.record })); this.deduplication.set(item.deduplicationKey, item.record.id); }
+    for (const item of snapshot) { this.notifications.set(item.record.id, Object.freeze({ ...item.record })); this.deduplication.set(item.deduplicationKey, item.record.id); this.lastCreatedAtMs = Math.max(this.lastCreatedAtMs, Date.parse(item.record.createdAt)); }
   }
 
   async onModuleDestroy(): Promise<void> { await this.flush(); }
@@ -35,7 +36,10 @@ export class NotificationService implements OnModuleInit, OnModuleDestroy {
     this.validate(input, deduplicationKey);
     const known = this.deduplication.get(deduplicationKey);
     if (known) return { ...this.notifications.get(known)! };
-    const record: Readonly<NotificationRecord> = Object.freeze({ ...input, id: randomUUID(), createdAt: new Date().toISOString() });
+    // PostgreSQL and the in-memory listing both sort by createdAt. Ensure that
+    // notifications emitted in the same millisecond retain their creation order.
+    this.lastCreatedAtMs = Math.max(Date.now(), this.lastCreatedAtMs + 1);
+    const record: Readonly<NotificationRecord> = Object.freeze({ ...input, id: randomUUID(), createdAt: new Date(this.lastCreatedAtMs).toISOString() });
     this.notifications.set(record.id, record); this.deduplication.set(deduplicationKey, record.id);
     if (this.persistence?.enabled) {
       this.persistenceQueue = this.persistenceQueue.then(async () => {
