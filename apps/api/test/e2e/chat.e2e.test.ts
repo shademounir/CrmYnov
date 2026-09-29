@@ -24,6 +24,7 @@ test("runs the internal chat journey with member-only history and synthetic data
   const session = async (user: { id: string; professionalEmail: string }): Promise<string> => {
     credentials.provisionTemporary(user.id, "Temporary1!E2eValue", digestRecoveryValue(user.professionalEmail));
     credentials.replace(user.id, "Temporary1!E2eValue");
+    users.completeFirstLogin(user.id);
     const response = await fetch(`${base}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: user.professionalEmail, password: "Temporary1!E2eValue" }) });
     assert.equal(response.status, 201);
     return (await response.json() as { token: string }).token;

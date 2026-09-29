@@ -39,6 +39,7 @@ test("enforces roles, ownership, scopes and immediate session revocation", async
     const user = users.create({ professionalEmail: email, roles }, "bootstrap", `create-${name}`);
     credentials.provisionTemporary(user.id, "Temporary1!E2eValue", digestRecoveryValue(email));
     credentials.replace(user.id, "Temporary1!E2eValue");
+    users.completeFirstLogin(user.id);
     const response = await fetch(`${base}/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-correlation-id": `create-${name}` },
