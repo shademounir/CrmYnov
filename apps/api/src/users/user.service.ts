@@ -8,7 +8,7 @@ import { PrismaService } from "../persistence/prisma.service.js";
 import { digestRecoveryValue, LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
 import { professionalDisplayName } from "./professional-display-name.js";
 
-export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean; authenticationVersion: number }
+export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean; authenticationVersion: number; firstLoginRequired?: boolean }
 export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; professionalDisplayName?: string | null; roles: string[]; campusId?: string; teamId?: string }
 export interface UpdateAuthorization { roles: string[]; campusId?: string; teamId?: string; reason: string; confirmed: boolean }
 export interface IssueTemporarySecret { reason: "INITIAL_ACCESS" | "CREDENTIAL_COMPROMISED" | "USER_REQUEST"; confirmed: boolean }
@@ -48,6 +48,7 @@ export class UserService implements OnModuleInit {
         teamId: row.teamId ?? undefined,
         active: row.active,
         authenticationVersion: row.authenticationVersion,
+        firstLoginRequired: row.firstLoginRequired,
       };
       this.users.set(user.id, user);
       this.sessions.updateIdentityState(user.id, user.active, user.authenticationVersion);
@@ -60,7 +61,7 @@ export class UserService implements OnModuleInit {
     if (!isEmail(email) || (input.secondaryEmail && !isEmail(input.secondaryEmail)) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "collaborator_invalid" });
     if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
     if ([...this.users.values()].some((user) => user.professionalEmail === email)) throw new ConflictException({ code: "professional_email_exists" });
-    const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles, campusId: input.campusId, teamId: input.teamId, active: true, authenticationVersion: 1 };
+    const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles, campusId: input.campusId, teamId: input.teamId, active: true, authenticationVersion: 1, firstLoginRequired: true };
     this.users.set(user.id, user);
     this.sessions.updateIdentityState(user.id, true, user.authenticationVersion);
     const client = this.prisma?.client;
@@ -84,6 +85,7 @@ export class UserService implements OnModuleInit {
     const revokedSessions = active ? 0 : this.sessions.revokeUser(id);
     const client = this.prisma?.client;
     if (client) this.enqueue(client.collaborator.update({ where: { id }, data: { active, authenticationVersion: user.authenticationVersion } }));
+    if (client && !active) this.enqueue(client.localAccessInvitation.updateMany({ where: { collaboratorId: id, state: { in: ["PENDING", "SENT", "SEND_UNCONFIRMED"] } }, data: { state: "REVOKED" } }));
     this.audit.record({ eventType: active ? "COLLABORATOR_ACTIVATED" : "COLLABORATOR_DEACTIVATED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, before, after: { subjectId: id, active, revokedSessions }, result: "SUCCESS", idempotencyKey: `collaborator-active:${id}:${active}:${correlationId}` });
     return { ...user, roles: [...user.roles] };
   }
@@ -116,11 +118,13 @@ export class UserService implements OnModuleInit {
     if (!this.credentials) throw new ForbiddenException({ code: "credential_store_unavailable" });
     const temporarySecret = `CrmYnov-${randomBytes(24).toString("base64url")}!9`;
     this.credentials.provisionTemporary(id, temporarySecret, digestRecoveryValue(user.professionalEmail));
+    user.firstLoginRequired = true;
     user.authenticationVersion += 1;
     this.sessions.updateIdentityState(id, true, user.authenticationVersion);
     const revokedSessions = this.sessions.revokeUser(id);
     const client = this.prisma?.client;
     if (client) this.enqueue(client.collaborator.update({ where: { id }, data: { firstLoginRequired: true, authenticationVersion: user.authenticationVersion } }));
+    if (client) this.enqueue(client.localAccessInvitation.updateMany({ where: { collaboratorId: id, state: { in: ["PENDING", "SENT", "SEND_UNCONFIRMED"] } }, data: { state: "REVOKED" } }));
     this.audit.record({ eventType: "COLLABORATOR_TEMPORARY_SECRET_ISSUED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, after: { subjectId: id, reason: input.reason, revokedSessions, mustChangeAtFirstLogin: true }, result: "SUCCESS", idempotencyKey: `collaborator-temporary-secret:${id}:${correlationId}` });
     return { temporarySecret, mustChangeAtFirstLogin: true, revokedSessions };
   }
@@ -128,6 +132,17 @@ export class UserService implements OnModuleInit {
   findById(id: string): Collaborator | undefined {
     const user = this.users.get(id);
     return user ? { ...user, roles: [...user.roles] } : undefined;
+  }
+
+  async findByIdForApi(id: string): Promise<Collaborator | undefined> {
+    const client = this.prisma?.client;
+    if (!client) return this.findById(id);
+    const row = await client.collaborator.findUnique({ where: { id } });
+    if (!row) return undefined;
+    const user: Collaborator = { id: row.id, professionalEmail: row.professionalEmail, secondaryEmail: row.secondaryEmail ?? undefined, roles: row.roles as Role[], campusId: row.campusId ?? undefined, teamId: row.teamId ?? undefined, active: row.active, authenticationVersion: row.authenticationVersion, firstLoginRequired: row.firstLoginRequired };
+    this.users.set(id, user);
+    this.sessions.updateIdentityState(id, user.active, user.authenticationVersion);
+    return { ...user, roles: [...user.roles] };
   }
 
   findByProfessionalEmail(email: string): Collaborator | undefined {
@@ -139,10 +154,12 @@ export class UserService implements OnModuleInit {
   completeFirstLogin(id: string): void {
     const user = this.users.get(id);
     if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
+    user.firstLoginRequired = false;
     user.authenticationVersion += 1;
     this.sessions.updateIdentityState(id, user.active, user.authenticationVersion);
     const client = this.prisma?.client;
     if (client) this.enqueue(client.collaborator.update({ where: { id }, data: { firstLoginRequired: false, authenticationVersion: user.authenticationVersion } }));
+    if (client) this.enqueue(client.localAccessInvitation.updateMany({ where: { collaboratorId: id, state: { in: ["PENDING", "SENT", "SEND_UNCONFIRMED"] } }, data: { state: "REVOKED" } }));
   }
 
   async flush(): Promise<void> {

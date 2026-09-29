@@ -78,6 +78,8 @@ test("session controller verifies a local credential, ownership and admin revoca
   const request = (value: Record<string, unknown>): AuthenticatedRequest => ({ header: () => "test-correlation", ...value }) as unknown as AuthenticatedRequest;
   await assert.rejects(controller.create({ ip: "client-a" } as AuthenticatedRequest, { email: "unknown@example.invalid", password: "invalid" }), hasErrorCode("identity_invalid"));
   const user = await controller.create(request({ ip: "client-a" }), { email: userRecord.professionalEmail, password: "Temporary1!Value" });
+  assert.equal(user.mustChangeSecret, true);
+  assert.deepEqual(await controller.current(request({ principal: { userId: userRecord.id, roles: ["AUDITOR"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: user.sessionId, mustChangeSecret: true } })), { roles: ["AUDITOR"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], mustChangeSecret: true, professionalEmail: userRecord.professionalEmail });
   await assert.rejects(
     controller.revoke({ principal: { userId: "other", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: "other-session" } } as AuthenticatedRequest, user.sessionId),
     hasErrorCode("session_ownership_required"),

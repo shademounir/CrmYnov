@@ -33,6 +33,9 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler<unknown>): Observable<unknown> {
     const controller = context.getClass().name;
     const handler = context.getHandler().name;
+    // The invitation service authorizes and commits its own fenced transaction,
+    // then contacts Gmail only after that transaction has committed.
+    if (controller === "UserController" && handler === "issueInvitation") return next.handle();
     if (lifecycleControllers.has(controller)) return this.lifecycle(context, next, controller, handler);
     if (controller === "SheetImportController") return this.sheetAdministration(context, next, handler);
     return from(this.repository.transaction(async (tx) => {

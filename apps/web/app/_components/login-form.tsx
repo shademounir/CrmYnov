@@ -12,7 +12,8 @@ export function LoginForm(): React.JSX.Element {
     setState("submitting");
     const response = await fetch("/api/crm/sessions", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }) });
     if (!response.ok) { setState("error"); return; }
-    globalThis.location.assign("/leads");
+    const session = await response.json() as { mustChangeSecret?: boolean };
+    globalThis.location.assign(session.mustChangeSecret === true ? "/first-login" : "/leads");
   }
   return <form action={submit} aria-label="Connexion locale">
     <label>Email professionnel<input name="email" type="email" autoComplete="username" defaultValue={localEmail} required /></label>

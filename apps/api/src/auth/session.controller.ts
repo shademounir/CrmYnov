@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Inject, Optional, Param, Post, Req, UnauthorizedException, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest, Scope } from "./auth.types.js";
 import { RateLimitService } from "./rate-limit.service.js";
 import { RbacGuard, RequireRoles } from "./rbac.guard.js";
@@ -6,6 +6,7 @@ import { SessionService } from "./session.service.js";
 import { AuditService } from "../audit/audit.service.js";
 import { digestRecoveryValue, LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
 import { UserService } from "../users/user.service.js";
+import { PrismaService } from "../persistence/prisma.service.js";
 
 @Controller("sessions")
 export class SessionController {
@@ -15,15 +16,27 @@ export class SessionController {
     @Inject(AuditService) private readonly audit: AuditService,
     @Inject(LocalCredentialAdapter) private readonly credentials: LocalCredentialAdapter,
     @Inject(UserService) private readonly users: UserService,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
   ) {}
 
+  @Get("current")
+  async current(@Req() request: AuthenticatedRequest): Promise<{ roles: string[]; scopes: Scope[]; mustChangeSecret: boolean; professionalEmail?: string; campusLabel?: string }> {
+    if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
+    const user = await this.users.findByIdForApi(request.principal.userId);
+    if (!user?.active) throw new UnauthorizedException({ code: "session_invalid" });
+    const campus = user.campusId && /^[a-f\d-]{36}$/i.test(user.campusId)
+      ? await this.prisma?.client?.crmReference.findUnique({ where: { id: user.campusId }, select: { label: true } })
+      : null;
+    return { roles: request.principal.roles, scopes: request.principal.scopes, mustChangeSecret: request.principal.mustChangeSecret === true, professionalEmail: user.professionalEmail, ...(user.campusId ? { campusLabel: campus?.label ?? user.campusId } : {}) };
+  }
+
   @Post()
-  async create(@Req() request: AuthenticatedRequest, @Body() body: { email?: string; password?: string }): Promise<{ token: string; sessionId: string }> {
+  async create(@Req() request: AuthenticatedRequest, @Body() body: { email?: string; password?: string }): Promise<{ token: string; sessionId: string; mustChangeSecret: boolean }> {
     this.rateLimit.assertAllowed(request.ip ?? "unknown");
     const email = String(body.email ?? "").trim().toLowerCase();
     const password = String(body.password ?? "");
-    const verified = this.credentials.verifyIdentity(digestRecoveryValue(email), password);
-    const user = verified ? this.users.findById(verified.subjectId) : undefined;
+    const verified = await this.credentials.verifyIdentityForApi(digestRecoveryValue(email), password);
+    const user = verified ? await this.users.findByIdForApi(verified.subjectId) : undefined;
     if (!verified || !user?.active || user.professionalEmail !== email) throw new ForbiddenException({ code: "identity_invalid" });
     const scopes: Scope[] = [];
     if (user.roles.some((role) => role === "SUPER_ADMIN" || role === "ADMIN" || role === "AUDITOR")) scopes.push({ kind: "GLOBAL" });
@@ -32,10 +45,11 @@ export class SessionController {
       if (user.teamId) scopes.push({ kind: "TEAM", id: user.teamId });
     }
     if (scopes.length === 0) throw new ForbiddenException({ code: "identity_scope_missing" });
-    const created = this.sessions.create(user.id, user.roles, scopes, 3_600_000, verified.mustChange, user.authenticationVersion);
+    const mustChangeSecret = verified.mustChange || user.firstLoginRequired === true;
+    const created = this.sessions.create(user.id, user.roles, scopes, 3_600_000, mustChangeSecret, user.authenticationVersion);
     await this.sessions.flush();
     this.audit.record({ eventType: "SESSION_CREATED", actorId: user.id, actorRoles: user.roles, sessionId: created.sessionId, correlationId: request.header("x-correlation-id") ?? "generated", result: "SUCCESS", idempotencyKey: `session-created:${created.sessionId}`, ip: request.ip });
-    return created;
+    return { ...created, mustChangeSecret };
   }
 
   @Delete(":sessionId")

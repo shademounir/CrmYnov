@@ -34,7 +34,7 @@ export type SearchState =
   | { kind: "empty"; items: never[] }
   | { kind: "session" | "forbidden" | "error"; items: never[] };
 
-const authPaths = new Set(["/", "/access-recovery", "/first-login"]);
+const authPaths = new Set(["/", "/access-recovery", "/first-login", "/invitation"]);
 const navigation = [
   { href: "/manager/reports/dashboard", label: "Vue d’ensemble", icon: House },
   { href: "/leads", label: "Tous les leads", icon: UsersThree },
@@ -53,6 +53,29 @@ const navigation = [
   { href: "/admin/audit", label: "Journal d’audit", icon: List },
   { href: "/admin/scheduled-sheets", label: "Sheets planifié", icon: UploadSimple },
 ] as const;
+
+type SessionRole = "SUPER_ADMIN" | "ADMIN" | "MANAGER" | "ADMISSIONS" | "AUDITOR";
+type SessionProfile = { roles: SessionRole[]; professionalEmail?: string; campusLabel?: string };
+const roleNames: Record<SessionRole, string> = { SUPER_ADMIN: "Super Admin", ADMIN: "Administrateur", MANAGER: "Manager", ADMISSIONS: "Commercial", AUDITOR: "Lecteur" };
+const commercialNavigation = new Set(["/leads", "/manager/reports/commercial-funnel", "/leads?view=FOLLOW_UP", "/appointments", "/calls/queue", "/notifications", "/chat"]);
+
+export function visibleNavigation(roles: readonly SessionRole[]): typeof navigation[number][] {
+  if (roles.includes("SUPER_ADMIN") || roles.includes("ADMIN")) return [...navigation];
+  if (roles.includes("ADMISSIONS")) return navigation.filter((item) => commercialNavigation.has(item.href));
+  if (roles.includes("MANAGER")) return navigation.filter((item) => !item.href.startsWith("/admin/") && item.href !== "/imports/wizard");
+  return navigation.filter((item) => ["/leads", "/notifications"].includes(item.href));
+}
+
+async function loadSessionProfile(): Promise<SessionProfile> {
+  const response = await fetch("/api/crm/sessions/current", { credentials: "same-origin", cache: "no-store" });
+  if (!response.ok) return { roles: [] };
+  const value = await response.json() as { roles?: unknown; mustChangeSecret?: boolean; professionalEmail?: unknown; campusLabel?: unknown };
+  if (value.mustChangeSecret) { globalThis.location.assign("/first-login"); return { roles: [] }; }
+  const allowed: readonly string[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"];
+  return { roles: Array.isArray(value.roles) ? value.roles.filter((role): role is SessionRole => typeof role === "string" && allowed.includes(role)) : [],
+    ...(typeof value.professionalEmail === "string" ? { professionalEmail: value.professionalEmail } : {}),
+    ...(typeof value.campusLabel === "string" ? { campusLabel: value.campusLabel } : {}) };
+}
 
 export function isActive(pathname: string, href: string, locationSearch = ""): boolean {
   const [route = href, routeSearch = ""] = href.split("?");
@@ -112,7 +135,13 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<SearchState>({ kind: "closed", items: [] });
   const [unreadNotifications, setUnreadNotifications] = useState<number>();
+  const [sessionProfile, setSessionProfile] = useState<SessionProfile>({ roles: [] });
   const isAuthPath = authPaths.has(pathname);
+
+  useEffect(() => {
+    if (isAuthPath) return;
+    void loadSessionProfile().then(setSessionProfile).catch(() => setSessionProfile({ roles: [] }));
+  }, [isAuthPath]);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -154,6 +183,9 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     query={query}
     search={search}
     unreadNotifications={unreadNotifications}
+    sessionRoles={sessionProfile.roles}
+    professionalEmail={sessionProfile.professionalEmail}
+    campusLabel={sessionProfile.campusLabel}
     onCollapse={() => setCollapsed((value) => !value)}
     onMobileOpen={() => setMobileOpen(true)}
     onMobileClose={() => setMobileOpen(false)}
@@ -173,6 +205,9 @@ type AppShellViewProps = Readonly<{
   query: string;
   search: SearchState;
   unreadNotifications?: number | undefined;
+  sessionRoles?: readonly SessionRole[];
+  professionalEmail?: string | undefined;
+  campusLabel?: string | undefined;
   onCollapse: () => void;
   onMobileOpen: () => void;
   onMobileClose: () => void;
@@ -191,6 +226,9 @@ export function AppShellView({
   query,
   search,
   unreadNotifications,
+  sessionRoles = [],
+  professionalEmail,
+  campusLabel,
   onCollapse,
   onMobileOpen,
   onMobileClose,
@@ -198,7 +236,9 @@ export function AppShellView({
   onQueryChange,
   onSearchSelect,
 }: AppShellViewProps): React.JSX.Element {
-  const currentLabel = navigation.find((item) => isActive(pathname, item.href, locationSearch))?.label ?? "CRM Admissions";
+  const allowedNavigation = visibleNavigation(sessionRoles);
+  const currentLabel = allowedNavigation.find((item) => isActive(pathname, item.href, locationSearch))?.label ?? "CRM Admissions";
+  const roleLabel = sessionRoles[0] ? roleNames[sessionRoles[0]] : "Session CRM";
   return <div className={`app-shell ${collapsed ? "is-collapsed" : ""}`}>
     <aside className={`sidebar ${mobileOpen ? "is-mobile-open" : ""}`} aria-label="Navigation CRM">
       <div className="brand-lockup">
@@ -206,11 +246,11 @@ export function AppShellView({
         {!collapsed ? <span>CRM Admissions</span> : null}
         <button type="button" className="mobile-close" onClick={onMobileClose} aria-label="Fermer la navigation"><X size={22} /></button>
       </div>
-      <SidebarNavigation pathname={pathname} locationSearch={locationSearch} collapsed={collapsed} />
-      <Link className="sidebar-profile" href="/admin/users" aria-label="Ouvrir le profil de la session locale">
+      <SidebarNavigation pathname={pathname} locationSearch={locationSearch} collapsed={collapsed} items={allowedNavigation} />
+      <div className="sidebar-profile" aria-label="Profil de la session locale">
         <span className="avatar" aria-hidden="true">SL</span>
-        {!collapsed ? <span><b>Session locale</b><small>Droits contrôlés par l’API</small></span> : null}
-      </Link>
+        {!collapsed ? <span><b>{roleLabel}</b><small>{campusLabel ?? "Périmètre global"}</small></span> : null}
+      </div>
     </aside>
     <div className="app-main">
       <header className="topbar">
@@ -223,11 +263,11 @@ export function AppShellView({
           <kbd aria-hidden="true">Ctrl K</kbd>
         </label>
         <div className="topbar-actions">
-          <button type="button" className="campus-button" aria-label="Campus sélectionné : Casablanca"><MapPin size={19} aria-hidden="true" /><span>Casablanca</span><CaretDown size={15} aria-hidden="true" /></button>
+          <div className="campus-button" aria-label={campusLabel ? `Campus du compte : ${campusLabel}` : "Périmètre global"}><MapPin size={19} aria-hidden="true" /><span>{campusLabel ?? "Tous les campus"}</span></div>
           <Link className="icon-button" href="/notifications" aria-label={unreadNotifications ? `Ouvrir les notifications, ${unreadNotifications} non lue${unreadNotifications > 1 ? "s" : ""}` : "Ouvrir les notifications"}><Bell size={22} />{unreadNotifications ? <span className="notification-dot" aria-hidden="true">{unreadNotifications > 99 ? "99+" : unreadNotifications}</span> : null}</Link>
           <div className="popover-anchor">
-            <button type="button" className="user-button" onClick={onProfileToggle} aria-expanded={profileOpen} aria-label="Ouvrir le menu de la session locale"><span className="avatar">SL</span><span>Session locale<small>Accès contrôlé</small></span><CaretDown size={15} aria-hidden="true" /></button>
-            {profileOpen ? <div className="user-menu" role="menu"><Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link><Link href="/" role="menuitem">Se déconnecter</Link></div> : null}
+            <button type="button" className="user-button" onClick={onProfileToggle} aria-expanded={profileOpen} aria-label="Ouvrir le menu de la session"><span className="avatar">SL</span><span>{roleLabel}<small>{professionalEmail ?? "Accès contrôlé"}</small></span><CaretDown size={15} aria-hidden="true" /></button>
+            {profileOpen ? <div className="user-menu" role="menu">{sessionRoles.some((role) => role === "SUPER_ADMIN" || role === "ADMIN") ? <Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link> : null}<form action="/api/logout" method="post"><button type="submit" role="menuitem">Se déconnecter</button></form></div> : null}
           </div>
         </div>
       </header>
@@ -239,9 +279,9 @@ export function AppShellView({
   </div>;
 }
 
-function SidebarNavigation({ pathname, locationSearch, collapsed }: Readonly<{ pathname: string; locationSearch: string; collapsed: boolean }>): React.JSX.Element {
+function SidebarNavigation({ pathname, locationSearch, collapsed, items }: Readonly<{ pathname: string; locationSearch: string; collapsed: boolean; items: readonly typeof navigation[number][] }>): React.JSX.Element {
   return <nav aria-label="Navigation principale">
-    {navigation.map(({ href, label, icon: Icon }) => {
+    {items.map(({ href, label, icon: Icon }) => {
       const active = isActive(pathname, href, locationSearch);
       return <Link key={`${label}-${href}`} href={href} className={active ? "active" : ""} aria-current={active ? "page" : undefined} title={collapsed ? label : undefined}>
         <Icon size={21} weight={active ? "fill" : "regular"} aria-hidden="true" />

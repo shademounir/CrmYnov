@@ -30,6 +30,9 @@ import { UserController } from "./users/user.controller.js";
 import { UserService } from "./users/user.service.js";
 import { FirstLoginController } from "./first-login/first-login.controller.js";
 import { FirstLoginService } from "./first-login/first-login.service.js";
+import { InvitationController } from "./invitations/invitation.controller.js";
+import { InvitationService } from "./invitations/invitation.service.js";
+import { GmailInvitationSender } from "./invitations/gmail-invitation.sender.js";
 import { LeadController, LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
 import { LeadService } from "./leads/lead.service.js";
 import { LeadPersistenceRepository } from "./leads/lead-persistence.repository.js";
@@ -120,7 +123,7 @@ import { createSheetSource } from "./sheet-import/google-sheet-source.js";
 import { resolve } from "node:path";
 
 @Module({
-  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
     SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
     { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
@@ -148,6 +151,8 @@ import { resolve } from "node:path";
     AuditReader,
     UserService,
     FirstLoginService,
+    InvitationService,
+    GmailInvitationSender,
     LeadService,
     LeadPersistenceRepository,
     LeadQualificationService,

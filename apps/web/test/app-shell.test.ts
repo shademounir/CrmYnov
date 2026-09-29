@@ -9,6 +9,7 @@ import {
   loadSearchResults,
   loadUnreadNotificationCount,
   searchItems,
+  visibleNavigation,
   type SearchState,
 } from "../app/_components/app-shell.js";
 
@@ -78,7 +79,7 @@ test("uses the API unread count instead of a static badge", async () => {
 });
 
 test("renders the responsive shell and every explicit search state", () => {
-  const ready = renderShell({ kind: "ready", items: [{ id: "lead/id", label: "Lead Synthétique", detail: "LD-SYN · Programme" }] }, { collapsed: true, mobileOpen: true, profileOpen: true });
+  const ready = renderShell({ kind: "ready", items: [{ id: "lead/id", label: "Lead Synthétique", detail: "LD-SYN · Programme" }] }, { collapsed: true, mobileOpen: true, profileOpen: true, sessionRoles: ["SUPER_ADMIN"] });
   assert.match(ready, /Maroc Ynov Campus/);
   assert.match(ready, /aria-current="page"/);
   assert.match(ready, /Lead Synthétique/);
@@ -99,10 +100,21 @@ test("renders the responsive shell and every explicit search state", () => {
   assert.doesNotMatch(renderShell({ kind: "closed", items: [] }), /Résultats de la recherche globale/);
 });
 
+test("commercial navigation excludes administration and imports without replacing API permissions", () => {
+  const links = visibleNavigation(["ADMISSIONS"]).map((item) => item.href);
+  assert.ok(links.includes("/leads"));
+  assert.ok(links.includes("/appointments"));
+  assert.ok(links.every((href) => !href.startsWith("/admin/")));
+  assert.ok(!links.includes("/imports/wizard"));
+  const shell = renderShell({ kind: "closed", items: [] }, { sessionRoles: ["ADMISSIONS"], profileOpen: true });
+  assert.doesNotMatch(shell, /href="\/admin\//);
+});
+
 test("marks only Relances active for the follow-up queue", () => {
   const followUp = renderShell({ kind: "closed", items: [] }, {
     pathname: "/leads",
     locationSearch: "view=FOLLOW_UP",
+    sessionRoles: ["ADMISSIONS"],
   });
   assert.match(followUp, /class="active" aria-current="page" href="\/leads\?view=FOLLOW_UP"/u);
   assert.match(followUp, /Page actuelle : Relances/u);
