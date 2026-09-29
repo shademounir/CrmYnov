@@ -1,6 +1,6 @@
 # Prérelease interne DEV `v0.1.0-rc.1`
 
-Le numéro est disponible au 23 septembre 2026 mais le tag n'est créé qu'après
+Le numéro est proposé au 29 septembre 2026 mais le tag n'est créé qu'après
 intégration des PR dédiées et contrôles sur le SHA exact de `develop`.
 
 ## Candidat et composants
@@ -8,7 +8,7 @@ intégration des PR dédiées et contrôles sur le SHA exact de `develop`.
 - socle DEV actuellement déployé : `17bed5548329acc23c394b0e9830e00224718d1b` ;
 - API : `sha256:0abb988860ee9191205491965580c0e32de6709eea670d6f3586f821bdb9d0d7` ;
 - Web : `sha256:9581c023ceadd965485ab09457c9450bedd007fea7b4d2170b71282856610ac3` ;
-- agent Windows candidat : `0.4.9-pilot`, PR98, package lié au SHA exact de la PR ;
+- agent Windows candidat : `0.4.11-pilot`, artefact produit au SHA `09cd5d7e650cd853490bf6d06e1ebd2f4d101250` de PR98 ; son correctif API ultérieur ne reconstruit pas l'agent ;
 - correction turquoise de connexion : PR99, non incluse tant que CRMY-161 reste
   bloquée par CRMY-160.
 
@@ -21,12 +21,12 @@ SHA. Le déploiement manuel DEV ne valide pas WIF ; ce blocage reste affiché.
 | Page/action | Web/BFF | API et permission | Persistance | État de preuve DEV |
 |---|---|---|---|---|
 | Connexion / première connexion | `/`, `/api/crm/sessions`, `/first-login` | sessions, utilisateur actif et scopes | PostgreSQL sessions/credentials | Connexion synthétique prouvée ; émission nominative ajoutée dans ce lot, à déployer |
-| Administration utilisateurs | `/admin/users` | `/users*`, `SUPER_ADMIN` | collaborateurs, versions d'authentification, audit | Création/listing livrés ; émission temporaire testée par code dans ce lot |
+| Administration utilisateurs | `/admin/users` | `/users*`, `SUPER_ADMIN` | collaborateurs, versions d'authentification, audit | Création, rôles/périmètres, état et émission temporaire testés par code dans PR100 ; recette connectée DEV à faire après fusion/déploiement |
 | Liste, création, fiche et édition Lead | `/leads*` | `/leads*`, permission/campus | Leads, activités et reçus | Livré et déjà recetté sur données synthétiques |
 | Statut et clôtures | fiche + `/closure` | `/lead-status*`, `/closures*`, demandeur/approbateur | workflow, audit, activités | ENROLLED/CLOSED_LOST et rejeu prouvés avant fusion PR93 |
 | Relances et notifications | fiche, `/notifications` | `/follow-ups*`, `/notifications*` | PostgreSQL + job idempotent | Livré ; Scheduler DEV actif, réception à échéance recettée |
 | Rendez-vous | `/appointments*` | `/appointments*`, périmètre Lead | PostgreSQL + événements | Livré et recetté |
-| Téléphonie sortante | fiche, `/admin/telephony`, gateway `/agent` | `/telephony*`, poste/utilisateur | commandes et événements | Pilote livré ; agent 0.4.9 en PR98, installateur non signé |
+| Téléphonie sortante | fiche, `/admin/telephony`, gateway `/agent` | `/telephony*`, poste/utilisateur | commandes et événements | Pilote livré ; agent 0.4.11 en PR98, installateur non signé |
 | Imports Sheets | administration imports | routes Sheets | PostgreSQL si activé | **Indisponible en DEV : Sheets désactivé** |
 | Documents candidats | fiche | validation locale temporaire | stockage temporaire seulement | **Non livrable équipe : CRMY-90/Cloud Storage requis** |
 | Outbox asynchrone | sans page dédiée | worker local actuel | mémoire/local selon adaptateur | **Pub/Sub non livré : CRMY-87** |
