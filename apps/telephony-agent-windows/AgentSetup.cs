@@ -20,15 +20,41 @@ internal sealed class AgentSetup
 
     public AgentSettings? Settings => store.Load();
 
+    public static string NormalizeApiBaseUrl(string value)
+    {
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var endpoint)
+            || (!string.IsNullOrEmpty(endpoint.UserInfo))
+            || (!string.IsNullOrEmpty(endpoint.Query))
+            || (!string.IsNullOrEmpty(endpoint.Fragment)))
+            throw new InvalidOperationException("CRM_ADDRESS_INVALID");
+        if (endpoint.Scheme != Uri.UriSchemeHttps
+            && !(endpoint.Scheme == Uri.UriSchemeHttp && (endpoint.IsLoopback || endpoint.Host == "host.docker.internal")))
+            throw new InvalidOperationException("API_TLS_REQUIRED");
+        return endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/";
+    }
+
+    public static string EnvironmentLabel(string value)
+    {
+        var endpoint = new Uri(NormalizeApiBaseUrl(value));
+        if (endpoint.IsLoopback || endpoint.Host == "host.docker.internal") return $"Local · {endpoint.Host}:{endpoint.Port}";
+        if (endpoint.Host.EndsWith(".a.run.app", StringComparison.OrdinalIgnoreCase)) return $"DEV Cloud · {endpoint.Host}";
+        return $"HTTPS · {endpoint.Host}";
+    }
+
+    internal static bool CanPreserveLocalProfile(AgentSettings? existing, string apiBaseUrl, PairResponse paired) =>
+        existing is not null
+        && string.Equals(NormalizeApiBaseUrl(existing.ApiBaseUrl), apiBaseUrl, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(existing.ProfileId, paired.Profile.Id, StringComparison.Ordinal)
+        && string.Equals(existing.SipAddress, paired.Profile.SipAddress, StringComparison.OrdinalIgnoreCase);
+
     public async Task<AgentSettings> PairAsync(string apiBaseUrl, string pairingCode, string displayName, CancellationToken cancellation)
     {
+        apiBaseUrl = NormalizeApiBaseUrl(apiBaseUrl);
         var existing = store.Load();
         var publicId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Environment.UserDomainName}|{Environment.UserName}|{Environment.MachineName}"))).ToLowerInvariant()[..32];
         using var client = new CrmAgentClient(apiBaseUrl);
         var paired = await client.PairAsync(new(pairingCode.Trim(), publicId, displayName.Trim(), Version, SdkVersion), cancellation);
-        var preserveSecret = existing is not null
-            && string.Equals(existing.ProfileId, paired.Profile.Id, StringComparison.Ordinal)
-            && string.Equals(existing.SipAddress, paired.Profile.SipAddress, StringComparison.OrdinalIgnoreCase);
+        var preserveSecret = CanPreserveLocalProfile(existing, apiBaseUrl, paired);
         var settings = new AgentSettings(
             apiBaseUrl.Trim(), paired.Token, paired.WorkstationId, paired.Profile.Id,
             paired.Profile.SipAddress, paired.Profile.AuthUsername, paired.Profile.Server.SipDomain,
