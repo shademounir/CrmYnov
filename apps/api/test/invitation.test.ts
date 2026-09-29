@@ -42,7 +42,7 @@ function fixture(failSend = false): Fixture {
   };
   const client = { ...tx, $transaction: (action: (value: typeof tx) => Promise<unknown>): Promise<unknown> => action(tx) };
   const prisma = { client } as unknown as PrismaService;
-  const sender = { configured: (): boolean => true, publicOrigin: (): string => "https://dev.example.invalid", send: ({ link: value }: { link: string }): Promise<void> => { if (failSend) return Promise.reject(new Error("provider_private_error")); link = value; return Promise.resolve(); } } as GmailInvitationSender;
+  const sender = { configured: (): boolean => true, publicOrigin: (): string => "https://dev.example.invalid", send: ({ link: value }: { link: string }): Promise<void> => { if (failSend) return Promise.reject(new Error("provider_private_error")); link = value; return Promise.resolve(); } } as unknown as GmailInvitationSender;
   const permissions = { transaction: (action: (value: typeof tx) => Promise<unknown>): Promise<unknown> => action(tx), snapshots: (): Promise<[]> => Promise.resolve([]) } as unknown as DynamicPermissionRepository;
   const service = new InvitationService(prisma, sender, permissions);
   const code = (): string => new URL(link).hash.slice("#code=".length);
