@@ -5,6 +5,7 @@ import { SessionService } from "../src/auth/session.service.js";
 import type { AuthenticatedRequest } from "../src/auth/auth.types.js";
 import { UserController } from "../src/users/user.controller.js";
 import { UserService } from "../src/users/user.service.js";
+import { LocalCredentialAdapter, digestRecoveryValue } from "../src/access-recovery/access-recovery.store.js";
 
 function hasResponseCode(code: string): (error: unknown) => boolean {
   return (error: unknown) => {
@@ -14,6 +15,7 @@ function hasResponseCode(code: string): (error: unknown) => boolean {
 }
 
 const createService = (): { users: UserService; sessions: SessionService; audit: AuditService } => { const sessions = new SessionService(); const audit = new AuditService(); return { users: new UserService(sessions, audit), sessions, audit }; };
+const createCredentialService = (): { users: UserService; sessions: SessionService; audit: AuditService; credentials: LocalCredentialAdapter } => { const sessions = new SessionService(); const audit = new AuditService(); const credentials = new LocalCredentialAdapter(); return { users: new UserService(sessions, audit, undefined, credentials), sessions, audit, credentials }; };
 
 test("creates, filters and audits synthetic collaborators", () => {
   const { users, audit } = createService();
@@ -76,4 +78,29 @@ test("authorization changes fail closed on missing confirmation, forged role and
   assert.throws(() => users.updateAuthorization(root.id, { roles: ["ADMIN"], reason: "ACCESS_REVIEW", confirmed: true }, "root", "corr-last"), hasResponseCode("last_super_admin_required"));
   assert.throws(() => users.updateAuthorization(root.id, { roles: ["FORGED"], reason: "ACCESS_REVIEW", confirmed: true }, "root", "corr-role"), hasResponseCode("authorization_change_invalid"));
   assert.throws(() => users.updateAuthorization(root.id, { roles: ["SUPER_ADMIN"], reason: "free text", confirmed: false }, "root", "corr-confirm"), hasResponseCode("authorization_change_invalid"));
+});
+
+test("issues a temporary secret once, forces replacement and revokes existing sessions without auditing the secret", async () => {
+  const { users, sessions, audit, credentials } = createCredentialService();
+  const user = users.create({ professionalEmail: "tester@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-a" }, "root", "corr-create");
+  const session = sessions.create(user.id, ["ADMISSIONS"], [{ kind: "CAMPUS", id: "campus-a" }]);
+  const result = users.issueTemporarySecret(user.id, { confirmed: true, reason: "INITIAL_ACCESS" }, "root", "corr-secret");
+  await users.flush();
+  assert.equal(result.mustChangeAtFirstLogin, true);
+  assert.equal(result.revokedSessions, 1);
+  assert.equal(sessions.authenticate(session.token), undefined);
+  assert.deepEqual(credentials.verifyIdentity(digestRecoveryValue("tester@example.invalid"), result.temporarySecret), { subjectId: user.id, mustChange: true });
+  const event = audit.list().find((candidate) => candidate.eventType === "COLLABORATOR_TEMPORARY_SECRET_ISSUED");
+  assert.equal(JSON.stringify(event).includes(result.temporarySecret), false);
+  assert.throws(() => users.issueTemporarySecret(user.id, { confirmed: false, reason: "INITIAL_ACCESS" }, "root", "corr-refused"), hasResponseCode("temporary_secret_issue_invalid"));
+});
+
+test("controller exposes confirmed Super Admin temporary-secret issuance", async () => {
+  const { users } = createCredentialService();
+  const controller = new UserController(users);
+  const request = { principal: { userId: "root", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "root-session" }, header: () => "corr-controller-secret" } as unknown as AuthenticatedRequest;
+  const user = await controller.create(request, { professionalEmail: "new-tester@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-a" });
+  const issued = await controller.issueTemporarySecret(request, user.id, { confirmed: true, reason: "INITIAL_ACCESS" });
+  assert.equal(issued.mustChangeAtFirstLogin, true);
+  assert.match(issued.temporarySecret, /^CrmYnov-/);
 });

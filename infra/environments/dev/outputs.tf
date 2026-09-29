@@ -9,3 +9,11 @@ output "synthetic_login_secret" {
   description = "Secret resource only; the credential value is never output."
   value       = google_secret_manager_secret.synthetic_login.id
 }
+output "monitoring_dashboard" {
+  description = "Managed DEV runtime dashboard resource name."
+  value       = local.observability_enabled ? google_monitoring_dashboard.runtime[0].id : null
+}
+output "web_uptime_check" {
+  description = "Managed public Web health check resource name."
+  value       = local.observability_enabled ? google_monitoring_uptime_check_config.web[0].id : null
+}

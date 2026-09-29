@@ -11,7 +11,7 @@ locals {
   services = toset([
     "artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "cloudresourcemanager.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com",
     "run.googleapis.com", "secretmanager.googleapis.com", "servicenetworking.googleapis.com",
-    "serviceusage.googleapis.com", "sqladmin.googleapis.com", "cloudscheduler.googleapis.com",
+    "serviceusage.googleapis.com", "sqladmin.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com",
   ])
 }
 
