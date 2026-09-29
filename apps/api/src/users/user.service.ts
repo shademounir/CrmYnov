@@ -1,15 +1,18 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Role } from "../auth/auth.types.js";
 import { isRole } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { digestRecoveryValue, LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
 import { professionalDisplayName } from "./professional-display-name.js";
 
 export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean; authenticationVersion: number }
 export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; professionalDisplayName?: string | null; roles: string[]; campusId?: string; teamId?: string }
 export interface UpdateAuthorization { roles: string[]; campusId?: string; teamId?: string; reason: string; confirmed: boolean }
+export interface IssueTemporarySecret { reason: "INITIAL_ACCESS" | "CREDENTIAL_COMPROMISED" | "USER_REQUEST"; confirmed: boolean }
+export interface TemporarySecretResult { temporarySecret: string; mustChangeAtFirstLogin: true; revokedSessions: number }
 
 const IDENTIFIER = /^[a-zA-Z0-9_-]{2,64}$/;
 
@@ -27,6 +30,7 @@ export class UserService implements OnModuleInit {
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
+    @Optional() @Inject(LocalCredentialAdapter) private readonly credentials?: LocalCredentialAdapter,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -105,6 +109,22 @@ export class UserService implements OnModuleInit {
     return { ...user, roles: [...user.roles] };
   }
 
+  issueTemporarySecret(id: string, input: IssueTemporarySecret, actorId: string, correlationId: string): TemporarySecretResult {
+    const user = this.users.get(id);
+    if (!user?.active) throw new ForbiddenException({ code: "collaborator_not_found_or_inactive" });
+    if (!input.confirmed || !["INITIAL_ACCESS", "CREDENTIAL_COMPROMISED", "USER_REQUEST"].includes(input.reason)) throw new ForbiddenException({ code: "temporary_secret_issue_invalid" });
+    if (!this.credentials) throw new ForbiddenException({ code: "credential_store_unavailable" });
+    const temporarySecret = `CrmYnov-${randomBytes(24).toString("base64url")}!9`;
+    this.credentials.provisionTemporary(id, temporarySecret, digestRecoveryValue(user.professionalEmail));
+    user.authenticationVersion += 1;
+    this.sessions.updateIdentityState(id, true, user.authenticationVersion);
+    const revokedSessions = this.sessions.revokeUser(id);
+    const client = this.prisma?.client;
+    if (client) this.enqueue(client.collaborator.update({ where: { id }, data: { firstLoginRequired: true, authenticationVersion: user.authenticationVersion } }));
+    this.audit.record({ eventType: "COLLABORATOR_TEMPORARY_SECRET_ISSUED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, after: { subjectId: id, reason: input.reason, revokedSessions, mustChangeAtFirstLogin: true }, result: "SUCCESS", idempotencyKey: `collaborator-temporary-secret:${id}:${correlationId}` });
+    return { temporarySecret, mustChangeAtFirstLogin: true, revokedSessions };
+  }
+
   findById(id: string): Collaborator | undefined {
     const user = this.users.get(id);
     return user ? { ...user, roles: [...user.roles] } : undefined;
@@ -127,6 +147,7 @@ export class UserService implements OnModuleInit {
 
   async flush(): Promise<void> {
     await this.pendingWrite;
+    await this.credentials?.flush();
     await this.sessions.flush();
   }
 
