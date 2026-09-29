@@ -18,7 +18,7 @@ test("administration creates and rereads a scoped user, retaining input on refus
     if (path === "/api/crm/users") return Promise.resolve(Response.json({ users: created ? [{ id: "user-a", professionalEmail: "synthetic@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-a", active: true }] : [] }));
     return Promise.resolve(new Response(null, { status: 404 }));
   });
-  act(() => { root.render(createElement(UsersConsole)); });
+  await act(async () => { root.render(createElement(UsersConsole)); await new Promise<void>((resolve) => setImmediate(resolve)); });
   const form = dom.window.document.querySelector("form")!;
   const email = form.querySelector<HTMLInputElement>('input[name="professionalEmail"]')!;
   const campus = form.querySelector<HTMLSelectElement>('select[name="campusId"]')!;
