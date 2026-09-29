@@ -45,3 +45,26 @@ la même page d'administration.
 
 La séparation demandeur/approbateur des clôtures reste inchangée : fournir un
 compte Manager distinct ne permet jamais au demandeur d'approuver sa demande.
+
+## Grille à fournir avant toute création nominative
+
+| Nom professionnel | Email professionnel | Rôle | Campus | Équipe | Extension SIP pilote (facultatif) |
+|---|---|---|---|---|---|
+| À confirmer | À confirmer | Un rôle explicite | Campus actif du référentiel | Si applicable | Si autorisée |
+
+Aucun compte nominatif n'est créé à partir de cette grille vierge. Le Super Admin
+vérifie les doublons et le périmètre avant de remettre un secret temporaire.
+
+## Lecture métier des rôles
+
+| Rôle | Périmètre et action usuelle | Administration des comptes |
+|---|---|---|
+| Super Admin | Gouvernance globale, avec contrôles serveur | Création, droits, désactivation et secret temporaire |
+| Admin | Gestion dans son campus selon les grants effectifs | Pas de mutation `/users` réservée au Super Admin |
+| Manager | Équipe ou campus autorisé, responsabilité d'équipe explicite | Pas de mutation `/users` |
+| Commercial (`ADMISSIONS`) | Leads affectés ou collaboration autorisée | Pas de mutation `/users` |
+| Lecteur (`AUDITOR`) | Lecture seule dans son périmètre | Aucune mutation métier |
+
+Cette table décrit le plafond métier, pas une attribution implicite de chaque
+permission. La matrice effective versionnée dans `/admin/roles` et les refus du
+serveur font foi. Une demande de clôture exige un décideur distinct.

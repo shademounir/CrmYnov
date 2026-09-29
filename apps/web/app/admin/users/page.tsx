@@ -1,5 +1,3 @@
-import { ConnectedResource } from "../../_components/connected-resource";
-import { ApiMutationForm } from "../../_components/api-mutation-form";
-import { TemporarySecretForm } from "./temporary-secret-form";
+import { UsersConsole } from "./users-console";
 
-export default function UsersPage(): React.JSX.Element { return <main><h1>Utilisateurs et autorisations</h1><p>Les utilisateurs, rôles et périmètres proviennent de PostgreSQL via l’API.</p><ConnectedResource endpoint="/api/crm/users?active=true" ariaLabel="Collaborateurs actifs" emptyMessage="Aucun collaborateur actif." fields={[{ key: "id", label: "Identifiant" }, { key: "professionalEmail", label: "Email professionnel" }, { key: "campusId", label: "Campus" }, { key: "teamId", label: "Équipe" }, { key: "active", label: "Actif" }]} /><ApiMutationForm endpoint="/api/crm/users" submitLabel="Créer via l’API" arrayFields={["roles"]}><label>Email professionnel<input name="professionalEmail" type="email" required /></label><label>Rôles, séparés par des virgules<input name="roles" required /></label><label>Campus<input name="campusId" /></label><label>Équipe<input name="teamId" /></label></ApiMutationForm><TemporarySecretForm /></main>; }
+export default function UsersPage(): React.JSX.Element { return <main className="users-page"><header><p>ADMINISTRATION · ACCÈS</p><h1>Utilisateurs et autorisations</h1><span>Créez un compte, définissez son périmètre puis remettez son accès temporaire.</span></header><UsersConsole /></main>; }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export function TemporarySecretForm(): React.JSX.Element {
+export function TemporarySecretForm({ collaboratorId = "" }: Readonly<{ collaboratorId?: string }>): React.JSX.Element {
   const [state, setState] = useState<"idle" | "submitting" | "success" | "error">("idle");
   const [temporarySecret, setTemporarySecret] = useState<string | null>(null);
 
@@ -13,7 +13,7 @@ export function TemporarySecretForm(): React.JSX.Element {
     const rawReason = formData.get("reason");
     const collaboratorId = typeof rawCollaboratorId === "string" ? rawCollaboratorId.trim() : "";
     const reason = typeof rawReason === "string" ? rawReason : "INITIAL_ACCESS";
-    const response = await fetch(`/api/crm/users/${encodeURIComponent(collaboratorId)}/temporary-secret`, {
+    try { const response = await fetch(`/api/crm/users/${encodeURIComponent(collaboratorId)}/temporary-secret`, {
       method: "POST",
       credentials: "same-origin",
       cache: "no-store",
@@ -25,13 +25,14 @@ export function TemporarySecretForm(): React.JSX.Element {
     if (!payload.temporarySecret) { setState("error"); return; }
     setTemporarySecret(payload.temporarySecret);
     setState("success");
+    } catch { setState("error"); }
   }
 
   return <section aria-labelledby="temporary-secret-title">
     <h2 id="temporary-secret-title">Accès initial ou renouvellement</h2>
     <p>Le secret temporaire est affiché une seule fois. Il impose un changement à la première connexion et révoque les sessions existantes.</p>
     <form action={submit}>
-      <label>Identifiant du collaborateur<input name="collaboratorId" required /></label>
+      <label>Identifiant du collaborateur<input name="collaboratorId" required defaultValue={collaboratorId} key={collaboratorId} /></label>
       <label>Motif<select name="reason"><option value="INITIAL_ACCESS">Premier accès</option><option value="USER_REQUEST">Demande utilisateur</option><option value="CREDENTIAL_COMPROMISED">Accès compromis</option></select></label>
       <button disabled={state === "submitting"} type="submit">{state === "submitting" ? "Génération…" : "Générer et révoquer les sessions"}</button>
     </form>
