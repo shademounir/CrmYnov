@@ -439,6 +439,7 @@ input, select, textarea { color: var(--onyx); }
   .login-brand img { width: 130px; height: 65px; }
   .login-brand > p:first-of-type { margin: 6px 0 25px; }
   .login-brand h1 { font-size: 34px; }
+  .login-brand .angle-mark { display: none; }
   .login-brand > p:last-child { display: none; }
   .login-panel { padding: 20px 14px 35px; }
   .login-card { margin-top: -34px; padding: 25px 20px; position: relative; z-index: 2; }

@@ -19,6 +19,7 @@ function contrast(foreground: string, background: string): number {
 test("uses the Ynov turquoise token for the login slogan with AA contrast across the gradient", async () => {
   const css = await readFile(new URL("../app/ynov-v2.css", import.meta.url), "utf8");
   assert.match(css, /\.login-brand h1\s*\{[^}]*color:\s*var\(--teal\)/u);
+  assert.match(css, /\.login-brand \.angle-mark\s*\{\s*display:\s*none;/u);
   assert.ok(contrast("23b2a4", "181d25") >= 4.5);
   assert.ok(contrast("23b2a4", "0f141c") >= 4.5);
 });
