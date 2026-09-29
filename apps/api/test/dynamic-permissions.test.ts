@@ -95,6 +95,7 @@ test("CRMY-169 route permission registry denies unknown controllers and handlers
   assert.deepEqual(routePermissions("LeadAssignmentController", "candidates"), []);
   assert.deepEqual(routePermissions("LeadQualificationController", "read"), ["lead.view"]);
   assert.deepEqual(routePermissions("LeadQualificationController", "update"), ["lead.qualification.update"]);
+  assert.deepEqual(routePermissions("UserController", "issueTemporarySecret"), ["users.roles.assign"]);
 });
 test("qualification update defaults are limited to Admin and Super Admin scopes", () => {
   const permission = "lead.qualification.update";
