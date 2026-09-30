@@ -37,7 +37,7 @@ test("mobile navigation keeps keyboard focus inside and restores it on Escape", 
     return element;
   };
   const opener = find("Ouvrir la navigation");
-  await act(async () => opener.click());
+  act(() => { opener.click(); });
   const closer = find("Fermer la navigation");
   assert.equal(dom.window.document.activeElement, closer);
   assert.equal(opener.getAttribute("aria-expanded"), "true");
@@ -47,17 +47,17 @@ test("mobile navigation keeps keyboard focus inside and restores it on Escape", 
   const last = sidebar.querySelectorAll<HTMLElement>("a[href], button:not([disabled])");
   const lastFocusable = last[last.length - 1]!;
   const backward = new dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
-  await act(async () => sidebar.dispatchEvent(backward));
+  act(() => { sidebar.dispatchEvent(backward); });
   assert.equal(backward.defaultPrevented, true);
   assert.equal(dom.window.document.activeElement, lastFocusable);
 
   const forward = new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-  await act(async () => sidebar.dispatchEvent(forward));
+  act(() => { sidebar.dispatchEvent(forward); });
   assert.equal(forward.defaultPrevented, true);
   assert.equal(dom.window.document.activeElement, closer);
 
   const escape = new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
-  await act(async () => sidebar.dispatchEvent(escape));
+  act(() => { sidebar.dispatchEvent(escape); });
   assert.equal(escape.defaultPrevented, true);
   assert.equal(dom.window.document.activeElement, opener);
   assert.equal(opener.getAttribute("aria-expanded"), "false");
