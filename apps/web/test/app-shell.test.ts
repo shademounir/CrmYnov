@@ -6,9 +6,11 @@ import {
   AppShellClient,
   AppShellView,
   isActive,
+  loadShellSession,
   loadSearchResults,
   loadUnreadNotificationCount,
   searchItems,
+  visibleNavigation,
   type SearchState,
 } from "../app/_components/app-shell.js";
 
@@ -22,6 +24,7 @@ function renderShell(search: SearchState, overrides: Partial<Parameters<typeof A
     profileOpen: false,
     query: "lead",
     search,
+    sessionRoles: ["SUPER_ADMIN"],
     onCollapse: noop,
     onMobileOpen: noop,
     onMobileClose: noop,
@@ -57,6 +60,22 @@ test("normalizes global search results without exposing unknown fields", () => {
   ]);
 });
 
+test("limits the shell navigation to the authenticated role without granting API access", async () => {
+  const hrefs = (roles: Parameters<typeof visibleNavigation>[0]): string[] => visibleNavigation(roles).map((item) => item.href);
+  assert.ok(hrefs(["SUPER_ADMIN"]).includes("/admin/users"));
+  assert.ok(hrefs(["MANAGER"]).includes("/imports/wizard"));
+  assert.ok(!hrefs(["MANAGER"]).includes("/admin/users"));
+  assert.ok(hrefs(["ADMISSIONS"]).includes("/leads"));
+  assert.ok(!hrefs(["ADMISSIONS"]).includes("/imports/wizard"));
+  assert.ok(hrefs(["AUDITOR"]).includes("/admin/audit"));
+  assert.ok(!hrefs([]).includes("/leads"));
+  const commercial = renderShell({ kind: "closed", items: [] }, { sessionRoles: ["ADMISSIONS"] });
+  assert.doesNotMatch(commercial, /href="\/admin\/users"/u);
+  assert.match(commercial, /href="\/leads"/u);
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" }))) as typeof fetch), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401))) as typeof fetch), { roles: [] });
+});
+
 test("loads every bounded global-search state", async () => {
   const signal = new AbortController().signal;
   const ready = await loadSearchResults("lead", signal, (() => Promise.resolve(response(200, { items: [{ id: "lead-1", firstName: "Lead" }] }))) as typeof fetch);
@@ -85,6 +104,7 @@ test("renders the responsive shell and every explicit search state", () => {
   assert.match(ready, /\/leads\/lead%2Fid/);
   assert.match(ready, /Administration/);
   assert.match(ready, /scrim/);
+  assert.match(ready, /aria-controls="crm-sidebar" aria-expanded="true"/);
   assert.match(ready, /Contenu connecté/);
 
   const states: Array<[SearchState, string]> = [
@@ -92,11 +112,13 @@ test("renders the responsive shell and every explicit search state", () => {
     [{ kind: "empty", items: [] }, "Aucun lead ne correspond"],
     [{ kind: "session", items: [] }, "Session expirée"],
     [{ kind: "forbidden", items: [] }, "Accès interdit"],
-    [{ kind: "error", items: [] }, "API locale momentanément indisponible"],
+    [{ kind: "error", items: [] }, "Service CRM momentanément indisponible"],
   ];
   for (const [state, copy] of states) assert.match(renderShell(state), new RegExp(copy));
 
-  assert.doesNotMatch(renderShell({ kind: "closed", items: [] }), /Résultats de la recherche globale/);
+  const closed = renderShell({ kind: "closed", items: [] });
+  assert.match(closed, /aria-controls="crm-sidebar" aria-expanded="false"/);
+  assert.doesNotMatch(closed, /Résultats de la recherche globale/);
 });
 
 test("marks only Relances active for the follow-up queue", () => {

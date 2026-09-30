@@ -328,7 +328,7 @@ a.lead-profile__relation-row:hover { color: var(--teal-dark); background: #fbfdf
   .lead-profile__timeline-tabs a, .lead-profile__timeline-tabs span { font-size: 12px; }
 }
 
-@media (max-width: 1360px) and (min-width: 821px) {
+@media (max-width: 1800px) and (min-width: 821px) {
   .lead-profile__actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
   .lead-profile__actions > .primary-button,
   .lead-profile__actions > .secondary-button { width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
