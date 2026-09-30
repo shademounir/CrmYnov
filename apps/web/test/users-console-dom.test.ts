@@ -47,3 +47,17 @@ test("administration never exposes forms when the initial read is forbidden", as
   assert.equal(dom.window.document.querySelector('input[name="professionalEmail"]'), null);
   assert.equal(dom.window.document.querySelectorAll('[role="alert"]').length, 1);
 });
+
+test("administration explains an unavailable API without exposing forms", async (t) => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/admin/users" });
+  const prior = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true })) { prior.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, value }); }
+  const { act, createElement } = await import("react"); const { createRoot } = await import("react-dom/client"); const { UsersConsole } = await import("../app/admin/users/users-console.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  t.after(() => { act(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+  t.mock.method(globalThis, "fetch", () => Promise.reject(new TypeError("Failed to fetch")));
+  await act(async () => { root.render(createElement(UsersConsole)); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.match(dom.window.document.body.textContent ?? "", /Le service CRM est indisponible/u);
+  assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Failed to fetch/u);
+  assert.equal(dom.window.document.querySelector("form"), null);
+});

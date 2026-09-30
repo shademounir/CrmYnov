@@ -37,7 +37,7 @@ export function UsersConsole(): React.JSX.Element {
     const result = data as { users?: User[] };
     if (!Array.isArray(result.users)) throw new Error("Liste des utilisateurs invalide.");
     setUsers(result.users); setCampuses(references); setLoading(false);
-  }).catch((failure: unknown) => { if (active) { setLoadError(failure instanceof Error ? failure.message : "Administration indisponible."); setLoading(false); } }); return (): void => { active = false; }; }, []);
+  }).catch((failure: unknown) => { if (active) { setLoadError(failure instanceof TypeError ? "Le service CRM est indisponible. Aucun compte ni droit n’a été relu." : failure instanceof Error ? failure.message : "Administration indisponible."); setLoading(false); } }); return (): void => { active = false; }; }, []);
   const current = users.find((item) => item.id === selected);
   async function mutate(action: () => Promise<unknown>, message: string): Promise<void> {
     if (mutationPending.current) return;
