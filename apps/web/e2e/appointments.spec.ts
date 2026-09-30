@@ -13,9 +13,11 @@ test("synthetic appointment agenda remains accessible and API-connected", async 
 
 test("planning from a Lead writes once and exposes the persistent agenda links", async ({ page }) => {
   const leadId = "00000000-0000-4000-8000-000000000149";
-  // Keep the appointment close enough for browser and Node timezone data to agree.
-  // Their speculative Casablanca rules can differ for a date as distant as 2099.
-  const selectedStart = `${new Date().getUTCFullYear() + 2}-07-01T10:30`;
+  // Keep the appointment close to the test run: speculative Casablanca timezone
+  // rules can differ between the Chromium and Node tzdata even two years ahead.
+  const futureDay = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+  const futureParts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(futureDay).map((part) => [part.type, part.value]));
+  const selectedStart = `${futureParts.year}-${futureParts.month}-${futureParts.day}T10:30`;
   let submissions = 0;
   await page.route(`**/api/crm/leads/${leadId}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: leadId, leadCode: "LD-SYNTHETIC", firstName: "Recette", lastName: "Rendez-vous", campus: "SYNTHETIC-CAMPUS", campaign: "SYNTHETIC", educationLevel: "BAC", program: "SYNTHETIC", source: "TEST", status: "TO_CONTACT", collaboratorIds: [], temperature: "UNEVALUATED", temperatureLabel: "Non évalué", qualificationVersion: 0 }) }));
   await page.route(`**/api/crm/leads/${leadId}/appointments`, async (route) => {
