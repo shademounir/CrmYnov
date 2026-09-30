@@ -22,7 +22,7 @@ FROM dependencies AS runtime-dependencies
 RUN npm ci --omit=dev --ignore-scripts --workspace=@crm/api --workspace=@crm/shared --include-workspace-root=false \
     && test -f node_modules/prisma/build/index.js
 
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552 AS runtime
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace
 COPY --from=runtime-dependencies --chown=65532:65532 /workspace/node_modules ./node_modules

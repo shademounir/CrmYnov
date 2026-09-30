@@ -12,7 +12,7 @@ COPY apps/web apps/web
 COPY packages/shared packages/shared
 RUN npm run build --workspace=@crm/shared && npm run build --workspace=@crm/web
 
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552 AS runtime
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
 ENV NODE_ENV=production
 ENV CRM_API_INTERNAL_URL=http://api:3001
 ENV HOSTNAME=0.0.0.0
