@@ -63,15 +63,21 @@ test("normalizes global search results without exposing unknown fields", () => {
 test("limits the shell navigation to the authenticated role without granting API access", async () => {
   const hrefs = (roles: Parameters<typeof visibleNavigation>[0]): string[] => visibleNavigation(roles).map((item) => item.href);
   assert.ok(hrefs(["SUPER_ADMIN"]).includes("/admin/users"));
+  assert.ok(!hrefs(["ADMIN"]).includes("/admin/users"));
   assert.ok(hrefs(["MANAGER"]).includes("/imports/wizard"));
   assert.ok(!hrefs(["MANAGER"]).includes("/admin/users"));
   assert.ok(hrefs(["ADMISSIONS"]).includes("/leads"));
+  assert.ok(hrefs(["ADMISSIONS"]).includes("/manager/reports/dashboard?view=personal"));
+  assert.ok(hrefs(["ADMISSIONS"]).includes("/manager/reports/commercial-performance"));
+  assert.ok(!hrefs(["ADMISSIONS"]).includes("/manager/reports/commercial-funnel"));
   assert.ok(!hrefs(["ADMISSIONS"]).includes("/imports/wizard"));
   assert.ok(hrefs(["AUDITOR"]).includes("/admin/audit"));
   assert.ok(!hrefs([]).includes("/leads"));
   const commercial = renderShell({ kind: "closed", items: [] }, { sessionRoles: ["ADMISSIONS"] });
   assert.doesNotMatch(commercial, /href="\/admin\/users"/u);
   assert.match(commercial, /href="\/leads"/u);
+  assert.match(commercial, /Commercial/u);
+  assert.doesNotMatch(commercial, /Session locale/u);
   assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" }))) as typeof fetch), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
   assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401))) as typeof fetch), { roles: [] });
 });
