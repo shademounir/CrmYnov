@@ -94,3 +94,15 @@ test("main release gate rejects untrusted sources before checkout", async () => 
   assert.match(workflow, /EXPECTED_REPOSITORY/);
   assert.match(workflow, /EXPECTED_OWNER/);
 });
+
+test("main release gate statically validates every existing Terraform root without a backend", async () => {
+  const workflow = await readFile(mainGateWorkflowUrl, "utf8");
+  for (const root of ["infra/bootstrap/foundation", "infra/bootstrap/phase0",
+    "infra/bootstrap/state", "infra/bootstrap/wif", "infra/bootstrap/dev-runtime-state",
+    "infra/environments/dev"]) assert.ok(workflow.includes(root), root);
+  assert.match(workflow, /terraform -chdir="\$root" init/);
+  assert.match(workflow, /-backend=false/);
+  assert.match(workflow, /-lockfile=readonly/);
+  assert.match(workflow, /terraform -chdir="\$root" validate -no-color/);
+  assert.doesNotMatch(workflow, /\bterraform\s+(plan|apply|destroy|import)\b/);
+});
