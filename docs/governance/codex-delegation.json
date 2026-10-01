@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "crm-ynov-po-delegation-20261001",
+  "status": "active",
+  "repository": "shademounir/CrmYnov",
+  "executor": "Codex",
+  "authenticatedActors": ["shademounir"],
+  "authority": {
+    "decidedAt": "2026-10-01T00:00:00Z",
+    "timestampMeaning": "Borne technique du jour de la décision ; heure exacte du message non attestée.",
+    "reference": "Instruction PO explicite du 1 octobre 2026, conversation CRM Ynov : Nouvelle décision de gouvernance — délégation permanente à Codex",
+    "meaning": "Compte GitHub de transport autorisé ; exécutant Codex déclaré, aucune décision personnelle du PO représentée."
+  },
+  "allowedBases": ["develop", "main"],
+  "allowedReasons": [
+    "ordinary-scope", "default-manual-po", "application-release", "ticket-sensitive-scope",
+    "github-governance", "iam-wif", "billing-budget", "secret-configuration",
+    "terraform-bootstrap-state", "production", "security-rule-exception", "write-capable-workflow",
+    "audited-repository-tooling", "destructive-migration"
+  ],
+  "constraints": {
+    "developmentMonthlyBudgetUsd": 150,
+    "deploymentRequiresSeparateObjectiveDossier": true,
+    "productionNotAuthorizedByPullRequestApproval": true,
+    "personalAestheticAcceptanceRemainsSeparate": true,
+    "noIdentityImpersonationOrIamBypass": true,
+    "noRealCallWithoutAuthorizedDestination": true,
+    "noUsefulDataDeletion": true,
+    "unvalidatedDestructiveMigrationForbidden": true,
+    "inboundAndAudioRecordingDisabled": true
+  }
+}

@@ -5,6 +5,10 @@ import {
   validatePullRequestPolicy,
 } from "./policy.mjs";
 import { assessChangedPrismaMigrations } from "./migration-policy.mjs";
+import { execFileSync } from "node:child_process";
+import { DELEGATED_CODEX_MODE, DELEGATED_CHECKS, GRANT_PATH, grantDigest, selectDelegatedDecision } from "./delegation.mjs";
+import { fetchAllCheckRuns } from "../release-manifest/checks.mjs";
+import { validateManifest } from "../release-manifest/index.mjs";
 
 function required(name) {
   const value = process.env[name];
@@ -41,14 +45,13 @@ async function pages(path) {
 }
 
 async function checkRuns() {
-  const requiredChecks = pull.base.ref === "develop"
+  const originalChecks = pull.base.ref === "develop"
     ? ["simulate", "terraform-static", "iac-security", "prisma-migration-policy"]
     : ["unit-tests", "terraform-static", "iac-security", "secret-scan"];
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const response = await github(
-      `/repos/${repository}/commits/${checkSha}/check-runs?per_page=100`,
-    );
-    const runs = response.check_runs ?? [];
+  const requiredChecks = process.env.PR_APPROVAL_MODE === DELEGATED_CODEX_MODE
+    ? [...new Set([...originalChecks, ...DELEGATED_CHECKS])] : originalChecks;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const runs = await fetchAllCheckRuns({ repository, commitSha: checkSha, token });
     const byName = new Map();
     for (const run of runs) {
       if (
@@ -74,6 +77,18 @@ const pull = await github(`/repos/${repository}/pulls/${pullNumber}`);
 const checkSha = pull.head?.sha;
 if (!/^[0-9a-f]{40}$/i.test(checkSha ?? "")) {
   throw new Error("Invalid pull request head SHA.");
+}
+let trustedGrant;
+let headGrantDigest;
+if (process.env.PR_APPROVAL_MODE === DELEGATED_CODEX_MODE) {
+  // Authority is read from the protected branch, never the reviewed PR checkout.
+  const trustedSha = pull.base.ref === "develop" ? pull.base.sha
+    : (await github(`/repos/${repository}/branches/develop`)).commit?.sha;
+  if (!/^[a-f0-9]{40}$/.test(trustedSha ?? "")) throw new Error("Invalid delegation authority revision.");
+  execFileSync("git", ["merge-base", "--is-ancestor", trustedSha, checkSha]);
+  try { trustedGrant = JSON.parse(execFileSync("git", ["show", `${trustedSha}:${GRANT_PATH}`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })); }
+  catch { throw new Error("Delegation authority unavailable on protected branch; bootstrap requires existing policy."); }
+  headGrantDigest = grantDigest(JSON.parse(execFileSync("git", ["show", `${checkSha}:${GRANT_PATH}`], { encoding: "utf8" })));
 }
 const [files, comments, comparison, checks] = await Promise.all([
   pages(`/repos/${repository}/pulls/${pullNumber}/files`),
@@ -125,7 +140,7 @@ try {
 
 let manifestProfile;
 if (pull.head.ref.startsWith("release/")) {
-  const manifest = JSON.parse(await readFile("release-manifest.json", "utf8"));
+  const manifest = validateManifest(JSON.parse(await readFile("release-manifest.json", "utf8")));
   manifestProfile = manifest.profile;
 }
 
@@ -153,6 +168,9 @@ const result = validatePullRequestPolicy({
   pullRequestNumber: pullNumber,
   pullRequestBody: pull.body,
   manualPoDecision,
+  trustedGrant,
+  headGrantDigest,
+  delegatedDecision: selectDelegatedDecision(comments, required("PR_POLICY_ALLOWED_ACTORS").split(",").map((actor) => actor.trim())),
   autoMerge: pull.auto_merge,
   autoMergeEvents: timeline.filter((event) => ["auto_merge_enabled", "auto_merge_disabled"].includes(event.event)),
   conversationsResolved: threads.every((thread) => thread.isResolved === true),
