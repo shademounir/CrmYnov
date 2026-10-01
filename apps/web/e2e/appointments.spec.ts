@@ -13,25 +13,35 @@ test("synthetic appointment agenda remains accessible and API-connected", async 
 
 test("planning from a Lead writes once and exposes the persistent agenda links", async ({ page }) => {
   const leadId = "00000000-0000-4000-8000-000000000149";
+  // This UI test checks the browser's Casablanca wall-time roundtrip. Chromium
+  // and Node can carry different Morocco tzdata even for a near-future date;
+  // server-side timezone parity needs separate evidence.
+  const selectedStart = `${new Date(Date.now() + 3 * 24 * 60 * 60_000).toISOString().slice(0, 10)}T10:30`;
   let submissions = 0;
+  let submittedStart: string | undefined;
   await page.route(`**/api/crm/leads/${leadId}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: leadId, leadCode: "LD-SYNTHETIC", firstName: "Recette", lastName: "Rendez-vous", campus: "SYNTHETIC-CAMPUS", campaign: "SYNTHETIC", educationLevel: "BAC", program: "SYNTHETIC", source: "TEST", status: "TO_CONTACT", collaboratorIds: [], temperature: "UNEVALUATED", temperatureLabel: "Non évalué", qualificationVersion: 0 }) }));
   await page.route(`**/api/crm/leads/${leadId}/appointments`, async (route) => {
     submissions += 1;
     const body = route.request().postDataJSON() as { startsAt: string; durationMinutes: number; idempotencyKey: string };
-    const displayed = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(body.startsAt)).map((part) => [part.type, part.value]));
-    expect(`${displayed.year}-${displayed.month}-${displayed.day}T${displayed.hour}:${displayed.minute}`).toBe("2099-03-01T10:30");
+    submittedStart = body.startsAt;
     expect(body.durationMinutes).toBe(45);
     expect(body.idempotencyKey.length).toBeGreaterThanOrEqual(8);
     await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "appointment-created" }) });
   });
   await page.goto(`/leads/${leadId}/appointments`);
-  await page.getByLabel("Date et heure").fill("2099-03-01T10:30");
+  await page.getByLabel("Date et heure").fill(selectedStart);
   await page.getByLabel("Durée").selectOption("45");
   await page.getByRole("button", { name: "Planifier le rendez-vous" }).click();
   await expect(page.getByText("Rendez-vous enregistré dans le CRM.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Ouvrir le rendez-vous" })).toHaveAttribute("href", "/appointments/appointment-created");
   await expect(page.getByRole("link", { name: "Voir tous les rendez-vous" })).toHaveAttribute("href", "/appointments?view=table");
   expect(submissions).toBe(1);
+  expect(submittedStart).toBeDefined();
+  const displayed = await page.evaluate((iso) => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  }, submittedStart ?? "");
+  expect(displayed).toBe(selectedStart);
 });
 
 test("records one durable no-show from the appointment detail", async ({ page }) => {

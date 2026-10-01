@@ -22,9 +22,20 @@ FROM dependencies AS runtime-dependencies
 RUN npm ci --omit=dev --ignore-scripts --workspace=@crm/api --workspace=@crm/shared --include-workspace-root=false \
     && test -f node_modules/prisma/build/index.js
 
-FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552 AS runtime
+FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS patched-openssl
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      libssl3t64=3.5.7-1~deb13u3 openssl-provider-legacy=3.5.7-1~deb13u3 \
+    && dpkg-query -s libssl3t64 > /libssl3t64.status \
+    && dpkg-query -s openssl-provider-legacy > /openssl-provider-legacy.status
+
+FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace
+COPY --from=patched-openssl /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/
+COPY --from=patched-openssl /usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so /usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so
+COPY --from=patched-openssl /libssl3t64.status /var/lib/dpkg/status.d/libssl3t64
+COPY --from=patched-openssl /openssl-provider-legacy.status /var/lib/dpkg/status.d/openssl-provider-legacy
 COPY --from=runtime-dependencies --chown=65532:65532 /workspace/node_modules ./node_modules
 COPY --from=build --chown=65532:65532 /workspace/node_modules/.prisma/client ./node_modules/.prisma/client
 COPY --from=build --chown=65532:65532 /workspace/node_modules/@prisma/engines ./node_modules/@prisma/engines
