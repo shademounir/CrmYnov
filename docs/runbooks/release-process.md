@@ -1,5 +1,11 @@
 # Runbook — Policy-validated release process
 
+Approval modes include the explicit, versioned PO delegation of 1 October 2026:
+[delegated-codex](../governance/delegated-codex.md). Its initial activation remains
+protected; subsequently Codex can decide and execute authorized releases without
+claiming a personal PO review. Publishing an internal prerelease is not a PROD
+deployment. The deployment workflow remains explicitly dispatched.
+
 ## Principle
 
 Merging a functional pull request into `develop` does not complete a Jira
@@ -39,11 +45,14 @@ and run without credentials:
 - `iac-security`;
 - `secret-scan`.
 
-The `application` profile remains fail-closed and additionally requires
-`lint`, `type-check`, `build`, `CodeQL`, `dependency-review`,
-`container-scan`, and `SonarQube Quality Gate`. Those controls are not claimed
-as available by this technical release. Any application release attempted
-before they exist will fail because required checks are absent.
+The `application` profile remains fail-closed and requires the full API/Web gates:
+`lint`, `type-check`, `unit-tests`, `integration-tests`, `playwright`, `build`,
+`dependency-review`, `secret-scan`, `container-scan (api)`, `container-scan (web)`,
+`CodeQL`, `SonarQube Quality Gate`, `quality-gate`, `prisma-migration-policy`,
+`terraform-static` and `iac-security`. Application and migration workflows also
+run on PRs targeting main. A missing control or an old SHA remains blocking.
+These API/Web gates do not certify the Windows native agent or its unsigned
+installer; their separate pilot proofs and restrictions must be listed explicitly.
 
 ## Required release sequence
 

@@ -1,5 +1,6 @@
 import { DELEGATED_CODEX_MODE, DELEGATED_LABEL, DELEGATED_CHECKS, selectDelegatedDecision, validateDelegatedDecision } from "../pr-policy/delegation.mjs";
 import { classifyApprovalMode } from "../pr-policy/policy.mjs";
+import { fetchAllCheckRuns } from "./checks.mjs";
 
 const MANUAL_PO_MODE = "manual-po";
 const AUTOMATED_POLICY_MODE = "automated-policy";
@@ -121,7 +122,7 @@ export function validateReleaseApproval({
       mergedAt: pullRequest.merged_at, headGrantDigest });
     const policyRun = policyCheckRuns.filter((run) => run.name === "pr-policy")
       .sort((a, b) => Number(b.id) - Number(a.id))[0];
-    if (!policyRun || policyRun.status !== "completed" || policyRun.conclusion !== "success" ||
+    if (policyRun?.status !== "completed" || policyRun.conclusion !== "success" ||
       policyRun.head_sha !== pullRequest.head.sha) refuse("pr_policy_check_failed");
     return { approvalMode, author, mergedBy, approvalValidated: true, humanApproved: false,
       mergeMethod: "codex_controlled", delegatedApproval };
@@ -219,6 +220,16 @@ export function selectManualPoDecision(comments, { pullRequestNumber, headSha })
   };
 }
 
+async function collectDelegatedReleaseEvidence({ enabled, repositoryName, pullRequest, comments, pages, token, fetchImpl }) {
+  if (!enabled) return {};
+  const [policyCheckRuns, changedFiles] = await Promise.all([
+    fetchAllCheckRuns({ repository: repositoryName, commitSha: pullRequest.head?.sha, token, fetchImpl }),
+    pages(`/repos/${repositoryName}/pulls/${pullRequest.number}/files`, "files"),
+  ]);
+  return { policyCheckRuns, changedFiles: changedFiles.map((file) => file.filename),
+    delegatedDecision: selectDelegatedDecision(comments, [pullRequest.user?.login]) };
+}
+
 export async function fetchSoloOwnerApprovalEvidence({
   repositoryName,
   pullRequestNumber,
@@ -274,38 +285,24 @@ export async function fetchSoloOwnerApprovalEvidence({
     }
     throw new Error(`GitHub ${label} pagination limit exceeded.`);
   }
-  const [policyCheckResponse, comments, timeline, changedFiles] = await Promise.all([
+  const [policyCheckResponse, comments, timeline] = await Promise.all([
     fetchImpl(
       `https://api.github.com/repos/${repositoryName}/commits/${pullRequest.head?.sha}/check-runs?per_page=100`,
       { headers },
     ),
     pages(`/repos/${repositoryName}/issues/${pullRequestNumber}/comments`, "comments"),
     pages(`/repos/${repositoryName}/issues/${pullRequestNumber}/timeline`, "timeline"),
-    includeDelegation ? pages(`/repos/${repositoryName}/pulls/${pullRequestNumber}/files`, "files") : [],
   ]);
   if (!policyCheckResponse.ok) {
     throw new Error(`GitHub policy check request failed (${policyCheckResponse.status}).`);
   }
   const policyChecks = await policyCheckResponse.json();
-  const allPolicyRuns = [...(policyChecks.check_runs ?? [])];
-  if (includeDelegation) {
-    for (let page = 2; allPolicyRuns.length < policyChecks.total_count; page += 1) {
-      if (page > 100) throw new Error("Policy check pagination limit exceeded.");
-      const response = await fetchImpl(`https://api.github.com/repos/${repositoryName}/commits/${pullRequest.head?.sha}/check-runs?per_page=100&page=${page}`, { headers });
-      if (!response.ok) throw new Error(`GitHub policy check request failed (${response.status}).`);
-      const next = await response.json();
-      if (!Array.isArray(next.check_runs) || !next.check_runs.length) throw new Error("Incomplete policy check pagination.");
-      allPolicyRuns.push(...next.check_runs);
-    }
-  }
   return {
     pullRequest,
     repository: await repositoryResponse.json(),
-    policyCheckRuns: allPolicyRuns,
-    ...(includeDelegation ? {
-      changedFiles: changedFiles.map((file) => file.filename),
-      delegatedDecision: selectDelegatedDecision(comments, [pullRequest.user?.login]),
-    } : {}),
+    policyCheckRuns: Array.isArray(policyChecks.check_runs) ? policyChecks.check_runs : [],
+    ...await collectDelegatedReleaseEvidence({ enabled: includeDelegation, repositoryName, pullRequest,
+      comments, pages, token, fetchImpl }),
     manualPoDecision: selectManualPoDecision(comments, {
       pullRequestNumber,
       headSha: pullRequest.head?.sha,

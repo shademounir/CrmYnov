@@ -1,6 +1,6 @@
 import { appendFile, readFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
-import { DELEGATED_CODEX_MODE, GRANT_PATH, grantDigest } from "../pr-policy/delegation.mjs";
+import { DELEGATED_CODEX_MODE } from "../pr-policy/delegation.mjs";
+import { loadProtectedDelegation } from "../pr-policy/delegation-evidence.mjs";
 import {
   fetchSoloOwnerApprovalEvidence,
   validateReleaseApproval,
@@ -26,10 +26,10 @@ const manifest = JSON.parse(
 let trustedGrant;
 let headGrantDigest;
 if (approvalMode === DELEGATED_CODEX_MODE) {
-  // Fetch the protected authority, not the release PR's copy of its grant.
-  execFileSync("git", ["fetch", "--no-tags", "origin", "develop"]);
-  trustedGrant = JSON.parse(execFileSync("git", ["show", `FETCH_HEAD:${GRANT_PATH}`], { encoding: "utf8" }));
-  headGrantDigest = grantDigest(JSON.parse(execFileSync("git", ["show", `${evidence.pullRequest.head.sha}:${GRANT_PATH}`], { encoding: "utf8" })));
+  // After merge, develop may have advanced. Current authority must still be active
+  // and identical; pre-merge ancestry is proved by the successful pr-policy check.
+  ({ trustedGrant, headGrantDigest } = await loadProtectedDelegation({ repository: requiredEnv("GITHUB_REPOSITORY"),
+    headSha: evidence.pullRequest.head.sha, token: requiredEnv("GITHUB_TOKEN"), requireAncestor: false }));
 }
 const result = validateReleaseApproval({
   approvalMode,

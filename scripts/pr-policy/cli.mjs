@@ -5,8 +5,8 @@ import {
   validatePullRequestPolicy,
 } from "./policy.mjs";
 import { assessChangedPrismaMigrations } from "./migration-policy.mjs";
-import { execFileSync } from "node:child_process";
-import { DELEGATED_CODEX_MODE, DELEGATED_CHECKS, GRANT_PATH, grantDigest, selectDelegatedDecision } from "./delegation.mjs";
+import { DELEGATED_CODEX_MODE, DELEGATED_CHECKS, selectDelegatedDecision } from "./delegation.mjs";
+import { loadProtectedDelegation } from "./delegation-evidence.mjs";
 import { fetchAllCheckRuns } from "../release-manifest/checks.mjs";
 import { validateManifest } from "../release-manifest/index.mjs";
 
@@ -81,14 +81,7 @@ if (!/^[0-9a-f]{40}$/i.test(checkSha ?? "")) {
 let trustedGrant;
 let headGrantDigest;
 if (process.env.PR_APPROVAL_MODE === DELEGATED_CODEX_MODE) {
-  // Authority is read from the protected branch, never the reviewed PR checkout.
-  const trustedSha = pull.base.ref === "develop" ? pull.base.sha
-    : (await github(`/repos/${repository}/branches/develop`)).commit?.sha;
-  if (!/^[a-f0-9]{40}$/.test(trustedSha ?? "")) throw new Error("Invalid delegation authority revision.");
-  execFileSync("git", ["merge-base", "--is-ancestor", trustedSha, checkSha]);
-  try { trustedGrant = JSON.parse(execFileSync("git", ["show", `${trustedSha}:${GRANT_PATH}`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })); }
-  catch { throw new Error("Delegation authority unavailable on protected branch; bootstrap requires existing policy."); }
-  headGrantDigest = grantDigest(JSON.parse(execFileSync("git", ["show", `${checkSha}:${GRANT_PATH}`], { encoding: "utf8" })));
+  ({ trustedGrant, headGrantDigest } = await loadProtectedDelegation({ repository, headSha: checkSha, token }));
 }
 const [files, comments, comparison, checks] = await Promise.all([
   pages(`/repos/${repository}/pulls/${pullNumber}/files`),

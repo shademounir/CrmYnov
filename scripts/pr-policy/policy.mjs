@@ -120,27 +120,41 @@ function reasonsForPath(path, manifestProfile, migrationAssessment) {
   return ORDINARY_RULES.some((pattern) => pattern.test(path)) ? [] : ["ambiguous-path"];
 }
 
+const TOOLING_EXTENSIONS = new Set(["mjs", "json", "yaml", "yml", "md", "sh", "ps1", "cmd", "tf", "tfvars", "sql", "hcl"]);
+const TOOLING_ROOT_FILES = new Set(["package.json", "package-lock.json", "release-manifest.json", "eslint.config.mjs",
+  ".gitattributes", ".gitignore", ".dockerignore", ".npmrc", "sonar-project.properties"]);
+
+function auditedToolingPath(path) {
+  const segments = path.split("/");
+  if (["scripts", "infra", ".github"].includes(segments[0]) && /^[A-Za-z0-9_./-]+$/.test(path)) {
+    return TOOLING_EXTENSIONS.has(path.split(".").at(-1));
+  }
+  if (/^docs\/risks?\/[A-Za-z0-9_./-]+\.md$/.test(path)) return true;
+  if (segments.length !== 1) return false;
+  return TOOLING_ROOT_FILES.has(path) || /^tsconfig[A-Za-z0-9_.-]*\.json$/.test(path) ||
+    /^Dockerfile[A-Za-z0-9_.-]*$/.test(path) || /^(?:docker-compose|compose)[A-Za-z0-9_.-]*\.ya?ml$/.test(path);
+}
+
+function classifyDelegatedApproval(input) {
+  const { changedFiles, manifestProfile, migrationAssessment } = input;
+  const original = classifyApprovalMode({ ...input, defaultMode: AUTOMATED_POLICY_MODE });
+  // Recognized repository tooling only; malformed/unknown paths still fail closed.
+  const recognized = changedFiles.every((file) => {
+    const path = normalizeRepositoryPath(file);
+    return path && (!reasonsForPath(path, manifestProfile, migrationAssessment).includes("ambiguous-path") || auditedToolingPath(path));
+  });
+  if (original.reasons.includes("ambiguous-path") && recognized) {
+    original.reasons = original.reasons.filter((reason) => reason !== "ambiguous-path");
+    original.reasons.push("audited-repository-tooling");
+  }
+  validateGrant(input.trustedGrant, { ...input, reasons: original.reasons });
+  return { ...original, effectiveApprovalMode: DELEGATED_CODEX_MODE };
+}
+
 export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode, migrationAssessment,
   trustedGrant, repository, actor, base, headGrantDigest }) {
-  if (defaultMode === DELEGATED_CODEX_MODE) {
-    const original = classifyApprovalMode({ changedFiles, ticket, manifestProfile,
-      defaultMode: AUTOMATED_POLICY_MODE, migrationAssessment });
-    // Explicitly recognize repository tooling; malformed/unknown paths still fail closed.
-    // This does not change historical automated-policy or manual-po classification.
-    if (original.reasons.includes("ambiguous-path") && changedFiles.every((file) => {
-      const path = normalizeRepositoryPath(file);
-      if (!path) return false;
-      if (!reasonsForPath(path, manifestProfile, migrationAssessment).includes("ambiguous-path")) return true;
-      return /^(?:scripts|infra|\.github)\/[A-Za-z0-9_.\/-]+\.(?:mjs|json|ya?ml|md|sh|ps1|cmd|tf|tfvars|sql|hcl)$/.test(path) ||
-        /^docs\/risks?\/[A-Za-z0-9_.\/-]+\.md$/.test(path) ||
-        /^(?:package(?:-lock)?\.json|release-manifest\.json|(?:tsconfig[^/]*|eslint\.config)\.(?:json|mjs)|\.gitattributes|\.gitignore|\.dockerignore|\.npmrc|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|compose[^/]*\.ya?ml|sonar-project\.properties)$/.test(path);
-    })) {
-      original.reasons = original.reasons.filter((reason) => reason !== "ambiguous-path");
-      original.reasons.push("audited-repository-tooling");
-    }
-    validateGrant(trustedGrant, { repository, actor, base, changedFiles, reasons: original.reasons, headGrantDigest });
-    return { ...original, effectiveApprovalMode: DELEGATED_CODEX_MODE };
-  }
+  if (defaultMode === DELEGATED_CODEX_MODE) return classifyDelegatedApproval({ changedFiles, ticket, manifestProfile,
+    migrationAssessment, trustedGrant, repository, actor, base, headGrantDigest });
   if (![AUTOMATED_POLICY_MODE, MANUAL_PO_MODE].includes(defaultMode)) {
     refuse("default_approval_mode_invalid");
   }

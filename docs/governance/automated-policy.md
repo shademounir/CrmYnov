@@ -1,5 +1,10 @@
 # Codex automated pull request policy
 
+This describes the retained `automated-policy` mode. The explicit PO delegation
+of 1 October 2026 adds [delegated-codex](delegated-codex.md), a distinct mode
+requiring protected authority and an exact-SHA decision. Existing modes are not
+silently repurposed and technical approval is not personal aesthetic acceptance.
+
 ## Separated approval modes
 
 `automated-policy` applies to internal `feature/*` and `fix/*` pull requests to
