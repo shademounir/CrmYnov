@@ -23,7 +23,7 @@ const markup = execFileSync(process.execPath, ["--import", "tsx", "-e", `
   process.stdout.write(renderToStaticMarkup(createElement(LeadProfileView, {lead:${JSON.stringify(lead)}, events:[]})));
 `], { cwd: webRoot, encoding: "utf8" });
 
-for (const width of [1440, 1280, 1024, 768, 390, 1838, 1920, 2560]) {
+for (const width of [1440, 1280, 1024, 768, 390, 1838, 1874, 1920, 2560]) {
   test(`all real Lead actions fit at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.setContent(`<style>${styles}</style><div style="max-width:1220px; margin:auto; padding:16px; width:calc(100% - ${width > 1024 ? 168 : 0}px)">${markup}</div>`);
