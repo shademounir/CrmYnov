@@ -10,12 +10,15 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 concurrency:
-  group: prisma-migration-policy-${{ github.event.pull_request.number }}
+  group: prisma-migration-policy-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -45,9 +48,15 @@ jobs:
           EXPECTED_REPOSITORY: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
           EXPECTED_ACTOR: ${{ github.repository_owner }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          test "${SOURCE_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          case "${EVENT_NAME}" in
+            pull_request) test "${SOURCE_REPOSITORY}" = "${EXPECTED_REPOSITORY}" ;;
+            push) test "${EVENT_REF}" = "refs/heads/main" ;;
+            *) exit 1 ;;
+          esac
           test "${ACTOR}" = "${EXPECTED_ACTOR}"
 
       - name: Check out reviewed code
@@ -68,8 +77,8 @@ jobs:
       - name: Audit and apply migrations on ephemeral PostgreSQL only
         env:
           DATABASE_URL: postgresql://crm_policy:synthetic-policy-only@127.0.0.1:5432/crm_policy?schema=public
-          MIGRATION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          MIGRATION_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MIGRATION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          MIGRATION_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail

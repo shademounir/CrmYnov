@@ -61,7 +61,9 @@ Si un passage Ready, une relance globale ou une nouvelle exécution remplace les
 ids des checks, examiner ses résultats puis publier une nouvelle décision avant
 de relancer uniquement `pr-policy`. Ne jamais approuver des runs encore en cours.
 
-Les checks de release sont activés aussi sur les PR main. Le profil application
+Les checks de release sont activés aussi sur les PR main et les commits fusionnés
+sur main pour vérifier le SHA réellement tagué, sans nouveau déploiement.
+Le profil application
 utilise les noms réels `container-scan (api)` et `container-scan (web)` ; aucune
 réussite ancienne d'un autre SHA ne remplace ces scans. Les validateurs restent
 read-only et Jira Sync reste en dry-run. `approvalValidated: true` est séparé de

@@ -50,7 +50,10 @@ The `application` profile remains fail-closed and requires the full API/Web gate
 `dependency-review`, `secret-scan`, `container-scan (api)`, `container-scan (web)`,
 `CodeQL`, `SonarQube Quality Gate`, `quality-gate`, `prisma-migration-policy`,
 `terraform-static` and `iac-security`. Application and migration workflows also
-run on PRs targeting main. A missing control or an old SHA remains blocking.
+run on PRs targeting main and on the exact merged main commit. This is necessary
+because a squash commit is not the reviewed PR head SHA: publishing must not
+reuse the PR's checks as if they ran on the tagged main commit. A missing control
+or an old SHA remains blocking.
 These API/Web gates do not certify the Windows native agent or its unsigned
 installer; their separate pilot proofs and restrictions must be listed explicitly.
 

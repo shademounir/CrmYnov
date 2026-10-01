@@ -121,6 +121,8 @@ test("collectors use protected authority and main gates, not a self-authorizing 
   for (const name of ["application-quality", "prisma-migration-policy"]) {
     const workflow = await readFile(new URL(`../../../.github/workflows/${name}.yml`, import.meta.url), "utf8");
     assert.match(workflow, /- develop\s+- main/);
+    assert.match(workflow, /push:\s+branches:\s+- main/);
+    assert.match(workflow, /test "\$\{EVENT_REF\}" = "refs\/heads\/main"/);
     assert.doesNotMatch(workflow, /pull_request_target/);
   }
 });
