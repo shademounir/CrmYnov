@@ -180,9 +180,10 @@ test("renders timestamps in French using the explicit Africa/Casablanca timezone
   assert.equal(formatDate("2026-09-11T23:30:00.000Z"), "12 sept., 00:30");
   assert.equal(formatDate(undefined), "Non planifiée");
 });
-test("keeps every Lead action inside desktop viewports through 1800 px", () => {
+test("keeps the Lead action grid active at every desktop width, including ultra-wide screens", () => {
   const css = readFileSync(new URL("../app/leads/lead-profile.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(max-width: 1800px\) and \(min-width: 821px\)[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/u);
+  assert.match(css, /^\.lead-profile__actions \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/mu);
+  assert.doesNotMatch(css, /@media \(max-width: 1800px\)/u);
   assert.match(css, /\.lead-profile__actions > \.primary-button,[\s\S]*min-width: 0/u);
 });
 test("keeps commercial context and actions ahead of the dossier on mobile", () => {
