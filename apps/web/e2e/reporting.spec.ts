@@ -18,6 +18,7 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
 
 async function mockReporting(page: Page): Promise<void> {
   // Reporting is isolated from the API; include the shared shell's notification query.
+  await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "manager@example.invalid" }) }));
   await page.route("**/api/crm/notifications?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], unread: 0, total: 0, page: 1, pageSize: 1 }) }));
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
   await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
@@ -51,7 +52,7 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   await page.getByText("Analyses détaillées et tableaux accessibles", { exact: true }).click();
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("link", { name: "Exporter les agrégats CSV" }).click(); const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("crm-manager-dashboard-v1.csv");
-  await expect(page.locator("body")).not.toContainText(/@example|LD-SYNTH|\+212/u);
+  await expect(page.locator(".page-canvas main").first()).not.toContainText(/@example|LD-SYNTH|\+212/u);
   expect(consoleErrors).toEqual([]);
 });
 

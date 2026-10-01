@@ -254,6 +254,8 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-profile__actions a { text-decoration: none; }
 .lead-profile__actions > .primary-button { order: -2; min-width: 196px; }
 .lead-profile__actions > .secondary-button { background: #fff; }
+.lead-profile__actions > .secondary-button:hover:not(:disabled),
+.lead-profile__actions > .secondary-button:focus-visible { color: var(--onyx); background: var(--teal-soft); border-color: var(--teal-dark); }
 .lead-profile__content-grid { grid-template-columns: minmax(300px, .78fr) minmax(520px, 1.62fr); gap: 12px; }
 .lead-profile__relation { min-width: 0; padding: 18px; }
 .lead-profile__relation .lead-profile__panel-heading { margin-bottom: 12px; }
@@ -328,7 +330,7 @@ a.lead-profile__relation-row:hover { color: var(--teal-dark); background: #fbfdf
   .lead-profile__timeline-tabs a, .lead-profile__timeline-tabs span { font-size: 12px; }
 }
 
-@media (max-width: 1360px) and (min-width: 821px) {
+@media (max-width: 1800px) and (min-width: 821px) {
   .lead-profile__actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; }
   .lead-profile__actions > .primary-button,
   .lead-profile__actions > .secondary-button { width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }

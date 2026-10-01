@@ -45,7 +45,9 @@ test("runtime probes cover persistence, two instances, seed replay and outbox co
   assert.match(check, /outbox_claim_concurrency_failed/);
   assert.match(check, /synthetic_seed_incomplete/);
   assert.match(check, /hostname !== "postgres"/);
-  assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552 AS runtime/);
+  assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime/);
+  assert.match(dockerfile, /libssl3t64=3\.5\.7-1~deb13u3 openssl-provider-legacy=3\.5\.7-1~deb13u3/);
+  assert.match(dockerfile, /COPY --from=patched-openssl \/libssl3t64\.status \/var\/lib\/dpkg\/status\.d\/libssl3t64/);
   assert.match(dockerfile, /USER 65532:65532/);
   assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/);
 });

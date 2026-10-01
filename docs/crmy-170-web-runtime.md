@@ -10,6 +10,14 @@ L'image API validée n'est ni reconstruite ni modifiée par cette remédiation.
 Runtime linux/amd64 :
 `gcr.io/distroless/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552`.
 
+Cette empreinte décrit la livraison historique CRMY-170. La remédiation de sécurité
+CRMY-160 du 30 septembre épingle désormais l'index
+`sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a`
+et superpose les bibliothèques `libssl3t64` et `openssl-provider-legacy`
+`3.5.7-1~deb13u3` publiées par Debian Security, avec leurs métadonnées exactes.
+Le conteneur final reste non-root et sans gestionnaire de paquets à l'exécution ;
+les scans de l'image finale font foi pour cette version.
+
 Le serveur minimal `apps/web/server.js` est lancé directement par
 `/nodejs/bin/node`, en UID/GID 65532. Les seules copies sont le standalone tracé,
 les ressources `.next/static` et `public`. Aucun shell, npm, curl ou gestionnaire

@@ -106,7 +106,7 @@ export function LeadDirectory({ endpoint, ariaLabel, emptyMessage, context = "di
   }, [endpoint]);
 
   if (state.kind === "loading") return <section className="connected-state" aria-live="polite" aria-busy="true"><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="sr-only">Chargement des prospects depuis l’API locale…</span></section>;
-  if (state.kind === "error") return <section className="ui-state ui-state--error" role="alert"><h2>Connexion impossible</h2><p>Les prospects ne sont pas affichés. Vérifiez la session et la disponibilité de l’API locale.</p><button type="button" onClick={() => globalThis.location.reload()}>Réessayer</button></section>;
+  if (state.kind === "error") return <section className="ui-state ui-state--error" role="alert"><h2>Connexion impossible</h2><p>Les prospects ne sont pas affichés. Vérifiez la session et la disponibilité du service CRM.</p><button type="button" onClick={() => globalThis.location.reload()}>Réessayer</button></section>;
   if (state.kind === "empty") return <section className="ui-state" aria-live="polite"><h2>Aucun résultat</h2><p>{emptyMessage}</p></section>;
   return <LeadDirectoryTable items={state.items} ariaLabel={ariaLabel} context={context} />;
 }
