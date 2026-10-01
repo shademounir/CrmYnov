@@ -10,11 +10,11 @@ function resource(address, type, values = {}) {
 }
 
 resources.push(resource("module.folder.google_folder.this", "google_folder", { display_name: "synthetic" }));
-for (const env of ["bootstrap", "dev", "staging", "prod"]) {
+for (const env of ["dev", "staging", "prod"]) {
   resources.push(resource(`module.projects[\"${env}\"].google_project.this`, "google_project", { project_id: `synthetic-${env}` }));
   resources.push(resource(`module.billing[\"${env}\"].google_billing_project_info.this`, "google_billing_project_info", { billing_account: "SYNTHETIC-BILLING-ACCOUNT" }));
 }
-for (let index = 1; index <= 17; index += 1) {
+for (let index = 1; index <= 14; index += 1) {
   resources.push(resource(`module.services[\"service-${String(index).padStart(2, "0")}\"].google_project_service.this`, "google_project_service", { service: `service-${index}.googleapis.com` }));
 }
 const budgetValues = { bootstrap: [8, 330000000], dev: [41, 670000000], staging: [33, 330000000], prod: [100, 0], folder: [183, 330000000] };

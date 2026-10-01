@@ -1,5 +1,9 @@
 node_modules/
 coverage/
+**/.next/
+**/dist/
+**/bin/
+**/obj/
 .env
 .env.*
 !.env.example

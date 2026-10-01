@@ -1,0 +1,2 @@
+import assert from "node:assert/strict"; import test from "node:test"; import { renderToStaticMarkup } from "react-dom/server"; import SharedContributionsPage from "../app/manager/reports/shared-contributions/page.js";
+test("renders separated contribution safeguards", () => { const html = renderToStaticMarkup(SharedContributionsPage()); for (const value of ["Contributions partagées", "actions principales", "actions secondaires", "Aucune double attribution", "commission"]) assert.equal(html.includes(value), true); });

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "migration": "20260917121000_widen_telephony_profile_state",
+  "migrationSha256": "c18045a011e7aecdffecb06783fe3639a8efd572c800e2a293821b783210859c",
+  "markers": ["additive", "ephemeral-only", "rollback-documented"],
+  "safeTypeChanges": [
+    {
+      "kind": "varchar-widening",
+      "table": "telephony_user_profiles",
+      "column": "state",
+      "fromLength": 24,
+      "toLength": 40,
+      "lockRisk": "PostgreSQL prend un verrou ACCESS EXCLUSIVE pendant la modification de métadonnées ; appliquer hors écriture concurrente et surveiller le délai d'acquisition.",
+      "dataRisk": "L'élargissement de VARCHAR(24) vers VARCHAR(40) conserve toutes les valeurs existantes sans conversion de contenu."
+    }
+  ]
+}

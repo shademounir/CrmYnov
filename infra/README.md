@@ -5,7 +5,8 @@ authorize or perform Google Cloud mutations.
 
 ## Roots
 
-1. `bootstrap/foundation`: folder, four projects, billing, APIs, budgets.
+1. `bootstrap/phase0`: adoption of the preexisting bootstrap project, its billing link, and three imported minimal APIs.
+2. `bootstrap/foundation`: folder, three environment projects, complementary APIs, and five budgets.
 2. `bootstrap/state`: four private and independent Terraform state buckets.
 3. `bootstrap/wif`: IAM, impersonation, service accounts, and GitHub OIDC.
 

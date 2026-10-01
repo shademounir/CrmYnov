@@ -5,4 +5,8 @@ resource "google_project" "this" {
   labels              = var.labels
   auto_create_network = false
   deletion_policy     = "PREVENT"
+
+  lifecycle {
+    ignore_changes = [billing_account]
+  }
 }

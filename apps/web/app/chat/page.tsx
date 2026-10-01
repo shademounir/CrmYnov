@@ -1,0 +1,6 @@
+import { ConnectedResource } from "../_components/connected-resource";
+import { ApiMutationForm } from "../_components/api-mutation-form";
+
+export default function InternalChatPage(): React.JSX.Element {
+  return <main><header><h1>Chat interne</h1><p>Conversations persistantes réservées aux collaborateurs autorisés.</p></header><ConnectedResource endpoint="/api/crm/chat/conversations" ariaLabel="Conversations internes" emptyMessage="Aucune conversation autorisée." fields={[{ key: "id", label: "Conversation" }, { key: "type", label: "Type" }, { key: "leadCode", label: "Contexte lead" }, { key: "updatedAt", label: "Dernière activité" }]} itemPathPrefix="/chat" /><ApiMutationForm endpoint="/api/crm/chat/conversations" submitLabel="Créer via l’API" arrayFields={["participantIds"]}><label>Type<select name="type"><option value="DIRECT">Directe</option><option value="TEAM">Équipe</option></select></label><label>Titre<input name="title" required /></label><label>Membres autorisés, séparés par des virgules<input name="participantIds" required /></label></ApiMutationForm><aside aria-label="Règles de confidentialité"><h2>Contrôles appliqués</h2><ul><li>RBAC et appartenance vérifiés côté API.</li><li>Édition versionnée et suppression logique motivée.</li><li>Aucun contenu de message dans les journaux d’audit.</li></ul></aside></main>;
+}

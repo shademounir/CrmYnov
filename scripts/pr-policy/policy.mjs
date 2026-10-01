@@ -1,16 +1,73 @@
+import { MIGRATION_SQL, ROLLBACK_DOC } from "./migration-policy.mjs";
+import { DELEGATED_CODEX_MODE, DELEGATED_LABEL, DELEGATED_CHECKS, validateGrant, validateDelegatedDecision } from "./delegation.mjs";
+
 const AUTOMATED_POLICY_MODE = "automated-policy";
 const MANUAL_PO_MODE = "manual-po";
 const POLICY_LABEL = "policy-approved";
 const PO_LABEL = "po-approved";
 const VALID_TICKET_STATUSES = new Set(["To Do", "In Progress", "In Review"]);
 
-const SENSITIVE_PATHS = [
-  /^infra\/environments\/prod(?:\/|$)/i,
-  /^infra\/.*(?:iam|billing|secret)/i,
-  /^\.github\/workflows\/.*(?:prod|apply|destroy|iam|billing|secret)/i,
-  /(?:^|\/)(?:secrets?|billing|iam|migrations?)(?:\/|$)/i,
-  /(?:^|\/)(?:terraform-)?(?:apply|destroy)(?:\.|\/|$)/i,
-];
+const SENSITIVE_RULES = Object.freeze([
+  ["github-governance", /^(?:\.github\/(?:workflows|CODEOWNERS|pull_request_template)|docs\/(?:governance|security)|scripts\/pr-policy)(?:\/|\.|$)/i],
+  ["iam-wif", /(?:^|\/)(?:iam|wif|workload-identity|identity-federation)(?:\/|\.|-|$)/i],
+  ["billing-budget", /(?:^|\/)(?:billing|budgets?)(?:\/|\.|-|$)/i],
+  ["secret-configuration", /(?:^|\/)(?:secrets?|credentials?)(?:\/|\.|-|$)|(?:^|\/)\.env(?:\.|$)/i],
+  ["terraform-bootstrap-state", /^(?:infra\/bootstrap|infra\/.*(?:backend|state)|scripts\/terraform-|.*\.(?:tf|tfvars))(?:\/|\.|-|$)/i],
+  ["production", /(?:^|\/)(?:prod|production)(?:\/|\.|-|$)/i],
+  ["destructive-migration", /(?:^|\/)(?:migrations?|data-migrations?)(?:\/|\.|-|$)/i],
+  ["security-rule-exception", /(?:^|\/)(?:security|exceptions?|polic(?:y|ies)|branch-protection|rulesets?)(?:\/|\.|-|$)/i],
+  ["write-capable-workflow", /^\.github\/workflows\/.*(?:write|deploy|release|publish|apply|destroy|sync|mutation)/i],
+]);
+
+const ORDINARY_RULES = Object.freeze([
+  /^(?:apps|packages|libs)\/[A-Za-z0-9_.\/-]+$/,
+  /^docs\/(?!governance(?:\/|$)|security(?:\/|$)|risks?(?:\/|$))[A-Za-z0-9_.\/-]+\.md$/i,
+  /^(?:README|CONTRIBUTING|LICENSE)(?:\.[A-Za-z0-9]+)?$/i,
+  /^(?:test|tests)\/[A-Za-z0-9_.\/-]+$/,
+]);
+
+const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:[\\/]/;
+const NEXT_APP_ROOT = "apps/web/app/";
+const NEXT_STATIC_SEGMENT = /^[A-Za-z0-9_.-]+$/;
+const NEXT_DYNAMIC_SEGMENT = /^\[[A-Za-z][A-Za-z0-9_-]*\]$/;
+const NEXT_CATCH_ALL_SEGMENT = /^\[\.\.\.[A-Za-z][A-Za-z0-9_-]*\]$/;
+const NEXT_OPTIONAL_CATCH_ALL_SEGMENT = /^\[\[\.\.\.[A-Za-z][A-Za-z0-9_-]*\]\]$/;
+const NEXT_ROUTE_GROUP_SEGMENT = /^\([A-Za-z][A-Za-z0-9_-]*\)$/;
+const NEXT_PARALLEL_ROUTE_SEGMENT = /^@[A-Za-z][A-Za-z0-9_-]*$/;
+
+function normalizeRepositoryPath(value) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) return undefined;
+  if (value.startsWith("/") || value.startsWith("\\") || WINDOWS_ABSOLUTE_PATH.test(value)) return undefined;
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.includes("//")) return undefined;
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return undefined;
+  return normalized;
+}
+
+function isAllowedNextAppPath(path) {
+  if (!path.startsWith(NEXT_APP_ROOT)) return false;
+  const segments = path.slice(NEXT_APP_ROOT.length).split("/");
+  if (segments.length === 0) return false;
+  return segments.every((segment) =>
+    NEXT_STATIC_SEGMENT.test(segment) ||
+    NEXT_DYNAMIC_SEGMENT.test(segment) ||
+    NEXT_CATCH_ALL_SEGMENT.test(segment) ||
+    NEXT_OPTIONAL_CATCH_ALL_SEGMENT.test(segment) ||
+    NEXT_ROUTE_GROUP_SEGMENT.test(segment) ||
+    NEXT_PARALLEL_ROUTE_SEGMENT.test(segment),
+  );
+}
+
+const PO_CHECKLIST = Object.freeze([
+  "Revue manuelle effectuée par le Product Owner",
+  "Label `po-approved` ajouté manuellement par le Product Owner",
+  "Toutes les conversations sont résolues",
+  "La branche est à jour",
+  "Les contrôles obligatoires sont verts",
+  "Auto-merge désactivé",
+  "Merge exclusivement manuel",
+]);
 
 function refuse(reason, details = {}) {
   const error = new Error(`Pull request policy refused: ${reason}.`);
@@ -44,22 +101,93 @@ function branchPolicy(branch, base) {
   refuse("branch_name_not_allowed");
 }
 
-function sensitiveFiles(files) {
-  return files.filter((file) => SENSITIVE_PATHS.some((pattern) => pattern.test(file)));
+function migrationReasons(migrationAssessment) {
+  if (migrationAssessment?.applicable === true && migrationAssessment.approved === true) return [];
+  const failures = migrationAssessment?.reasons?.length
+    ? migrationAssessment.reasons
+    : ["migration_static_audit_missing"];
+  return failures.map((failure) => `prisma-${failure}`);
+}
+
+function reasonsForPath(path, manifestProfile, migrationAssessment) {
+  if (path === "release-manifest.json" && manifestProfile === "gate-1") return [];
+  if (MIGRATION_SQL.test(path) || ROLLBACK_DOC.test(path)) return migrationReasons(migrationAssessment);
+  const sensitive = SENSITIVE_RULES
+    .filter(([, pattern]) => pattern.test(path))
+    .map(([reason]) => reason);
+  if (sensitive.length) return sensitive;
+  if (isAllowedNextAppPath(path)) return [];
+  return ORDINARY_RULES.some((pattern) => pattern.test(path)) ? [] : ["ambiguous-path"];
+}
+
+const TOOLING_EXTENSIONS = new Set(["mjs", "json", "yaml", "yml", "md", "sh", "ps1", "cmd", "tf", "tfvars", "sql", "hcl"]);
+const TOOLING_ROOT_FILES = new Set(["package.json", "package-lock.json", "release-manifest.json", "eslint.config.mjs",
+  ".gitattributes", ".gitignore", ".dockerignore", ".npmrc", "sonar-project.properties"]);
+
+function auditedToolingPath(path) {
+  const segments = path.split("/");
+  if (["scripts", "infra", ".github"].includes(segments[0]) && /^[A-Za-z0-9_./-]+$/.test(path)) {
+    return TOOLING_EXTENSIONS.has(path.split(".").at(-1));
+  }
+  if (/^docs\/risks?\/[A-Za-z0-9_./-]+\.md$/.test(path)) return true;
+  if (segments.length !== 1) return false;
+  return TOOLING_ROOT_FILES.has(path) || /^tsconfig[A-Za-z0-9_.-]*\.json$/.test(path) ||
+    /^Dockerfile[A-Za-z0-9_.-]*$/.test(path) || /^(?:docker-compose|compose)[A-Za-z0-9_.-]*\.ya?ml$/.test(path);
+}
+
+function classifyDelegatedApproval(input) {
+  const { changedFiles, manifestProfile, migrationAssessment } = input;
+  const original = classifyApprovalMode({ ...input, defaultMode: AUTOMATED_POLICY_MODE });
+  // Recognized repository tooling only; malformed/unknown paths still fail closed.
+  const recognized = changedFiles.every((file) => {
+    const path = normalizeRepositoryPath(file);
+    return path && (!reasonsForPath(path, manifestProfile, migrationAssessment).includes("ambiguous-path") || auditedToolingPath(path));
+  });
+  if (original.reasons.includes("ambiguous-path") && recognized) {
+    original.reasons = original.reasons.filter((reason) => reason !== "ambiguous-path");
+    original.reasons.push("audited-repository-tooling");
+  }
+  validateGrant(input.trustedGrant, { ...input, reasons: original.reasons });
+  return { ...original, effectiveApprovalMode: DELEGATED_CODEX_MODE };
+}
+
+export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode, migrationAssessment,
+  trustedGrant, repository, actor, base, headGrantDigest }) {
+  if (defaultMode === DELEGATED_CODEX_MODE) return classifyDelegatedApproval({ changedFiles, ticket, manifestProfile,
+    migrationAssessment, trustedGrant, repository, actor, base, headGrantDigest });
+  if (![AUTOMATED_POLICY_MODE, MANUAL_PO_MODE].includes(defaultMode)) {
+    refuse("default_approval_mode_invalid");
+  }
+  if (!Array.isArray(changedFiles) || changedFiles.length === 0) {
+    return { effectiveApprovalMode: MANUAL_PO_MODE, reasons: ["ambiguous-empty-diff"] };
+  }
+  const reasons = new Set();
+  if (ticket?.scope === "prod" || ticket?.scope === MANUAL_PO_MODE) reasons.add("ticket-sensitive-scope");
+  if (manifestProfile === "application") reasons.add("application-release");
+  for (const file of changedFiles) {
+    const normalizedPath = normalizeRepositoryPath(file);
+    if (!normalizedPath) {
+      reasons.add("ambiguous-path");
+      continue;
+    }
+    for (const reason of reasonsForPath(normalizedPath, manifestProfile, migrationAssessment)) reasons.add(reason);
+  }
+  if (reasons.size > 0 || defaultMode === MANUAL_PO_MODE) {
+    return {
+      effectiveApprovalMode: MANUAL_PO_MODE,
+      reasons: reasons.size ? [...reasons].sort((left, right) => left.localeCompare(right)) : ["default-manual-po"],
+    };
+  }
+  return { effectiveApprovalMode: AUTOMATED_POLICY_MODE, reasons: ["ordinary-scope"] };
 }
 
 function validateChecks(required, runs, expectedSha) {
   const latest = new Map();
   for (const run of runs ?? []) {
     if (run.name === "pr-policy") continue;
-    if (!latest.has(run.name) || Number(run.id ?? 0) >= Number(latest.get(run.name)?.id ?? 0)) {
-      latest.set(run.name, run);
-    }
+    if (!latest.has(run.name) || Number(run.id ?? 0) >= Number(latest.get(run.name)?.id ?? 0)) latest.set(run.name, run);
   }
-  const missing = [];
-  const pending = [];
-  const failed = [];
-  const wrongSha = [];
+  const missing = [], pending = [], failed = [], wrongSha = [];
   for (const name of required) {
     const run = latest.get(name);
     if (!run) missing.push(name);
@@ -73,87 +201,17 @@ function validateChecks(required, runs, expectedSha) {
   if (wrongSha.length) refuse("required_check_wrong_sha", { wrongSha });
 }
 
-export function validatePullRequestPolicy({
-  approvalMode,
-  repository,
-  sourceRepository,
-  actor,
-  allowedActors,
-  branch,
-  base,
-  draft,
-  labels,
-  ticket,
-  changedFiles = [],
-  manifestProfile,
-  mergeable,
-  branchUpToDate,
-  requiredChecks = [],
-  checkRuns = [],
-  checkSha,
-}) {
-  if (approvalMode !== AUTOMATED_POLICY_MODE) refuse("approval_mode_not_automated_policy");
-  if (!repository || sourceRepository !== repository) refuse("external_fork_not_allowed");
-  const allowlist = actors(allowedActors);
-  if (!allowlist.includes(actor)) refuse("actor_not_allowed");
-
-  const branchResult = branchPolicy(branch, base);
-  const names = labelNames(labels);
-  if (names.includes(PO_LABEL)) refuse("po_approved_reserved_for_manual_scope");
-  if (!names.includes(POLICY_LABEL)) refuse("policy_approved_label_missing");
-  if (draft !== false) refuse("pull_request_is_draft");
-
+function validateTicket(ticket, branchResult) {
   if (!ticket?.key) refuse("jira_ticket_missing");
-  if (branchResult.ticketKey && ticket.key !== branchResult.ticketKey) {
-    refuse("jira_ticket_branch_mismatch");
-  }
+  if (branchResult.ticketKey && ticket.key !== branchResult.ticketKey) refuse("jira_ticket_branch_mismatch");
   if (ticket.issueType === "Epic") refuse("jira_epic_not_allowed");
-  if (!labelNames(ticket.labels).includes("codex-ready")) {
-    refuse("jira_codex_ready_missing");
-  }
-  if (ticket.blocked === true || labelNames(ticket.labels).includes("blocked")) {
-    refuse("jira_ticket_blocked");
-  }
+  if (!labelNames(ticket.labels).includes("codex-ready")) refuse("jira_codex_ready_missing");
+  if (ticket.blocked === true || labelNames(ticket.labels).includes("blocked")) refuse("jira_ticket_blocked");
   if (!VALID_TICKET_STATUSES.has(ticket.status)) refuse("jira_status_not_compatible");
-
-  const protectedFiles = sensitiveFiles(changedFiles);
-  if (
-    ticket.scope === "prod" ||
-    ticket.scope === MANUAL_PO_MODE ||
-    manifestProfile === "application" ||
-    protectedFiles.length > 0
-  ) {
-    refuse("manual_po_scope_required", { protectedFiles });
-  }
-  if (branchResult.kind === "release" && manifestProfile !== "gate-1") {
-    refuse("release_gate_profile_required");
-  }
-
-  const manifests = changedFiles.filter((file) => file.endsWith("release-manifest.json"));
-  if (manifests.length > 1 || manifests.some((file) => file !== "release-manifest.json")) {
-    refuse("release_manifest_collision");
-  }
-  if (mergeable !== true) refuse("pull_request_conflict");
-  if (branchUpToDate !== true) refuse("branch_not_up_to_date");
-  validateChecks(requiredChecks, checkRuns, checkSha);
-
-  return {
-    mode: AUTOMATED_POLICY_MODE,
-    policyLabel: POLICY_LABEL,
-    actor,
-    branch,
-    base,
-    branchKind: branchResult.kind,
-    ticketKey: ticket.key,
-    checks: [...requiredChecks],
-    sensitiveFiles: 0,
-    mergeable: true,
-    branchUpToDate: true,
-  };
 }
 
-export function parseAuditComment(body) {
-  const match = /<!-- codex-policy-audit\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
+export function parseManualPoDecision(body) {
+  const match = /<!-- manual-po-decision\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
   if (!match) return undefined;
   try {
     const value = JSON.parse(match[1]);
@@ -163,25 +221,120 @@ export function parseAuditComment(body) {
   }
 }
 
+export function selectManualPoDecision(comments, { pullRequestNumber, headSha, allowedActors }) {
+  const allowlist = actors(allowedActors);
+  const candidates = (comments ?? [])
+    .map((comment) => ({ comment, decision: parseManualPoDecision(comment.body) }))
+    .filter(({ comment, decision }) =>
+      decision && comment.user?.type === "User" && allowlist.includes(comment.user?.login),
+    )
+    .sort((left, right) => Number(right.comment.id) - Number(left.comment.id));
+  if (!candidates.length) refuse("manual_po_decision_missing");
+  const { comment, decision } = candidates[0];
+  if (decision.decision !== "approved") refuse("manual_po_decision_not_approved");
+  if (decision.pullRequest !== pullRequestNumber) refuse("manual_po_decision_pr_mismatch");
+  if (decision.headSha !== headSha) refuse("manual_po_decision_sha_mismatch");
+  return { actor: comment.user.login, commentId: Number(comment.id), headSha, pullRequest: pullRequestNumber };
+}
+
+export function validatePoChecklist(body) {
+  const missing = PO_CHECKLIST.filter((item) => {
+    const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return !new RegExp(`^\\s*- \\[x\\] ${escaped}\\.?\\s*$`, "im").test(String(body ?? ""));
+  });
+  if (missing.length) refuse("po_checklist_incomplete", { missingCount: missing.length });
+}
+
+export function validatePullRequestPolicy({
+  approvalMode: defaultMode,
+  repository, sourceRepository, actor, allowedActors, branch, base, draft, labels,
+  ticket, changedFiles = [], manifestProfile, mergeable, branchUpToDate,
+  migrationAssessment,
+  requiredChecks = [], checkRuns = [], checkSha, pullRequestNumber, pullRequestBody,
+  manualPoDecision, autoMerge, autoMergeEvents = [], conversationsResolved,
+  poLabelEvents = [], automationRequested = false,
+  trustedGrant, delegatedDecision, headGrantDigest,
+}) {
+  if (!repository || sourceRepository !== repository) refuse("external_fork_not_allowed");
+  const allowlist = actors(allowedActors);
+  if (!allowlist.includes(actor)) refuse("actor_not_allowed");
+  const branchResult = branchPolicy(branch, base);
+  validateTicket(ticket, branchResult);
+  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode, migrationAssessment,
+    trustedGrant, repository, actor, base, headGrantDigest });
+  const names = labelNames(labels);
+  let delegatedApproval;
+
+  if (classification.effectiveApprovalMode === DELEGATED_CODEX_MODE) {
+    if (names.includes(PO_LABEL) || names.includes(POLICY_LABEL)) refuse("delegated_human_or_policy_label_forbidden");
+    if (!names.includes(DELEGATED_LABEL)) refuse("delegated_label_missing");
+    if (draft !== false) refuse("delegated_pull_request_is_draft");
+    if (autoMerge !== null || autoMergeEvents.length) refuse("delegated_native_auto_merge_forbidden");
+    if (conversationsResolved !== true) refuse("conversations_unresolved");
+    if (manualPoDecision) refuse("delegated_human_decision_forbidden");
+    requiredChecks = [...new Set([...requiredChecks, ...DELEGATED_CHECKS])];
+    delegatedApproval = validateDelegatedDecision({ decision: delegatedDecision, grant: trustedGrant,
+      repository, actor, base, changedFiles, reasons: classification.reasons, headSha: checkSha,
+      pullRequestNumber, requiredChecks, checkRuns, headGrantDigest });
+  } else if (classification.effectiveApprovalMode === AUTOMATED_POLICY_MODE) {
+    if (names.includes(PO_LABEL)) refuse("po_approved_reserved_for_manual_scope");
+    if (!names.includes(POLICY_LABEL)) refuse("policy_approved_label_missing");
+    if (draft !== false) refuse("pull_request_is_draft");
+    if (branchResult.kind === "release" && manifestProfile !== "gate-1") refuse("release_gate_profile_required");
+  } else {
+    if (!names.includes(PO_LABEL)) refuse("po_approved_label_missing");
+    if (names.includes(POLICY_LABEL)) refuse("policy_approved_forbidden_in_manual_po");
+    if (draft !== false) refuse("manual_po_pull_request_is_draft");
+    validatePoChecklist(pullRequestBody);
+    if (!manualPoDecision) refuse("manual_po_decision_missing");
+    if (manualPoDecision.headSha !== checkSha) refuse("manual_po_decision_sha_mismatch");
+    if (manualPoDecision.pullRequest !== pullRequestNumber) refuse("manual_po_decision_pr_mismatch");
+    if (!allowlist.includes(manualPoDecision.actor)) refuse("manual_po_decision_actor_not_allowed");
+    if (autoMerge !== null) refuse("auto_merge_was_configured");
+    if (autoMergeEvents.length) refuse("auto_merge_event_detected");
+    if (automationRequested) refuse("manual_po_automation_attempted");
+    if (
+      poLabelEvents.length !== 1 ||
+      poLabelEvents[0]?.actorType !== "User" ||
+      !allowlist.includes(poLabelEvents[0]?.actor)
+    ) refuse("po_approved_not_manually_traceable");
+    if (conversationsResolved !== true) refuse("conversations_unresolved");
+  }
+
+  const manifests = changedFiles.filter((file) => file.endsWith("release-manifest.json"));
+  if (manifests.length > 1 || manifests.some((file) => file !== "release-manifest.json")) refuse("release_manifest_collision");
+  if (mergeable !== true) refuse("pull_request_conflict");
+  if (branchUpToDate !== true) refuse("branch_not_up_to_date");
+  validateChecks(requiredChecks, checkRuns, checkSha);
+
+  return {
+    mode: classification.effectiveApprovalMode,
+    effectiveApprovalMode: classification.effectiveApprovalMode,
+    classificationReasons: classification.reasons,
+    actor, branch, base, branchKind: branchResult.kind, ticketKey: ticket.key,
+    checks: [...requiredChecks], mergeable: true, branchUpToDate: true,
+    approvalValidated: true,
+    ...(delegatedApproval ? { delegatedApproval } : {}),
+  };
+}
+
+export function parseAuditComment(body) {
+  const match = /<!-- codex-policy-audit\s*([\s\S]*?)\s*-->/.exec(String(body ?? ""));
+  if (!match) return undefined;
+  try {
+    const value = JSON.parse(match[1]);
+    return value?.schemaVersion === 1 ? value : undefined;
+  } catch { return undefined; }
+}
+
 export function selectAuditComment(comments, { headSha, allowedActors }) {
   const allowlist = actors(allowedActors);
   const candidates = (comments ?? [])
     .map((comment) => ({ comment, audit: parseAuditComment(comment.body) }))
-    .filter(({ comment, audit }) =>
-      audit &&
-      audit.headSha === headSha &&
-      audit.verifiedBy === comment.user?.login &&
-      allowlist.includes(comment.user?.login),
-    )
+    .filter(({ comment, audit }) => audit && audit.headSha === headSha && audit.verifiedBy === comment.user?.login && allowlist.includes(comment.user?.login))
     .sort((left, right) => Number(right.comment.id) - Number(left.comment.id));
-  if (candidates.length === 0) refuse("jira_audit_comment_missing");
+  if (!candidates.length) refuse("jira_audit_comment_missing");
   return candidates[0].audit;
 }
 
-export {
-  AUTOMATED_POLICY_MODE,
-  MANUAL_PO_MODE,
-  POLICY_LABEL,
-  PO_LABEL,
-  sensitiveFiles,
-};
+export { AUTOMATED_POLICY_MODE, MANUAL_PO_MODE, POLICY_LABEL, PO_LABEL, SENSITIVE_RULES };

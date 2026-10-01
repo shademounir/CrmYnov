@@ -22,30 +22,6 @@
           "address": "module.synthetic",
           "resources": [
             {
-              "address": "module.projects[\"bootstrap\"].google_project.this",
-              "mode": "managed",
-              "type": "google_project",
-              "name": "this",
-              "provider_name": "registry.terraform.io/hashicorp/google",
-              "schema_version": 0,
-              "values": {
-                "project_id": "synthetic-bootstrap"
-              },
-              "sensitive_values": {}
-            },
-            {
-              "address": "module.billing[\"bootstrap\"].google_billing_project_info.this",
-              "mode": "managed",
-              "type": "google_billing_project_info",
-              "name": "this",
-              "provider_name": "registry.terraform.io/hashicorp/google",
-              "schema_version": 0,
-              "values": {
-                "billing_account": "SYNTHETIC-BILLING-ACCOUNT"
-              },
-              "sensitive_values": {}
-            },
-            {
               "address": "module.projects[\"dev\"].google_project.this",
               "mode": "managed",
               "type": "google_project",
@@ -200,36 +176,36 @@
                 "service": "service-7.googleapis.com"
               },
               "sensitive_values": {}
+            },
+            {
+              "address": "module.services[\"service-08\"].google_project_service.this",
+              "mode": "managed",
+              "type": "google_project_service",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "service": "service-8.googleapis.com"
+              },
+              "sensitive_values": {}
+            },
+            {
+              "address": "module.services[\"service-09\"].google_project_service.this",
+              "mode": "managed",
+              "type": "google_project_service",
+              "name": "this",
+              "provider_name": "registry.terraform.io/hashicorp/google",
+              "schema_version": 0,
+              "values": {
+                "service": "service-9.googleapis.com"
+              },
+              "sensitive_values": {}
             }
           ],
           "child_modules": [
             {
               "address": "module.synthetic.module.nested",
               "resources": [
-                {
-                  "address": "module.services[\"service-08\"].google_project_service.this",
-                  "mode": "managed",
-                  "type": "google_project_service",
-                  "name": "this",
-                  "provider_name": "registry.terraform.io/hashicorp/google",
-                  "schema_version": 0,
-                  "values": {
-                    "service": "service-8.googleapis.com"
-                  },
-                  "sensitive_values": {}
-                },
-                {
-                  "address": "module.services[\"service-09\"].google_project_service.this",
-                  "mode": "managed",
-                  "type": "google_project_service",
-                  "name": "this",
-                  "provider_name": "registry.terraform.io/hashicorp/google",
-                  "schema_version": 0,
-                  "values": {
-                    "service": "service-9.googleapis.com"
-                  },
-                  "sensitive_values": {}
-                },
                 {
                   "address": "module.services[\"service-10\"].google_project_service.this",
                   "mode": "managed",
@@ -287,42 +263,6 @@
                   "schema_version": 0,
                   "values": {
                     "service": "service-14.googleapis.com"
-                  },
-                  "sensitive_values": {}
-                },
-                {
-                  "address": "module.services[\"service-15\"].google_project_service.this",
-                  "mode": "managed",
-                  "type": "google_project_service",
-                  "name": "this",
-                  "provider_name": "registry.terraform.io/hashicorp/google",
-                  "schema_version": 0,
-                  "values": {
-                    "service": "service-15.googleapis.com"
-                  },
-                  "sensitive_values": {}
-                },
-                {
-                  "address": "module.services[\"service-16\"].google_project_service.this",
-                  "mode": "managed",
-                  "type": "google_project_service",
-                  "name": "this",
-                  "provider_name": "registry.terraform.io/hashicorp/google",
-                  "schema_version": 0,
-                  "values": {
-                    "service": "service-16.googleapis.com"
-                  },
-                  "sensitive_values": {}
-                },
-                {
-                  "address": "module.services[\"service-17\"].google_project_service.this",
-                  "mode": "managed",
-                  "type": "google_project_service",
-                  "name": "this",
-                  "provider_name": "registry.terraform.io/hashicorp/google",
-                  "schema_version": 0,
-                  "values": {
-                    "service": "service-17.googleapis.com"
                   },
                   "sensitive_values": {}
                 },
@@ -457,40 +397,6 @@
         "before": null,
         "after": {
           "display_name": "synthetic"
-        },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "module.projects[\"bootstrap\"].google_project.this",
-      "mode": "managed",
-      "type": "google_project",
-      "name": "this",
-      "provider_name": "registry.terraform.io/hashicorp/google",
-      "change": {
-        "actions": [
-          "create"
-        ],
-        "before": null,
-        "after": {
-          "project_id": "synthetic-bootstrap"
-        },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "module.billing[\"bootstrap\"].google_billing_project_info.this",
-      "mode": "managed",
-      "type": "google_billing_project_info",
-      "name": "this",
-      "provider_name": "registry.terraform.io/hashicorp/google",
-      "change": {
-        "actions": [
-          "create"
-        ],
-        "before": null,
-        "after": {
-          "billing_account": "SYNTHETIC-BILLING-ACCOUNT"
         },
         "after_unknown": {}
       }
@@ -831,57 +737,6 @@
         "before": null,
         "after": {
           "service": "service-14.googleapis.com"
-        },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "module.services[\"service-15\"].google_project_service.this",
-      "mode": "managed",
-      "type": "google_project_service",
-      "name": "this",
-      "provider_name": "registry.terraform.io/hashicorp/google",
-      "change": {
-        "actions": [
-          "create"
-        ],
-        "before": null,
-        "after": {
-          "service": "service-15.googleapis.com"
-        },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "module.services[\"service-16\"].google_project_service.this",
-      "mode": "managed",
-      "type": "google_project_service",
-      "name": "this",
-      "provider_name": "registry.terraform.io/hashicorp/google",
-      "change": {
-        "actions": [
-          "create"
-        ],
-        "before": null,
-        "after": {
-          "service": "service-16.googleapis.com"
-        },
-        "after_unknown": {}
-      }
-    },
-    {
-      "address": "module.services[\"service-17\"].google_project_service.this",
-      "mode": "managed",
-      "type": "google_project_service",
-      "name": "this",
-      "provider_name": "registry.terraform.io/hashicorp/google",
-      "change": {
-        "actions": [
-          "create"
-        ],
-        "before": null,
-        "after": {
-          "service": "service-17.googleapis.com"
         },
         "after_unknown": {}
       }

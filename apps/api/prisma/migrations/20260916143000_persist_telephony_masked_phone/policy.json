@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "migration": "20260916143000_persist_telephony_masked_phone",
+  "migrationSha256": "8724c6d8b9e401d61f3ae7c8331b8ce4157fcebbf759b8c52154abcbdcf961c0",
+  "markers": ["additive", "ephemeral-only", "rollback-documented"]
+}

@@ -1,3 +1,5 @@
+import { DELEGATED_CHECKS } from "../pr-policy/delegation.mjs";
+
 export const RELEASE_PROFILE = Object.freeze({
   GATE_1: "gate-1",
   APPLICATION: "application",
@@ -14,19 +16,8 @@ const PROFILES = Object.freeze({
     ]),
   }),
   [RELEASE_PROFILE.APPLICATION]: Object.freeze({
-    description: "Future application release; unavailable controls remain fail-closed.",
-    requiredChecks: Object.freeze([
-      "unit-tests",
-      "lint",
-      "type-check",
-      "build",
-      "CodeQL",
-      "dependency-review",
-      "secret-scan",
-      "iac-security",
-      "container-scan",
-      "SonarQube Quality Gate",
-    ]),
+    description: "Application release; all API/Web, migration and security controls required on the exact SHA.",
+    requiredChecks: DELEGATED_CHECKS,
   }),
 });
 

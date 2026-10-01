@@ -1,0 +1,3 @@
+import { ConnectedResource } from "../../_components/connected-resource";
+
+export default function DocumentsDashboardPage(): React.JSX.Element { return <main><h1>Suivi documentaire</h1><p>Seules les métadonnées autorisées sont affichées ; aucun contenu documentaire n’est exposé.</p><ConnectedResource endpoint="/api/crm/candidate-documents/dashboard?page=1&pageSize=25" ariaLabel="Métadonnées documentaires" emptyMessage="Aucun document à contrôler." fields={[{ key: "id", label: "Identifiant" }, { key: "documentType", label: "Type" }, { key: "state", label: "État" }, { key: "createdAt", label: "Créé le" }]} /></main>; }

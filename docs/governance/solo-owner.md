@@ -1,11 +1,19 @@
 # Solo-owner Product Owner governance
 
+Historical/manual fallback contract. The explicit PO delegation of 1 October
+2026 is implemented separately in [delegated-codex.md](delegated-codex.md).
+When activated with trusted authority, it replaces personal approval requirements
+with a traceable Codex decision; it never fabricates the human evidence below.
+
 ## Scope
 
 This document now describes the retained `manual-po` path. DEV, STAGING, and
 technical Gate releases use `automated-policy` as documented in
 `docs/governance/automated-policy.md`. Manual Product Owner evidence remains
 mandatory for production with real data and sensitive operations.
+
+The per-PR classifier and exact machine-verifiable evidence are documented in
+`docs/governance/per-pr-approval-mode.md`.
 
 ## Mandatory sequence
 

@@ -10,6 +10,17 @@ variable "folder_display_name" {
   default     = "CRM Ynov"
 }
 
+variable "bootstrap_project_id" {
+  description = "Existing bootstrap project owned exclusively by the Phase 0 Terraform state."
+  type        = string
+  default     = "crmynov-bst-n7x4q2"
+
+  validation {
+    condition     = var.bootstrap_project_id == "crmynov-bst-n7x4q2"
+    error_message = "bootstrap_project_id must match the Product Owner-approved project."
+  }
+}
+
 variable "region" {
   description = "Primary Google Cloud region."
   type        = string
@@ -82,5 +93,19 @@ variable "common_labels" {
     managed-by  = "terraform"
     owner       = "admissions"
     phase       = "foundation"
+  }
+}
+
+variable "dev_sheets_reader_impersonators" {
+  description = "Explicit principals allowed to mint short-lived tokens for the DEV Sheets reader service account."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for member in var.dev_sheets_reader_impersonators :
+      can(regex("^(user|serviceAccount):[^[:space:]]+$", member))
+    ])
+    error_message = "Every Sheets reader impersonator must be an explicit user: or serviceAccount: IAM member."
   }
 }

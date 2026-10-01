@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "migration": "20260921120000_telephony_free_call",
+  "migrationSha256": "3a97398d4ba802699165884a6544cb330e744c1bf4c2276a45e8260bc60f9bdb",
+  "markers": ["additive", "ephemeral-only", "rollback-documented"]
+}

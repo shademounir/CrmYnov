@@ -1,0 +1,41 @@
+{
+  "name": "@crm/api",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "npm run prisma:generate --silent && tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "job:follow-up-due": "node dist/jobs/follow-up-due.js",
+    "job:grant-runtime-database": "node dist/jobs/grant-runtime-database.js",
+    "type-check": "npm run prisma:generate --silent && tsc --noEmit",
+    "test": "npm run prisma:generate --silent && node --import tsx --test test/*.test.ts",
+    "test:integration": "npm run prisma:generate --silent && node --import tsx --test test/integration/*.test.ts",
+    "test:e2e": "npm run prisma:generate --silent && node --import tsx --test test/e2e/*.test.ts",
+    "prisma:validate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma validate",
+    "prisma:generate": "cross-env DATABASE_URL=postgresql://localhost:5432/crmynov_local prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "db:prepare:local": "npm run prisma:migrate:deploy && npm run seed:local",
+    "seed:local": "tsx prisma/seed-local.ts"
+  },
+  "dependencies": {
+    "@crm/shared": "0.0.0",
+    "@nestjs/common": "11.1.29",
+    "@nestjs/core": "11.1.29",
+    "@nestjs/platform-express": "11.1.29",
+    "@prisma/client": "6.19.3",
+    "google-auth-library": "11.0.2",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "swagger-ui-express": "5.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.5.2",
+    "@types/swagger-ui-express": "4.1.8",
+    "cross-env": "10.1.0",
+    "prisma": "6.19.3",
+    "tsx": "4.23.12",
+    "typescript": "5.9.2"
+  }
+}

@@ -1,0 +1,43 @@
+import { BadRequestException, Body, Controller, Get, Inject, Post, Req, UseGuards } from "@nestjs/common";
+import type { AuthenticatedRequest } from "../auth/auth.types.js";
+import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
+import {
+  ImportMappingService,
+  type ImportDryRunInput,
+  type ConfirmMappedImportInput,
+  type ImportMappingTemplate,
+  type SaveImportMappingInput,
+} from "./import-mapping.service.js";
+import type { IngestionDryRunResult } from "../ingestion/ingestion.service.js";
+import type { PersistentImportResult } from "../ingestion/persistent-ingestion.service.js";
+
+@Controller("lead-import")
+@UseGuards(RbacGuard)
+@RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
+export class ImportMappingController {
+  constructor(@Inject(ImportMappingService) private readonly mappings: ImportMappingService) {}
+
+  @Get("mappings")
+  list(@Req() request: AuthenticatedRequest): ImportMappingTemplate[] {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.mappings.list(request.principal);
+  }
+
+  @Post("mappings")
+  save(@Body() body: SaveImportMappingInput, @Req() request: AuthenticatedRequest): ImportMappingTemplate {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.mappings.save(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+
+  @Post("dry-runs")
+  dryRun(@Body() body: ImportDryRunInput, @Req() request: AuthenticatedRequest): Promise<IngestionDryRunResult & { mappingId: string; mappingVersion: number }> {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.mappings.dryRunForApi(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+
+  @Post("confirmations")
+  async confirm(@Body() body: ConfirmMappedImportInput, @Req() request: AuthenticatedRequest): Promise<PersistentImportResult> {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.mappings.confirm(body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+  }
+}

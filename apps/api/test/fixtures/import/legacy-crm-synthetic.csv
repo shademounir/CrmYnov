@@ -1,0 +1,9 @@
+NOM,PRÉNOM,TÉLÉPHONE,EMAIL,NIVEAU,SPÉCIALITÉ,FORMATION SOUHAITÉE,DATE RÉCEPTION,DATE TRAITEMENT,DÉLAI (jours),SOURCE,STATUT,COMMENTAIRE 1,QUALIFICATION,COMMENTAIRE 2,rdv,PROCHAINE ACTION,RESPONSABLE,PAYS,Part 1er (%),Lien WhatsApp,VILLE
+Exemple,Amal,+212600000301,amal-legacy@example.invalid,Bac,Spécialité A,Programme Alpha,2026-01-02,2026-01-03,1,Campagne synthétique,À contacter,Note synthétique,À qualifier,,,2026-01-10,Conseiller synthétique,Maroc,0,=1+1,Ville synthétique
+Exemple,Yanis,0600000302,,Bac+2,Spécialité B,Programme Bêta,2026-01-03,,,Campagne synthétique,À relancer,"Commentaire synthétique long sans donnée réelle destiné à vérifier la borne de longueur et la conservation append-only de la provenance historique dans un environnement de test entièrement éphémère.",,,,,,Maroc,,,Ville synthétique
+Exemple,Lina,+212600000303,lina-legacy@example.invalid,Bac,Spécialité A,Programme Alpha,2026-01-04,,,Campagne synthétique,RDV planifié,,,,2026-01-12,,,Maroc,,,Ville synthétique
+Exemple,Noé,+212600000304,noe-legacy@example.invalid,Bac,Spécialité A,Programme Alpha,2026-01-05,,,Campagne synthétique,Inscrit,,,,,,,Maroc,,,Ville synthétique
+Exemple,Zoé,+212600000305,zoe-legacy@example.invalid,Bac,Spécialité A,Programme Alpha,2026-01-06,,,Campagne synthétique,Sans suite,,,,,,,Maroc,,,Ville synthétique
+Exemple,Doublon,+212600000301,amal-legacy@example.invalid,Bac,Spécialité A,Programme Alpha,2026-01-07,,,Campagne synthétique,Doublon,,,,,,,Maroc,,,Ville synthétique
+Exemple,Inconnu,+212600000307,inconnu-legacy@example.invalid,Bac,Spécialité A,Programme Alpha,2026-01-08,,,Campagne synthétique,Statut inconnu,,,,,,,Maroc,,,Ville synthétique
+,,,,,,,,,,,,,,,,,,,,,

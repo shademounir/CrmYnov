@@ -1,0 +1,204 @@
+import { Module } from "@nestjs/common";
+import { GrantProvider, PermissionService } from "./permissions/permission.service.js";
+import { APP_INTERCEPTOR } from "@nestjs/core";
+import { DynamicPermissionController } from "./permissions/dynamic-controller.js";
+import { DynamicPermissionService } from "./permissions/dynamic-service.js";
+import { DynamicPermissionRepository } from "./permissions/dynamic-repository.js";
+import { DynamicGrantProvider } from "./permissions/dynamic-provider.js";
+import { DynamicPermissionInterceptor } from "./permissions/dynamic-interceptor.js";
+import { DynamicResourceLocator } from "./permissions/dynamic-locator.js";
+import { ReferenceRepository } from "./references/reference.repository.js";
+import { ReferenceService } from "./references/reference.service.js";
+import { ReferenceController, LeadTagController } from "./references/reference.controller.js";
+import { HealthController } from "./health.controller.js";
+import { RateLimitService } from "./auth/rate-limit.service.js";
+import { RbacGuard } from "./auth/rbac.guard.js";
+import { ResourceController } from "./auth/resource.controller.js";
+import { SessionController } from "./auth/session.controller.js";
+import { SessionService } from "./auth/session.service.js";
+import { AccessRecoveryController } from "./access-recovery/access-recovery.controller.js";
+import { AccessRecoveryService } from "./access-recovery/access-recovery.service.js";
+import {
+  LocalCredentialAdapter,
+  LocalIdentityDirectory,
+  LocalRecoveryChallengeStore,
+} from "./access-recovery/access-recovery.store.js";
+import { AuditController } from "./audit/audit.controller.js";
+import { AuditService } from "./audit/audit.service.js";
+import { AuditReader } from "./audit/audit-reader.js";
+import { UserController } from "./users/user.controller.js";
+import { UserService } from "./users/user.service.js";
+import { FirstLoginController } from "./first-login/first-login.controller.js";
+import { FirstLoginService } from "./first-login/first-login.service.js";
+import { LeadController, LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
+import { LeadService } from "./leads/lead.service.js";
+import { LeadPersistenceRepository } from "./leads/lead-persistence.repository.js";
+import { SavedLeadViewController } from "./leads/saved-lead-view.controller.js";
+import { SavedLeadViewService } from "./leads/saved-lead-view.service.js";
+import { ViewSharingService } from "./leads/view-sharing.service.js";
+import { ViewSharingAudiences } from "./leads/view-sharing-audiences.js";
+import { ViewSharingController } from "./leads/view-sharing.controller.js";
+import { LeadWorkflowPersistenceRepository } from "./leads/lead-workflow-persistence.repository.js";
+import { AssignmentController } from "./assignment/assignment.controller.js";
+import { AssignmentService } from "./assignment/assignment.service.js";
+import { CampusAssignmentService } from "./assignment/campus-assignment.service.js";
+import { PersistentAssignmentService } from "./assignment/persistent-assignment.service.js";
+import { LeadAssignmentController } from "./assignment/lead-assignment.controller.js";
+import { LeadAssignmentService } from "./assignment/lead-assignment.service.js";
+import { ReassignmentController } from "./assignment/reassignment.controller.js";
+import { ReassignmentService } from "./assignment/reassignment.service.js";
+import { AssignmentDashboardController } from "./assignment/assignment-dashboard.controller.js";
+import { AssignmentDashboardService } from "./assignment/assignment-dashboard.service.js";
+import { IngestionController } from "./ingestion/ingestion.controller.js";
+import { IngestionService } from "./ingestion/ingestion.service.js";
+import { PersistentIngestionService } from "./ingestion/persistent-ingestion.service.js";
+import { ImportProfileController } from "./import-profile/import-profile.controller.js";
+import { ImportProfileService } from "./import-profile/import-profile.service.js";
+import { ImportMappingController } from "./import-mapping/import-mapping.controller.js";
+import { ImportMappingService } from "./import-mapping/import-mapping.service.js";
+import { ImportReportController } from "./import-report/import-report.controller.js";
+import { ImportReportService } from "./import-report/import-report.service.js";
+import { ForminatorWebhookController } from "./forminator-webhook/forminator-webhook.controller.js";
+import { ForminatorWebhookService } from "./forminator-webhook/forminator-webhook.service.js";
+import { QuickLeadController } from "./quick-lead/quick-lead.controller.js";
+import { QuickLeadService } from "./quick-lead/quick-lead.service.js";
+import { ImportWizardController } from "./import-wizard/import-wizard.controller.js";
+import { ImportWizardService } from "./import-wizard/import-wizard.service.js";
+import { ImportReviewController } from "./import-review/import-review.controller.js";
+import { ImportReviewService } from "./import-review/import-review.service.js";
+import { NotificationController } from "./notifications/notification.controller.js";
+import { NotificationService } from "./notifications/notification.service.js";
+import { NotificationPersistenceRepository } from "./notifications/notification-persistence.repository.js";
+import { FollowUpController } from "./follow-up/follow-up.controller.js";
+import { FollowUpService } from "./follow-up/follow-up.service.js";
+import { FollowUpPersistenceRepository } from "./follow-up/follow-up-persistence.repository.js";
+import { FollowUpDueScheduler } from "./follow-up/follow-up-due.scheduler.js";
+import { ClosureController } from "./closure/closure.controller.js";
+import { ClosureService } from "./closure/closure.service.js";
+import { LeadCollaborationController } from "./collaboration/lead-collaboration.controller.js";
+import { LeadCollaborationService } from "./collaboration/lead-collaboration.service.js";
+import { CommercialFunnelController } from "./reporting/commercial-funnel.controller.js";
+import { CommercialFunnelService } from "./reporting/commercial-funnel.service.js";
+import { CommercialPerformanceController } from "./reporting/commercial-performance.controller.js";
+import { CommercialPerformanceService } from "./reporting/commercial-performance.service.js";
+import { OperationalRiskController } from "./reporting/operational-risk.controller.js";
+import { OperationalRiskService } from "./reporting/operational-risk.service.js";
+import { SourceEffectivenessController } from "./reporting/source-effectiveness.controller.js";
+import { SourceEffectivenessService } from "./reporting/source-effectiveness.service.js";
+import { SharedContributionController } from "./reporting/shared-contribution.controller.js";
+import { SharedContributionService } from "./reporting/shared-contribution.service.js";
+import { ManagerDashboardController, PersonalDashboardController } from "./reporting/manager-dashboard.controller.js";
+import { ManagerDashboardService } from "./reporting/manager-dashboard.service.js";
+import { ReportingPersistenceService } from "./reporting/reporting-persistence.service.js";
+import { ReportingPersistenceGuard } from "./reporting/reporting-persistence.guard.js";
+import { ChatController } from "./chat/chat.controller.js";
+import { ChatService } from "./chat/chat.service.js";
+import { BroadcastController } from "./broadcast/broadcast.controller.js";
+import { LocalBroadcastPublisher } from "./broadcast/broadcast.publisher.js";
+import { BroadcastService } from "./broadcast/broadcast.service.js";
+import { CandidateDocumentController, DocumentVerificationController } from "./documents/candidate-document.controller.js";
+import { CandidateDocumentService } from "./documents/candidate-document.service.js";
+import { LocalTemporaryDocumentStorageAdapter } from "./documents/document-storage.adapter.js";
+import { TelephonyAgentController, TelephonyBridgeController, TelephonyController, TelephonyProvisioningController } from "./telephony/telephony.controller.js";
+import { TelephonyService } from "./telephony/telephony.service.js";
+import { TelephonyPersistenceRepository } from "./telephony/telephony-persistence.repository.js";
+import { TelephonyAgentRepository } from "./telephony/telephony-agent.repository.js";
+import { AppointmentController } from "./appointments/appointment.controller.js";
+import { AppointmentService } from "./appointments/appointment.service.js";
+import { AppointmentPersistenceRepository } from "./appointments/appointment-persistence.repository.js";
+import { PrismaService } from "./persistence/prisma.service.js";
+import { LocalOutboxRepository } from "./outbox/local-outbox.repository.js";
+import { LocalOutboxWorker } from "./outbox/local-outbox.worker.js";
+import { SheetImportController } from "./sheet-import/sheet-import.controller.js";
+import { SheetImportAdminService } from "./sheet-import/sheet-import-admin.service.js";
+import { SheetImportExecutor } from "./sheet-import/sheet-import-executor.js";
+import { SheetImportScheduler, ScheduledSheetExecutor } from "./sheet-import/sheet-import-scheduler.js";
+import { SheetSource } from "./sheet-import/synthetic-sheet-source.js";
+import { LeadQualificationController } from "./qualification/lead-qualification.controller.js";
+import { LeadQualificationService } from "./qualification/lead-qualification.service.js";
+import { createSheetSource } from "./sheet-import/google-sheet-source.js";
+import { resolve } from "node:path";
+
+@Module({
+  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  providers: [
+    SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
+    { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
+    { provide: SheetSource, useFactory: (): ReturnType<typeof createSheetSource> => createSheetSource(process.env, resolve(__dirname, "../../..")) },
+    ViewSharingService, ViewSharingAudiences,
+    { provide: GrantProvider, useClass: DynamicGrantProvider },
+    DynamicPermissionService,
+    DynamicPermissionRepository,
+    DynamicResourceLocator,
+    { provide: APP_INTERCEPTOR, useClass: DynamicPermissionInterceptor },
+    PermissionService,
+    ReferenceRepository,
+    ReferenceService,
+    PrismaService,
+    LocalOutboxRepository,
+    LocalOutboxWorker,
+    SessionService,
+    RateLimitService,
+    RbacGuard,
+    AccessRecoveryService,
+    LocalIdentityDirectory,
+    LocalRecoveryChallengeStore,
+    LocalCredentialAdapter,
+    AuditService,
+    AuditReader,
+    UserService,
+    FirstLoginService,
+    LeadService,
+    LeadPersistenceRepository,
+    LeadQualificationService,
+    SavedLeadViewService,
+    LeadWorkflowPersistenceRepository,
+    AssignmentService,
+    CampusAssignmentService,
+    PersistentAssignmentService,
+    LeadAssignmentService,
+    ReassignmentService,
+    AssignmentDashboardService,
+    IngestionService,
+    PersistentIngestionService,
+    ImportProfileService,
+    ImportMappingService,
+    ImportReportService,
+    {
+      provide: ForminatorWebhookService,
+      useFactory: (): ForminatorWebhookService => new ForminatorWebhookService(),
+    },
+    QuickLeadService,
+    ImportWizardService,
+    ImportReviewService,
+    NotificationService,
+    NotificationPersistenceRepository,
+    ChatService,
+    LocalBroadcastPublisher,
+    BroadcastService,
+    {
+      provide: LocalTemporaryDocumentStorageAdapter,
+      useFactory: (): LocalTemporaryDocumentStorageAdapter => new LocalTemporaryDocumentStorageAdapter(),
+    },
+    CandidateDocumentService,
+    TelephonyService,
+    TelephonyPersistenceRepository,
+    TelephonyAgentRepository,
+    AppointmentService,
+    AppointmentPersistenceRepository,
+    FollowUpService,
+    FollowUpPersistenceRepository,
+    FollowUpDueScheduler,
+    ClosureService,
+    LeadCollaborationService,
+    CommercialFunnelService,
+    CommercialPerformanceService,
+    SourceEffectivenessService,
+    OperationalRiskService,
+    SharedContributionService,
+    ManagerDashboardService,
+    ReportingPersistenceService,
+    ReportingPersistenceGuard,
+  ],
+})
+export class AppModule {}

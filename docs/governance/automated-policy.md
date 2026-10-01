@@ -1,5 +1,10 @@
 # Codex automated pull request policy
 
+This describes the retained `automated-policy` mode. The explicit PO delegation
+of 1 October 2026 adds [delegated-codex](delegated-codex.md), a distinct mode
+requiring protected authority and an exact-SHA decision. Existing modes are not
+silently repurposed and technical approval is not personal aesthetic acceptance.
+
 ## Separated approval modes
 
 `automated-policy` applies to internal `feature/*` and `fix/*` pull requests to
@@ -10,6 +15,11 @@ deployments. It is technical policy evidence and never implies human approval.
 `apply` or `destroy`, IAM, billing, secrets, destructive migrations, and
 security exceptions. Only the Product Owner may add `po-approved`, record the
 decision comment, and perform the protected operation.
+
+The effective mode is computed per PR as documented in
+`docs/governance/per-pr-approval-mode.md`. `PR_APPROVAL_MODE` is only the
+ordinary default; a sensitive or ambiguous diff always overrides it to
+`manual-po`.
 
 ## Automated-policy evidence
 

@@ -108,13 +108,13 @@ test("nominal Foundation fixture produces the exact redacted contract", () => {
   const summary = analyzePlanBytes(source);
   assert.equal(summary.valid, true);
   assert.match(summary.planSha256, /^[a-f0-9]{64}$/);
-  assert.deepEqual(summary.actions, { create: 31, update: 0, delete: 0, replace: 0, import: 0, read: 0, noOp: 0 });
+  assert.deepEqual(summary.actions, { create: 26, update: 0, delete: 0, replace: 0, import: 0, read: 0, noOp: 0 });
   assert.equal(summary.schemaVersion, 1);
   assert.deepEqual(summary.resourceTypes, {
     google_folder: 1,
-    google_project: 4,
-    google_billing_project_info: 4,
-    google_project_service: 17,
+    google_project: 3,
+    google_billing_project_info: 3,
+    google_project_service: 14,
     google_billing_budget: 5,
   });
   assert.deepEqual(summary.budgets, {
@@ -160,7 +160,7 @@ test("data source reads are visible and never counted as mutations", () => {
   plan.planned_values.root_module.resources.push(data);
   plan.resource_changes.push({ address: data.address, mode: "data", type: data.type, name: data.name, change: { actions: ["read"], before: null, after: {}, after_unknown: {} } });
   const summary = analyzePlanBytes(encode(plan));
-  assert.equal(summary.actions.create, 31);
+  assert.equal(summary.actions.create, 26);
   assert.equal(summary.actions.read, 1);
   assert.equal(summary.actions.update, 0);
 });
