@@ -77,15 +77,23 @@ test("proxy stores a successful login token only in a secure server cookie", asy
   const proxy = proxyWith({
     getSession: () => Promise.resolve(undefined),
     production: true,
-    fetch: () => Promise.resolve(Response.json({ sessionId: "session-synthetic", token: "synthetic-token" })),
+    fetch: () => Promise.resolve(Response.json({ sessionId: "session-synthetic", token: "synthetic-token", mustChangeSecret: true })),
   });
   const response = await proxy(jsonRequest("sessions", "POST", "{}"), context("sessions"));
-  assert.deepEqual(await response.json(), { sessionId: "session-synthetic" });
+  assert.deepEqual(await response.json(), { sessionId: "session-synthetic", mustChangeSecret: true });
   const cookie = response.headers.get("set-cookie") ?? "";
   assert.match(cookie, /crm_session=synthetic-token/u);
   assert.match(cookie, /HttpOnly/u);
   assert.match(cookie, /SameSite=strict/iu);
   assert.match(cookie, /Secure/u);
+  assert.match(cookie, /crm_first_login=required/u);
+});
+
+test("successful first-login completion clears the restricted session", async () => {
+  const proxy = proxyWith({ fetch: () => Promise.resolve(Response.json({ revokedSessions: 1 })) });
+  const response = await proxy(jsonRequest("first-login/change-secret", "POST", "{}"), context("first-login", "change-secret"));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("set-cookie") ?? "", /crm_session=/u);
 });
 
 test("proxy refuses oversized bodies and transport failures, but preserves upstream error bodies", async () => {

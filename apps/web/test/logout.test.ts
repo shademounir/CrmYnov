@@ -7,5 +7,6 @@ test("logout clears the local CRM session cookie and redirects without caching",
   assert.equal(response.status, 303);
   assert.equal(response.headers.get("location"), "https://crm.example.invalid/");
   assert.match(response.headers.get("set-cookie") ?? "", /crm_session=;.*Expires=Thu, 01 Jan 1970 00:00:00 GMT/u);
+  assert.match(response.headers.get("set-cookie") ?? "", /crm_first_login=;/u);
   assert.equal(response.headers.get("cache-control"), "no-store");
 });

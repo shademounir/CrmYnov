@@ -48,8 +48,10 @@ export function permissionTransactionMode(controller: string, handler: string): 
 export type PermissionLifecycle = "session" | "session-create" | "first-login" | "recovery";
 export function lifecyclePermissionFence(controller: string, handler: string): PermissionLifecycle | undefined {
   if (controller === "SessionController" && handler === "create") return "session-create";
+  if (controller === "SessionController" && handler === "current") return "first-login";
   if (controller === "SessionController" && ["revoke", "revokeUser"].includes(handler)) return "session";
   if (controller === "FirstLoginController" && handler === "change") return "first-login";
+  if (controller === "InvitationController" && handler === "complete") return "recovery";
   if (controller === "AccessRecoveryController" && handler === "complete") return "recovery";
   return undefined;
 }

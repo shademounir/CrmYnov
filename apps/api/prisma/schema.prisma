@@ -228,6 +228,7 @@ model Collaborator {
   passwordHash          LocalPasswordHash?
   sessions              LocalSession[]
   recoveryChallenges    LocalRecoveryChallenge[]
+  accessInvitations      LocalAccessInvitation[]
   teamResponsibilities TeamResponsibility[]
   telephonyProfile     TelephonyUserProfile?
 
@@ -278,6 +279,21 @@ model LocalRecoveryChallenge {
 
   @@index([collaboratorId, expiresAt])
   @@map("local_recovery_challenges")
+}
+
+model LocalAccessInvitation {
+  id             String       @id @default(uuid()) @db.Uuid
+  collaboratorId String       @map("collaborator_id") @db.Uuid
+  linkDigest     String       @unique @map("link_digest") @db.VarChar(64)
+  state          String       @db.VarChar(24)
+  expiresAt      DateTime     @map("expires_at") @db.Timestamptz(6)
+  sentAt         DateTime?    @map("sent_at") @db.Timestamptz(6)
+  usedAt         DateTime?    @map("used_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  collaborator   Collaborator @relation(fields: [collaboratorId], references: [id], onDelete: Restrict)
+
+  @@index([collaboratorId, state, expiresAt])
+  @@map("local_access_invitations")
 }
 
 model Broadcast {

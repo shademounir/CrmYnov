@@ -50,6 +50,30 @@ variable "deploy_services" {
   default     = false
 }
 
+variable "gmail_invitation_enabled" {
+  description = "Attach existing OAuth Secret Manager versions to the DEV API only after personal consent and a verified gmail.send grant."
+  type        = bool
+  default     = false
+}
+variable "gmail_sender_email" {
+  description = "DEV sender identity authorized by the mailbox owner."
+  type        = string
+  default     = "casablancaynovcampus@gmail.com"
+  validation {
+    condition     = var.gmail_sender_email == "casablancaynovcampus@gmail.com"
+    error_message = "The DEV sender is restricted to the approved mailbox."
+  }
+}
+variable "crm_public_origin" {
+  description = "Reviewed public DEV Web origin; never derived from an incoming Host header."
+  type        = string
+  default     = "https://crm-dev-web-bvzn3lz52q-ew.a.run.app"
+  validation {
+    condition     = var.crm_public_origin == "https://crm-dev-web-bvzn3lz52q-ew.a.run.app"
+    error_message = "Invitation links are restricted to the reviewed DEV Web origin."
+  }
+}
+
 variable "scheduler_paused" {
   description = "Keep background execution paused until the API and due job have passed deployment smoke tests."
   type        = bool

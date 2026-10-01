@@ -22,7 +22,9 @@ export function createProxy(dependencies: Readonly<ProxyDependencies>) {
       target.search = requestUrl.search;
       const session = await dependencies.getSession();
       const isLogin = request.method === "POST" && path.length === 1 && path[0] === "sessions";
-      if (!isLogin && !session) return NextResponse.json({ code: "authentication_required" }, { status: 401 });
+      const isInvitationCompletion = request.method === "POST" && path.join("/") === "invitations/completions";
+      const isFirstLoginChange = request.method === "POST" && path.join("/") === "first-login/change-secret";
+      if (!isLogin && !isInvitationCompletion && !session) return NextResponse.json({ code: "authentication_required" }, { status: 401 });
 
       const correlationId = dependencies.randomId();
       const headers = new Headers({ accept: "application/json", "x-correlation-id": correlationId });
@@ -36,7 +38,7 @@ export function createProxy(dependencies: Readonly<ProxyDependencies>) {
         headers.set("content-type", "application/json");
       }
       const upstream = await dependencies.fetch(target, { method: request.method, headers, ...(body ? { body } : {}), cache: "no-store", redirect: "error" });
-      return await relayApiResponse(upstream, { isLogin, production: dependencies.production, correlationId });
+      return await relayApiResponse(upstream, { isLogin, isFirstLoginChange, production: dependencies.production, correlationId });
     } catch {
       return NextResponse.json({ code: "api_proxy_unavailable" }, { status: 503 });
     }

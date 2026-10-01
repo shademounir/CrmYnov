@@ -42,6 +42,7 @@ test("CRMY-170 lifecycle revocations participate while first-login retains its d
   assert.equal(lifecyclePermissionFence("SessionController", "revoke"), "session");
   assert.equal(lifecyclePermissionFence("SessionController", "revokeUser"), "session");
   assert.equal(lifecyclePermissionFence("SessionController", "create"), "session-create");
+  assert.equal(lifecyclePermissionFence("SessionController", "current"), "first-login");
   assert.equal(lifecyclePermissionFence("FirstLoginController", "change"), "first-login");
   assert.equal(lifecyclePermissionFence("AccessRecoveryController", "complete"), "recovery");
   const outside: ReadonlyArray<readonly [string, string]> = [["AccessRecoveryController", "request"], ["HealthController", "read"], ["ForminatorWebhookController", "receive"], ["UnknownController", "revoke"]];
