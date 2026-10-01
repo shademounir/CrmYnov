@@ -4,17 +4,21 @@ on:
   pull_request:
     branches:
       - develop
+      - main
     types:
       - opened
       - reopened
       - synchronize
       - ready_for_review
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 concurrency:
-  group: application-quality-${{ github.event.pull_request.number }}
+  group: application-quality-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -30,9 +34,15 @@ jobs:
           EXPECTED_OWNER: ${{ github.repository_owner }}
           EXPECTED_REPOSITORY: ${{ github.repository }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          test "${HEAD_REPOSITORY}" = "${EXPECTED_REPOSITORY}"
+          case "${EVENT_NAME}" in
+            pull_request) test "${HEAD_REPOSITORY}" = "${EXPECTED_REPOSITORY}" ;;
+            push) test "${EVENT_REF}" = "refs/heads/main" ;;
+            *) exit 1 ;;
+          esac
           test "${ACTOR}" = "${EXPECTED_OWNER}"
 
   lint:
@@ -252,12 +262,12 @@ jobs:
       - name: Verify container scan contract
         run: node scripts/ci/container-readiness.mjs
       - name: Build reviewed container image
-        run: docker build --file apps/${{ matrix.component }}/Dockerfile --tag crmynov-${{ matrix.component }}:${{ github.event.pull_request.head.sha }} .
+        run: docker build --file apps/${{ matrix.component }}/Dockerfile --tag crmynov-${{ matrix.component }}:${{ github.event.pull_request.head.sha || github.sha }} .
       - name: Scan image for high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: crmynov-${{ matrix.component }}:${{ github.event.pull_request.head.sha }}
+          image-ref: crmynov-${{ matrix.component }}:${{ github.event.pull_request.head.sha || github.sha }}
           version: v0.70.0
           cache: false
           format: table
