@@ -62,6 +62,14 @@ test("release workflow uses fail-closed policy approval evidence", async () => {
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 
+test("published release installs locked dependencies before automation tests", async () => {
+  const workflow = await readFile(releaseWorkflowUrl, "utf8");
+  const install = workflow.indexOf("run: npm ci --ignore-scripts");
+  const tests = workflow.indexOf("run: npm test");
+  assert.ok(install >= 0 && install < tests);
+  assert.doesNotMatch(workflow, /npm (?:install|update)\b/);
+});
+
 test("main release gate covers pull requests, pushes and controlled dispatch", async () => {
   const workflow = await readFile(mainGateWorkflowUrl, "utf8");
   assert.match(workflow, /pull_request:\s*[\s\S]*?- main/);
