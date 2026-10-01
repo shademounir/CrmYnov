@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "migration": "00000000000000_bootstrap",
+  "migrationSha256": "30fcaf2a9403c1b43e2dacd5eb74f3fe8b1a57af0c07082913bb03a82e409ad3",
+  "markers": ["additive", "ephemeral-only", "rollback-documented"]
+}
