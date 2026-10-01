@@ -282,7 +282,11 @@ resource "google_secret_manager_secret_iam_member" "synthetic_login" {
   member    = google_service_account.jobs.member
 }
 resource "google_secret_manager_secret_iam_member" "gmail_invitation" {
-  for_each  = toset([google_secret_manager_secret.gmail_oauth_client_id.secret_id, google_secret_manager_secret.gmail_oauth_client_secret.secret_id, google_secret_manager_secret.gmail_oauth_refresh_token.secret_id])
+  for_each = {
+    "crm-dev-gmail-oauth-client-id"     = google_secret_manager_secret.gmail_oauth_client_id.secret_id
+    "crm-dev-gmail-oauth-client-secret" = google_secret_manager_secret.gmail_oauth_client_secret.secret_id
+    "crm-dev-gmail-oauth-refresh-token" = google_secret_manager_secret.gmail_oauth_refresh_token.secret_id
+  }
   project   = var.project_id
   secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
