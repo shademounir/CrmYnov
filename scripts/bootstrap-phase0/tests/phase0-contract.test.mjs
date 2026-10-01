@@ -45,6 +45,14 @@ test("wrong organization is refused", () => fails({ organizationId: "00000000000
 test("wrong project id is refused", () => fails({ bootstrapProjectId: "wrong-project" }, "project_id_mismatch"));
 test("missing billing id is refused", () => fails({ billingAccountPresent: false }, "billing_account_missing"));
 test("extra API is refused", () => fails({ services: [...positive.services, "storage.googleapis.com"] }, "service_allowlist_mismatch"));
+test("API order does not change the contract digest or mutate input", () => {
+  const services = [...positive.services].reverse();
+  const before = [...services];
+  assert.equal(run({ services }).contractSha256, run().contractSha256);
+  assert.deepEqual(services, before);
+});
+test("non-string APIs are refused without a comparator exception", () => fails({ services: [null, ...positive.services] }, "services_invalid"));
+test("duplicate APIs remain refused", () => fails({ services: [...positive.services, positive.services[0]] }, "service_duplicate"));
 test("plan before project import is refused", () => fails({ import: { ...positive.import, projectImported: false } }, "plan_before_import"));
 test("absent project is refused", () => fails({ observed: { ...positive.observed, projectExists: false } }, "project_absent"));
 test("wrong observed project id is refused", () => fails({ observed: { ...positive.observed, projectId: "wrong-project" } }, "observed_project_id_mismatch"));

@@ -86,10 +86,11 @@ export function analyzePhase0Contract(input, { mode, now = new Date().toISOStrin
   if (!/^[0-9a-f]{40}$/.test(input.gitSha ?? "")) refuse("git_sha_invalid");
   if (input.billingAccountPresent !== true) refuse("billing_account_missing");
   exactObject(input.labels, EXPECTED.labels, "labels_mismatch");
-  if (!Array.isArray(input.services)) refuse("services_invalid");
-  const actualServices = [...new Set(input.services)].sort();
+  if (!Array.isArray(input.services) || input.services.some((service) => typeof service !== "string")) refuse("services_invalid");
+  const compareServices = (left, right) => left.localeCompare(right);
+  const actualServices = [...new Set(input.services)].sort(compareServices);
   if (actualServices.length !== input.services.length) refuse("service_duplicate");
-  if (JSON.stringify(actualServices) !== JSON.stringify([...EXPECTED.services].sort())) refuse("service_allowlist_mismatch");
+  if (JSON.stringify(actualServices) !== JSON.stringify([...EXPECTED.services].sort(compareServices))) refuse("service_allowlist_mismatch");
   if (input.partialExecution === true) refuse("partial_execution_detected");
   if (input.concurrentInvocation === true || input.previousAttempt === true) refuse("single_attempt_violation");
   validateState(input);

@@ -66,13 +66,22 @@ installer; their separate pilot proofs and restrictions must be listed explicitl
    data.
 4. Open a release PR from `release/<version>` to `main`. This is a separate
    future authorization; the current preparation PR targets only `develop`.
-5. For a technical Gate, Codex records the SHA-bound Jira audit, adds
+5. In `delegated-codex`, follow the distinct SHA/check-id-bound Codex decision
+   procedure in the delegation runbook: technical evidence, explicit executor,
+   protected grant and scope digests, reservations, rollback, then
+   `codex-delegated-approved`. No human review checkbox, `po-approved` or
+   `manual-po-decision` may stand in for this automated decision.
+   In the retained historical modes, for a technical Gate, Codex records the SHA-bound Jira audit, adds
    `policy-approved`, marks the PR Ready, and waits for `pr-policy` plus every
    required Gate check. For PROD or an application profile, the Product Owner
    instead records a manual decision and adds `po-approved`.
-6. Merge by squash without bypass. Technical Gates may use native auto-merge or
+6. Merge by squash without bypass. Delegated mode uses a controlled merge matching
+   the approved HEAD, with no native auto-merge. In historical modes, technical Gates may use native auto-merge or
    the explicitly authorized Codex fallback. PROD remains a manual PO merge.
-7. Confirm the four Gate-1 checks completed successfully on the exact resulting
+7. Confirm every check required by the manifest profile completed successfully
+   on the exact resulting main SHA (all API/Web application gates for this
+   internal prerelease, not only the four Gate-1 checks). For a technical Gate,
+   confirm the four Gate-1 checks completed successfully on the exact resulting
    `main` SHA. For the first technical release, follow the bootstrap procedure
    in `docs/runbooks/gate1-first-release.md`.
 8. Only then create the tag on the exact manifest commit.
@@ -88,12 +97,17 @@ installer; their separate pilot proofs and restrictions must be listed explicitl
    - a manual release carries `po-approved`, has no auto-merge request or
      auto-merge timeline event, and has a traceable Product Owner decision
      bound to the exact PR number and head SHA;
+   - a delegated release instead carries `codex-delegated-approved`, a validated
+     Codex decision predating merge, exact examined checks/scope and an active
+     protected grant; `humanApproved` remains false and auto-merge is absent;
    - the manifest source commit belongs to that release PR, including when the
      PR was squash-merged;
    - every explicitly required check is present, completed, and successful;
    - the tag and commit match the manifest;
    - each Jira ticket is listed in that manifest.
-11. Review the dry-run output. No Jira mutation is currently permitted.
+11. Review the dry-run output. Automated Jira Sync remains disabled. An explicitly
+    authorized operator may then use the official Jira workflow with the verified
+    release evidence; that is distinct from enabling automatic synchronization.
 
 ## Manual Product Owner decision evidence
 
