@@ -1,5 +1,10 @@
 # Solo-owner Product Owner governance
 
+Historical/manual fallback contract. The explicit PO delegation of 1 October
+2026 is implemented separately in [delegated-codex.md](delegated-codex.md).
+When activated with trusted authority, it replaces personal approval requirements
+with a traceable Codex decision; it never fabricates the human evidence below.
+
 ## Scope
 
 This document now describes the retained `manual-po` path. DEV, STAGING, and

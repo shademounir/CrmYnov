@@ -1,3 +1,7 @@
+import { DELEGATED_CODEX_MODE, DELEGATED_LABEL, DELEGATED_CHECKS, selectDelegatedDecision, validateDelegatedDecision } from "../pr-policy/delegation.mjs";
+import { classifyApprovalMode } from "../pr-policy/policy.mjs";
+import { fetchAllCheckRuns } from "./checks.mjs";
+
 const MANUAL_PO_MODE = "manual-po";
 const AUTOMATED_POLICY_MODE = "automated-policy";
 const PRODUCT_OWNER_LABEL = "po-approved";
@@ -79,8 +83,9 @@ export function validateReleaseApproval({
   autoMergeEvents = [],
   releaseProfile,
   policyCheckRuns = [],
+  trustedGrant, delegatedDecision, changedFiles = [], headGrantDigest,
 }) {
-  if (![MANUAL_PO_MODE, AUTOMATED_POLICY_MODE].includes(approvalMode)) {
+  if (![MANUAL_PO_MODE, AUTOMATED_POLICY_MODE, DELEGATED_CODEX_MODE].includes(approvalMode)) {
     refuse("approval_mode_not_supported");
   }
 
@@ -101,6 +106,27 @@ export function validateReleaseApproval({
   const labels = Array.isArray(pullRequest.labels)
     ? pullRequest.labels.map((label) => label?.name)
     : [];
+  if (approvalMode === DELEGATED_CODEX_MODE) {
+    if (manualPoDecision) refuse("delegated_human_decision_forbidden");
+    if (!labels.includes(DELEGATED_LABEL)) refuse("delegated_label_missing");
+    if (labels.includes(PRODUCT_OWNER_LABEL) || labels.includes(POLICY_APPROVED_LABEL)) refuse("delegated_human_or_policy_label_forbidden");
+    if (pullRequest.auto_merge !== null || autoMergeEvents.length) refuse("delegated_native_auto_merge_forbidden");
+    if (!["gate-1", "application"].includes(releaseProfile)) refuse("release_gate_profile_required");
+    const classification = classifyApprovalMode({ changedFiles, manifestProfile: releaseProfile,
+      defaultMode: DELEGATED_CODEX_MODE, migrationAssessment: { applicable: true, approved: true },
+      trustedGrant, repository: pullRequest.base?.repo?.full_name, actor: mergedBy, base: "main", headGrantDigest });
+    const delegatedApproval = validateDelegatedDecision({ decision: delegatedDecision, grant: trustedGrant,
+      repository: pullRequest.base?.repo?.full_name, actor: mergedBy, base: "main", changedFiles,
+      reasons: classification.reasons, headSha: pullRequest.head?.sha, pullRequestNumber: pullRequest.number,
+      requiredChecks: DELEGATED_CHECKS, checkRuns: policyCheckRuns,
+      mergedAt: pullRequest.merged_at, headGrantDigest });
+    const policyRun = policyCheckRuns.filter((run) => run.name === "pr-policy")
+      .sort((a, b) => Number(b.id) - Number(a.id))[0];
+    if (policyRun?.status !== "completed" || policyRun.conclusion !== "success" ||
+      policyRun.head_sha !== pullRequest.head.sha) refuse("pr_policy_check_failed");
+    return { approvalMode, author, mergedBy, approvalValidated: true, humanApproved: false,
+      mergeMethod: "codex_controlled", delegatedApproval };
+  }
   if (approvalMode === AUTOMATED_POLICY_MODE) {
     if (labels.includes(PRODUCT_OWNER_LABEL)) {
       refuse("po_approved_forbidden_in_automated_policy");
@@ -194,11 +220,22 @@ export function selectManualPoDecision(comments, { pullRequestNumber, headSha })
   };
 }
 
+async function collectDelegatedReleaseEvidence({ enabled, repositoryName, pullRequest, comments, pages, token, fetchImpl }) {
+  if (!enabled) return {};
+  const [policyCheckRuns, changedFiles] = await Promise.all([
+    fetchAllCheckRuns({ repository: repositoryName, commitSha: pullRequest.head?.sha, token, fetchImpl }),
+    pages(`/repos/${repositoryName}/pulls/${pullRequest.number}/files`, "files"),
+  ]);
+  return { policyCheckRuns, changedFiles: changedFiles.map((file) => file.filename),
+    delegatedDecision: selectDelegatedDecision(comments, [pullRequest.user?.login]) };
+}
+
 export async function fetchSoloOwnerApprovalEvidence({
   repositoryName,
   pullRequestNumber,
   token,
   fetchImpl = globalThis.fetch,
+  includeDelegation = false,
 }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repositoryName)) {
     throw new Error("Invalid GitHub repository.");
@@ -263,9 +300,9 @@ export async function fetchSoloOwnerApprovalEvidence({
   return {
     pullRequest,
     repository: await repositoryResponse.json(),
-    policyCheckRuns: Array.isArray(policyChecks.check_runs)
-      ? policyChecks.check_runs
-      : [],
+    policyCheckRuns: Array.isArray(policyChecks.check_runs) ? policyChecks.check_runs : [],
+    ...await collectDelegatedReleaseEvidence({ enabled: includeDelegation, repositoryName, pullRequest,
+      comments, pages, token, fetchImpl }),
     manualPoDecision: selectManualPoDecision(comments, {
       pullRequestNumber,
       headSha: pullRequest.head?.sha,

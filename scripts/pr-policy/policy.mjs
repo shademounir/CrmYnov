@@ -1,4 +1,5 @@
 import { MIGRATION_SQL, ROLLBACK_DOC } from "./migration-policy.mjs";
+import { DELEGATED_CODEX_MODE, DELEGATED_LABEL, DELEGATED_CHECKS, validateGrant, validateDelegatedDecision } from "./delegation.mjs";
 
 const AUTOMATED_POLICY_MODE = "automated-policy";
 const MANUAL_PO_MODE = "manual-po";
@@ -119,7 +120,41 @@ function reasonsForPath(path, manifestProfile, migrationAssessment) {
   return ORDINARY_RULES.some((pattern) => pattern.test(path)) ? [] : ["ambiguous-path"];
 }
 
-export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode, migrationAssessment }) {
+const TOOLING_EXTENSIONS = new Set(["mjs", "json", "yaml", "yml", "md", "sh", "ps1", "cmd", "tf", "tfvars", "sql", "hcl"]);
+const TOOLING_ROOT_FILES = new Set(["package.json", "package-lock.json", "release-manifest.json", "eslint.config.mjs",
+  ".gitattributes", ".gitignore", ".dockerignore", ".npmrc", "sonar-project.properties"]);
+
+function auditedToolingPath(path) {
+  const segments = path.split("/");
+  if (["scripts", "infra", ".github"].includes(segments[0]) && /^[A-Za-z0-9_./-]+$/.test(path)) {
+    return TOOLING_EXTENSIONS.has(path.split(".").at(-1));
+  }
+  if (/^docs\/risks?\/[A-Za-z0-9_./-]+\.md$/.test(path)) return true;
+  if (segments.length !== 1) return false;
+  return TOOLING_ROOT_FILES.has(path) || /^tsconfig[A-Za-z0-9_.-]*\.json$/.test(path) ||
+    /^Dockerfile[A-Za-z0-9_.-]*$/.test(path) || /^(?:docker-compose|compose)[A-Za-z0-9_.-]*\.ya?ml$/.test(path);
+}
+
+function classifyDelegatedApproval(input) {
+  const { changedFiles, manifestProfile, migrationAssessment } = input;
+  const original = classifyApprovalMode({ ...input, defaultMode: AUTOMATED_POLICY_MODE });
+  // Recognized repository tooling only; malformed/unknown paths still fail closed.
+  const recognized = changedFiles.every((file) => {
+    const path = normalizeRepositoryPath(file);
+    return path && (!reasonsForPath(path, manifestProfile, migrationAssessment).includes("ambiguous-path") || auditedToolingPath(path));
+  });
+  if (original.reasons.includes("ambiguous-path") && recognized) {
+    original.reasons = original.reasons.filter((reason) => reason !== "ambiguous-path");
+    original.reasons.push("audited-repository-tooling");
+  }
+  validateGrant(input.trustedGrant, { ...input, reasons: original.reasons });
+  return { ...original, effectiveApprovalMode: DELEGATED_CODEX_MODE };
+}
+
+export function classifyApprovalMode({ changedFiles = [], ticket, manifestProfile, defaultMode, migrationAssessment,
+  trustedGrant, repository, actor, base, headGrantDigest }) {
+  if (defaultMode === DELEGATED_CODEX_MODE) return classifyDelegatedApproval({ changedFiles, ticket, manifestProfile,
+    migrationAssessment, trustedGrant, repository, actor, base, headGrantDigest });
   if (![AUTOMATED_POLICY_MODE, MANUAL_PO_MODE].includes(defaultMode)) {
     refuse("default_approval_mode_invalid");
   }
@@ -218,16 +253,30 @@ export function validatePullRequestPolicy({
   requiredChecks = [], checkRuns = [], checkSha, pullRequestNumber, pullRequestBody,
   manualPoDecision, autoMerge, autoMergeEvents = [], conversationsResolved,
   poLabelEvents = [], automationRequested = false,
+  trustedGrant, delegatedDecision, headGrantDigest,
 }) {
   if (!repository || sourceRepository !== repository) refuse("external_fork_not_allowed");
   const allowlist = actors(allowedActors);
   if (!allowlist.includes(actor)) refuse("actor_not_allowed");
   const branchResult = branchPolicy(branch, base);
   validateTicket(ticket, branchResult);
-  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode, migrationAssessment });
+  const classification = classifyApprovalMode({ changedFiles, ticket, manifestProfile, defaultMode, migrationAssessment,
+    trustedGrant, repository, actor, base, headGrantDigest });
   const names = labelNames(labels);
+  let delegatedApproval;
 
-  if (classification.effectiveApprovalMode === AUTOMATED_POLICY_MODE) {
+  if (classification.effectiveApprovalMode === DELEGATED_CODEX_MODE) {
+    if (names.includes(PO_LABEL) || names.includes(POLICY_LABEL)) refuse("delegated_human_or_policy_label_forbidden");
+    if (!names.includes(DELEGATED_LABEL)) refuse("delegated_label_missing");
+    if (draft !== false) refuse("delegated_pull_request_is_draft");
+    if (autoMerge !== null || autoMergeEvents.length) refuse("delegated_native_auto_merge_forbidden");
+    if (conversationsResolved !== true) refuse("conversations_unresolved");
+    if (manualPoDecision) refuse("delegated_human_decision_forbidden");
+    requiredChecks = [...new Set([...requiredChecks, ...DELEGATED_CHECKS])];
+    delegatedApproval = validateDelegatedDecision({ decision: delegatedDecision, grant: trustedGrant,
+      repository, actor, base, changedFiles, reasons: classification.reasons, headSha: checkSha,
+      pullRequestNumber, requiredChecks, checkRuns, headGrantDigest });
+  } else if (classification.effectiveApprovalMode === AUTOMATED_POLICY_MODE) {
     if (names.includes(PO_LABEL)) refuse("po_approved_reserved_for_manual_scope");
     if (!names.includes(POLICY_LABEL)) refuse("policy_approved_label_missing");
     if (draft !== false) refuse("pull_request_is_draft");
@@ -265,6 +314,7 @@ export function validatePullRequestPolicy({
     actor, branch, base, branchKind: branchResult.kind, ticketKey: ticket.key,
     checks: [...requiredChecks], mergeable: true, branchUpToDate: true,
     approvalValidated: true,
+    ...(delegatedApproval ? { delegatedApproval } : {}),
   };
 }
 
