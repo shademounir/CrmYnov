@@ -59,6 +59,9 @@ function prismaFixture(): { prisma: PrismaService; calls: string[] } {
       create: (): Promise<object> => { calls.push("challenge.create"); return Promise.resolve({}); },
       update: (): Promise<object> => { calls.push("challenge.update"); return Promise.resolve({}); },
     },
+    localAccessInvitation: {
+      updateMany: (): Promise<{ count: number }> => { calls.push("invitation.updateMany"); return Promise.resolve({ count: 0 }); },
+    },
     localPasswordHash: {
       findMany: (): Promise<unknown[]> => Promise.resolve([{
         collaboratorId: "user-persisted",
@@ -111,6 +114,7 @@ test("hydrates and persists local sessions and collaborator authorization", asyn
   assert.ok(calls.includes("collaborator.update"));
   assert.ok(calls.includes("session.create"));
   assert.ok(calls.includes("session.updateMany"));
+  assert.ok(calls.includes("invitation.updateMany"));
 });
 
 test("hydrates and persists recovery, identity and local password adapters", async () => {

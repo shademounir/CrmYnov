@@ -76,11 +76,13 @@ test("session controller verifies a local credential, ownership and admin revoca
   credentials.provisionTemporary(userRecord.id, "Temporary1!Value", digestRecoveryValue(userRecord.professionalEmail));
   const controller = new SessionController(sessions, new RateLimitService(), audit, credentials, users);
   const request = (value: Record<string, unknown>): AuthenticatedRequest => ({ header: () => "test-correlation", ...value }) as unknown as AuthenticatedRequest;
-  assert.throws(() => controller.current(request({})), hasErrorCode("session_invalid"));
+  await assert.rejects(controller.current(request({})), hasErrorCode("session_invalid"));
   const principal: Principal = { userId: userRecord.id, roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-current" };
-  assert.deepEqual(controller.current(request({ principal })), { roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], professionalEmail: userRecord.professionalEmail });
+  assert.deepEqual(await controller.current(request({ principal })), { roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], mustChangeSecret: false, professionalEmail: userRecord.professionalEmail });
   await assert.rejects(controller.create({ ip: "client-a" } as AuthenticatedRequest, { email: "unknown@example.invalid", password: "invalid" }), hasErrorCode("identity_invalid"));
   const user = await controller.create(request({ ip: "client-a" }), { email: userRecord.professionalEmail, password: "Temporary1!Value" });
+  assert.equal(user.mustChangeSecret, true);
+  assert.deepEqual(await controller.current(request({ principal: { userId: userRecord.id, roles: ["AUDITOR"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: user.sessionId, mustChangeSecret: true } })), { roles: ["AUDITOR"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], mustChangeSecret: true, professionalEmail: userRecord.professionalEmail });
   await assert.rejects(
     controller.revoke({ principal: { userId: "other", roles: ["AUDITOR"], scopes: [{ kind: "GLOBAL" }], sessionId: "other-session" } } as AuthenticatedRequest, user.sessionId),
     hasErrorCode("session_ownership_required"),

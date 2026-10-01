@@ -34,7 +34,7 @@ export type SearchState =
   | { kind: "empty"; items: never[] }
   | { kind: "session" | "forbidden" | "error"; items: never[] };
 
-const authPaths = new Set(["/", "/access-recovery", "/first-login"]);
+const authPaths = new Set(["/", "/access-recovery", "/first-login", "/invitation"]);
 const navigation = [
   { href: "/manager/reports/dashboard", label: "Vue d’ensemble", icon: House },
   { href: "/leads", label: "Tous les leads", icon: UsersThree },
@@ -71,7 +71,8 @@ export function visibleNavigation(roles: readonly SessionRole[]): typeof navigat
 export async function loadShellSession(request: typeof fetch = fetch): Promise<SessionProfile> {
   const response = await request("/api/crm/sessions/current", { credentials: "same-origin", cache: "no-store" });
   if (!response.ok) return { roles: [] };
-  const value = await response.json() as { roles?: unknown; scopes?: unknown; professionalEmail?: unknown };
+  const value = await response.json() as { roles?: unknown; scopes?: unknown; professionalEmail?: unknown; mustChangeSecret?: boolean; campusLabel?: unknown };
+  if (value.mustChangeSecret) { globalThis.location.assign("/first-login"); return { roles: [] }; }
   const allowed: readonly string[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"];
   const scopes: unknown[] = Array.isArray(value.scopes) ? value.scopes : [];
   const hasScopeKind = (kind: string): boolean => scopes.some((scope) => typeof scope === "object" && scope !== null && "kind" in scope && scope.kind === kind);
@@ -80,7 +81,7 @@ export async function loadShellSession(request: typeof fetch = fetch): Promise<S
       : hasScopeKind("TEAM") ? "Équipe attribuée" : "Périmètre contrôlé";
   return {
     roles: Array.isArray(value.roles) ? value.roles.filter((role): role is SessionRole => typeof role === "string" && allowed.includes(role)) : [],
-    scopeLabel,
+    scopeLabel: typeof value.campusLabel === "string" ? value.campusLabel : scopeLabel,
     ...(typeof value.professionalEmail === "string" ? { professionalEmail: value.professionalEmail } : {}),
   };
 }
