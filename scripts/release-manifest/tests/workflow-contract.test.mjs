@@ -62,6 +62,14 @@ test("release workflow uses fail-closed policy approval evidence", async () => {
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
 
+test("published release installs locked dependencies before automation tests", async () => {
+  const workflow = await readFile(releaseWorkflowUrl, "utf8");
+  const install = workflow.indexOf("run: npm ci --ignore-scripts");
+  const tests = workflow.indexOf("run: npm test");
+  assert.ok(install >= 0 && install < tests);
+  assert.doesNotMatch(workflow, /npm (?:install|update)\b/);
+});
+
 test("main release gate covers pull requests, pushes and controlled dispatch", async () => {
   const workflow = await readFile(mainGateWorkflowUrl, "utf8");
   assert.match(workflow, /pull_request:\s*[\s\S]*?- main/);
@@ -93,4 +101,16 @@ test("main release gate rejects untrusted sources before checkout", async () => 
   assert.match(workflow, /HEAD_REPOSITORY/);
   assert.match(workflow, /EXPECTED_REPOSITORY/);
   assert.match(workflow, /EXPECTED_OWNER/);
+});
+
+test("main release gate statically validates every existing Terraform root without a backend", async () => {
+  const workflow = await readFile(mainGateWorkflowUrl, "utf8");
+  for (const root of ["infra/bootstrap/foundation", "infra/bootstrap/phase0",
+    "infra/bootstrap/state", "infra/bootstrap/wif", "infra/bootstrap/dev-runtime-state",
+    "infra/environments/dev"]) assert.ok(workflow.includes(root), root);
+  assert.match(workflow, /terraform -chdir="\$root" init/);
+  assert.match(workflow, /-backend=false/);
+  assert.match(workflow, /-lockfile=readonly/);
+  assert.match(workflow, /terraform -chdir="\$root" validate -no-color/);
+  assert.doesNotMatch(workflow, /\bterraform\s+(plan|apply|destroy|import)\b/);
 });
