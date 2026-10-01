@@ -99,13 +99,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for root in foundation state wif; do
-            terraform -chdir="infra/bootstrap/$root" init \
+          for root in infra/bootstrap/foundation infra/bootstrap/phase0 \
+            infra/bootstrap/state infra/bootstrap/wif \
+            infra/bootstrap/dev-runtime-state infra/environments/dev; do
+            terraform -chdir="$root" init \
               -backend=false \
               -input=false \
               -lockfile=readonly \
               -no-color
-            terraform -chdir="infra/bootstrap/$root" validate -no-color
+            terraform -chdir="$root" validate -no-color
           done
 
   iac-security:

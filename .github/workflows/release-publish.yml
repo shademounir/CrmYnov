@@ -19,7 +19,7 @@ jobs:
   validate-and-simulate:
     if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       JIRA_BASE_URL: ""
       JIRA_CLOUD_ID: ""
@@ -116,6 +116,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ steps.evidence.outputs.release_commit }}
         run: node scripts/release-manifest/verify-checks.mjs
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
 
       - name: Test automation
         run: npm test
