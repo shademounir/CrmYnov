@@ -105,6 +105,12 @@ test("accepts checksum-bound policy evidence for an immutable applied migration"
   const assessment = await assessChangedPrismaMigrations({ changedFiles, root });
   assert.equal(assessment.approved, true);
 
+  const sidecarOnly = changedFiles.filter(file => !file.endsWith("migration.sql"));
+  assert.equal((await assessChangedPrismaMigrations({ changedFiles: sidecarOnly, root })).approved, true);
+  assert.deepEqual((await assessChangedPrismaMigrations({ changedFiles: [changedFiles[1]], root })).migrationFiles, [changedFiles[0]]);
+  // A retained sidecar is still validated when only the SQL is changed.
+  assert.equal((await assessChangedPrismaMigrations({ changedFiles: [changedFiles[0]], root })).approved, true);
+
   const evidencePath = join(directory, "policy.json");
   const evidence = JSON.parse(await readFile(evidencePath, "utf8"));
   evidence.migrationSha256 = "0".repeat(64);
@@ -112,6 +118,10 @@ test("accepts checksum-bound policy evidence for an immutable applied migration"
   const mismatched = await assessChangedPrismaMigrations({ changedFiles, root });
   assert.equal(mismatched.approved, false);
   assert.ok(mismatched.reasons.includes("migration_policy_evidence_checksum_mismatch"));
+  assert.ok((await assessChangedPrismaMigrations({ changedFiles: sidecarOnly, root })).reasons.includes("migration_policy_evidence_checksum_mismatch"));
+  assert.ok((await assessChangedPrismaMigrations({ changedFiles: [changedFiles[0]], root })).reasons.includes("migration_policy_evidence_checksum_mismatch"));
+  await writeFile(join(directory, "rollback.md"), " ");
+  assert.ok((await assessChangedPrismaMigrations({ changedFiles: sidecarOnly, root })).reasons.includes("migration_rollback_document_missing"));
 });
 
 test("refuses persistent or secret-backed migration workflows", () => {
@@ -148,6 +158,9 @@ test("fails closed when rollback, SQL or workflow evidence is missing", async ()
   assert.ok(assessment.reasons.includes("migration_rollback_document_missing"));
   assert.ok(assessment.reasons.includes("migration_file_unreadable"));
   assert.ok(assessment.reasons.includes("migration_workflow_unreadable"));
+  const sidecar = await assessChangedPrismaMigrations({ changedFiles: ["apps/api/prisma/migrations/unknown/policy.json"], root });
+  assert.equal(sidecar.approved, false);
+  assert.ok(sidecar.reasons.includes("migration_file_unreadable"));
 });
 
 test("CI runner accepts only an ephemeral database before Prisma execution", async () => {

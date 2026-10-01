@@ -123,22 +123,29 @@ export function validateMigrationWorkflow(workflow) {
 }
 
 export async function assessChangedPrismaMigrations({ changedFiles = [], root = process.cwd(), workflowPath = ".github/workflows/prisma-migration-policy.yml" } = {}) {
-  const migrationFiles = changedFiles.filter((file) => MIGRATION_SQL.test(file));
   const migrationPaths = changedFiles.filter((file) => MIGRATION_SQL.test(file) || ROLLBACK_DOC.test(file) || POLICY_EVIDENCE.test(file));
   if (!migrationPaths.length) return result([], { applicable: false, migrationFiles: [] });
+  // Sidecar corrections must audit the immutable SQL too, not require editing it.
+  const migrationFiles = stable(migrationPaths.map(file => file.slice(0, file.lastIndexOf("/") + 1) + "migration.sql"));
   const reasons = [];
-  if (!migrationFiles.length) reasons.push("migration_sql_missing");
   for (const file of migrationFiles) {
     const id = MIGRATION_SQL.exec(file)?.[1];
     const rollbackFile = `apps/api/prisma/migrations/${id}/rollback.md`;
     const evidenceFile = `apps/api/prisma/migrations/${id}/policy.json`;
-    if (!changedFiles.includes(rollbackFile)) reasons.push("migration_rollback_document_missing");
+    try {
+      if (!(await readFile(join(root, rollbackFile), "utf8")).trim()) reasons.push("migration_rollback_document_missing");
+    } catch { reasons.push("migration_rollback_document_missing"); }
     try {
       const sql = await readFile(join(root, file), "utf8");
       let evidence;
-      if (changedFiles.includes(evidenceFile)) {
+      let evidenceSource;
+      try { evidenceSource = await readFile(join(root, evidenceFile), "utf8"); }
+      catch (error) {
+        if (error.code !== "ENOENT" || changedFiles.includes(evidenceFile)) reasons.push("migration_policy_evidence_invalid");
+      }
+      if (evidenceSource !== undefined) {
         try {
-          evidence = JSON.parse(await readFile(join(root, evidenceFile), "utf8"));
+          evidence = JSON.parse(evidenceSource);
           const evidenceAssessment = validatePolicyEvidence(evidence, { id, sql });
           reasons.push(...evidenceAssessment.reasons);
           if (!evidenceAssessment.approved) evidence = undefined;
