@@ -122,48 +122,53 @@ export function validateMigrationWorkflow(workflow) {
   return result(reasons);
 }
 
+async function rollbackReasons(root, file) {
+  try {
+    return (await readFile(join(root, file), "utf8")).trim() ? [] : ["migration_rollback_document_missing"];
+  } catch { return ["migration_rollback_document_missing"]; }
+}
+
+async function policyEvidence(root, file, changedFiles, id, sql) {
+  let source;
+  try { source = await readFile(join(root, file), "utf8"); }
+  catch (error) {
+    return { reasons: error.code === "ENOENT" && !changedFiles.includes(file) ? [] : ["migration_policy_evidence_invalid"] };
+  }
+  try {
+    const evidence = JSON.parse(source);
+    const assessment = validatePolicyEvidence(evidence, { id, sql });
+    return { reasons: assessment.reasons, evidence: assessment.approved ? evidence : undefined };
+  } catch { return { reasons: ["migration_policy_evidence_invalid"] }; }
+}
+
+async function migrationReasons(root, file, changedFiles) {
+  const id = MIGRATION_SQL.exec(file)?.[1];
+  const rollbackFile = `apps/api/prisma/migrations/${id}/rollback.md`;
+  const evidenceFile = `apps/api/prisma/migrations/${id}/policy.json`;
+  const rollback = await rollbackReasons(root, rollbackFile);
+  let sql;
+  try { sql = await readFile(join(root, file), "utf8"); }
+  catch { return [...rollback, "migration_file_unreadable"]; }
+  const policy = await policyEvidence(root, evidenceFile, changedFiles, id, sql);
+  return [...rollback, ...policy.reasons, ...analyzeMigrationSql(sql, policy.evidence).reasons];
+}
+
+async function workflowReasons(root, workflowPath) {
+  try {
+    return validateMigrationWorkflow(await readFile(join(root, workflowPath), "utf8")).reasons;
+  } catch { return ["migration_workflow_unreadable"]; }
+}
+
 export async function assessChangedPrismaMigrations({ changedFiles = [], root = process.cwd(), workflowPath = ".github/workflows/prisma-migration-policy.yml" } = {}) {
   const migrationPaths = changedFiles.filter((file) => MIGRATION_SQL.test(file) || ROLLBACK_DOC.test(file) || POLICY_EVIDENCE.test(file));
   if (!migrationPaths.length) return result([], { applicable: false, migrationFiles: [] });
   // Sidecar corrections must audit the immutable SQL too, not require editing it.
   const migrationFiles = stable(migrationPaths.map(file => file.slice(0, file.lastIndexOf("/") + 1) + "migration.sql"));
-  const reasons = [];
-  for (const file of migrationFiles) {
-    const id = MIGRATION_SQL.exec(file)?.[1];
-    const rollbackFile = `apps/api/prisma/migrations/${id}/rollback.md`;
-    const evidenceFile = `apps/api/prisma/migrations/${id}/policy.json`;
-    try {
-      if (!(await readFile(join(root, rollbackFile), "utf8")).trim()) reasons.push("migration_rollback_document_missing");
-    } catch { reasons.push("migration_rollback_document_missing"); }
-    try {
-      const sql = await readFile(join(root, file), "utf8");
-      let evidence;
-      let evidenceSource;
-      try { evidenceSource = await readFile(join(root, evidenceFile), "utf8"); }
-      catch (error) {
-        if (error.code !== "ENOENT" || changedFiles.includes(evidenceFile)) reasons.push("migration_policy_evidence_invalid");
-      }
-      if (evidenceSource !== undefined) {
-        try {
-          evidence = JSON.parse(evidenceSource);
-          const evidenceAssessment = validatePolicyEvidence(evidence, { id, sql });
-          reasons.push(...evidenceAssessment.reasons);
-          if (!evidenceAssessment.approved) evidence = undefined;
-        } catch {
-          reasons.push("migration_policy_evidence_invalid");
-        }
-      }
-      reasons.push(...analyzeMigrationSql(sql, evidence).reasons);
-    } catch {
-      reasons.push("migration_file_unreadable");
-    }
-  }
-  try {
-    reasons.push(...validateMigrationWorkflow(await readFile(join(root, workflowPath), "utf8")).reasons);
-  } catch {
-    reasons.push("migration_workflow_unreadable");
-  }
-  return result(reasons, { applicable: true, migrationFiles: stable(migrationFiles) });
+  const assessments = await Promise.all([
+    ...migrationFiles.map(file => migrationReasons(root, file, changedFiles)),
+    workflowReasons(root, workflowPath),
+  ]);
+  return result(assessments.flat(), { applicable: true, migrationFiles });
 }
 
 export { MIGRATION_SQL, POLICY_EVIDENCE, ROLLBACK_DOC };
