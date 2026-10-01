@@ -17,7 +17,7 @@ function formString(form: FormData, name: string): string {
 
 async function api(path: string, method = "GET", body?: object): Promise<unknown> {
   const response = await fetch(`/api/crm/${path}`, { method, credentials: "same-origin", cache: "no-store", ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) });
-  if (!response.ok) throw new Error(response.status === 409 ? "Conflit : rechargez avant de réessayer." : response.status === 403 ? "Accès refusé pour ce rôle ou ce périmètre." : `Opération non confirmée (${response.status}).`);
+  if (!response.ok) throw new Error(response.status === 409 ? "Conflit : rechargez avant de réessayer." : response.status === 403 ? "Accès refusé pour ce rôle ou ce périmètre." : response.status === 401 ? "Votre session a expiré. Reconnectez-vous avant de réessayer." : `Opération non confirmée (${response.status}).`);
   return response.json();
 }
 
@@ -25,7 +25,7 @@ export function UsersConsole(): React.JSX.Element {
   const [users, setUsers] = useState<User[]>([]), [campuses, setCampuses] = useState<ReferenceOption[]>([]);
   const [selected, setSelected] = useState(""), [role, setRole] = useState<Role>("ADMISSIONS"), [campusId, setCampusId] = useState(""), [teamId, setTeamId] = useState("");
   const [reason, setReason] = useState<keyof typeof reasons>("ACCESS_REVIEW"), [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(""), [success, setSuccess] = useState("");
+  const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [loadError, setLoadError] = useState(""), [error, setError] = useState(""), [success, setSuccess] = useState("");
   const mutationPending = useRef(false);
   const reload = useCallback(async (): Promise<void> => {
     const data = await api("users") as { users?: User[] };
@@ -37,7 +37,7 @@ export function UsersConsole(): React.JSX.Element {
     const result = data as { users?: User[] };
     if (!Array.isArray(result.users)) throw new Error("Liste des utilisateurs invalide.");
     setUsers(result.users); setCampuses(references); setLoading(false);
-  }).catch((failure: unknown) => { if (active) { setError(failure instanceof Error ? failure.message : "Administration indisponible."); setLoading(false); } }); return (): void => { active = false; }; }, []);
+  }).catch((failure: unknown) => { if (active) { setLoadError(failure instanceof TypeError ? "Le service CRM est indisponible. Aucun compte ni droit n’a été relu." : failure instanceof Error ? failure.message : "Administration indisponible."); setLoading(false); } }); return (): void => { active = false; }; }, []);
   const current = users.find((item) => item.id === selected);
   async function mutate(action: () => Promise<unknown>, message: string): Promise<void> {
     if (mutationPending.current) return;
@@ -49,6 +49,7 @@ export function UsersConsole(): React.JSX.Element {
   }
   function choose(user: User): void { setSelected(user.id); setRole(user.roles[0] ?? "ADMISSIONS"); setCampusId(user.campusId ?? ""); setTeamId(user.teamId ?? ""); setConfirmed(false); setError(""); setSuccess(""); }
   if (loading) return <p role="status">Chargement des comptes et des campus…</p>;
+  if (loadError) return <section role="alert" className="users-feedback error"><h2>Administration indisponible</h2><p>{loadError}</p><p>Aucun compte ni formulaire d’administration n’est présenté sans lecture autorisée.</p><button type="button" onClick={() => window.location.reload()}>Réessayer</button></section>;
   return <div className="users-grid">
     <section className="users-card" aria-labelledby="users-list-title"><h2 id="users-list-title">Comptes <small>{users.length}</small></h2><div className="users-list">{users.map((user) => <button key={user.id} type="button" className={user.id === selected ? "is-selected" : ""} onClick={() => choose(user)}><strong>{user.professionalEmail}</strong><span>{user.roles.map((value) => labels[value] ?? value).join(", ")} · {campuses.find((item) => item.id === user.campusId)?.label ?? user.campusId ?? "Global"}</span><small>{user.active ? "Actif" : "Désactivé"}</small></button>)}{users.length === 0 ? <p>Aucun compte.</p> : null}</div></section>
     <div className="users-actions"><section className="users-card"><h2>Créer un utilisateur</h2><p>Le secret temporaire est émis séparément après création.</p><form onSubmit={(event): void => { event.preventDefault(); const form = new FormData(event.currentTarget); void (async (): Promise<void> => {

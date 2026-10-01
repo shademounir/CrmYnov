@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Inject, Param, Post, Req, UnauthorizedException, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest, Scope } from "./auth.types.js";
 import { RateLimitService } from "./rate-limit.service.js";
 import { RbacGuard, RequireRoles } from "./rbac.guard.js";
@@ -16,6 +16,14 @@ export class SessionController {
     @Inject(LocalCredentialAdapter) private readonly credentials: LocalCredentialAdapter,
     @Inject(UserService) private readonly users: UserService,
   ) {}
+
+  @Get("current")
+  current(@Req() request: AuthenticatedRequest): { roles: string[]; scopes: Scope[]; professionalEmail: string } {
+    if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
+    const user = this.users.findById(request.principal.userId);
+    if (!user?.active) throw new UnauthorizedException({ code: "session_invalid" });
+    return { roles: request.principal.roles, scopes: request.principal.scopes, professionalEmail: user.professionalEmail };
+  }
 
   @Post()
   async create(@Req() request: AuthenticatedRequest, @Body() body: { email?: string; password?: string }): Promise<{ token: string; sessionId: string }> {

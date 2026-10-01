@@ -18,7 +18,7 @@ test("CRMY-170 sharing, permission, identity and resource writers always exclude
     ViewSharingController: ["share", "revoke", "duplicate", "archive"],
     SavedLeadViewController: ["create", "update", "remove"],
     DynamicPermissionController: ["save", "restore", "saveTeam"],
-    UserController: ["create", "setStatus", "updateAuthorization"],
+    UserController: ["create", "setStatus", "updateAuthorization", "issueTemporarySecret"],
     ReferenceController: ["create", "update", "availability", "legacy"],
     LeadController: ["create", "update"],
     LeadAssignmentController: ["assignOne", "assignBatch"],

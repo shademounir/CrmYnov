@@ -8,7 +8,7 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   ReassignmentController: { create: ["lead.reassign.request"], list: ["lead.view"], decide: ["lead.reassign.approve"] },
   ClosureController: { request: ["lead.close.request"], list: ["lead.view"], decide: ["lead.close.approve"], cancel: ["lead.close.request"] },
   LeadCollaborationController: { request: ["lead.collaborators.manage"], list: ["lead.view"], decide: ["lead.collaborators.manage"] },
-  UserController: { create: ["users.create"], list: ["users.view"], setStatus: ["users.disable"], updateAuthorization: ["users.roles.assign"] },
+  UserController: { create: ["users.create"], list: ["users.view"], setStatus: ["users.disable"], updateAuthorization: ["users.roles.assign"], issueTemporarySecret: ["users.roles.assign"] },
   QuickLeadController: { matches: ["lead.view"], submit: ["lead.create"] },
   AssignmentController: { config: ["lead.assign"], configure: ["settings.campus.manage"], simulate: ["lead.assign"], assign: ["lead.assign"], history: ["lead.assign"] },
   IngestionController: { ingest: ["import.execute"], confirmPersistent: ["import.execute", "import.confirm"], provenance: ["import.view"] },

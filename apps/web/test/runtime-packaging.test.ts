@@ -6,7 +6,9 @@ const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8
 const runtime = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
 
 test("Web runtime uses the pinned non-root Distroless standalone server", () => {
-  assert.match(runtime, /FROM gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:9a052c12c6501f1248b682bf6d022276220cb2a65416d215e0973527394d1552 AS runtime/);
+  assert.match(runtime, /FROM gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime/);
+  assert.match(dockerfile, /libssl3t64=3\.5\.7-1~deb13u3 openssl-provider-legacy=3\.5\.7-1~deb13u3/);
+  assert.match(runtime, /COPY --from=patched-openssl \/libssl3t64\.status \/var\/lib\/dpkg\/status\.d\/libssl3t64/);
   assert.match(runtime, /USER 65532:65532/);
   assert.match(runtime, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/);
   assert.match(runtime, /CMD \["apps\/web\/server\.js"\]/);
@@ -14,7 +16,7 @@ test("Web runtime uses the pinned non-root Distroless standalone server", () => 
   assert.match(runtime, /ENV NODE_ENV=production/);
   assert.match(runtime, /ENV HOSTNAME=0\.0\.0\.0/);
   assert.match(runtime, /ENV PORT=3000/);
-  const copies = runtime.split(/\r?\n/).filter((line) => line.startsWith("COPY "));
+  const copies = runtime.split(/\r?\n/).filter((line) => line.startsWith("COPY --from=build "));
   assert.equal(copies.length, 3);
   for (const line of copies) assert.match(line, /--from=build --chown=65532:65532/);
   assert.match(copies[0] ?? "", /\.next\/standalone \.\/$/);
