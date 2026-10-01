@@ -1,5 +1,10 @@
 # Per-PR approval mode
 
+Depuis la décision PO du 1 octobre 2026, un troisième mode est préparé dans
+[delegated-codex.md](delegated-codex.md). Il exige une autorité préalablement
+intégrée et des preuves exactes ; le contrat historique ci-dessous demeure
+applicable en l'absence d'activation explicite de ce mode.
+
 CRMY-124 removes the global approval-mode decision. `PR_APPROVAL_MODE` remains
 the default for an ordinary pull request, while the reviewed diff, Jira scope,
 and release profile determine `effectiveApprovalMode` for each PR.
