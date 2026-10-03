@@ -78,24 +78,24 @@ test("limits the shell navigation to the authenticated role without granting API
   assert.match(commercial, /href="\/leads"/u);
   assert.match(commercial, /Commercial/u);
   assert.doesNotMatch(commercial, /Session locale/u);
-  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" }))) as typeof fetch), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
-  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401))) as typeof fetch), { roles: [] });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" })))), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401)))), { roles: [] });
 });
 
 test("loads every bounded global-search state", async () => {
   const signal = new AbortController().signal;
-  const ready = await loadSearchResults("lead", signal, (() => Promise.resolve(response(200, { items: [{ id: "lead-1", firstName: "Lead" }] }))) as typeof fetch);
+  const ready = await loadSearchResults("lead", signal, (() => Promise.resolve(response(200, { items: [{ id: "lead-1", firstName: "Lead" }] }))));
   assert.equal(ready.kind, "ready");
-  assert.equal(await loadSearchResults("none", signal, (() => Promise.resolve(response(200, { items: [] }))) as typeof fetch).then((value) => value.kind), "empty");
-  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(401))) as typeof fetch).then((value) => value.kind), "session");
-  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(403))) as typeof fetch).then((value) => value.kind), "forbidden");
-  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(503))) as typeof fetch).then((value) => value.kind), "error");
+  assert.equal(await loadSearchResults("none", signal, (() => Promise.resolve(response(200, { items: [] })))).then((value) => value.kind), "empty");
+  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(401)))).then((value) => value.kind), "session");
+  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(403)))).then((value) => value.kind), "forbidden");
+  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(503)))).then((value) => value.kind), "error");
 });
 
 test("uses the API unread count instead of a static badge", async () => {
-  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: 3 }))) as typeof fetch), 3);
-  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: -2 }))) as typeof fetch), 0);
-  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(401))) as typeof fetch), undefined);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: 3 })))), 3);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: -2 })))), 0);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(401)))), undefined);
   const withBadge = renderShell({ kind: "closed", items: [] }, { unreadNotifications: 3 });
   assert.match(withBadge, /3 non lues/);
   assert.match(withBadge, /notification-dot/);
