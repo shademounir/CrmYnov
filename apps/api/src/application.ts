@@ -12,6 +12,7 @@ import { viewSharingPaths } from "./leads/view-sharing.openapi.js";
 import { createCollaboratorBody } from "./users/user.openapi.js";
 import { sheetImportPaths } from "./sheet-import/sheet-import.openapi.js";
 import { leadQualificationPaths } from "./qualification/lead-qualification.openapi.js";
+import { admissionsPaths } from "./admissions/admissions.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -35,6 +36,7 @@ export function configureApplication(app: INestApplication): void {
       ...auditPaths,
       ...viewSharingPaths,
       ...leadQualificationPaths,
+      ...admissionsPaths,
       "/health": {
         get: {
           summary: "API operational health",

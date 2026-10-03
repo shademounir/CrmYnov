@@ -25,6 +25,8 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   ManagerDashboardController: { read: ["reporting.view"], export: ["reporting.export"] },
   TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], freeCall: ["telephony.free-call.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
   TelephonyProvisioningController: { list: [], server: [], user: [], pairing: [], revoke: [] },
+  // Admissions rechecks declared responsibility, private agenda and lead grants in the same fence.
+  AdmissionsController: { context: [], responsibles: [], configureResponsibility: [], windows: [], createWindow: [], withdrawWindow: [], slots: [], createBooking: [], bookings: [], booking: [], bookingSlots: [], decide: [], report: [] },
 };
 const grouped: Readonly<Record<string, string>> = {
   FollowUpController: "reminder.manage", AppointmentController: "appointment.manage",

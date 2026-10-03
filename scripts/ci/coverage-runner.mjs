@@ -41,6 +41,11 @@ async function postgresProofs() {
     const http = `postgresql://postgres@127.0.0.1:${port}/crmy171_http_synthetic`;
     await verifyDatabase(direct, nonce); await verifyDatabase(http, nonce);
     run(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", "apps/api/prisma/schema.prisma"], { env: { ...process.env, DATABASE_URL: direct } });
+    // Shared permission-epoch fixtures are isolated by file. Controlled races
+    // inside admissions-concurrency.test.ts retain independent database clients.
+    run(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", "test/admissions-postgres.test.ts", "test/admissions-concurrency.test.ts", "test/admissions-http-postgres.test.ts"], {
+      cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY175_EPHEMERAL_TEST: "true", CRMY171_DATABASE_NONCE: nonce, SHEETS_ENABLED: "false" },
+    });
     run(process.execPath, ["--import", "tsx", "--test", "test/integration/notification-postgres.test.ts"], {
       cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY165_EPHEMERAL_TEST: "true", CRMY171_DATABASE_NONCE: nonce },
     });
