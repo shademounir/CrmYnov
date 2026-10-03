@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 test("synthetic appointment agenda remains accessible and API-connected", async ({ page }) => {
+  const hydrationErrors: string[] = [];
+  page.on("pageerror", (error) => hydrationErrors.push(error.message));
+  page.on("console", (message) => { if (message.type() === "error" && /hydrat/iu.test(message.text())) hydrationErrors.push(message.text()); });
   await page.route("**/api/crm/appointments?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [{ id: "appointment-synthetic", startsAt: "2026-09-15T10:00:00Z", type: "VISITE_CAMPUS", mode: "SUR_SITE", state: "PLANIFIE", campus: "SYNTHETIC" }] }) }));
   await page.goto("/appointments?view=table&campus=Synthetic");
   await expect(page.getByRole("heading", { name: "Rendez-vous", exact: true })).toBeVisible();
@@ -9,6 +12,7 @@ test("synthetic appointment agenda remains accessible and API-connected", async 
   await expect(page.getByText("Visite du campus")).toBeVisible();
   await page.getByRole("link", { name: "Jour", exact: true }).focus();
   await expect(page.getByRole("link", { name: "Jour", exact: true })).toBeFocused();
+  expect(hydrationErrors).toEqual([]);
 });
 
 test("planning from a Lead requests a declared Admissions slot without presenting a mock as persistence", async ({ page }) => {
@@ -33,7 +37,7 @@ test("planning from a Lead requests a declared Admissions slot without presentin
   });
   await page.goto(`/leads/${leadId}/appointments`);
   await page.getByLabel("Responsable d’admission").selectOption(responsibilityId);
-  await page.getByLabel("Durée", { exact: true }).selectOption("45");
+  await page.getByRole("combobox", { name: "Durée", exact: true }).selectOption("45");
   await page.getByLabel("Jour recherché").fill(day);
   await page.getByRole("radio").first().check();
   await page.getByRole("button", { name: "Demander ce rendez-vous" }).click();

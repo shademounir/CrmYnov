@@ -4,7 +4,9 @@ import { PageHeader } from "../_components/ui/page-header";
 import { AppointmentAgenda } from "./appointment-agenda";
 import { AdmissionsAgendaLink } from "./admissions/agenda-link";
 
-export default function AppointmentsPage(): React.JSX.Element {
+export default async function AppointmentsPage({ searchParams }: Readonly<{ searchParams: Promise<Record<string, string | string[] | undefined>> }>): Promise<React.JSX.Element> {
+  const { view } = await searchParams;
+  const initialView = view === "week" || view === "table" ? view : "day";
   return <main className="appointments-page">
     <PageHeader
       eyebrow="Organisation commerciale"
@@ -16,6 +18,6 @@ export default function AppointmentsPage(): React.JSX.Element {
       <span><CalendarPlus size={18} aria-hidden="true" /><strong>Agenda CRM</strong></span>
       <p>Heure de Casablanca · calendriers externes désactivés</p>
     </section>
-    <AppointmentAgenda />
+    <AppointmentAgenda key={initialView} initialView={initialView} />
   </main>;
 }

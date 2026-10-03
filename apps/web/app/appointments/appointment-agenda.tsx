@@ -31,12 +31,6 @@ export function appointmentDate(value: string): { date: string; time: string } {
 
 export function appointmentState(value: string): string { return stateLabels[value] ?? "À vérifier"; }
 
-function initialView(): AgendaView {
-  if (typeof globalThis.location === "undefined") return "day";
-  const view = new URLSearchParams(globalThis.location.search).get("view");
-  return view === "week" || view === "table" ? view : "day";
-}
-
 function dayKey(date: Date): string {
   if (Number.isNaN(date.valueOf())) return "";
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
@@ -84,7 +78,7 @@ function AppointmentTable({ items }: Readonly<{ items: ApiObject[] }>): React.JS
   </table></div>;
 }
 
-export function AppointmentAgenda(): React.JSX.Element {
+export function AppointmentAgenda({ initialView = "day" }: Readonly<{ initialView?: AgendaView }> = {}): React.JSX.Element {
   const [view, setView] = useState<AgendaView>(initialView); const [state, setState] = useState<AgendaState>({ kind: "loading", items: [] });
   const endpoint = useMemo(() => "/api/crm/appointments?page=1&pageSize=25", []);
   const visibleItems = useMemo(() => appointmentsForView(state.items, view), [state.items, view]);

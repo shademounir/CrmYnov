@@ -1,8 +1,14 @@
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
+import {accessSync,constants,statSync} from 'node:fs';
 import {waitForPostgres} from './postgres-readiness.mjs';
 const nonce=randomUUID(),container=`crmy175-ci-${nonce}`;
-const docker=args=>execFileSync('docker',args,{encoding:'utf8',windowsHide:true,timeout:90_000,stdio:['ignore','pipe','pipe']});
+// Only the official Docker Desktop installation or the hosted Linux runner's
+// system executable is trusted. Never resolve an executable from inherited PATH.
+const dockerExecutable=process.platform==='win32'?'C:/Program Files/Docker/Docker/resources/bin/docker.exe':'/usr/bin/docker';
+if(!['win32','linux'].includes(process.platform)||!statSync(dockerExecutable).isFile())throw Error('admissions_test_docker_installation_unsupported');
+accessSync(dockerExecutable,process.platform==='win32'?constants.F_OK:constants.X_OK);
+const docker=args=>execFileSync(dockerExecutable,args,{encoding:'utf8',windowsHide:true,timeout:90_000,stdio:['ignore','pipe','pipe']});
 if(process.env.DATABASE_URL)throw Error('admissions_test_must_not_inherit_database');
 let created=false;
 try{

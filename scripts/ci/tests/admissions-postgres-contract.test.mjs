@@ -8,6 +8,10 @@ test('Admissions CI requires actual PostgreSQL concurrency proofs, not unenabled
  assert.match(integration,/node scripts\/ci\/admissions-postgres\.mjs/);
  const harness=await read('scripts/ci/admissions-postgres.mjs');
  assert.match(harness,/admissions_test_must_not_inherit_database/);
+ assert.match(harness,/C:\/Program Files\/Docker\/Docker\/resources\/bin\/docker\.exe/);
+ assert.match(harness,/\/usr\/bin\/docker/);
+ assert.match(harness,/accessSync\(dockerExecutable/);
+ assert.doesNotMatch(harness,/execFileSync\(['"]docker['"]/);
  assert.match(harness,/127\.0\.0\.1::5432/);
  assert.match(harness,/crmy175_test_identity\.marker/);
  assert.match(harness,/migrate','deploy'/);
