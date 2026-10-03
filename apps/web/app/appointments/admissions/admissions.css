@@ -1,5 +1,8 @@
 .admissions-page { width: 100%; max-width: 1220px; margin: 0 auto; min-width: 0; }
 .admissions-page .ui-page-header { margin-bottom: 16px; }
+.admissions-page .ui-page-header > div:first-child { min-width: 0; flex: 1 1 280px; }
+.admissions-page .ui-page-header__actions { min-width: 0; max-width: 100%; }
+.admissions-page .ui-page-header__actions > .secondary-button { max-width: 100%; padding: 10px 15px; overflow-wrap: normal; }
 .admissions-page h2 { margin: 0 0 8px; font-size: 18px; }
 .admissions-page h3 { margin: 8px 0; font-size: 16px; }
 .admissions-page h4 { margin: 0; font-size: 14px; }
@@ -54,6 +57,11 @@
 .admissions-detail dt { font-size: 11px; color: var(--muted); }
 .admissions-detail dd { margin: 5px 0 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 @media (max-width: 1100px) { .admissions-agenda-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 768px) {
+  .admissions-page .ui-page-header { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .admissions-page .ui-page-header__actions,
+  .admissions-page .ui-page-header__actions > .secondary-button { width: 100%; }
+}
 @media (max-width: 640px) {
   .admissions-fields, .admissions-detail { grid-template-columns: minmax(0, 1fr); }
   .admissions-overview { gap: 8px; }

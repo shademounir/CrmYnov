@@ -15,6 +15,7 @@ async function fixtures(page: Page): Promise<void> {
     else if (path.endsWith("/admissions/responsibles")) payload = { items: [responsibility] };
     else if (path.endsWith("/admissions/slots")) payload = { items: [{ startsAt: booking.startsAt, endsAt: booking.endsAt }], redacted: true };
     else if (path.endsWith("/admissions/bookings")) payload = { items: [booking] };
+    else if (path.endsWith(`/admissions/bookings/${booking.id}`)) payload = booking;
     else if (path.endsWith("/admissions/windows")) payload = { items: [{ id: "window", responsibilityId: responsibility.id, campus: "SYNTHETIC", kind: "AVAILABLE", startsAt: booking.startsAt, endsAt: "2099-10-04T12:00:00.000Z", active: true, version: 1 }] };
     else if (path.endsWith(`/leads/${leadId}`)) payload = { id: leadId, leadCode: "LD-SYNTHETIC", firstName: "Lead", lastName: "synthétique", campus: "SYNTHETIC", collaboratorIds: [] };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) });
@@ -32,6 +33,22 @@ async function containedControls(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
 }
 
+async function readableHeaderReturn(page: Page, name: string, width: number): Promise<void> {
+  const link = page.getByRole("link", { name, exact: true });
+  await expect(link).toBeVisible();
+  const geometry = await link.evaluate((element) => {
+    const rect = element.getBoundingClientRect(); const header = element.closest("header")!.getBoundingClientRect();
+    const text = element.closest("header")!.querySelector("div")!.getBoundingClientRect();
+    return { width: rect.width, height: rect.height, headerWidth: header.width, top: rect.top, titleBottom: text.bottom };
+  });
+  expect(geometry.width).toBeGreaterThanOrEqual(160); expect(geometry.height).toBeGreaterThanOrEqual(44); expect(geometry.height).toBeLessThanOrEqual(68);
+  if (width <= 768) {
+    expect(geometry.width).toBeGreaterThanOrEqual(geometry.headerWidth - 1);
+    expect(geometry.top).toBeGreaterThanOrEqual(geometry.titleBottom + 13);
+  }
+  await link.focus(); await expect(link).toBeFocused();
+}
+
 for (const width of [1440, 1280, 1024, 768, 390]) {
   test(`Admissions real components retain accessible controls at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 }); await fixtures(page);
@@ -42,10 +59,14 @@ for (const width of [1440, 1280, 1024, 768, 390]) {
     await expect(page.getByText("Campus synthétique de recette", { exact: true }).last()).toBeVisible();
     await page.goto("/appointments/admissions");
     await expect(page.getByRole("heading", { name: "Déclarer une plage" })).toBeVisible();
+    await readableHeaderReturn(page, "Agenda des rendez-vous", width);
     await expect(page.getByRole("button", { name: "Accepter le rendez-vous" })).toBeVisible(); await containedControls(page);
     await page.getByRole("button", { name: "Refuser la demande" }).click();
     await expect(page.getByLabel("Motif obligatoire")).toBeFocused(); await containedControls(page);
     await page.keyboard.press("Escape"); await expect(page.getByLabel("Motif obligatoire")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Refuser la demande" })).toBeFocused();
+    await page.goto(`/appointments/admissions/${booking.id}`);
+    await expect(page.getByRole("heading", { name: booking.leadLabel, exact: true })).toBeVisible();
+    await readableHeaderReturn(page, "Retour à mon agenda", width); await containedControls(page);
   });
 }

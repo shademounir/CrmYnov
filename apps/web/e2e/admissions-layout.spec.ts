@@ -13,12 +13,14 @@ const markup = execFileSync(process.execPath, ["--import", "tsx", "-e", `
   const { AdmissionsBookingActions } = require('./app/appointments/admissions/booking-actions.tsx');
   const { AdmissionsSlotPicker } = require('./app/appointments/admissions/slot-picker.tsx');
   const { AdmissionsReportForm } = require('./app/appointments/admissions/report-form.tsx');
+  const { PageHeader } = require('./app/_components/ui/page-header.tsx');
   const responsible = {id:'responsible-profile',userId:'responsible',label:'Responsable synthétique des Admissions',campus:'SYNTHETIC',campusLabel:'Campus synthétique de recette',active:true,version:1};
   const booking = {id:'booking-synthetic',leadId:'lead-synthetic',responsibilityId:responsible.id,leadIdentifier:'LD-SYNTHETIC',leadLabel:'Lead synthétique',responsibleLabel:responsible.label,state:'PENDING',appointmentState:'PLANIFIE',campus:'SYNTHETIC',startsAt:'2099-10-04T09:00:00.000Z',durationMinutes:30,version:1,canDecide:true,canCancel:true,canReschedule:true};
   const context = {timezone:'Africa/Casablanca',ownResponsibilities:[responsible],canManageResponsibilities:true,canUseAgenda:true,campuses:[{id:'campus',code:'SYNTHETIC',label:'Campus synthétique de recette'}],eligibleUsers:[{id:'responsible',label:responsible.label,campus:'SYNTHETIC'}]};
   const onUpdated = async () => {}; const onChange = () => {};
   process.stdout.write(renderToStaticMarkup(h('main',{className:'admissions-page'},
-    h('h1',null,'Disponibilités et rendez-vous'),
+    h(PageHeader,{eyebrow:'Relation Ynov · décision Admissions',title:'Lina Recette Admissions',description:'Le statut de la demande est relu depuis le serveur, indépendamment d’un accès à la fiche complète du Lead.',actions:h('a',{className:'secondary-button',href:'/appointments/admissions'},'Retour à mon agenda')}),
+    h(PageHeader,{eyebrow:'Relation Ynov · Admissions',title:'Disponibilités et rendez-vous',description:'Préparez votre agenda, recevez les demandes et décidez sans chevauchement.',actions:h('a',{className:'secondary-button',href:'/appointments'},'Agenda des rendez-vous')}),
     h('div',{className:'admissions-agenda-grid'}, h(AdmissionsWindowForm,{responsibilities:[responsible],onUpdated}), h(AdmissionsResponsibilities,{context,items:[responsible],onUpdated})),
     h('section',{className:'panel admissions-panel'},h(AdmissionsSlotPicker,{leadId:booking.leadId,responsibilityId:responsible.id,durationMinutes:30,value:'',onChange}),h(AdmissionsBookingActions,{booking,onUpdated})),
     h('section',{className:'panel admissions-panel'},h(AdmissionsReportForm,{booking:{...booking,state:'ACCEPTED',appointmentState:'REALISE',canWriteReport:true},onUpdated}))
@@ -37,6 +39,24 @@ for (const width of [1440, 1280, 1024, 768, 390]) {
       return elements.map((element) => { const rect = element.getBoundingClientRect(); return { label: element.textContent, outside: rect.left < parent.left - 1 || rect.right > parent.right + 1, height: rect.height }; }).filter((result) => result.outside || result.height < 44);
     });
     expect(geometry).toEqual([]);
+    for (const name of ["Retour à mon agenda", "Agenda des rendez-vous"]) {
+      const back = page.getByRole("link", { name, exact: true });
+      await expect(back).toBeVisible();
+      const linkGeometry = await back.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const header = element.closest("header")!.getBoundingClientRect();
+        const text = element.closest("header")!.querySelector("div")!.getBoundingClientRect();
+        return { width: rect.width, height: rect.height, headerWidth: header.width, top: rect.top, titleBottom: text.bottom };
+      });
+      expect(linkGeometry.width).toBeGreaterThanOrEqual(160);
+      expect(linkGeometry.height).toBeGreaterThanOrEqual(44);
+      expect(linkGeometry.height).toBeLessThanOrEqual(68);
+      if (width <= 768) {
+        expect(linkGeometry.width).toBeGreaterThanOrEqual(linkGeometry.headerWidth - 1);
+        expect(linkGeometry.top).toBeGreaterThanOrEqual(linkGeometry.titleBottom + 13);
+      }
+      await back.focus(); await expect(back).toBeFocused();
+    }
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
     const focus = page.getByLabel("Responsable et campus"); await focus.focus(); await expect(focus).toBeFocused();
   });
