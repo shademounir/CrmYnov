@@ -79,7 +79,7 @@ function AppointmentTable({ items }: Readonly<{ items: ApiObject[] }>): React.JS
       <td data-label="Mode">{modeLabels[apiString(item, "mode")] ?? "À préciser"}</td>
       <td data-label="État"><span className="appointments-state" data-state={state}>{appointmentState(state)}</span></td>
       <td data-label="Campus">{apiString(item, "campus", "À distance")}</td>
-      <td data-label="Action">{id ? <Link href={`/appointments/${encodeURIComponent(id)}`} aria-label={`Ouvrir le rendez-vous du ${date.date} à ${date.time}`}><span>Voir</span><ArrowRight size={16} weight="bold" aria-hidden="true" /></Link> : "—"}</td>
+      <td data-label="Action">{id ? <Link href={apiString(item, "admissionsBookingState") ? `/appointments/admissions/${encodeURIComponent(id)}` : `/appointments/${encodeURIComponent(id)}`} aria-label={`Ouvrir le rendez-vous du ${date.date} à ${date.time}`}><span>Voir</span><ArrowRight size={16} weight="bold" aria-hidden="true" /></Link> : "—"}</td>
     </tr>; })}</tbody>
   </table></div>;
 }

@@ -1,0 +1,69 @@
+.admissions-page { width: 100%; max-width: 1220px; margin: 0 auto; min-width: 0; }
+.admissions-page .ui-page-header { margin-bottom: 16px; }
+.admissions-page h2 { margin: 0 0 8px; font-size: 18px; }
+.admissions-page h3 { margin: 8px 0; font-size: 16px; }
+.admissions-page h4 { margin: 0; font-size: 14px; }
+.admissions-page p { font-size: 12px; line-height: 1.6; }
+.admissions-page :is(input, select, textarea, button, a) { min-width: 0; }
+.admissions-page :is(button, .primary-button, .secondary-button, .text-button) { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.admissions-page .lead-profile__back { min-height: 44px; }
+.admissions-page :is(button, input, select, textarea, a):focus-visible { outline: 3px solid #009d93; outline-offset: 3px; }
+.admissions-page label { display: grid; gap: 7px; font-size: 12px; font-weight: 600; min-width: 0; }
+.admissions-page :is(input:not([type=radio]), select, textarea) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 11px; border: 1px solid #ccd5da; border-radius: 8px; background: white; color: var(--onyx); font: inherit; }
+.admissions-page textarea { min-height: 90px; resize: vertical; }
+.admissions-page fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.admissions-panel, .admissions-existing { padding: 20px; margin-top: 16px; min-width: 0; }
+.admissions-panel > p { color: var(--muted); }
+.admissions-notice { padding: 12px 14px; border-radius: 8px; background: #eef8f6; color: #365d58; font-size: 12px; line-height: 1.6; }
+.admissions-error, .admissions-feedback--error { padding: 12px 14px; border-left: 3px solid #c8352e; border-radius: 7px; background: #fff0ee; color: #9d2d27; font-size: 12px; }
+.admissions-feedback { margin-top: 16px; display: flex; gap: 10px; line-height: 1.5; }
+.admissions-feedback--success { padding: 12px 14px; border-left: 3px solid var(--teal); border-radius: 7px; background: var(--teal-soft); color: var(--teal-dark); font-size: 12px; }
+.admissions-feedback a { display: inline-flex; align-items: center; min-height: 44px; margin-top: 8px; font-weight: 700; color: var(--teal-dark); }
+.admissions-feedback svg { flex-shrink: 0; }
+.admissions-fields, .admissions-agenda-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.admissions-section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.admissions-section-heading > div { min-width: 0; flex: 1 1 230px; }
+.admissions-section-heading > :is(a, button) { flex: 0 1 auto; max-width: 100%; }
+.admissions-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.admissions-actions > * { max-width: 100%; }
+.admissions-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0 0; }
+.admissions-overview article { display: grid; gap: 5px; padding: 15px 18px; border: 1px solid var(--border); border-radius: 12px; background: white; }
+.admissions-overview strong { font-size: 26px; color: var(--teal-dark); }
+.admissions-overview span { font-size: 11px; color: var(--muted); }
+.admissions-window-list, .admissions-booking-list, .admissions-existing ul { padding: 0; list-style: none; }
+.admissions-window-list li, .admissions-existing li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 0; border-top: 1px solid var(--border); }
+.admissions-window-list li > div, .admissions-existing li > div { display: grid; gap: 5px; min-width: 0; flex: 1 1 180px; }
+.admissions-window-list strong, .admissions-existing strong { font-size: 12px; }
+.admissions-window-list span, .admissions-window-list small, .admissions-existing span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.admissions-window-list [data-kind=BLOCKED] strong { color: #8b4b26; }
+.admissions-filter { max-width: 340px; margin: 18px 0; }
+.admissions-booking-list > li { padding: 20px 0; border-top: 1px solid var(--border); }
+.admissions-state { display: inline-flex; border-radius: 999px; padding: 7px 10px; font-size: 11px; font-weight: 700; background: #fff4db; color: #80610f; }
+.admissions-state[data-state=ACCEPTED] { background: #e8f7f3; color: #286454; }
+.admissions-state:is([data-state=REFUSED], [data-state=CANCELLED]) { background: #f1f3f4; color: #57636c; }
+.admissions-booking-actions { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
+.admissions-action-form { display: grid; gap: 14px; padding: 16px; margin-top: 16px; border: 1px solid #b8deda; border-radius: 10px; background: #f2fbfa; }
+.admissions-slots { padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--border); }
+.admissions-slots > label { max-width: 260px; margin: 14px 0; }
+.admissions-slot-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; }
+.admissions-slot-list legend { margin-bottom: 10px; font-size: 12px; font-weight: 700; }
+.admissions-slot-list label { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 12px; border: 1px solid #ccd5da; border-radius: 8px; background: white; cursor: pointer; }
+.admissions-slot-list label.is-selected { border-color: var(--teal); background: var(--teal-soft); }
+.admissions-slot-list input { width: 17px; height: 17px; accent-color: var(--teal); flex-shrink: 0; }
+.admissions-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin: 20px 0; }
+.admissions-detail dt { font-size: 11px; color: var(--muted); }
+.admissions-detail dd { margin: 5px 0 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+@media (max-width: 1100px) { .admissions-agenda-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 640px) {
+  .admissions-fields, .admissions-detail { grid-template-columns: minmax(0, 1fr); }
+  .admissions-overview { gap: 8px; }
+  .admissions-overview article { padding: 12px 10px; }
+  .admissions-overview strong { font-size: 21px; }
+  .admissions-overview span { font-size: 10px; overflow-wrap: anywhere; }
+  .admissions-panel, .admissions-existing { padding: 16px; }
+  .admissions-actions { align-items: stretch; flex-direction: column; }
+  .admissions-actions > *, .admissions-section-heading > :is(a, button) { width: 100%; justify-content: center; }
+  .admissions-section-heading { gap: 10px; }
+  .admissions-section-heading > div { flex-basis: 100%; }
+  .admissions-window-list li > button, .admissions-existing li > a { width: 100%; justify-content: center; }
+}

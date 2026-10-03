@@ -231,6 +231,7 @@ model Collaborator {
   accessInvitations      LocalAccessInvitation[]
   teamResponsibilities TeamResponsibility[]
   telephonyProfile     TelephonyUserProfile?
+  admissionsResponsibilities AdmissionsResponsibility[]
 
   @@index([active, campusId, teamId])
   @@map("collaborators")
@@ -592,11 +593,64 @@ model Appointment {
   participants     AppointmentParticipant[]
   events           AppointmentEvent[]
   interviewReports InterviewReport[]
+  admissionsBooking AdmissionsBooking?
 
   @@index([leadId, startsAt(sort: Desc)])
   @@index([adviserId, startsAt])
   @@index([campus, state, startsAt])
   @@map("appointments")
+}
+
+model AdmissionsResponsibility {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  campus String @db.VarChar(120)
+  active Boolean @default(true)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user Collaborator @relation(fields: [userId], references: [id], onDelete: Restrict)
+  windows AdmissionsWindow[]
+  bookings AdmissionsBooking[]
+  @@unique([userId, campus])
+  @@index([campus, active])
+  @@map("admissions_responsibilities")
+}
+
+model AdmissionsWindow {
+  id String @id @default(uuid()) @db.Uuid
+  responsibilityId String @map("responsibility_id") @db.Uuid
+  kind String @db.VarChar(16)
+  startsAt DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt DateTime @map("ends_at") @db.Timestamptz(6)
+  active Boolean @default(true)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  responsibility AdmissionsResponsibility @relation(fields: [responsibilityId], references: [id], onDelete: Restrict)
+  @@index([responsibilityId, active, startsAt])
+  @@map("admissions_windows")
+}
+
+model AdmissionsBooking {
+  appointmentId String @id @map("appointment_id") @db.Uuid
+  responsibilityId String @map("responsibility_id") @db.Uuid
+  state String @default("PENDING") @db.VarChar(16)
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+  responsibility AdmissionsResponsibility @relation(fields: [responsibilityId], references: [id], onDelete: Restrict)
+  @@index([responsibilityId, state])
+  @@map("admissions_bookings")
+}
+
+model AdmissionsMutationReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  operation String @db.VarChar(48)
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  response Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@unique([actorId, operation, key])
+  @@map("admissions_mutation_receipts")
 }
 
 model AppointmentParticipant {

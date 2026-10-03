@@ -4,9 +4,10 @@ import type { Prisma } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import type { AppointmentEvent, AppointmentRecord, InterviewReport } from "./appointment.service.js";
+import { assertAppointmentFree, lockAppointmentParticipants } from "./appointment-locks.js";
 
 type AppointmentRow = Prisma.AppointmentGetPayload<{
-  include: { participants: true; events: true; interviewReports: true };
+  include: { participants: true; events: true; interviewReports: true; admissionsBooking: true };
 }>;
 
 export interface AppointmentSnapshot {
@@ -27,10 +28,18 @@ export class AppointmentPersistenceRepository {
     return (await this.requiredClient().appointment.findUnique({ where: { id }, select: { leadId: true } }))?.leadId;
   }
 
+  /** Refuse before legacy in-memory mutation/notification queues can start.
+   * The persisted writer keeps its own check as defense in depth. */
+  async assertLegacyMutationAllowed(id: string, operation: "transition" | "report"): Promise<void> {
+    if (await this.requiredClient().admissionsBooking.findUnique({ where: { appointmentId: id }, select: { appointmentId: true } })) {
+      throw new ConflictException({ code: operation === "report" ? "admissions_controlled_report_required" : "admissions_controlled_transition_required" });
+    }
+  }
+
   async snapshot(): Promise<AppointmentSnapshot> {
     const client = this.requiredClient();
     const rows = await client.appointment.findMany({
-      include: { participants: true, events: { orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }, interviewReports: { orderBy: [{ validatedAt: "asc" }, { id: "asc" }] } },
+      include: { admissionsBooking: true, participants: true, events: { orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }, interviewReports: { orderBy: [{ validatedAt: "asc" }, { id: "asc" }] } },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }],
     });
     const collaboratorIds = [...new Set(rows.flatMap((row) => [row.adviserId, row.organizerId]))];
@@ -63,6 +72,12 @@ export class AppointmentPersistenceRepository {
     try {
       await client.$transaction(async (tx) => {
         if (await tx.appointmentEvent.findUnique({ where: { idempotencyKey: event.idempotencyKey } })) return;
+        const involved = [record.adviserId, record.organizerId, ...record.participantIds, ...(record.evaluatorId ? [record.evaluatorId] : [])];
+        await lockAppointmentParticipants(tx, involved);
+        // A designated Admissions responsible must receive a controlled request,
+        // never a directly planned legacy appointment bypassing declared windows.
+        if (await tx.admissionsResponsibility.findFirst({ where: { userId: record.adviserId, active: true, user: { active: true, firstLoginRequired: false } } })) throw new ConflictException({ code: "admissions_controlled_booking_required" });
+        await assertAppointmentFree(tx, involved, new Date(record.startsAt), record.durationMinutes);
         await tx.appointment.create({ data: {
           id: record.id, leadId: record.leadId, type: record.type, mode: record.mode, state: record.state,
           startsAt: new Date(record.startsAt), durationMinutes: record.durationMinutes, campus: record.campus ?? null,
@@ -85,6 +100,9 @@ export class AppointmentPersistenceRepository {
     try {
       await client.$transaction(async (tx) => {
         if (await tx.appointmentEvent.findUnique({ where: { idempotencyKey: event.idempotencyKey } })) return;
+        await lockAppointmentParticipants(tx, [record.adviserId, record.organizerId, ...record.participantIds, ...(record.evaluatorId ? [record.evaluatorId] : [])]);
+        if (await tx.admissionsBooking.findUnique({ where: { appointmentId: record.id } })) throw new ConflictException({ code: "admissions_controlled_transition_required" });
+        if (!["ANNULE", "REALISE", "ABSENT", "REFUSE"].includes(record.state)) await assertAppointmentFree(tx, [record.adviserId, record.organizerId, ...record.participantIds, ...(record.evaluatorId ? [record.evaluatorId] : [])], new Date(record.startsAt), record.durationMinutes, record.id);
         const changed = await tx.appointment.updateMany({
           where: { id: record.id, version: record.version - 1 },
           data: { state: record.state, startsAt: new Date(record.startsAt), version: record.version, updatedAt: new Date(record.updatedAt) },
@@ -117,6 +135,7 @@ export class AppointmentPersistenceRepository {
   async persistReport(record: AppointmentRecord, report: InterviewReport, principal: Principal, correlationId: string): Promise<void> {
     const client = this.requiredClient();
     await client.$transaction(async (tx) => {
+      if (await tx.admissionsBooking.findUnique({ where: { appointmentId: record.id } })) throw new ConflictException({ code: "admissions_controlled_report_required" });
       const existing = await tx.interviewReport.findFirst({ where: { appointmentId: record.id }, orderBy: [{ validatedAt: "asc" }, { id: "asc" }] });
       if (existing) return;
       await tx.interviewReport.create({ data: {
@@ -194,6 +213,7 @@ export class AppointmentPersistenceRepository {
       ...(row.evaluatorId ? { evaluatorId: row.evaluatorId } : {}), participantIds: row.participants.map((participant) => participant.userId).sort((left, right) => left.localeCompare(right)),
       version: row.version, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
       conflictWarning: false, overloadWarning: false,
+      ...(row.admissionsBooking ? { admissionsBookingState: row.admissionsBooking.state, admissionsResponsibilityId: row.admissionsBooking.responsibilityId } : {}),
     };
   }
 

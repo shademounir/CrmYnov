@@ -31,6 +31,7 @@ const readers: Readonly<Record<string, readonly string[]>> = {
   TelephonyController: ["configuration", "listLeadCalls", "detail", "associationCandidates", "queue", "recording", "webhookStatus"],
   FollowUpController: ["list"],
   AppointmentController: ["list", "availability", "kpis", "detail"],
+  AdmissionsController: ["context", "responsibles", "windows", "slots", "bookings", "booking", "bookingSlots"],
   ChatController: ["listConversations", "listMessages"],
   BroadcastController: ["list", "recipients"],
   ReferenceController: ["list", "readAvailability"],

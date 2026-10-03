@@ -11,37 +11,36 @@ test("synthetic appointment agenda remains accessible and API-connected", async 
   await expect(page.getByRole("link", { name: "Jour", exact: true })).toBeFocused();
 });
 
-test("planning from a Lead writes once and exposes the persistent agenda links", async ({ page }) => {
+test("planning from a Lead requests a declared Admissions slot without presenting a mock as persistence", async ({ page }) => {
   const leadId = "00000000-0000-4000-8000-000000000149";
-  // This UI test checks the browser's Casablanca wall-time roundtrip. Chromium
-  // and Node can carry different Morocco tzdata even for a near-future date;
-  // server-side timezone parity needs separate evidence.
-  const selectedStart = `${new Date(Date.now() + 3 * 24 * 60 * 60_000).toISOString().slice(0, 10)}T10:30`;
-  let submissions = 0;
-  let submittedStart: string | undefined;
-  await page.route(`**/api/crm/leads/${leadId}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: leadId, leadCode: "LD-SYNTHETIC", firstName: "Recette", lastName: "Rendez-vous", campus: "SYNTHETIC-CAMPUS", campaign: "SYNTHETIC", educationLevel: "BAC", program: "SYNTHETIC", source: "TEST", status: "TO_CONTACT", collaboratorIds: [], temperature: "UNEVALUATED", temperatureLabel: "Non évalué", qualificationVersion: 0 }) }));
-  await page.route(`**/api/crm/leads/${leadId}/appointments`, async (route) => {
+  const responsibilityId = "00000000-0000-4000-8000-000000000175";
+  const day = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+  const startsAt = `${day}T10:30:00.000Z`;
+  let submissions = 0; let created = false;
+  const booking = { id: "appointment-created", leadId, leadIdentifier: "LD-SYNTHETIC", leadLabel: "Recette Rendez-vous", responsibilityId, responsibleId: "responsible", responsibleLabel: "Responsable synthétique", requesterId: "requester", campus: "SYNTHETIC-CAMPUS", type: "ENTRETIEN_ADMISSION", mode: "SUR_SITE", state: "PENDING", appointmentState: "PLANIFIE", startsAt, endsAt: `${day}T11:15:00.000Z`, durationMinutes: 45, version: 1, canDecide: false, canCancel: true, canReschedule: true };
+  await page.route(`**/api/crm/leads/${leadId}`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: leadId, leadCode: "LD-SYNTHETIC", firstName: "Recette", lastName: "Rendez-vous", campus: "SYNTHETIC-CAMPUS", collaboratorIds: [] }) }));
+  await page.route("**/api/crm/admissions/context", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: false, canUseAgenda: true, eligibleUsers: [], campuses: [{ id: "campus", code: "SYNTHETIC-CAMPUS", label: "Campus synthétique" }] }) }));
+  await page.route("**/api/crm/admissions/responsibles?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [{ id: responsibilityId, userId: "responsible", label: "Responsable synthétique", campus: "SYNTHETIC-CAMPUS", active: true, version: 1 }] }) }));
+  await page.route("**/api/crm/admissions/slots?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [{ startsAt, endsAt: booking.endsAt }], timezone: "Africa/Casablanca", redacted: true }) }));
+  await page.route("**/api/crm/admissions/bookings?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: created ? [booking] : [] }) }));
+  await page.route(`**/api/crm/leads/${leadId}/admissions-bookings`, async (route) => {
     submissions += 1;
-    const body = route.request().postDataJSON() as { startsAt: string; durationMinutes: number; idempotencyKey: string };
-    submittedStart = body.startsAt;
-    expect(body.durationMinutes).toBe(45);
+    const body = route.request().postDataJSON() as { startsAt: string; durationMinutes: number; responsibilityId: string; idempotencyKey: string };
+    expect(body).toMatchObject({ startsAt, durationMinutes: 45, responsibilityId });
     expect(body.idempotencyKey.length).toBeGreaterThanOrEqual(8);
-    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "appointment-created" }) });
+    created = true;
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(booking) });
   });
   await page.goto(`/leads/${leadId}/appointments`);
-  await page.getByLabel("Date et heure").fill(selectedStart);
-  await page.getByLabel("Durée").selectOption("45");
-  await page.getByRole("button", { name: "Planifier le rendez-vous" }).click();
-  await expect(page.getByText("Rendez-vous enregistré dans le CRM.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Ouvrir le rendez-vous" })).toHaveAttribute("href", "/appointments/appointment-created");
-  await expect(page.getByRole("link", { name: "Voir tous les rendez-vous" })).toHaveAttribute("href", "/appointments?view=table");
+  await page.getByLabel("Responsable d’admission").selectOption(responsibilityId);
+  await page.getByLabel("Durée", { exact: true }).selectOption("45");
+  await page.getByLabel("Jour recherché").fill(day);
+  await page.getByRole("radio").first().check();
+  await page.getByRole("button", { name: "Demander ce rendez-vous" }).click();
+  await expect(page.getByText("Demande envoyée. Le créneau est réservé en attente de l’acceptation du responsable.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Ouvrir la demande" })).toHaveAttribute("href", "/appointments/admissions/appointment-created");
+  await expect(page.getByRole("button", { name: "Demander ce rendez-vous" })).toBeDisabled();
   expect(submissions).toBe(1);
-  expect(submittedStart).toBeDefined();
-  const displayed = await page.evaluate((iso) => {
-    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
-    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
-  }, submittedStart ?? "");
-  expect(displayed).toBe(selectedStart);
 });
 
 test("records one durable no-show from the appointment detail", async ({ page }) => {

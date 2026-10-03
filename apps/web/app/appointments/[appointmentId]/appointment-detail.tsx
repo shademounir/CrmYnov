@@ -5,11 +5,12 @@ import { ArrowLeft, CalendarCheck, Clock, ShieldCheck, UserCircle, WarningCircle
 import { useCallback, useEffect, useState } from "react";
 import { appointmentDate, appointmentState } from "../appointment-agenda";
 import { AppointmentStateActions } from "./appointment-state-actions";
+import { AdmissionsBookingDetail } from "../admissions/booking-detail";
 
 interface AppointmentRecord {
   id: string; leadId: string; type: string; mode: string; state: string; startsAt: string;
   durationMinutes: number; campus?: string; adviserId: string; adviserLabel?: string; organizerId: string; organizerLabel?: string;
-  version: number; conflictWarning: boolean; overloadWarning: boolean;
+  version: number; conflictWarning: boolean; overloadWarning: boolean; admissionsBookingState?: string;
 }
 interface AppointmentEvent { id: string; type: string; occurredAt: string; reasonCode?: string }
 interface AppointmentPayload { appointment: AppointmentRecord; events: AppointmentEvent[] }
@@ -58,6 +59,7 @@ export function AppointmentDetail({ appointmentId }: Readonly<{ appointmentId: s
   if (state.kind === "error") return <main className="appointment-detail-page"><Link className="lead-profile__back" href="/appointments?view=table"><ArrowLeft size={17} /> Retour aux rendez-vous</Link><section className="ui-state ui-state--error" role="alert"><h1>Rendez-vous indisponible</h1><p>Il n’existe pas ou n’est pas visible dans votre périmètre.</p><button type="button" onClick={() => globalThis.location.reload()}>Réessayer</button></section></main>;
 
   const { appointment, events } = state.payload;
+  if (appointment.admissionsBookingState) return <AdmissionsBookingDetail bookingId={appointment.id} />;
   const date = appointmentDate(appointment.startsAt);
   return <main className="appointment-detail-page">
     <Link className="lead-profile__back" href="/appointments?view=table"><ArrowLeft size={17} aria-hidden="true" /> Retour aux rendez-vous</Link>
