@@ -5,6 +5,7 @@
 **/.next
 **/dist
 coverage
+apps/web/test-results
 node_modules
 **/node_modules
 *.log

@@ -124,6 +124,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run integration tests
         run: npm run test:integration
+      - name: Prove Admissions reservation on isolated PostgreSQL
+        run: node scripts/ci/admissions-postgres.mjs
       - name: Run targeted end-to-end contracts
         run: npm run test:e2e
 

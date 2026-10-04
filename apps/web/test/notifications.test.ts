@@ -15,9 +15,9 @@ test("renders the Relation Ynov notification center with an explicit loading sta
 });
 
 test("maps ready, session, forbidden and unavailable responses without fallback data", async () => {
-  const ready = await loadNotifications(1, (() => Promise.resolve(response(200, { items: [], page: 1, pageSize: 25, total: 0, unread: 0 }))) as typeof fetch);
+  const ready = await loadNotifications(1, (() => Promise.resolve(response(200, { items: [], page: 1, pageSize: 25, total: 0, unread: 0 }))));
   assert.equal(ready.kind, "ready");
-  assert.equal(await loadNotifications(1, (() => Promise.resolve(response(401))) as typeof fetch).then((value) => value.kind), "session");
-  assert.equal(await loadNotifications(1, (() => Promise.resolve(response(403))) as typeof fetch).then((value) => value.kind), "forbidden");
-  assert.equal(await loadNotifications(1, (() => Promise.resolve(response(503))) as typeof fetch).then((value) => value.kind), "error");
+  assert.equal(await loadNotifications(1, (() => Promise.resolve(response(401)))).then((value) => value.kind), "session");
+  assert.equal(await loadNotifications(1, (() => Promise.resolve(response(403)))).then((value) => value.kind), "forbidden");
+  assert.equal(await loadNotifications(1, (() => Promise.resolve(response(503)))).then((value) => value.kind), "error");
 });

@@ -17,8 +17,9 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
   contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
 
 async function mockReporting(page: Page): Promise<void> {
-  // Reporting is isolated from the API; include the shared shell's notification query.
+  // Reporting is isolated from the API; include shared shell and Admissions capabilities.
   await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "manager@example.invalid", mustChangeSecret: false }) }));
+  await page.route("**/api/crm/admissions/context", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: false, canUseAgenda: true, campuses: [{ id: "campus-a", code: "SYNTHETIC", label: "Campus synthétique" }], eligibleUsers: [] }) }));
   await page.route("**/api/crm/notifications?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], unread: 0, total: 0, page: 1, pageSize: 1 }) }));
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
   await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
@@ -37,6 +38,7 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   });
   await page.context().addCookies([{ name: "crm_session", value: "synthetic-manager-session", domain: "localhost", path: "/" }]);
   await mockReporting(page); await page.goto("/manager/reports/dashboard");
+  await expect(page.getByRole("link", { name: "Mon agenda Admissions", exact: true })).toHaveAttribute("href", "/appointments/admissions");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "crm_session")).toBe(true);
   await page.locator("details.reporting-filter-popover > summary").click();
   await page.locator('select[name="period"]').selectOption("7d");

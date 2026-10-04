@@ -10,12 +10,19 @@ import { appointmentDurationOptions, appointmentTypeOptions, casablancaDateTimeT
 import { appointmentEventLabel, appointmentEventReason, appointmentPrivacyNotice } from "../app/appointments/[appointmentId]/appointment-detail.js";
 import { appointmentOutcomeAvailable, appointmentTransitionTargets } from "../app/appointments/[appointmentId]/appointment-state-actions.js";
 
-test("agenda exposes the persistent accessible API view without external integration", () => {
-  const html = renderToStaticMarkup(AppointmentsPage());
+test("agenda exposes the persistent accessible API view without external integration", async () => {
+  const html = renderToStaticMarkup(await AppointmentsPage({ searchParams: Promise.resolve({}) }));
   assert.ok(html.includes("Rendez-vous"));
   assert.ok(html.includes("Chargement depuis l’API locale"));
   assert.ok(html.includes("Casablanca"));
   assert.ok(html.includes("calendriers externes désactivés"));
+});
+
+test("agenda server rendering respects the URL view before hydration and normalizes unsupported views", async () => {
+  for (const [view, heading] of [["day", "Aujourd’hui"], ["week", "Cette semaine"], ["table", "Tous les rendez-vous"], ["unsupported", "Aujourd’hui"]]) {
+    const html = renderToStaticMarkup(await AppointmentsPage({ searchParams: Promise.resolve({ view }) }));
+    assert.ok(html.includes(`<h2>${heading}</h2>`));
+  }
 });
 
 test("agenda localizes dates and applies the selected operational period", () => {

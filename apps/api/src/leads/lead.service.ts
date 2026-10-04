@@ -153,7 +153,7 @@ export class LeadService implements OnModuleInit {
     const activity = this.activities.find((item) => item.leadId === lead.id && !activityIds.has(item.id));
     if (!activity) throw new Error("lead_create_activity_missing");
     try {
-      const stored = await this.persistence.createLead(lead as LeadRecord & { version: number }, activity, receiptKey, fingerprint, principal, correlationId);
+      const stored = await this.persistence.createLead(lead, activity, receiptKey, fingerprint, principal, correlationId);
       await this.refreshPersistentState();
       this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `lead-created:${stored.id}`, after: { leadId: stored.id, leadCode: stored.leadCode, duplicateCandidateCount: result.duplicateCandidates.length } });
       return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };

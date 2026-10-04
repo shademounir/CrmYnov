@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ConnectedResource } from "../../../_components/connected-resource";
 import { PageHeader } from "../../../_components/ui/page-header";
+import { AdmissionsAgendaLink } from "../../../appointments/admissions/agenda-link";
 
 type Datum = { value: string; count: number };
 type DashboardReport = {
@@ -85,7 +86,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
   const updatePreference = (next: Preferences): void => { setPreferences(next); localStorage.setItem(preferenceKey, JSON.stringify(next)); };
   const dashboardDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Africa/Casablanca" }).format(new Date());
   return <main className="dashboard-page" data-density={preferences.compact ? "compact" : "comfortable"}>
-    <PageHeader eyebrow={dashboardDate} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<Link className="primary-button" href="/leads/new"><Plus size={19} weight="bold" /> Nouveau lead</Link>} />
+    <PageHeader eyebrow={dashboardDate} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink /><Link className="primary-button" href="/leads/new"><Plus size={19} weight="bold" /> Nouveau lead</Link></>} />
     <div className="dashboard-toolbar"><ReportingFilters filters={initialFilters} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
       <label><input type="checkbox" checked={preferences.compact} onChange={(event) => updatePreference({ ...preferences, compact: event.target.checked })} /> Affichage compact</label>
       <label><input type="checkbox" checked={preferences.showTables} onChange={(event) => updatePreference({ ...preferences, showTables: event.target.checked })} /> Afficher les tableaux accessibles</label>

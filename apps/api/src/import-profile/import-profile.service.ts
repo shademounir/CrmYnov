@@ -106,7 +106,7 @@ export class ImportProfileService {
     const extension = input.fileName.toLocaleLowerCase("en-US").split(".").pop();
     if (extension !== "csv" && extension !== "xlsx") this.refuse(extension === "xlsm" ? "macro_file_refused" : "file_extension_refused");
     const fileType: ProfileFileType = extension === "csv" ? "CSV" : "XLSX";
-    if (!MIME_BY_TYPE[fileType].has(input.mimeType as never)) this.refuse("mime_type_mismatch");
+    if (!MIME_BY_TYPE[fileType].has(input.mimeType)) this.refuse("mime_type_mismatch");
     return fileType;
   }
 

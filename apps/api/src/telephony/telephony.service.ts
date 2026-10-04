@@ -308,7 +308,7 @@ export class TelephonyService implements OnModuleInit {
     this.assertContributor(principal); this.scopedLead(leadId, principal, correlationId);
     if (!input.idempotencyKey || !/^[A-Za-z0-9_-]{8,128}$/.test(input.idempotencyKey)) throw new BadRequestException({ code: "telephony_idempotency_invalid" });
     if (this.config.mode === "DISABLED" || !this.config.outboundEnabled || !this.config.clickToCallEnabled) throw new ServiceUnavailableException({ code: "telephony_provider_disabled" });
-    const adapter = this.adapters[this.config.mode as TelephonyProvider];
+    const adapter = this.adapters[this.config.mode];
     const replayId = this.callByProviderId.get(`${adapter.provider}:request:${input.idempotencyKey}`); if (replayId) return this.copy(this.calls.get(replayId)!);
     const lead = this.scopedLead(leadId, principal, correlationId); if (!lead.phone) throw new BadRequestException({ code: "lead_phone_missing" });
     const normalized = this.normalizePhone(lead.phone); const fingerprint = this.fingerprint(normalized); const receipt = adapter.initiate({ direction: "OUTBOUND", phoneFingerprint: fingerprint, correlationId });
