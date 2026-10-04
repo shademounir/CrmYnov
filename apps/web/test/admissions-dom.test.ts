@@ -94,7 +94,7 @@ test("manual window persists only after a server response, retaining the date ra
 test("administration selects only eligible activated campus users and does not fabricate a broad role", async (t) => {
   const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsResponsibilities } = await import("../app/appointments/admissions/agenda-forms"); let body: Record<string, unknown> | undefined;
   t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => { assert.equal(path, "/api/crm/admissions/responsibles"); assert.equal(typeof init?.body, "string"); body = JSON.parse(init!.body as string) as Record<string, unknown>; return Promise.resolve(Response.json({ id: "responsibility-synthetic" })); });
-  const context = { timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: true, canUseAgenda: true, campuses: [{ id: "campus-synthetic", code: "SYNTHETIC", label: "Campus synthétique" }], eligibleUsers: [{ id: "user-synthetic", label: "Utilisateur activé", campus: "SYNTHETIC" }] };
+  const context = { timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: true, canUseAgenda: true, campuses: [{ id: "campus-synthetic", code: "SYNTHETIC", label: "Campus synthétique", canManageResponsibilities: true }], eligibleUsers: [{ id: "user-synthetic", label: "Utilisateur activé", campus: "SYNTHETIC" }] };
   act(() => root.render(createElement(AdmissionsResponsibilities, { context, items: [], onUpdated: async (): Promise<void> => { await Promise.resolve(); } })));
   const campus = dom.window.document.querySelector<HTMLSelectElement>('select[name="responsibilityCampus"]')!; const user = dom.window.document.querySelector<HTMLSelectElement>('select[name="responsibilityUserId"]')!;
   assert.equal(user.disabled, true); act(() => { campus.value = "SYNTHETIC"; campus.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
@@ -109,6 +109,80 @@ test("agenda entry follows a current effective grant instead of a role name", as
   t.mock.method(globalThis, "fetch", () => Promise.resolve(Response.json({ canUseAgenda: allowed })));
   act(() => root.render(createElement(AdmissionsAgendaLink, { key: "denied" }))); await settle(); assert.equal(dom.window.document.querySelector("a"), null);
   allowed = true; act(() => root.render(createElement(AdmissionsAgendaLink, { key: "allowed" }))); await settle(); assert.equal(dom.window.document.querySelector("a")?.getAttribute("href"), "/appointments/admissions");
+});
+
+for (const scenario of [
+  { name: "global administrator with two managed campuses and no eligible users", campuses: [{ code: "SYNTHETIC", manage: true }, { code: "CASABLANCA_YNOV", manage: true }], canManage: true },
+  { name: "campus-bounded administrator", campuses: [{ code: "SYNTHETIC", manage: true }], canManage: true },
+  { name: "mixed management and agenda-use grants", campuses: [{ code: "SYNTHETIC", manage: true }, { code: "CASABLANCA_YNOV", manage: false }], canManage: true },
+  { name: "agenda-use grants without administration", campuses: [{ code: "SYNTHETIC", manage: false }], canManage: false },
+  { name: "older context without per-campus management capabilities", campuses: [{ code: "SYNTHETIC", manage: undefined }], canManage: true },
+]) {
+  test(`agenda bounds responsible reads and administration options for ${scenario.name}`, async (t) => {
+    const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsAgenda } = await import("../app/appointments/admissions/admissions-agenda"); const reads: string[] = [];
+    const campuses = scenario.campuses.map(({ code, manage }) => ({ id: `campus-${code}`, code, label: `Campus ${code}`, ...(manage === undefined ? {} : { canManageResponsibilities: manage }) }));
+    t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => {
+      assert.equal(init?.method, undefined);
+      const url = new URL(path, "http://localhost");
+      if (url.pathname.endsWith("/admissions/context")) return Promise.resolve(Response.json({ timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: scenario.canManage, canUseAgenda: true, campuses, eligibleUsers: [] }));
+      if (url.pathname.endsWith("/admissions/responsibles")) {
+        const campus = url.searchParams.get("campus");
+        if (!campus) return Promise.resolve(Response.json({ code: "admissions_invalid" }, { status: 400 }));
+        assert.ok(scenario.campuses.some((item) => item.code === campus && item.manage)); reads.push(campus);
+        return Promise.resolve(Response.json({ items: [
+          { id: `responsible-${campus}`, userId: `user-${campus}`, label: `Responsable ${campus}`, campus, active: true, version: 1 },
+          { id: `retired-${campus}`, userId: `retired-user-${campus}`, label: `Profil désactivé ${campus}`, campus, active: false, version: 2 },
+          { id: "outside-profile", userId: "outside-user", label: "Profil hors périmètre", campus: "OUTSIDE", active: false, version: 1 },
+        ] }));
+      }
+      return Promise.resolve(Response.json({ items: [] }));
+    });
+    act(() => root.render(createElement(AdmissionsAgenda))); await settle();
+    const managed = scenario.canManage ? scenario.campuses.filter((item) => item.manage).map((item) => item.code) : [];
+    assert.deepEqual(reads.sort(), [...managed].sort());
+    assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
+    const campus = dom.window.document.querySelector<HTMLSelectElement>('select[name="responsibilityCampus"]');
+    assert.deepEqual(campus ? [...campus.options].map((item) => item.value).filter(Boolean).sort() : [], [...managed].sort());
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Profil hors périmètre/u);
+    for (const code of managed) {
+      assert.match(dom.window.document.body.textContent ?? "", new RegExp(`Responsable ${code}`, "u"));
+      assert.match(dom.window.document.body.textContent ?? "", new RegExp(`Profil désactivé ${code}`, "u"));
+    }
+    if (!managed.length) assert.equal(campus, null);
+  });
+}
+
+test("a refused campus-specific responsible read does not expose a partial administration agenda", async (t) => {
+  const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsAgenda } = await import("../app/appointments/admissions/admissions-agenda");
+  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => {
+    const url = new URL(path, "http://localhost");
+    if (url.pathname.endsWith("/admissions/context")) return Promise.resolve(Response.json({ timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: true, canUseAgenda: true, campuses: ["SYNTHETIC", "CASABLANCA_YNOV"].map((code) => ({ id: `campus-${code}`, code, label: code, canManageResponsibilities: true })), eligibleUsers: [] }));
+    if (url.pathname.endsWith("/admissions/responsibles") && url.searchParams.get("campus") === "CASABLANCA_YNOV") return Promise.resolve(Response.json({ code: "permission_denied" }, { status: 403 }));
+    return Promise.resolve(Response.json({ items: [] }));
+  });
+  act(() => root.render(createElement(AdmissionsAgenda))); await settle();
+  assert.match(dom.window.document.body.textContent ?? "", /Accès refusé/u);
+  assert.equal(dom.window.document.querySelectorAll("form").length, 0);
+  assert.equal(dom.window.document.querySelector(".admissions-overview"), null);
+});
+
+test("unmount aborts every campus-specific responsible read and discards late results", async (t) => {
+  const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsAgenda } = await import("../app/appointments/admissions/admissions-agenda");
+  const signals: AbortSignal[] = []; const finish: Array<() => void> = [];
+  t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => {
+    const url = new URL(path, "http://localhost");
+    if (url.pathname.endsWith("/admissions/context")) return Promise.resolve(Response.json({ timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: true, canUseAgenda: true, campuses: ["SYNTHETIC", "CASABLANCA_YNOV"].map((code) => ({ id: `campus-${code}`, code, label: code, canManageResponsibilities: true })), eligibleUsers: [] }));
+    if (url.pathname.endsWith("/admissions/responsibles")) {
+      assert.ok(init?.signal); signals.push(init.signal);
+      return new Promise<Response>((resolve) => { finish.push(() => resolve(Response.json({ items: [] }))); });
+    }
+    return Promise.resolve(Response.json({ items: [] }));
+  });
+  act(() => root.render(createElement(AdmissionsAgenda))); await settle();
+  assert.equal(signals.length, 2); assert.ok(signals.every((signal) => !signal.aborted));
+  act(() => root.unmount()); assert.ok(signals.every((signal) => signal.aborted));
+  for (const resolve of finish) resolve(); await settle();
+  assert.equal(dom.window.document.body.textContent, "");
 });
 
 test("a report is saved once only for the authorized evaluator after a realized meeting", async (t) => {

@@ -1,7 +1,7 @@
 export interface AdmissionsResponsibility { id: string; userId: string; label: string; campus: string; campusLabel?: string; active: boolean; version: number }
 export interface AdmissionsContext {
   timezone: string; ownResponsibilities: AdmissionsResponsibility[]; canManageResponsibilities: boolean; canUseAgenda: boolean;
-  campuses: Array<{ id: string; code: string; label: string }>;
+  campuses: Array<{ id: string; code: string; label: string; canManageResponsibilities: boolean }>;
   eligibleUsers: Array<{ id: string; label: string; campus: string }>;
 }
 export interface AdmissionsWindow { id: string; responsibilityId: string; campus: string; kind: "AVAILABLE" | "BLOCKED"; startsAt: string; endsAt: string; active: boolean; version: number }

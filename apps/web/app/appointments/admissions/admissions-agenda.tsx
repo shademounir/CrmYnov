@@ -15,7 +15,10 @@ export function AdmissionsAgenda(): React.JSX.Element {
     const [bookings, windows, responsibilities] = await Promise.all([
       admissionsRequest<AdmissionsBookingsPage>("/admissions/bookings?limit=50", signal ? { signal } : undefined),
       context.ownResponsibilities.length || context.canManageResponsibilities ? admissionsRequest<{ items: AdmissionsWindow[] }>("/admissions/windows", signal ? { signal } : undefined) : Promise.resolve({ items: [] }),
-      context.canManageResponsibilities ? admissionsRequest<{ items: AdmissionsResponsibility[] }>("/admissions/responsibles", signal ? { signal } : undefined) : Promise.resolve({ items: [] }),
+      context.canManageResponsibilities ? Promise.all(context.campuses.filter((campus) => campus.canManageResponsibilities === true).map(async (campus) => {
+        const page = await admissionsRequest<{ items: AdmissionsResponsibility[] }>(`/admissions/responsibles?${new URLSearchParams({ campus: campus.code })}`, signal ? { signal } : undefined);
+        return page.items.filter((item) => item.campus === campus.code);
+      })).then((pages) => ({ items: pages.flat() })) : Promise.resolve({ items: [] }),
     ]);
     if (!signal?.aborted && version === generation.current) { setData({ context, bookings: bookings.items, hasMore: bookings.hasMore === true, ...(bookings.nextCursor ? { nextCursor: bookings.nextCursor } : {}), windows: windows.items, responsibilities: responsibilities.items }); setError(undefined); }
   }, []);

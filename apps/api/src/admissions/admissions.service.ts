@@ -34,10 +34,10 @@ export class AdmissionsService {
     }, read ? "read" : "write");
   }
 
-  async context(principal: Principal, requestedCampus?: string): Promise<{ timezone: "Africa/Casablanca"; ownResponsibilities: ResponsibilityView[]; canManageResponsibilities: boolean; canUseAgenda: boolean; campuses: Array<{ id: string; code: string; label: string }>; eligibleUsers: Array<{ id: string; label: string; campus: string }> }> {
+  async context(principal: Principal, requestedCampus?: string): Promise<{ timezone: "Africa/Casablanca"; ownResponsibilities: ResponsibilityView[]; canManageResponsibilities: boolean; canUseAgenda: boolean; campuses: Array<{ id: string; code: string; label: string; canManageResponsibilities: boolean }>; eligibleUsers: Array<{ id: string; label: string; campus: string }> }> {
     return this.transaction(principal, true, async (tx, actor) => {
       const accessible = await this.accessibleCampuses(tx, actor, requestedCampus);
-      const campuses = accessible.map(({ id, code, label }) => ({ id, code, label }));
+      const campuses = accessible.map(({ id, code, label, canManage }) => ({ id, code, label, canManageResponsibilities: canManage }));
       const managed = accessible.filter((campus) => campus.canManage);
       const canUseAgenda = accessible.some((campus) => campus.canUseAgenda);
       const profiles = await tx.admissionsResponsibility.findMany({ where: { userId: actor.userId, active: true, campus: { in: campuses.map((item) => item.code) } }, include: { user: true } });
