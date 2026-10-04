@@ -58,6 +58,18 @@ type SessionRole = "SUPER_ADMIN" | "ADMIN" | "MANAGER" | "ADMISSIONS" | "AUDITOR
 type SessionProfile = { roles: SessionRole[]; professionalEmail?: string; scopeLabel?: string };
 const roleNames: Record<SessionRole, string> = { SUPER_ADMIN: "Super Admin", ADMIN: "Administrateur", MANAGER: "Manager", ADMISSIONS: "Commercial", AUDITOR: "Lecteur" };
 const commercialNavigation = new Set(["/manager/reports/dashboard", "/leads", "/leads?view=FOLLOW_UP", "/appointments", "/calls/queue", "/notifications", "/chat", "/manager/reports/commercial-performance"]);
+const ownTelephonyNavigation = { href: "/account/telephony", label: "Mon poste d’appel", icon: PhoneCall };
+
+export function ownTelephonyRoleAllowed(roles: readonly SessionRole[]): boolean {
+  return roles.some((role) => ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS"].includes(role));
+}
+
+export async function loadOwnTelephonyAccess(request: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const response = await request("/api/crm/telephony/me", { credentials: "same-origin", cache: "no-store", headers: { accept: "application/json" } });
+    return response.ok;
+  } catch { return false; }
+}
 
 export function visibleNavigation(roles: readonly SessionRole[]): typeof navigation[number][] {
   if (roles.includes("SUPER_ADMIN")) return [...navigation];
@@ -145,6 +157,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   const [search, setSearch] = useState<SearchState>({ kind: "closed", items: [] });
   const [unreadNotifications, setUnreadNotifications] = useState<number>();
   const [sessionProfile, setSessionProfile] = useState<SessionProfile>({ roles: [] });
+  const [ownTelephonyAllowed, setOwnTelephonyAllowed] = useState(false);
   const mobileMenuRef = useRef<HTMLButtonElement>(null);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -154,6 +167,14 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     if (isAuthPath) return;
     void loadShellSession().then(setSessionProfile).catch(() => setSessionProfile({ roles: [] }));
   }, [isAuthPath]);
+
+  useEffect(() => {
+    let current = true;
+    setOwnTelephonyAllowed(false);
+    if (isAuthPath || !ownTelephonyRoleAllowed(sessionProfile.roles)) return;
+    void loadOwnTelephonyAccess().then((allowed) => { if (current) setOwnTelephonyAllowed(allowed); });
+    return (): void => { current = false; };
+  }, [isAuthPath, pathname, profileOpen, sessionProfile.roles]);
 
   useEffect(() => {
     if (mobileOpen) mobileCloseRef.current?.focus();
@@ -223,6 +244,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     sessionRoles={sessionProfile.roles}
     professionalEmail={sessionProfile.professionalEmail}
     scopeLabel={sessionProfile.scopeLabel}
+    ownTelephonyAllowed={ownTelephonyAllowed}
     onCollapse={() => setCollapsed((value) => !value)}
     onMobileOpen={() => setMobileOpen(true)}
     onMobileClose={closeMobileMenu}
@@ -249,6 +271,7 @@ type AppShellViewProps = Readonly<{
   sessionRoles?: readonly SessionRole[];
   professionalEmail?: string | undefined;
   scopeLabel?: string | undefined;
+  ownTelephonyAllowed?: boolean;
   onCollapse: () => void;
   onMobileOpen: () => void;
   onMobileClose: () => void;
@@ -274,6 +297,7 @@ export function AppShellView({
   sessionRoles = [],
   professionalEmail,
   scopeLabel = "Périmètre contrôlé",
+  ownTelephonyAllowed = false,
   onCollapse,
   onMobileOpen,
   onMobileClose,
@@ -285,7 +309,8 @@ export function AppShellView({
   onQueryChange,
   onSearchSelect,
 }: AppShellViewProps): React.JSX.Element {
-  const allowedNavigation = visibleNavigation(sessionRoles);
+  const canUseOwnTelephony = ownTelephonyAllowed && ownTelephonyRoleAllowed(sessionRoles);
+  const allowedNavigation = [...visibleNavigation(sessionRoles), ...(canUseOwnTelephony ? [ownTelephonyNavigation] : [])];
   const canManageUsers = sessionRoles.includes("SUPER_ADMIN");
   const roleLabel = sessionRoles[0] ? roleNames[sessionRoles[0]] : "Session CRM";
   const profileLabel = professionalEmail ?? roleLabel;
@@ -321,7 +346,7 @@ export function AppShellView({
           <Link className="icon-button" href="/notifications" aria-label={unreadNotifications ? `Ouvrir les notifications, ${unreadNotifications} non lue${unreadNotifications > 1 ? "s" : ""}` : "Ouvrir les notifications"}><Bell size={22} />{unreadNotifications ? <span className="notification-dot" aria-hidden="true">{unreadNotifications > 99 ? "99+" : unreadNotifications}</span> : null}</Link>
           <div className="popover-anchor">
             <button type="button" className="user-button" onClick={onProfileToggle} aria-expanded={profileOpen} aria-label="Ouvrir le menu du compte"><span className="avatar">CRM</span><span>{profileLabel}<small>{roleLabel}</small></span><CaretDown size={15} aria-hidden="true" /></button>
-            {profileOpen ? <div className="user-menu" role="menu">{canManageUsers ? <Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link> : null}<form action="/api/logout" method="post"><button type="submit" role="menuitem">Se déconnecter</button></form></div> : null}
+            {profileOpen ? <div className="user-menu" role="menu">{canUseOwnTelephony ? <Link href="/account/telephony" role="menuitem"><PhoneCall size={18} /> Mon compte · Téléphonie</Link> : null}{canManageUsers ? <Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link> : null}<form action="/api/logout" method="post"><button type="submit" role="menuitem">Se déconnecter</button></form></div> : null}
           </div>
         </div>
       </header>

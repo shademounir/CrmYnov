@@ -71,6 +71,9 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
     const expiredCall = await client.telephonyCall.findUniqueOrThrow({ where: { id: expiredCallId } });
     assert.equal(expiredCall.dispatchState, "UNCERTAIN");
     assert.equal(expiredCall.dispatchErrorCode, "AGENT_COMMAND_EXPIRED");
+    await assert.rejects(() => repository.revokeWorkstation(paired.workstationId, principal), errorCode("telephony_workstation_busy"), "An uncertain telephonic result cannot be erased by revoking the agent");
+    // Isolated synthetic fixture finalization; production still requires an observed terminal event.
+    await client.telephonyCall.updateMany({ where: { id: { in: [callId, busyCallId, expiredCallId] } }, data: { state: "FAILED", endedAt: new Date() } });
     await repository.revokeWorkstation(workstationId, principal);
     await assert.rejects(() => repository.authenticate(paired.token), errorCode("telephony_agent_authentication_refused"));
     const replacementCode = await repository.createPairingCode(profileId, principal);
@@ -81,6 +84,7 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
   } finally {
     await client.telephonyAgentCommand.deleteMany({ where: { callId: { in: [callId, busyCallId, expiredCallId] } } });
     await client.telephonyCall.deleteMany({ where: { id: { in: [callId, busyCallId, expiredCallId] } } });
+    await client.auditEvent.deleteMany({ where: { actorId: userId, eventType: { startsWith: "TELEPHONY_" } } });
     if (profileId) await client.telephonyPairingCode.deleteMany({ where: { userProfileId: profileId } });
     if (workstationId) await client.telephonyWorkstation.deleteMany({ where: { id: workstationId } });
     if (profileId) await client.telephonyUserProfile.deleteMany({ where: { id: profileId } });

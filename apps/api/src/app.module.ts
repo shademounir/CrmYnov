@@ -106,6 +106,8 @@ import { TelephonyAgentController, TelephonyBridgeController, TelephonyControlle
 import { TelephonyService } from "./telephony/telephony.service.js";
 import { TelephonyPersistenceRepository } from "./telephony/telephony-persistence.repository.js";
 import { TelephonyAgentRepository } from "./telephony/telephony-agent.repository.js";
+import { TelephonyOwnController } from "./telephony/telephony-own.controller.js";
+import { TelephonyOwnService } from "./telephony/telephony-own.service.js";
 import { AppointmentController } from "./appointments/appointment.controller.js";
 import { AdmissionsController } from "./admissions/admissions.controller.js";
 import { AdmissionsService } from "./admissions/admissions.service.js";
@@ -125,8 +127,9 @@ import { createSheetSource } from "./sheet-import/google-sheet-source.js";
 import { resolve } from "node:path";
 
 @Module({
-  controllers: [AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [TelephonyOwnController, AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
+    TelephonyOwnService,
     AdmissionsService,
     SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
     { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },

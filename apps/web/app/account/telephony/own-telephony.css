@@ -1,0 +1,43 @@
+.own-telephony-page { width: min(1180px, 100%); margin: 0 auto; padding: 0; border: 0; background: transparent; box-shadow: none; min-width: 0; }
+.own-telephony { display: grid; gap: 20px; margin-top: 24px; min-width: 0; }
+.own-telephony .panel { padding: 24px; min-width: 0; }
+.own-telephony p { margin-bottom: 0; }
+.own-telephony__summary { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+.own-telephony__summary h2 { font-size: 22px; margin-bottom: 7px; }
+.own-telephony__status-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; background: var(--amber-soft); color: var(--amber); }
+.own-telephony__status-icon.is-ready { background: var(--green-soft); color: var(--green); }
+.own-telephony__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.own-telephony header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; color: var(--teal-dark); }
+.own-telephony dl { margin: 0; display: grid; gap: 0; }
+.own-telephony dl > div { display: grid; grid-template-columns: minmax(110px, .75fr) minmax(0, 1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.own-telephony dt { color: var(--muted); font-size: 13px; }
+.own-telephony dd { margin: 0; color: var(--ynov-ink); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.own-telephony dd small { display: block; font-weight: 400; color: var(--muted); }
+.own-telephony__observations { padding-left: 20px; margin-bottom: 0; color: var(--muted); font-size: 13px; display: grid; gap: 7px; }
+.own-telephony .own-telephony__note { font-size: 13px; color: var(--muted); margin-top: 16px; }
+.own-telephony__local { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px; }
+.own-telephony__local h2 { margin-bottom: 12px; }
+.own-telephony__local .own-telephony__note { grid-column: 1 / -1; margin-top: 0; }
+.own-telephony :is(.primary-button, .secondary-button) { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; max-width: 100%; white-space: normal; text-align: center; text-decoration: none; overflow-wrap: anywhere; }
+.own-telephony__association ol { padding-left: 22px; display: grid; gap: 12px; margin: 0 0 24px; }
+.own-telephony__gateway { margin-bottom: 24px; }
+.own-telephony__gateway input { display: block; width: 100%; min-width: 0; margin: 10px 0; font-size: 13px; }
+.own-telephony__gateway p { font-size: 13px; color: var(--muted); }
+.own-telephony__confirmation { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; font-size: 14px; line-height: 1.6; }
+.own-telephony__confirmation input { flex: 0 0 18px; width: 18px; height: 18px; margin: 3px 0; accent-color: var(--teal-dark); }
+.own-telephony__pairing { margin-top: 24px; padding: 20px; border: 1px solid var(--teal); border-radius: 12px; background: var(--teal-soft); }
+.own-telephony__pairing > div { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.own-telephony__pairing input { min-width: 0; width: min(100%, 330px); font-family: ui-monospace, monospace; }
+.own-telephony__pairing p { font-size: 13px; }
+.own-telephony__pairing .text-button { margin-top: 10px; }
+.own-telephony__revoke { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px; }
+.own-telephony__revoke p { flex: 1 1 300px; font-size: 13px; color: var(--muted); }
+.own-telephony__limits { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+.own-telephony__limits svg { flex-shrink: 0; margin-top: 2px; }
+.own-telephony__loading { color: var(--muted); }
+.own-telephony__dialog { width: min(560px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 28px; border: 1px solid var(--border); border-radius: 16px; color: var(--ynov-text); box-shadow: var(--shadow); }
+.own-telephony__dialog::backdrop { background: rgb(15 20 28 / 50%); }
+.own-telephony__dialog h2 { margin-bottom: 16px; }
+.own-telephony__dialog > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+@media (max-width: 900px) { .own-telephony__grid { grid-template-columns: minmax(0, 1fr); } .own-telephony__local { grid-template-columns: minmax(0, 1fr); } .own-telephony__local .primary-button { justify-self: start; } }
+@media (max-width: 600px) { .own-telephony .panel { padding: 18px; } .own-telephony__summary { grid-template-columns: 40px minmax(0, 1fr); gap: 12px; } .own-telephony__status-icon { width: 40px; height: 40px; } .own-telephony__summary h2 { font-size: 19px; } .own-telephony__summary button { grid-column: 1 / -1; } .own-telephony dl > div { grid-template-columns: minmax(0, 1fr); gap: 5px; } .own-telephony__pairing { padding: 16px; } .own-telephony__pairing input { width: 100%; } .own-telephony__dialog { padding: 20px; } .own-telephony__dialog > div button { width: 100%; } }

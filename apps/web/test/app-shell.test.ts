@@ -11,6 +11,8 @@ import {
   loadUnreadNotificationCount,
   searchItems,
   visibleNavigation,
+  ownTelephonyRoleAllowed,
+  loadOwnTelephonyAccess,
   type SearchState,
 } from "../app/_components/app-shell.js";
 
@@ -156,4 +158,23 @@ test("renders the client shell initial state and bypasses chrome on authenticati
 
   const authentication = renderToStaticMarkup(createElement(AppShellClient, { pathname: "/", children: createElement("main", null, "Connexion locale") }));
   assert.match(authentication, /^<main>Connexion locale<\/main>$/u);
+});
+
+test("own telephony navigation requires both an eligible role and successful server permission verification", async () => {
+  for (const role of ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"] as const) {
+    assert.equal(ownTelephonyRoleAllowed([role]), true);
+    const allowed = renderShell({ kind: "closed", items: [] }, { pathname: "/account/telephony", profileOpen: true, sessionRoles: [role], ownTelephonyAllowed: true });
+    assert.match(allowed, /href="\/account\/telephony"/u);
+    assert.match(allowed, /Mon compte · Téléphonie/u);
+    assert.match(allowed, /Page actuelle : Mon poste d’appel/u);
+    const denied = renderShell({ kind: "closed", items: [] }, { profileOpen: true, sessionRoles: [role], ownTelephonyAllowed: false });
+    assert.doesNotMatch(denied, /href="\/account\/telephony"/u);
+  }
+  assert.equal(ownTelephonyRoleAllowed(["AUDITOR"]), false);
+  assert.equal(ownTelephonyRoleAllowed([]), false);
+  assert.doesNotMatch(renderShell({ kind: "closed", items: [] }, { profileOpen: true, sessionRoles: ["AUDITOR"], ownTelephonyAllowed: true }), /href="\/account\/telephony"/u);
+  for (const status of [200, 401, 403, 503]) assert.equal(await loadOwnTelephonyAccess((input, init) => {
+    assert.equal(input, "/api/crm/telephony/me"); assert.equal(init?.cache, "no-store"); return Promise.resolve(response(status));
+  }), status === 200);
+  assert.equal(await loadOwnTelephonyAccess(() => Promise.reject(new Error("unavailable"))), false);
 });

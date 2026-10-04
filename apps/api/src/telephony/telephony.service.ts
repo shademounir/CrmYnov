@@ -103,12 +103,13 @@ export class TelephonyService implements OnModuleInit {
       catch (error) { await this.refreshAfterPersistentMutation(); throw error; }
     }
     this.assertOutboundInput(leadId, input, principal, correlationId);
+    const lead = this.scopedLead(leadId, principal, correlationId); if (!lead.phone) throw new BadRequestException({ code: "lead_phone_missing" });
+    const normalized = this.normalizePhone(lead.phone);
     const replayId = this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`);
-    if (replayId) return this.copy(this.calls.get(replayId)!);
+    if (replayId) return this.leadCallReplay(this.calls.get(replayId), principal, leadId, normalized);
     const readiness = this.agents?.enabled ? await this.agents.readiness(principal.userId) : await this.linphoneBridge.readiness();
     if (!readiness.available) throw new ServiceUnavailableException({ code: "telephony_bridge_not_ready", reason: readiness.reason });
-    const lead = this.scopedLead(leadId, principal, correlationId); if (!lead.phone) throw new BadRequestException({ code: "lead_phone_missing" });
-    const normalized = this.normalizePhone(lead.phone); const commandId = randomUUID();
+    const commandId = randomUUID();
     const record = this.createCall({ provider: "LINPHONE", externalId: commandId, direction: "OUTBOUND", leadId, phone: normalized,
       matchState: "MATCHED", principal, idempotencyKey: input.idempotencyKey!, correlationId, dispatchState: "PENDING" });
     const event = record.events.find((item) => item.idempotencyKey === input.idempotencyKey);
@@ -116,7 +117,7 @@ export class TelephonyService implements OnModuleInit {
     try {
       const created = await this.persistence.persistCreate(record, event, principal, correlationId);
       await this.refreshAfterPersistentMutation();
-      if (!created) return this.copy(this.calls.get(this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`)!)!);
+      if (!created) return this.leadCallReplay(this.calls.get(this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`)!), principal, leadId, normalized);
       const outcome = this.agents?.enabled
         ? await this.agents.enqueue(record.id, principal.userId, normalized).then(() => ({ state: "ACCEPTED" as const, reasonCode: undefined }))
         : await this.linphoneBridge.initiate({ schemaVersion: "1", commandId, callId: record.id, destination: normalized, maxDurationSeconds: this.config.maxCallDurationSeconds });
@@ -144,7 +145,7 @@ export class TelephonyService implements OnModuleInit {
     if (comment && (comment.length > 500 || /[\r\n\0]/u.test(comment))) throw new BadRequestException({ code: "telephony_free_call_comment_invalid" });
     const normalized = this.normalizeMoroccoPhone(input.phone ?? "");
     const replayId = this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`);
-    if (replayId) return this.copy(this.calls.get(replayId)!);
+    if (replayId) return this.freeCallReplay(this.calls.get(replayId), principal, normalized, input.purposeCode, comment);
     const readiness = await this.agents.readiness(principal.userId);
     if (!readiness.available) throw new ServiceUnavailableException({ code: "telephony_bridge_not_ready", reason: readiness.reason });
     const commandId = randomUUID();
@@ -156,7 +157,7 @@ export class TelephonyService implements OnModuleInit {
     try {
       const created = await this.persistence.persistCreate(record, event, principal, correlationId);
       await this.refreshAfterPersistentMutation();
-      if (!created) return this.copy(this.calls.get(this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`)!)!);
+      if (!created) return this.freeCallReplay(this.calls.get(this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`)!), principal, normalized, input.purposeCode, comment);
       await this.agents.enqueue(record.id, principal.userId, normalized);
       await this.persistence.persistDispatch(record.id, "PENDING", "ACCEPTED");
       await this.refreshAfterPersistentMutation();
@@ -400,6 +401,19 @@ export class TelephonyService implements OnModuleInit {
     return normalized;
   }
   private fingerprint(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+  private leadCallReplay(call: Readonly<CallRecord> | undefined, principal: Principal, leadId: string, normalized: string): CallRecord {
+    if (!call || call.createdBy !== principal.userId || call.provider !== "LINPHONE" || call.direction !== "OUTBOUND" || call.leadId !== leadId
+      || call.phoneFingerprint !== this.fingerprint(normalized)) throw new ConflictException({ code: "telephony_call_idempotency_conflict" });
+    return this.copy(call);
+  }
+  /** A globally unique receipt key never grants access to another actor or intent. */
+  private freeCallReplay(call: Readonly<CallRecord> | undefined, principal: Principal, normalized: string, purposeCode: string, comment: string | undefined): CallRecord {
+    if (!call || call.createdBy !== principal.userId || call.provider !== "LINPHONE" || call.direction !== "OUTBOUND" || call.leadId
+      || call.phoneFingerprint !== this.fingerprint(normalized) || call.purposeCode !== purposeCode || (call.purposeComment ?? "") !== (comment ?? "")) {
+      throw new ConflictException({ code: "telephony_free_call_idempotency_conflict" });
+    }
+    return this.copy(call);
+  }
   private mask(value: string): string { return `***${value.replace(/\D/g, "").slice(-3)}`; }
   private timestamp(value: string | undefined, code: string): string { const date = value ? new Date(value) : new Date(); if (Number.isNaN(date.valueOf())) throw new BadRequestException({ code }); return date.toISOString(); }
   private copy(call: Readonly<CallRecord>): CallRecord { return structuredClone(call); }

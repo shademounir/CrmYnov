@@ -126,6 +126,8 @@ jobs:
         run: npm run test:integration
       - name: Prove Admissions reservation on isolated PostgreSQL
         run: node scripts/ci/admissions-postgres.mjs
+      - name: Prove personal telephony authorization and pairing concurrency on isolated PostgreSQL
+        run: node scripts/ci/personal-telephony-postgres.mjs
       - name: Run targeted end-to-end contracts
         run: npm run test:e2e
 
