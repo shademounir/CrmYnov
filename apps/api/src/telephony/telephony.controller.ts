@@ -5,7 +5,7 @@ import { TelephonyService, type AssociationCandidate, type CallRecord, type Tele
 import { TelephonyAgentRepository } from "./telephony-agent.repository.js";
 import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
 import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
-import { campusContext } from "../permissions/dynamic-context.js";
+import { ownTelephonyContext } from "../permissions/dynamic-resources.js";
 
 @Controller() @UseGuards(RbacGuard) @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
 export class TelephonyController {
@@ -75,20 +75,25 @@ export class TelephonyAgentController {
     @Body() body: { phone?: string; purposeCode?: string; comment?: string; idempotencyKey?: string },
     @Headers("x-correlation-id") correlationId: string | undefined,
   ): Promise<CallRecord> {
+    return this.permissions.transaction(async (tx) => {
     const identity = await this.agents.authenticate(token);
+    await this.agents.revalidate(identity);
     const roles = identity.roles.filter(isRole);
     const scopes: Principal["scopes"] = identity.campusId ? [{ kind: "CAMPUS", id: identity.campusId }] : roles.includes("SUPER_ADMIN") ? [{ kind: "GLOBAL" }] : [];
     const principal: Principal = { userId: identity.userId, roles, scopes, sessionId: `agent-${identity.workstationId}` };
-    const allowed = await this.permissions.readTransaction(async (tx) => evaluatePermission(principal, "telephony.free-call.create", await this.permissions.snapshots(tx), campusContext(principal, identity.campusId ?? "GLOBAL")).allowed);
+    const allowed = evaluatePermission(principal, "telephony.free-call.create", await this.permissions.snapshots(tx), await ownTelephonyContext(tx, principal)).allowed;
     if (!allowed) throw new ForbiddenException({ code: "telephony_free_call_forbidden" });
     return this.telephony.initiateFreeForApi(body, principal, correlationId ?? `agent-free-${identity.workstationId}`);
+    });
   }
   @Post("events") async event(
     @Headers("x-telephony-agent-token") token: string | undefined,
     @Body() body: { schemaVersion?: string; commandId?: string; callId?: string; eventId?: string; state?: string; occurredAt?: string; reasonCode?: string },
     @Headers("x-correlation-id") correlationId: string | undefined,
   ): Promise<CallRecord> {
+    return this.permissions.transaction(async () => {
     const identity = await this.agents.authenticate(token);
+    await this.agents.revalidate(identity);
     if (body.schemaVersion !== "1" || !body.commandId || !body.callId || !body.eventId || !body.state || !body.occurredAt) throw new BadRequestException({ code: "telephony_agent_event_invalid" });
     await this.agents.assertEvent(identity, body.commandId, body.callId, body.state);
     const roles = identity.roles.filter(isRole);
@@ -99,5 +104,6 @@ export class TelephonyAgentController {
     const result = await this.telephony.receiveAgentEventForApi(body.callId, { idempotencyKey: body.eventId, state: body.state, occurredAt: body.occurredAt, ...(body.reasonCode ? { reasonCode: body.reasonCode } : {}) }, principal, correlationId ?? `agent-${identity.workstationId}`);
     await this.agents.markEventApplied(identity, body.callId, body.state);
     return result;
+    });
   }
 }

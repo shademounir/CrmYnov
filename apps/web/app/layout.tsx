@@ -13,6 +13,7 @@ import "./leads/lead-profile.css";
 import "./manager/reports/commercial-funnel/pipeline-pilot.css";
 import "./calls/queue/calls.css";
 import "./admin/telephony/telephony.css";
+import "./account/telephony/own-telephony.css";
 import "./notifications/notifications.css";
 import "./appointments/admissions/admissions.css";
 
