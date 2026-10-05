@@ -17,6 +17,7 @@ import type { SheetValues } from "./google-sheets-adapter.js";
 import { localObservation, observeLocalRow, sheetStreamId, verifyLocalLedger, suspendLocalStream } from "./sheet-local-ledger.js";
 import { evaluateLocalMappedRow } from "./sheet-local-simulation.js";
 import type { SheetLocalObservation, SheetObservedPosition } from "./sheet-local-observation.js";
+import { retrySheetSerialization } from "./sheet-serialization-retry.js";
 
 type RunContext = { lease: SheetLease; configuration: SheetConfiguration; authorizedBy: string; campusId: string; workbookId: string; tab: string };
 type LocalPositionInput = { streamId: string; position: SheetObservedPosition; row: Record<string, string>; columns: string[] };
@@ -155,13 +156,7 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     // Contact matching spans connectors and source identity modes. Retry only a fully
     // rolled-back serialization conflict; each attempt reacquires authority and
     // the lease. This callback performs database work only, never external I/O.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try { return await this.authorizedTransaction(context, action); }
-      catch (error) {
-        if (attempt === 2 || !isSerializationConflict(error)) throw error;
-      }
-    }
-    throw new Error("sheet_transaction_conflict");
+    return retrySheetSerialization(() => this.authorizedTransaction(context, action));
   }
 
   private async authorizedTransaction<T>(context: RunContext, action: (tx: Prisma.TransactionClient) => T | Promise<T>): Promise<T> {
@@ -209,10 +204,6 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     const field = { CREATED: "createdCount", DUPLICATE: "duplicateCount", IGNORED: "ignoredCount", REVIEW: "reviewCount" } as const;
     await tx.sheetImportRun.update({ where: { id: context.lease.runId }, data: { [field[outcome]]: { increment: 1 } } });
   }
-}
-
-function isSerializationConflict(error: unknown): boolean {
-  return error !== null && typeof error === "object" && "code" in error && error.code === "P2034";
 }
 
 function executionErrorCode(error: unknown): string {
