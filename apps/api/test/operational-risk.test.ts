@@ -56,6 +56,24 @@ test("fails closed for advisers and invalid thresholds", () => {
   assert.throws(() => service.read({ capacityWarningPercent: "49" }, manager, "corr-threshold"), hasCode("operational_capacity_threshold_invalid"));
 });
 
+test("missing configured capacity is unavailable and never an invented 100 percent alert", () => {
+  const { leads, service } = setup();
+  leads.registerLocalLead({ id: "lead-no-capacity", leadCode: "LD-NO-CAPACITY", firstName: "Lead", lastName: "Synthétique", campus: "Campus synthétique", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM", assignedToId: "adviser-a" });
+  const report = service.read({}, manager, "corr-no-capacity");
+  assert.deepEqual(report.capacity, [{ adviserId: "adviser-a", activeLeads: 1, capacity: null, utilizationPercent: null }]);
+  assert.equal(report.alerts.some((item) => item.code.startsWith("capacity_warning:")), false);
+});
+
+test("PostgreSQL source quality cannot be inferred from instance-local ingestion memory", () => {
+  const { leads, ingestion, service } = setup();
+  leads.registerLocalLead({ id: "lead-pg-quality", leadCode: "LD-PG-QUALITY", firstName: "Lead", lastName: "Synthétique", campus: "Campus synthétique", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM" });
+  leads.persistenceEnabled = (): boolean => true;
+  ingestion.reportingSnapshot = (): never => { throw new Error("persistent reporting must not consult local ingestion occurrences"); };
+  const report = service.read({}, manager, "corr-pg-quality");
+  assert.equal(report.sourceQualityAvailability, "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED");
+  assert.deepEqual(report.sourceRisks, []); assert.equal(report.alerts.some((item) => item.code.startsWith("source_quality:")), false);
+});
+
 test("controller refuses a missing principal", () => {
   const { service } = setup(); const controller = new OperationalRiskController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));

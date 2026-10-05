@@ -31,6 +31,8 @@ export class FollowUpService implements OnModuleInit {
     await this.refreshPersistentState();
   }
 
+  async refreshReportingForApi(): Promise<void> { await this.refreshPersistentState(); }
+
   async scheduleForApi(
     leadId: string,
     input: { dueAt?: string; reason?: string; ownerId?: string; idempotencyKey?: string },

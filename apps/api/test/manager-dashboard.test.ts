@@ -14,7 +14,8 @@ import type { SourceEffectivenessService } from "../src/reporting/source-effecti
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-manager" };
 const calls: Array<{ panel: string; query: unknown }> = [];
-const dependency = <T>(panel: string, value: unknown): T => ({ read: (query: unknown) => { calls.push({ panel, query }); return value; } }) as T;
+const dependency = <T>(panel: string, value: unknown): T => ({ read: (query: unknown) => { calls.push({ panel, query }); return value; },
+  readForApi: (query: unknown): Promise<unknown> => { calls.push({ panel, query }); return Promise.resolve(value); } }) as T;
 const hasCode = (code: string) => (error: unknown): boolean => typeof error === "object" && error !== null && "getResponse" in error
   && (error as { getResponse: () => unknown }).getResponse() !== null
   && (error as { getResponse: () => { code?: string } }).getResponse().code === code;
@@ -104,7 +105,9 @@ test("personal dashboard exposes only authenticated adviser aggregates", () => {
 test("API reporting refreshes PostgreSQL-backed state and exposes scoped persistence evidence", async () => {
   const calls: string[] = [];
   const persistence = {
-    refresh: (): Promise<void> => { calls.push("refresh"); return Promise.resolve(); },
+    withReportingScope: async <T>(principal: Principal, read: (current: Principal) => Promise<T>): Promise<T> => { calls.push("refresh"); return read(principal); },
+    normalizeCampusQuery: (_principal: Principal, query: unknown): Promise<unknown> => Promise.resolve(query),
+    capabilities: (): Promise<{ canCreateLead: boolean; canReadRecentLeads: boolean }> => Promise.resolve({ canCreateLead: false, canReadRecentLeads: true }),
     evidence: (): Promise<{ source: "POSTGRESQL"; distinctLeadCount: number; appointmentCount: number; documentMetadataCount: number; importBatchCount: number }> => Promise.resolve({ source: "POSTGRESQL", distinctLeadCount: 2, appointmentCount: 1, documentMetadataCount: 3, importBatchCount: 1 }),
   };
   const service = new ManagerDashboardService(
@@ -114,7 +117,10 @@ test("API reporting refreshes PostgreSQL-backed state and exposes scoped persist
     dependency<SharedContributionService>("contributions", {}),
     { reportingSnapshot: () => [] } as unknown as LeadService, new AuditService(), persistence as never,
   );
-  const report = await service.readForApi({ period: "30d" }, { ...manager, scopes: [{ kind: "GLOBAL" }] }, "corr-persistent", new Date("2026-08-24T12:00:00.000Z"));
+  const report = await service.readForApi({ period: "30d", adviserId: manager.userId }, { ...manager, scopes: [{ kind: "GLOBAL" }] }, "corr-persistent", new Date("2026-08-24T12:00:00.000Z"));
   assert.deepEqual(calls, ["refresh"]);
   assert.deepEqual(report.persistence, { source: "POSTGRESQL", distinctLeadCount: 2, appointmentCount: 1, documentMetadataCount: 3, importBatchCount: 1 });
+  const drillDown = new URL(report.drillDowns[0]!.href, "http://localhost");
+  assert.equal(drillDown.searchParams.get("adviserId"), manager.userId); assert.equal(drillDown.searchParams.has("assignedToId"), false);
+  assert.equal(drillDown.searchParams.get("createdBefore"), report.filters.to); assert.equal(drillDown.searchParams.has("createdTo"), false);
 });

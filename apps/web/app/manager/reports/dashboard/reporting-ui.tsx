@@ -3,43 +3,42 @@
 import { Alarm, ChartBar, CheckCircle, Plus, Student, TrendUp, UserPlus, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ConnectedResource } from "../../../_components/connected-resource";
 import { PageHeader } from "../../../_components/ui/page-header";
 import { AdmissionsAgendaLink } from "../../../appointments/admissions/agenda-link";
 import type { DashboardCalendar } from "./dashboard-calendar";
 
-type Datum = { value: string; count: number };
+type Datum = { value: string; count: number; key?: string };
+type ReportingCapabilities = { canCreateLead: boolean; canReadRecentLeads: boolean; canViewManagerDashboard: boolean };
+type ReportingEvidence = {
+  generatedAt?: string; capabilities?: ReportingCapabilities;
+  persistence?: { countsObservability?: Record<string, { state: "OBSERVED" | "AUTHORIZED_SUBSET" | "UNAVAILABLE"; reason: string | null }> };
+};
 type DashboardReport = {
   definitionVersion: string; timezone: string; filters: Record<string, string>;
-  cards: Record<"uniqueLeads" | "enrolled" | "unassigned" | "overdueFollowUps" | "activeAlerts", number>;
+  cards: Record<"uniqueLeads" | "enrolled" | "unassigned" | "overdueFollowUps" | "activeAlerts", number | null>;
   trends: Array<{ date: string; leadsCreated: number; leadsEnrolled: number }>;
   distributions: Record<"source" | "campaign" | "program" | "campus", Datum[]>;
   panels: {
     funnel: { currentState: Record<string, number> };
     performance: { advisers: Array<{ adviserId: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number }> };
-    operationalRisks: { alerts: Array<{ code: string; count: number; drillDown: string }>; queues: Record<string, number> };
+    operationalRisks: { alerts: Array<{ code: string; count: number; drillDown: string }>; queues: Record<string, number | null>; sourceQualityAvailability?: "LOCAL_SYNTHETIC_OCCURRENCES" | "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" };
     sharedContributions: { contributors: Array<{ contributorId: string; primaryActionCount: number; secondaryActionCount: number }> };
   };
   drillDowns: Array<{ key: string; count: number; href: string }>;
   export: { href: string; schemaVersion: string; aggregatedOnly: true };
-};
+} & ReportingEvidence;
 type PersonalDashboardReport = {
   definitionVersion: "personal-dashboard-v1"; timezone: string; filters: Record<string, string>;
   performance: { advisers: Array<{ adviserId: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number; followUps: { overdue: number } }> };
   contributions: { contributors: Array<{ contributorId: string; primaryActionCount: number; secondaryActionCount: number }> };
   safeguards: { personalScopeOnly: true; aggregatedOnly: true };
-};
+} & ReportingEvidence;
 type ReportingReport = DashboardReport | PersonalDashboardReport;
 
 const labels: Record<string, string> = { uniqueLeads: "Leads uniques", enrolled: "Inscriptions", unassigned: "Non affectés", overdueFollowUps: "Relances échues", activeAlerts: "Alertes actives" };
 const preferenceKey = "crm-reporting-preferences-v1";
 type PreferredPeriod = "7d" | "30d" | "90d";
 type Preferences = { compact: boolean; showTables: boolean; preferredPeriod: PreferredPeriod; operationalThreshold: number };
-const preferredPeriodHref: Record<PreferredPeriod, string> = {
-  "7d": "/manager/reports/dashboard?period=7d",
-  "30d": "/manager/reports/dashboard?period=30d",
-  "90d": "/manager/reports/dashboard?period=90d",
-};
 const dashboardDestinationRoots = ["/leads", "/reports/manager-dashboard/export"] as const;
 
 function safePreferences(raw: Partial<Preferences>): Preferences {
@@ -62,9 +61,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
     try {
       const saved = localStorage.getItem(preferenceKey);
       if (saved) setPreferences(safePreferences(JSON.parse(saved) as Partial<Preferences>));
-    } catch {
-      localStorage.removeItem(preferenceKey);
-    }
+    } catch { /* Preferences are optional when browser storage is unavailable. */ }
   }, []);
   useEffect(() => {
     if (initialReport) return;
@@ -76,33 +73,49 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
         return response.json() as Promise<ReportingReport>;
       })
       .then((value) => {
+        if (controller.signal.aborted) return;
         setReport(value);
-        setState(reportItemCount(value) > 0 ? "ready" : "empty");
+        setState(reportItemCount(value) > 0 || hasUnavailableEvidence(value) ? "ready" : "empty");
       })
       .catch((error: unknown) => {
         if ((error as { name?: string }).name !== "AbortError") setState("error");
       });
     return (): void => controller.abort();
   }, [initialReport, query]);
-  const updatePreference = (next: Preferences): void => { setPreferences(next); localStorage.setItem(preferenceKey, JSON.stringify(next)); };
+  const effectiveQuery = new URLSearchParams(query);
+  for (const [key, value] of Object.entries(report?.filters ?? {})) if (reportingFilterKeys.has(key)) effectiveQuery.set(key, value);
+  const presentationFilters = Object.fromEntries(effectiveQuery);
+  for (const key of ["from", "to"]) {
+    if (initialFilters[key]) presentationFilters[key] = initialFilters[key];
+    else delete presentationFilters[key];
+  }
+  const updatePreference = (next: Preferences): void => {
+    setPreferences(next);
+    try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch { /* Keep the current display usable without storage. */ }
+  };
   return <main className="dashboard-page" data-density={preferences.compact ? "compact" : "comfortable"}>
-    <PageHeader eyebrow={initialCalendar.label} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink /><Link className="primary-button" href="/leads/new"><Plus size={19} weight="bold" /> Nouveau lead</Link></>} />
-    <div className="dashboard-toolbar"><ReportingFilters filters={initialFilters} calendar={initialCalendar} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
+    <PageHeader eyebrow={initialCalendar.label} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink />{report?.capabilities?.canCreateLead === true && <Link className="primary-button" href={preserveFilters("/leads/new", effectiveQuery)}><Plus size={19} weight="bold" /> Nouveau lead</Link>}</>} />
+    <div className="dashboard-toolbar"><ReportingFilters filters={presentationFilters} calendar={initialCalendar} canViewManagerDashboard={report?.capabilities?.canViewManagerDashboard === true} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
       <label><input type="checkbox" checked={preferences.compact} onChange={(event) => updatePreference({ ...preferences, compact: event.target.checked })} /> Affichage compact</label>
       <label><input type="checkbox" checked={preferences.showTables} onChange={(event) => updatePreference({ ...preferences, showTables: event.target.checked })} /> Afficher les tableaux accessibles</label>
       <label>Période préférée <select value={preferences.preferredPeriod} onChange={(event) => updatePreference({ ...preferences, preferredPeriod: event.target.value as PreferredPeriod })}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option></select></label>
-      <a href={preferredPeriodHref[preferences.preferredPeriod]}>Appliquer la période préférée</a>
+      <a href={dashboardPeriodHref(effectiveQuery, preferences.preferredPeriod)}>Appliquer la période préférée</a>
       <label>Seuil personnel de charge <input type="number" min={1} max={100} value={preferences.operationalThreshold} onChange={(event) => updatePreference({ ...preferences, operationalThreshold: Math.min(100, Math.max(1, Number.parseInt(event.target.value, 10) || 1)) })} /></label>
       <small>Ces préférences d’affichage restent dans ce navigateur et ne contiennent ni identifiant métier, ni donnée personnelle.</small>
-    </fieldset></details><span className="freshness-indicator" role="status"><span aria-hidden="true" /> Données actualisées à la dernière réponse API</span></div>
-    <ReportingState state={state} report={report} showTables={preferences.showTables} query={query} operationalThreshold={preferences.operationalThreshold} />
+    </fieldset></details><span className="freshness-indicator" role="status"><span aria-hidden="true" /> {state === "loading" ? "Actualisation en cours" : state === "error" ? "Actualisation indisponible" : "Données de la dernière réponse API"}</span></div>
+    <ReportingState state={state} report={report} showTables={preferences.showTables} query={effectiveQuery} operationalThreshold={preferences.operationalThreshold} />
   </main>;
 }
 
 function reportItemCount(report: ReportingReport): number {
   return "cards" in report
-    ? Object.values(report.cards).reduce((sum, item) => sum + item, 0)
+    ? Object.values(report.cards).reduce<number>((sum, item) => sum + (isObservedCount(item) ? item : 0), 0)
     : report.performance.advisers.length + report.contributions.contributors.length;
+}
+
+function hasUnavailableEvidence(report: ReportingReport): boolean {
+  return ("cards" in report && Object.values(report.cards).some((value) => !isObservedCount(value)))
+    || Object.values(report.persistence?.countsObservability ?? {}).some((value) => value.state === "UNAVAILABLE");
 }
 
 function ReportingState({ state, report, showTables, query, operationalThreshold }: Readonly<{ state: "loading" | "ready" | "empty" | "error"; report: ReportingReport | undefined; showTables: boolean; query: URLSearchParams; operationalThreshold: number }>): React.JSX.Element | null {
@@ -118,17 +131,76 @@ function PersonalDashboardContent({ report, showTables }: Readonly<{ report: Per
   const adviser = report.performance.advisers[0]; const contributor = report.contributions.contributors[0];
   const data = adviser ? [{ value: "Leads principaux", count: adviser.primaryLeadCount }, { value: "Collaborations", count: adviser.secondaryLeadCount }, { value: "Charge active", count: adviser.activeLoad }, { value: "Relances échues", count: adviser.followUps.overdue }] : [];
   const contributions = contributor ? [{ value: "Actions principales", count: contributor.primaryActionCount }, { value: "Actions secondaires", count: contributor.secondaryActionCount }] : [];
-  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p></section><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></>;
+  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p></section><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /><ReportingAvailability report={report} /></>;
 }
 
-function ReportingFilters({ filters, calendar }: Readonly<{ filters: Record<string, string>; calendar: DashboardCalendar }>): React.JSX.Element {
-  const todayHref = `/manager/reports/dashboard?${new URLSearchParams({ period: "custom", from: calendar.from, to: calendar.to }).toString()}`;
+function ReportingAvailability({ report }: Readonly<{ report: ReportingReport }>): React.JSX.Element | null {
+  const observations = Object.values(report.persistence?.countsObservability ?? {});
+  if (observations.some((value) => value.state === "UNAVAILABLE")) return <p role="status">Certains compteurs de persistance sont indisponibles ; ils ne sont pas assimilés à zéro.</p>;
+  if (observations.some((value) => value.state === "AUTHORIZED_SUBSET")) return <p>Les compteurs de persistance couvrent uniquement les données autorisées pour cette session.</p>;
+  return null;
+}
+
+type RecentLead = { id: string; leadCode: string; name: string; status: string; createdAt: string; assignedToLabel?: string };
+type RecentLeadsResult = { availability: "OBSERVED" | "UNAVAILABLE"; leads: RecentLead[] };
+
+function decodeRecentLeads(value: unknown): RecentLeadsResult {
+  if (!value || typeof value !== "object" || !("availability" in value) || !("leads" in value)
+    || !["OBSERVED", "UNAVAILABLE"].includes(String(value.availability)) || !Array.isArray(value.leads) || value.leads.length > 10) throw new Error("recent_leads_invalid_response");
+  const leads: RecentLead[] = value.leads.map((row: unknown) => {
+    if (!row || typeof row !== "object" || !("id" in row) || typeof row.id !== "string" || !/^[a-z\d-]+$/iu.test(row.id)
+      || !("leadCode" in row) || typeof row.leadCode !== "string" || !("name" in row) || typeof row.name !== "string"
+      || !("status" in row) || typeof row.status !== "string" || !("createdAt" in row) || typeof row.createdAt !== "string"
+      || ("assignedToLabel" in row && typeof row.assignedToLabel !== "string")) throw new Error("recent_leads_invalid_row");
+    return { id: row.id, leadCode: row.leadCode, name: row.name, status: row.status, createdAt: row.createdAt,
+      ...("assignedToLabel" in row ? { assignedToLabel: row.assignedToLabel as string } : {}) };
+  });
+  return { availability: value.availability as RecentLeadsResult["availability"], leads };
+}
+
+function RecentDashboardLeads({ query, canRead }: Readonly<{ query: URLSearchParams; canRead: boolean }>): React.JSX.Element {
+  const [result, setResult] = useState<RecentLeadsResult>();
+  const [state, setState] = useState<"loading" | "ready" | "error" | "forbidden">("loading");
+  const params = new URLSearchParams(query);
+  if (params.has("from") && params.has("to")) params.set("period", "custom");
+  params.set("limit", "5");
+  const queryString = params.toString();
+  useEffect(() => {
+    if (!canRead) return;
+    const controller = new AbortController();
+    setState("loading");
+    fetch(`/api/crm/reports/dashboard/recent-leads?${queryString}`, { credentials: "same-origin", signal: controller.signal, headers: { accept: "application/json" } })
+      .then(async (response) => {
+        if (controller.signal.aborted) return;
+        if (response.status === 403) { setState("forbidden"); return; }
+        if (!response.ok) throw new Error("recent_leads_unavailable");
+        const value = decodeRecentLeads(await response.json());
+        if (controller.signal.aborted) return;
+        setResult(value); setState("ready");
+      })
+      .catch(() => { if (!controller.signal.aborted) setState("error"); });
+    return (): void => controller.abort();
+  }, [canRead, queryString]);
+  if (!canRead) return <p>Liste récente indisponible pour les autorisations de cette session.</p>;
+  if (state === "loading") return <p role="status" aria-busy="true">Chargement des leads autorisés…</p>;
+  if (state === "forbidden") return <p role="alert">Accès aux leads récents refusé pour cette session.</p>;
+  if (state === "error" || result?.availability === "UNAVAILABLE") return <p role="alert">Liste récente indisponible. Aucune absence de lead ne peut être déduite.</p>;
+  if (!result?.leads.length) return <p>Aucun lead récent dans la période et le périmètre autorisés.</p>;
+  return <ul aria-label="Derniers leads autorisés">{result.leads.map((lead) => <li key={lead.id}>
+    <Link href={preserveFilters(`/leads/${encodeURIComponent(lead.id)}`, query)}>{lead.leadCode} — {lead.name}</Link>
+    <span> — {lead.status} — {lead.assignedToLabel ?? "Libellé du responsable indisponible"}</span>
+  </li>)}</ul>;
+}
+
+function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readonly<{ filters: Record<string, string>; calendar: DashboardCalendar; canViewManagerDashboard: boolean }>): React.JSX.Element {
+  const query = new URLSearchParams(filters);
+  const todayHref = dashboardPeriodHref(query, "custom", calendar);
   return <div className="reporting-toolbar-content">
     <nav className="period-selector" aria-label="Période globale du dashboard">
       <Link href={todayHref} className={filters.period === "custom" ? "active" : ""}>Aujourd’hui</Link>
-      <Link href="/manager/reports/dashboard?period=7d" className={filters.period === "7d" ? "active" : ""}>7 jours</Link>
-      <Link href="/manager/reports/dashboard?period=30d" className={!filters.period || filters.period === "30d" ? "active" : ""}>Ce mois</Link>
-      <Link href="/manager/reports/dashboard?period=90d" className={filters.period === "90d" ? "active" : ""}>Ce trimestre</Link>
+      <Link href={dashboardPeriodHref(query, "7d")} className={filters.period === "7d" ? "active" : ""}>7 jours</Link>
+      <Link href={dashboardPeriodHref(query, "30d")} className={!filters.period || filters.period === "30d" ? "active" : ""}>30 jours</Link>
+      <Link href={dashboardPeriodHref(query, "90d")} className={filters.period === "90d" ? "active" : ""}>90 jours</Link>
     </nav>
     <details className="reporting-filter-popover" suppressHydrationWarning><summary>Filtres avancés</summary><form method="get" action="/manager/reports/dashboard" aria-label="Filtres interactifs du reporting">
     <label>Période <select name="period" defaultValue={filters.period ?? "30d"}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option><option value="custom">Personnalisée</option></select></label>
@@ -138,15 +210,16 @@ function ReportingFilters({ filters, calendar }: Readonly<{ filters: Record<stri
     <label>Canal <select name="channel" defaultValue={filters.channel ?? ""}><option value="">Tous</option><option value="DIGITAL">Digital</option><option value="PHONE">Téléphone</option><option value="IN_PERSON">Présentiel</option><option value="PARTNER">Partenaire</option><option value="OTHER">Autre</option></select></label>
     <label>Commercial <input name="adviserId" defaultValue={filters.adviserId} autoComplete="off" /></label>
     <label>Statut <select name="status" defaultValue={filters.status ?? ""}><option value="">Tous</option><option value="PROSPECT">Prospect</option><option value="CONTACTED">Contacté</option><option value="QUALIFIED">Qualifié</option><option value="ENROLLED">Inscrit</option><option value="CLOSED_LOST">Sans suite</option></select></label>
-    <label>Vue <select name="view" defaultValue={filters.view ?? "global"}><option value="global">Globale</option><option value="personal">Personnelle</option></select></label>
-    <button type="submit">Appliquer</button> <a href="/manager/reports/dashboard">Réinitialiser</a></form></details>
+    <label>Vue <select name="view" defaultValue={filters.view ?? "global"}><option value="global" disabled={!canViewManagerDashboard}>Pilotage autorisé</option><option value="personal">Personnelle</option></select></label>
+    <button type="submit">Appliquer</button> <a href={dashboardPeriodHref(query, "30d")}>Réinitialiser la période</a></form></details>
   </div>;
 }
 
 function DashboardContent({ report, showTables, query, operationalThreshold }: Readonly<{ report: DashboardReport; showTables: boolean; query: URLSearchParams; operationalThreshold: number }>): React.JSX.Element {
   const funnel = Object.entries(report.panels.funnel.currentState).map(([value, count]) => ({ value, count }));
-  const loads = report.panels.performance.advisers.map((item) => ({ value: item.adviserId, count: item.activeLoad }));
-  const contributions = report.panels.sharedContributions.contributors.map((item) => ({ value: item.contributorId, count: item.primaryActionCount + item.secondaryActionCount }));
+  const loads = report.panels.performance.advisers.map((item) => ({ key: item.adviserId, value: "Libellé commercial indisponible", count: item.activeLoad }));
+  const contributions = report.panels.sharedContributions.contributors.map((item) => ({ key: item.contributorId, value: "Libellé contributeur indisponible", count: item.primaryActionCount + item.secondaryActionCount }));
+  const followUpsHref = preserveFilters(report.drillDowns.find((item) => item.key === "overdueFollowUps")?.href ?? "/leads?view=FOLLOW_UP", query);
   return <>
     <section className="kpi-grid" aria-label="Indicateurs clés">
       <DashboardKpi icon={UserPlus} tone="teal" label="Leads uniques" value={report.cards.uniqueLeads} hint="Périmètre sélectionné" />
@@ -155,26 +228,34 @@ function DashboardContent({ report, showTables, query, operationalThreshold }: R
       <DashboardKpi icon={Student} tone="green" label="Inscriptions" value={report.cards.enrolled} hint="Statut inscrit" />
       <DashboardKpi icon={TrendUp} tone="teal" label="Alertes actives" value={report.cards.activeAlerts} hint="À surveiller" />
     </section>
-    <section className="quick-queues" aria-label="Files rapides"><Link className="queue-item" href={safeInternalHref(report.drillDowns.find((item) => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED", ["/leads"])}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Non affectés<strong>{report.cards.unassigned}</strong></span></Link><Link className="queue-item" href="/leads?view=FOLLOW_UP"><span className="icon-disc small amber"><Alarm size={20} /></span><span>À relancer<strong>{report.cards.overdueFollowUps}</strong></span></Link><Link className="queue-item" href="/leads?view=NO_ACTIVITY"><span className="icon-disc small blue"><ChartBar size={20} /></span><span>Sans activité<strong>{report.panels.operationalRisks.queues.noActivity ?? 0}</strong></span></Link><Link className="queue-item" href="/leads?savedView=IMPORT_ERRORS"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>{report.panels.operationalRisks.queues.importErrors ?? 0}</strong></span></Link></section>
-    <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} action(s) issue(s) des contrôles API</p></div><Link className="text-button" href="/leads?view=FOLLOW_UP">Voir toutes les actions</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />En retard</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{alert.count}</span><span data-label="File"><Link href={preserveFilters(alert.drillDown, query)}>Ouvrir</Link></span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href="/leads?view=FOLLOW_UP">Organiser ma journée</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href="/manager/reports/commercial-funnel">Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{item.count}</strong><em>{report.cards.uniqueLeads ? `${Math.round((item.count / report.cards.uniqueLeads) * 100)} %` : "0 %"}</em></div>)}</section></div>
-    <div className="dashboard-secondary-grid"><section className="panel leads-panel"><div className="panel-heading"><h2>Derniers leads</h2><Link className="text-button" href="/leads">Voir tous les leads</Link></div><ConnectedResource endpoint="/api/crm/leads?page=1&pageSize=5&sortBy=createdAt" ariaLabel="Derniers leads issus de PostgreSQL" emptyMessage="Aucun lead récent." fields={[{ key: "leadCode", label: "Identifiant" }, { key: "firstName", label: "Prénom" }, { key: "lastName", label: "Nom" }, { key: "status", label: "Statut" }, { key: "assignedToId", label: "Conseiller" }]} itemPathPrefix="/leads" /></section><section className="panel activity-panel"><div className="panel-heading"><h2>Activité récente</h2></div><ul className="activity-list">{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <li key={alert.code}><span className="icon-disc small red"><WarningCircle size={18} /></span><span><b>{alert.code}</b><small>{alert.count} élément(s) agrégé(s)</small></span></li>)}</ul></section></div>
+    <p><small>Ces liens ouvrent des listes de travail avec les filtres de période et de périmètre conservés. Les Leads non affectés peuvent inclure des statuts terminaux ; la file des Leads à relancer n’est pas le compteur de relances ; la file sans activité est distincte du seuil de première interaction.</small></p>
+    <section className="quick-queues" aria-label="Files rapides">
+      <Link className="queue-item" href={preserveFilters(report.drillDowns.find((item) => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED", query)}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Non affectés<strong>{displayCount(report.cards.unassigned)}</strong></span></Link>
+      <Link className="queue-item" href={followUpsHref}><span className="icon-disc small amber"><Alarm size={20} /></span><span>À relancer<strong>{displayCount(report.cards.overdueFollowUps)}</strong></span></Link>
+      <Link className="queue-item" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}><span className="icon-disc small blue"><ChartBar size={20} /></span><span>Première interaction échue<strong>{displayCount(report.panels.operationalRisks.queues.withoutFirstInteraction, "Non observé")}</strong></span></Link>
+      <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
+    </section>
+    <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} signal(s) observé(s) par les contrôles API</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{preserveFilters(alert.drillDown, query) === "#" ? "File indisponible" : <Link href={preserveFilters(alert.drillDown, query)}>Ouvrir</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{isObservedCount(report.cards.uniqueLeads) ? report.cards.uniqueLeads > 0 ? `${Math.round((item.count / report.cards.uniqueLeads) * 100)} %` : "0 %" : "Indisponible"}</em></div>)}</section></div>
+    <div className="dashboard-secondary-grid"><section className="panel leads-panel"><div className="panel-heading"><h2>Derniers leads</h2>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} /></section><section className="panel activity-panel"><div className="panel-heading"><h2>Activité récente</h2></div><ul className="activity-list">{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <li key={alert.code}><span className="icon-disc small red"><WarningCircle size={18} /></span><span><b>{alert.code}</b><small>{displayCount(alert.count)} élément(s) agrégé(s)</small></span></li>)}</ul></section></div>
     <details className="reporting-details"><summary>Analyses détaillées et tableaux accessibles</summary>
-    <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={safeInternalHref(item.href, ["/leads"])}><strong>{labels[item.key] ?? item.key}</strong> : {item.count}</a></li>)}<li><strong>Alertes actives</strong> : {report.cards.activeAlerts}</li></ul></section>
+    <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
+    {query.has("status") && query.get("status") !== "ENROLLED" && <p>Le lien Inscriptions explore le statut Inscrit en remplaçant le filtre de statut ; ce n’est pas la même cohorte que celle actuellement affichée.</p>}
     <AccessibleChart title="Funnel commercial" data={funnel} showTable={showTables} />
     <AccessibleTrend data={report.trends} showTable={showTables} />
     {(["source", "campaign", "program", "campus"] as const).map((dimension) => <AccessibleChart key={dimension} title={`Répartition par ${dimension}`} data={report.distributions[dimension]} showTable={showTables} />)}
     <AccessibleChart title="Charge commerciale" data={loads} showTable={showTables} />
     <p aria-live="polite">{loads.filter((item) => item.count >= operationalThreshold).length} charge(s) atteignent le seuil personnel d’affichage de {operationalThreshold}.</p>
     <AccessibleChart title="Contributions principales et secondaires" data={contributions} showTable={showTables} />
-    <section aria-label="Alertes opérationnelles"><h2>Relances et alertes</h2>{report.panels.operationalRisks.alerts.length ? <ul>{report.panels.operationalRisks.alerts.map((alert) => <li key={alert.code}><a href={preserveFilters(alert.drillDown, query)}>{alert.code} : {alert.count}</a></li>)}</ul> : <p>Aucune alerte active.</p>}</section>
-    <p><a href={safeInternalHref(report.export.href, ["/reports/manager-dashboard/export"])} download="crm-manager-dashboard-v1.csv">Exporter les agrégats CSV</a></p>
+    <section aria-label="Alertes opérationnelles"><h2>Relances et alertes</h2>{report.panels.operationalRisks.alerts.length ? <ul>{report.panels.operationalRisks.alerts.map((alert) => <li key={alert.code}>{preserveFilters(alert.drillDown, query) === "#" ? <span>{alert.code} : {displayCount(alert.count)} — file indisponible</span> : <a href={preserveFilters(alert.drillDown, query)}>{alert.code} : {displayCount(alert.count)}</a>}</li>)}</ul> : <p>Aucune alerte observée dans les contrôles disponibles.</p>}{report.panels.operationalRisks.sourceQualityAvailability === "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" && <p>Qualité des sources : non observée durablement. L’absence de signal ne garantit pas l’absence d’erreur d’import.</p>}</section>
+    <ReportingAvailability report={report} />
+    <p><a href={preserveFilters(report.export.href, query)} download="crm-manager-dashboard-v1.csv">Exporter les agrégats CSV</a></p>
     <p><small>Contrat {report.definitionVersion} — export {report.export.schemaVersion} — {report.timezone}</small></p>
     </details>
   </>;
 }
 
-function DashboardKpi({ icon: Icon, tone, label, value, hint }: Readonly<{ icon: typeof UserPlus; tone: string; label: string; value: number; hint: string }>): React.JSX.Element {
-  return <article className="kpi-card"><span className={`icon-disc ${tone}`}><Icon size={25} weight="bold" /></span><div><span>{label}</span><strong>{value}</strong><small>{hint}</small></div><span className={`mini-bars ${tone}`} aria-hidden="true"><i /><i /><i /><i /><i /></span></article>;
+function DashboardKpi({ icon: Icon, tone, label, value, hint }: Readonly<{ icon: typeof UserPlus; tone: string; label: string; value: number | null; hint: string }>): React.JSX.Element {
+  return <article className="kpi-card"><span className={`icon-disc ${tone}`}><Icon size={25} weight="bold" /></span><div><span>{label}</span><strong>{displayCount(value)}</strong><small>{isObservedCount(value) ? hint : "Valeur non observée"}</small></div><span className={`mini-bars ${tone}`} aria-hidden="true"><i /><i /><i /><i /><i /></span></article>;
 }
 
 function AccessibleChart({ title, data, showTable }: Readonly<{ title: string; data: Datum[]; showTable: boolean }>): React.JSX.Element {
@@ -183,9 +264,9 @@ function AccessibleChart({ title, data, showTable }: Readonly<{ title: string; d
   const description = `${title}. ${values}`;
   return <figure><figcaption><h2>{title}</h2></figcaption>
     <button type="button" className="reporting-chart" aria-label={description}>
-      {data.map((item) => <div key={item.value}><span>{item.value}</span> <meter min={0} max={max} value={item.count}>{item.count}</meter> <strong>{item.count}</strong></div>)}
+      {data.map((item) => <div key={item.key ?? item.value}><span>{item.value}</span> <meter min={0} max={max} value={item.count}>{item.count}</meter> <strong>{item.count}</strong></div>)}
     </button>
-    {showTable && <table><caption>Données alternatives — {title}</caption><thead><tr><th scope="col">Catégorie</th><th scope="col">Valeur</th></tr></thead><tbody>{data.map((item) => <tr key={item.value}><th scope="row">{item.value}</th><td>{item.count}</td></tr>)}</tbody></table>}
+    {showTable && <table><caption>Données alternatives — {title}</caption><thead><tr><th scope="col">Catégorie</th><th scope="col">Valeur</th></tr></thead><tbody>{data.map((item) => <tr key={item.key ?? item.value}><th scope="row">{item.value}</th><td>{item.count}</td></tr>)}</tbody></table>}
   </figure>;
 }
 
@@ -195,23 +276,39 @@ function AccessibleTrend({ data, showTable }: Readonly<{ data: DashboardReport["
 }
 
 function preserveFilters(href: string, query: URLSearchParams): string {
-  const safe = safeInternalHref(href, ["/leads"]);
+  const safe = safeInternalHref(href, ["/leads", "/manager/assignment", "/manager/reports/commercial-funnel", "/reports/manager-dashboard/export"]);
   if (safe === "#") return safe;
   const [path, current = ""] = safe.split("?");
   const params = new URLSearchParams(current);
+  const leadDestination = path === "/leads" || path?.startsWith("/leads/");
   for (const [key, value] of query) {
-    if (!params.has(key) && !["period", "view"].includes(key)) params.set(filterTarget(key), value);
+    if (!reportingFilterKeys.has(key) || (leadDestination && ["period", "view"].includes(key))) continue;
+    const target = leadDestination ? filterTarget(key) : key;
+    if (!params.has(target)) params.set(target, value);
   }
+  if (leadDestination && params.has("createdBefore")) params.delete("createdTo");
   params.set("returnTo", `/manager/reports/dashboard?${query.toString()}`);
   return `${path}?${params.toString()}`;
 }
 
 function filterTarget(key: string): string {
   if (key === "from") return "createdFrom";
-  if (key === "to") return "createdTo";
-  if (key === "adviserId") return "assignedToId";
+  if (key === "to") return "createdBefore";
   return key;
 }
+
+const reportingFilterKeys = new Set(["period", "from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "view"]);
+
+function dashboardPeriodHref(query: URLSearchParams, period: PreferredPeriod | "custom", calendar?: DashboardCalendar): string {
+  const params = new URLSearchParams([...query].filter(([key]) => reportingFilterKeys.has(key)));
+  params.set("period", period);
+  params.delete("from"); params.delete("to");
+  if (period === "custom" && calendar) { params.set("from", calendar.from); params.set("to", calendar.to); }
+  return `/manager/reports/dashboard?${params.toString()}`;
+}
+
+function isObservedCount(value: number | null | undefined): value is number { return typeof value === "number" && Number.isFinite(value) && value >= 0; }
+function displayCount(value: number | null | undefined, unavailable = "Indisponible"): string { return isObservedCount(value) ? String(value) : unavailable; }
 
 function safeInternalHref(href: string, allowedRoots: readonly string[] = dashboardDestinationRoots): string {
   if (!href || href.includes("\0") || href.includes("\\") || href.startsWith("//") || /^[a-z][a-z\d+.-]*:/iu.test(href)) return "#";
