@@ -50,13 +50,34 @@ SHA publié. Aucune nouvelle recette connectée, capture aux cinq largeurs,
 campagne PostgreSQL ou acceptation visuelle n'a été exécutée pour ce point.
 
 PR121 a été fusionnée de façon protégée le 5 octobre 2026 à 12:40:57 UTC,
-sur main `467848dc38f479d969b18de1295be2f2e18cd167`. Les gates de ce main sont
-encore en cours à ce point ; aucun tag, publication de release ou Done CRMY-161
-n'est revendiqué. La dépendance CRMY-161 reste donc ouverte. PR116 demeure
-Draft : ni Ready, ni `codex-ready`, ni décision de livraison ou Jira Done ne
-sont déduits de ces correctifs locaux. Les six critères ci-dessous restent à
-qualifier sur le build publié et raccordé ; les améliorations locales ne valent
-pas à elles seules une acceptation globale.
+sur main `467848dc38f479d969b18de1295be2f2e18cd167`. Ses 16 gates main ont
+ensuite réussi, puis la prérelease interne `v0.1.0-rc.2` a été publiée et le
+workflow de publication `37313001866` a réussi. CRMY-161 est désormais Done
+par la transition officielle « Clôturer après release », relue à 13:12:06 UTC.
+Le lien de dépendance reste conservé, sans blocage artificiellement supprimé.
+PR116 demeure Draft : ni Ready, ni `codex-ready`, ni décision de livraison ou
+Jira Done ne sont déduits des seuls correctifs locaux. Les six critères restent
+à qualifier sur le build publié et raccordé, sans acceptation esthétique globale.
+
+## Correctifs nécessaires après les contrôles de `c073d275`
+
+Sur `c073d275257f31b4867910848112e2515fdcfcb1`, Sonar a réellement refusé
+la duplication nouvelle de 5,2 % au-dessus du seuil inchangé de 3 %.
+Couverture nouvelle 95,7 %, notes A/A/A et hotspots revus 100 % passent.
+La duplication provient des deux runners de preuve PostgreSQL, pas du Web.
+Le helper `postgres-proof-runtime.mjs` mutualise uniquement leurs mécanismes
+de compilation, empreintes, manifeste et garde Docker ; les DI, marqueurs,
+bases, délais, contrôles spécifiques et arrêts des seuls conteneurs possédés
+restent distincts. Les 19 tests unitaires ciblés et contrôles de syntaxe passent.
+Ils utilisent des adaptateurs mémoire : ils ne sont pas une exécution réelle
+des deux preuves PostgreSQL. Le lint direct de ces scripts est refusé au
+chargement par la configuration typée existante ; il n'est pas présenté réussi
+et aucune règle, exclusion ou limite Sonar n'est modifiée.
+
+Le prochain SHA requiert ses contrôles distants, sa propre mesure Sonar et les
+deux preuves PostgreSQL du workflow. Le refus de politique `jira_codex_ready_missing`
+sur `c073d275` reste historique ; la recette connectée et la préparation Jira
+ne sont pas déduites des tests locaux. Aucun déploiement DEV par ce correctif.
 
 ## Matrice des critères Jira relus le 5 octobre 2026
 
@@ -91,6 +112,27 @@ interaction structurée n'est pas `lastActivityAt`. Les statuts terminaux peuven
 figurer dans la file non affectée. Aucune équivalence de nombre de lignes n'est
 affirmée et aucune formule n'est modifiée pour faire coïncider artificiellement les
 résultats.
+
+### Correction ciblée de cohérence au-dessus de `c073d275257f31b4867910848112e2515fdcfcb1`
+
+Le signal « Première interaction échue » n'ouvre plus `NO_ACTIVITY` : son nombre
+est un agrégat non cliquable, avec la mention « sans file équivalente ». La même
+garde concerne l'alerte API `first_interaction_overdue` dans le tableau des priorités
+et dans les alertes opérationnelles. Un lien distinct vers la file legacy des
+Leads sans activité reste disponible, sans la présenter comme les N résultats du
+signal. Les liens de relances précisent localement qu'ils ouvrent une file de Leads
+distincte du compteur de relances ; les liens non affectés précisent que leur file
+inclut aussi les statuts clos, contrairement au compteur de Leads actifs.
+
+Le test ciblé a réellement échoué avant correction sur le signal cliquable, puis
+sur le lien de l'alerte `first_interaction_overdue`. Après correction : 43 tests
+Dashboard DOM/SSR PASS / 0 FAIL / 0 SKIP, lint des deux fichiers concernés PASS et
+typage Web sans émission ni incremental PASS. La fixture contient l'alerte réelle,
+et vérifie les trois rendus, les libellés locaux et la conservation de campus,
+canal, conseiller et bornes ISO `[from, to)`. Aucun calcul API ni droit n'a changé.
+Ces preuves portent sur les changements locaux au-dessus de `c073d275` ; elles ne
+sont ni une recette connectée, ni des captures responsive, ni un nouveau gate
+distant. Le SHA final publié et ses contrôles restent à rattacher.
 
 ## Résultats locaux historiques réellement obtenus
 
@@ -158,9 +200,9 @@ et identifiants exacts. Ces preuves restent historiques : elles ne couvrent
 automatiquement ni le merge `8c44d30`, ni ses correctifs locaux, ni le futur
 HEAD à publier. Aucun ancien résultat Sonar n'est réattribué.
 
-CRMY-161 est encore In Review : réception réelle du lien de récupération,
-définition du nouveau mot de passe et reconnexion sont désormais confirmées ;
-le contrat main/tag/release reste à qualifier avant sa clôture. CRMY-162 reste techniquement préparée,
+Au moment des contrôles historiques ci-dessus, CRMY-161 était encore In Review.
+Elle est désormais Done après qualification de sa release, comme décrit au
+point courant ; son lien de dépendance est conservé. CRMY-162 reste techniquement préparée,
 sans codex-ready, Ready, décision déléguée ou fusion tant que ces conditions et
 ses propres preuves manquent. Aucun DEV, STAGING ou PROD déployé par ce lot ;
 aucun appel, envoi de mail, migration DEV, import Sheets ou changement natif.

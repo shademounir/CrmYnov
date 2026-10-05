@@ -142,6 +142,44 @@ test("quick queues retain the selected cohort and show the backend first-interac
   dom.window.close();
 });
 
+test("legacy work queues cannot pretend to be exact KPI drill-downs", () => {
+  const scoped = { ...report, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks,
+    queues: { withoutFirstInteraction: 2 }, alerts: [...report.panels.operationalRisks.alerts, { code: "first_interaction_overdue", count: 2, drillDown: "/leads?view=NO_ACTIVITY" }, { code: "unassigned_leads", count: 1, drillDown: "/leads?view=UNASSIGNED" }],
+  } } };
+  const filters = { period: "custom", campus: "campus-a", channel: "DIGITAL", adviserId: "adviser-synthetic", from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z" };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: filters, initialReport: scoped, initialCalendar })), { url: "https://dev.example.invalid" });
+  const document = dom.window.document;
+  const signal = [...document.querySelectorAll(".quick-queues .queue-item")].find((item) => item.textContent?.includes("Première interaction échue"));
+  assert.ok(signal); assert.equal(signal.tagName, "DIV", "the aggregate signal must not navigate to a different cohort");
+  assert.equal(signal.querySelector("a"), null); assert.match(signal.textContent ?? "", /Première interaction échue2/u);
+  assert.match(signal.textContent ?? "", /sans file équivalente/u);
+  const priority = [...document.querySelectorAll(".priority-table article")].find((item) => item.textContent?.includes("first_interaction_overdue"));
+  assert.ok(priority); assert.equal(priority.querySelector("a"), null); assert.match(priority.textContent ?? "", /Signal sans file équivalente/u);
+  const operational = [...document.querySelectorAll('section[aria-label="Alertes opérationnelles"] li')].find((item) => item.textContent?.includes("first_interaction_overdue"));
+  assert.ok(operational); assert.equal(operational.querySelector("a"), null); assert.match(operational.textContent ?? "", /first_interaction_overdue : 2 — signal sans file équivalente/u);
+  for (const [code, label] of [["follow_up_overdue", /file distincte des Leads à relancer/u], ["unassigned_leads", /statuts clos inclus/u]] as const) {
+    const priorityLink = [...document.querySelectorAll(".priority-table article")].find((item) => item.textContent?.includes(code))?.querySelector("a");
+    const operationalLink = [...document.querySelectorAll('section[aria-label="Alertes opérationnelles"] li')].find((item) => item.textContent?.includes(code))?.querySelector("a");
+    assert.match(priorityLink?.textContent ?? "", label); assert.match(operationalLink?.textContent ?? "", label);
+  }
+  const noActivityLinks = [...document.querySelectorAll<HTMLAnchorElement>("a")].filter((item) => new URL(item.href).searchParams.get("view") === "NO_ACTIVITY");
+  assert.equal(noActivityLinks.length, 1, "only the explicitly distinct legacy work file remains linked");
+  const noActivity = noActivityLinks[0];
+  assert.ok(noActivity); assert.match(noActivity.textContent ?? "", /file distincte/u);
+  assert.doesNotMatch(noActivity.textContent ?? "", /échue\s*2/u);
+  const followUp = [...document.querySelectorAll<HTMLAnchorElement>(".quick-queues a")].find((item) => new URL(item.href).searchParams.get("view") === "FOLLOW_UP");
+  const unassigned = [...document.querySelectorAll<HTMLAnchorElement>(".quick-queues a")].find((item) => new URL(item.href).searchParams.get("view") === "UNASSIGNED");
+  assert.match(followUp?.textContent ?? "", /Relances échues.*File de Leads distincte/u);
+  assert.match(unassigned?.textContent ?? "", /Leads actifs non affectés.*inclut aussi les statuts clos/u);
+  for (const link of [noActivity, followUp, unassigned]) {
+    assert.ok(link); const url = new URL(link.href);
+    for (const key of ["campus", "channel", "adviserId"] as const) assert.equal(url.searchParams.get(key), filters[key]);
+    assert.equal(url.searchParams.get("createdFrom"), filters.from); assert.equal(url.searchParams.get("createdBefore"), filters.to);
+    assert.equal(url.searchParams.has("createdTo"), false);
+  }
+  dom.window.close();
+});
+
 test("missing or null observations are not displayed as zero or fabricated names", () => {
   const unavailable = { ...report, cards: { ...report.cards, activeAlerts: null }, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, sourceQualityAvailability: "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED", queues: {} } } } as unknown as DashboardReport;
   const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: unavailable, initialCalendar })));

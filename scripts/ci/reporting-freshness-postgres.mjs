@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { accessSync, constants, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { waitForPostgres } from "./postgres-readiness.mjs";
 import { withPreservedCleanup } from "./preserved-cleanup.mjs";
+import { compilePostgresProof, createPostgresDocker, hashProofBytes as hash } from "./postgres-proof-runtime.mjs";
 
 // Independent disposable database; never inherit a shared, recipe or DEV URL.
 // The official local/CI image is pinned by ID before starting this owned tmpfs.
@@ -15,98 +16,26 @@ if (resolve(process.cwd()) !== repository) throw new Error("reporting_repository
 const proofRoot = resolve(process.env.CRMY162_PROOF_ROOT ?? process.env.RUNNER_TEMP ?? tmpdir());
 mkdirSync(proofRoot, { recursive: true });
 const proofDirectory = mkdtempSync(join(proofRoot, "crmy162-reporting-"));
-const compiledDirectory = join(proofDirectory, "compiled");
-const dependencyDirectory = resolve(repository, "node_modules");
-const compiler = resolve(dependencyDirectory, "typescript/bin/tsc");
 const apiDirectory = resolve(repository, "apps/api");
-const apiPackage = JSON.parse(readFileSync(join(apiDirectory, "package.json"), "utf8"));
-const moduleType = apiPackage.type === "module" ? "module" : "commonjs";
 const testSource = resolve(apiDirectory, "test/reporting-freshness-postgres.test.ts");
-const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-const sourceFiles = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-  if (entry.isDirectory()) return sourceFiles(join(directory, entry.name));
-  if (entry.isFile() && entry.name.endsWith(".ts")) return [join(directory, entry.name)];
-  return [];
-});
-const inputs = [...sourceFiles(join(apiDirectory, "src")), testSource].sort((first, second) => {
-  if (first < second) return -1;
-  if (first > second) return 1;
-  return 0;
-});
-const sourceHashes = () => inputs.map(path => ({ path: relative(repository, path).replaceAll("\\", "/"), sha256: hash(readFileSync(path)) }));
-const sourcesBefore = sourceHashes();
-const configuration = { extends: resolve(apiDirectory, "tsconfig.json"), compilerOptions: {
-  noEmit: false, emitDecoratorMetadata: true, experimentalDecorators: true, rootDir: apiDirectory,
-  outDir: compiledDirectory, sourceMap: true, declaration: false, incremental: false,
-}, files: [testSource], include: [], exclude: [] };
-const configurationPath = join(proofDirectory, "tsconfig-proof.json");
-// These are private generated compiler artifacts, never tracked source/config.
-writeFileSync(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, { flag: "wx" });
-writeFileSync(join(proofDirectory, "package.json"), `${JSON.stringify({ private: true, type: moduleType })}\n`, { flag: "wx" });
-symlinkSync(dependencyDirectory, join(proofDirectory, "node_modules"), process.platform === "win32" ? "junction" : "dir");
-let compilation;
-try {
-  compilation = execFileSync(process.execPath, [compiler, "--project", configurationPath, "--listEmittedFiles"], {
-    encoding: "utf8", windowsHide: true, timeout: 120_000, maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
-  });
-} catch (error) {
-  writeFileSync(join(proofDirectory, "compile-failure.log"), `${error.stdout ?? ""}\n${error.stderr ?? ""}`, { flag: "wx" });
-  throw new Error(`reporting_compilation_failed_private_proof:${proofDirectory}`, { cause: error });
-}
-writeFileSync(join(proofDirectory, "compile-output.log"), compilation, { flag: "wx" });
-if (JSON.stringify(sourceHashes()) !== JSON.stringify(sourcesBefore)) throw new Error("reporting_compile_source_changed");
-const emitted = compilation.split(/\r?\n/u).filter(line => line.startsWith("TSFILE: ")).map(line => resolve(line.slice(8)));
-if (!emitted.length || emitted.some(path => { const item = relative(compiledDirectory, path); return item.startsWith("..") || isAbsolute(item); })) throw new Error("reporting_emitted_path_invalid");
-const compiledBytes = emitted.reduce((total, path) => total + statSync(path).size, 0);
-if (emitted.length > 2_000 || compiledBytes > 16 * 1024 * 1024) throw new Error("reporting_compiled_output_exceeds_bound");
 // Qualify the compiled real decorator metadata, without creating an API, DB or
 // replacing any provider. The regular production TypeScript compiler emits it.
-let metadata;
-try {
-  metadata = execFileSync(process.execPath, ["--input-type=module", "-e", `import 'reflect-metadata';
+const { sourceHashes, sourcesBefore } = compilePostgresProof({ repository, proofDirectory, testSource, errorPrefix: "reporting",
+  metadataInputType: "module", includeCompilationCause: true, metadataProgram: `import 'reflect-metadata';
   const { ManagerDashboardService } = await import('./compiled/src/reporting/manager-dashboard.service.js');
   const names = (Reflect.getMetadata('design:paramtypes', ManagerDashboardService) ?? []).map(value => value?.name);
   const expected = ['CommercialFunnelService','CommercialPerformanceService','SourceEffectivenessService','OperationalRiskService','SharedContributionService','LeadService','AuditService','ReportingPersistenceService'];
   if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error('reporting_compiled_metadata_invalid');
-  console.log(JSON.stringify({provider:'ManagerDashboardService',designParamTypes:names}));`],
-  { cwd: proofDirectory, encoding: "utf8", windowsHide: true, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] }).trim();
-} catch (error) {
-  writeFileSync(join(proofDirectory, "qualification-failure.log"), `${error.stdout ?? ""}\n${error.stderr ?? ""}`, { flag: "wx" });
-  throw new Error(`reporting_metadata_qualification_failed_private_proof:${proofDirectory}`);
-}
-writeFileSync(join(proofDirectory, "compiled-manifest.json"), `${JSON.stringify({ runtime: process.version,
-  compilerVersion: JSON.parse(readFileSync(join(dependencyDirectory, "typescript/package.json"), "utf8")).version, moduleType,
-  configurationSha256: hash(readFileSync(configurationPath)), decoratorMetadata: JSON.parse(metadata), compiledBytes, sources: sourcesBefore,
-  compiled: emitted.map(path => ({ path: relative(proofDirectory, path).replaceAll("\\", "/"), sha256: hash(readFileSync(path)) })),
-  dependenciesReusedReadOnly: true, noPrismaGeneration: true, noSharedBuild: true,
-}, null, 2)}\n`, { flag: "wx" });
-console.log(JSON.stringify({ proof: "reporting-compiled-runtime-qualified", proofDirectory, emittedFileCount: emitted.length, sourceFileCount: sourcesBefore.length, runtime: process.version }));
+  console.log(JSON.stringify({provider:'ManagerDashboardService',designParamTypes:names}));` });
 const nonce = randomUUID(), container = `crmy162-ci-${nonce}`, database = "crmy162_reporting_synthetic";
-const dockerExecutable = process.platform === "win32" ? "C:/Program Files/Docker/Docker/resources/bin/docker.exe" : "/usr/bin/docker";
-if (!["win32", "linux"].includes(process.platform) || !statSync(dockerExecutable).isFile()) throw new Error("reporting_docker_unsupported");
-accessSync(dockerExecutable, process.platform === "win32" ? constants.F_OK : constants.X_OK);
-const docker = args => execFileSync(dockerExecutable, args, { encoding: "utf8", windowsHide: true, timeout: 90_000, stdio: ["ignore", "pipe", "pipe"] });
+const { docker, ownedContainer, assertContainerAvailable, pinImage, loopbackBinding } = createPostgresDocker({ errorPrefix: "reporting", container, nonce, nonceLabel: "crmy162-test-nonce" });
 let created = false, image;
-const ownedContainer = () => {
-  const info = JSON.parse(docker(["inspect", container]))[0];
-  const tmpfs = info.HostConfig.Tmpfs ?? {};
-  if (info.Name !== `/${container}` || info.Config.Labels["crmy162-test-nonce"] !== nonce || info.Image !== image
-    || info.Mounts.some(mount => mount.Type !== "tmpfs") || Object.keys(tmpfs).length !== 1 || tmpfs["/var/lib/postgresql/data"] !== "rw") {
-    throw new Error("reporting_container_identity_mismatch");
-  }
-  return info;
-};
 await withPreservedCleanup(async () => {
-  if (docker(["ps", "-a", "--filter", `name=^/${container}$`, "--format", "{{.Names}}"] ).trim()) throw new Error("reporting_container_name_occupied");
-  image = docker(["image", "inspect", "postgres:17.6-bookworm", "--format", "{{.Id}}"] ).trim();
-  if (!/^sha256:[a-f0-9]{64}$/u.test(image)) throw new Error("reporting_postgres_image_unverified");
+  assertContainerAvailable(); image = pinImage();
   docker(["run", "-d", "--name", container, "--label", `crmy162-test-nonce=${nonce}`, "--publish", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data:rw",
     "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "--env", `POSTGRES_DB=${database}`, image]);
   created = true; await waitForPostgres(container, docker);
-  const binding = docker(["port", container, "5432/tcp"] ).trim();
-  if (!/^127\.0\.0\.1:\d+$/u.test(binding)) throw new Error("reporting_port_invalid");
-  const info = ownedContainer(), ports = info.NetworkSettings.Ports["5432/tcp"];
-  if (ports?.length !== 1 || ports[0].HostIp !== "127.0.0.1" || `${ports[0].HostIp}:${ports[0].HostPort}` !== binding) throw new Error("reporting_loopback_binding_invalid");
+  const binding = loopbackBinding(image);
   docker(["exec", container, "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-c",
     `CREATE SCHEMA crmy162_test_identity; CREATE TABLE crmy162_test_identity.marker(nonce text NOT NULL); INSERT INTO crmy162_test_identity.marker VALUES ('${nonce}');`]);
   const empty = docker(["exec", container, "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", database, "-Atc", "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"]).trim();
@@ -136,8 +65,8 @@ await withPreservedCleanup(async () => {
   console.log(JSON.stringify({ proof: "reporting-isolated-postgres", runtime: process.version, image, database, twoApiInstances: true, sharedDatabaseUsed: false }));
 }, () => {
   if (created) {
-    ownedContainer(); docker(["stop", "--timeout", "60", container]);
-    if (ownedContainer().State.Running) throw new Error("reporting_owned_container_not_stopped");
+    ownedContainer(image); docker(["stop", "--timeout", "60", container]);
+    if (ownedContainer(image).State.Running) throw new Error("reporting_owned_container_not_stopped");
     writeFileSync(join(proofDirectory, "cleanup-result.json"), `${JSON.stringify({ container, image, ownedNonceMatched: true, stopped: true, preserved: true, tmpfsDatabaseNotABackup: true }, null, 2)}\n`, { flag: "wx" });
     // Preserve the stopped owned container for inspection; no preserved image,
     // volume or other worktree container is removed. Stopping discards tmpfs.
