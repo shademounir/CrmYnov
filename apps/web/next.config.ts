@@ -5,5 +5,8 @@ const config: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
   poweredByHeader: false,
+  headers() {
+    return Promise.resolve(["/invitation", "/first-login", "/access-recovery", "/access-recovery/complete"].map((source) => ({ source, headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "no-store" }] })));
+  },
 };
 export default config;

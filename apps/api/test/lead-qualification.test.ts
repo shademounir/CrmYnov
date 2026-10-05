@@ -52,7 +52,7 @@ test("commercial temperatures keep the approved manual vocabulary", () => {
     { temperature: "HOT", reason: "motif", expectedVersion: -1, idempotencyKey: "qualification:one" },
     { temperature: "HOT", reason: "motif", expectedVersion: 0, idempotencyKey: "short" },
     { temperature: "HOT", reason: "motif", expectedVersion: 0, idempotencyKey: "qualification:one", status: "QUALIFIED" },
-  ]) assert.throws(() => normalizeQualificationInput(input as never));
+  ]) assert.throws(() => normalizeQualificationInput(input));
 });
 
 test("qualification is append-only, versioned and exact replay does not append audit", async () => {

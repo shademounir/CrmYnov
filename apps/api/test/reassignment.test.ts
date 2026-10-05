@@ -5,6 +5,8 @@ import { ReassignmentController } from "../src/assignment/reassignment.controlle
 import { ReassignmentService } from "../src/assignment/reassignment.service.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import { LeadService } from "../src/leads/lead.service.js";
+import type { LeadWorkflowPersistenceRepository } from "../src/leads/lead-workflow-persistence.repository.js";
+import type { PersistentAssignmentService } from "../src/assignment/persistent-assignment.service.js";
 
 const ownerId = "00000000-0000-4000-8000-000000000010";
 const targetId = "00000000-0000-4000-8000-000000000020";
@@ -54,4 +56,47 @@ test("controller exposes request, list and decision contracts", async () => {
   assert.equal((await controller.list(lead.id, adviserRequest)).requests[0]?.id, created.id);
   assert.equal((await controller.decide(created.id, { approved: true, reason: "Validation Manager" }, { principal: manager, header: () => "corr-manager" } as never)).request.status, "APPROVED");
   assert.throws(() => controller.list(lead.id, { header: () => undefined } as never), hasCode("principal_missing"));
+});
+
+test("request replay compares the full normalized intent and never discloses another request", () => {
+  const { leads, service } = setup();
+  const lead = leads.registerLocalLead({ leadCode: "LD-REASSIGN-005", firstName: "Lead", lastName: "Synthétique", campus: "Campus", campaign: "Campaign", educationLevel: "BAC", program: "Programme", source: "FORM", assignedToId: ownerId });
+  const input = { targetUserId: targetId, reason: "  Motif complet  ", moveOpenTasks: false, idempotencyKey: "reassign-full-intent" };
+  const request = service.request(lead.id, input, adviser, "request-intent");
+  assert.equal(service.request(lead.id, { ...input, reason: "Motif complet" }, adviser, "replay-intent").id, request.id);
+  for (const changed of [{ ...input, targetUserId: ownerId }, { ...input, reason: "Autre motif" }, { ...input, moveOpenTasks: true }]) {
+    assert.throws(() => service.request(lead.id, changed, adviser, "collision"), hasCode("reassignment_idempotency_conflict"));
+  }
+  assert.throws(() => service.request(lead.id, input, manager, "other-requester"), hasCode("reassignment_idempotency_conflict"));
+  assert.throws(() => service.request("other-lead", input, adviser, "other-lead"), hasCode("reassignment_idempotency_conflict"));
+  assert.equal(leads.timeline(lead.id, manager).length, 1);
+});
+
+test("terminal decision replays only the exact authenticated intention without new effects", () => {
+  const { leads, service, audit } = setup();
+  const lead = leads.registerLocalLead({ leadCode: "LD-REASSIGN-006", firstName: "Lead", lastName: "Synthétique", campus: "Campus", campaign: "Campaign", educationLevel: "BAC", program: "Programme", source: "FORM", assignedToId: ownerId });
+  const request = service.request(lead.id, { targetUserId: targetId, reason: "Motif complet", moveOpenTasks: false, idempotencyKey: "reassign-terminal" }, adviser, "request");
+  const input = { approved: true, reason: "Décision distincte", expectedVersion: 1, idempotencyKey: "decision-terminal" };
+  assert.equal(service.decide(request.id, input, manager, "decision").request.version, 2);
+  const before = JSON.stringify({ timeline: leads.timeline(lead.id, manager), audit: audit.list() });
+  assert.equal(service.decide(request.id, input, manager, "replay").request.version, 2);
+  assert.equal(JSON.stringify({ timeline: leads.timeline(lead.id, manager), audit: audit.list() }), before);
+  assert.throws(() => service.decide(request.id, { ...input, reason: "Autre décision" }, manager, "collision"), hasCode("reassignment_idempotency_conflict"));
+  assert.throws(() => service.decide(request.id, input, { ...manager, userId: "another-manager" }, "collision"), hasCode("reassignment_idempotency_conflict"));
+});
+
+test("persistent API rejects non-UUID targets without widening the historical in-memory engine contract", async () => {
+  const { audit, leads } = setup();
+  const engine = new AssignmentService(audit);
+  engine.configure([{ id: "legacy-rule", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [
+    { userId: "adviser-a", active: true, capacity: 10, activeLeadCount: 1 },
+    { userId: "adviser-b", active: true, capacity: 10, activeLeadCount: 0 },
+  ] }], manager, "legacy-config");
+  const lead = leads.registerLocalLead({ leadCode: "LD-REASSIGN-LEGACY", firstName: "Lead", lastName: "Synthétique", campus: "Campus", campaign: "Campaign", educationLevel: "BAC", program: "Programme", source: "FORM", assignedToId: "adviser-a" });
+  const input = { targetUserId: "adviser-b", reason: "Motif historique", moveOpenTasks: false, idempotencyKey: "reassign-legacy-contract" };
+  const memory = new ReassignmentService(leads, engine, audit);
+  assert.equal((await memory.requestForApi(lead.id, input, { ...adviser, userId: "adviser-a" }, "memory-request")).targetUserId, "adviser-b");
+  const persistent = new ReassignmentService(leads, engine, audit, { enabled: true } as unknown as LeadWorkflowPersistenceRepository,
+    {} as PersistentAssignmentService);
+  await assert.rejects(() => persistent.requestForApi(lead.id, input, adviser, "persistent-invalid"), hasCode("reassignment_request_invalid"));
 });

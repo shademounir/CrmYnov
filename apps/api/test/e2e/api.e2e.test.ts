@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { createApplication } from "./synthetic-application.js";
-import { digestRecoveryValue, LocalCredentialAdapter } from "../../src/access-recovery/access-recovery.store.js";
+import { digestRecoveryValue, LocalCredentialAdapter, LocalIdentityDirectory, LocalRecoveryChallengeStore } from "../../src/access-recovery/access-recovery.store.js";
 import { UserService } from "../../src/users/user.service.js";
 
 test("serves health, correlation and OpenAPI endpoints", async (context) => {
@@ -39,6 +39,7 @@ test("enforces roles, ownership, scopes and immediate session revocation", async
     const user = users.create({ professionalEmail: email, roles }, "bootstrap", `create-${name}`);
     credentials.provisionTemporary(user.id, "Temporary1!E2eValue", digestRecoveryValue(email));
     credentials.replace(user.id, "Temporary1!E2eValue");
+    users.completeFirstLogin(user.id);
     const response = await fetch(`${base}/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-correlation-id": `create-${name}` },
@@ -81,13 +82,25 @@ test("enforces roles, ownership, scopes and immediate session revocation", async
   assert.equal(body.includes(auditor.userId), false);
 });
 
-test("keeps access recovery non-enumerating and correlation-safe", async (context) => {
+test("keeps HTTP recovery fail-closed and correlation-safe without persistent authority", async (context) => {
+  const originalRecoveryEnabled = process.env.CRM_ACCESS_RECOVERY_ENABLED;
+  context.after(() => {
+    if (originalRecoveryEnabled === undefined) delete process.env.CRM_ACCESS_RECOVERY_ENABLED;
+    else process.env.CRM_ACCESS_RECOVERY_ENABLED = originalRecoveryEnabled;
+  });
   const app = await createApplication();
   await app.listen(0, "127.0.0.1");
   context.after(() => app.close());
   const address = app.getHttpServer().address() as AddressInfo | null;
   assert.ok(address);
   const endpoint = `http://127.0.0.1:${address.port}/access-recovery/requests`;
+  const subject = digestRecoveryValue("known-user@example.invalid");
+  assert.equal(app.get(LocalIdentityDirectory).has(subject), true);
+  const challenges = app.get(LocalRecoveryChallengeStore);
+  const localToken = challenges.issue(subject, "/access-recovery/complete");
+  const credentials = app.get(LocalCredentialAdapter);
+  const originalSecret = "Existing1!SyntheticE2e", nextSecret = "Changed1!SyntheticE2e";
+  credentials.replace(subject, originalSecret);
 
   const requestRecovery = async (email: string, correlationId: string): Promise<{ response: Response; body: unknown }> => {
     const response = await fetch(endpoint, {
@@ -98,13 +111,37 @@ test("keeps access recovery non-enumerating and correlation-safe", async (contex
     return { response, body: await response.json() };
   };
 
-  const known = await requestRecovery("known-user@example.invalid", "recovery-known");
-  const unknown = await requestRecovery("unknown-user@example.invalid", "recovery-unknown");
-  assert.equal(known.response.status, 202);
-  assert.equal(unknown.response.status, 202);
-  assert.deepEqual(known.body, unknown.body);
-  assert.equal(known.response.headers.get("x-correlation-id"), "recovery-known");
-  assert.equal(JSON.stringify(known.body).includes("known-user"), false);
+  // This explicit memory harness is not recovery authority. The 202 eligible /
+  // ineligible contract is covered by the separate two-instance PostgreSQL tests.
+  for (const mode of [
+    { enabled: undefined, code: "recovery_disabled", label: "default" },
+    { enabled: "false", code: "recovery_disabled", label: "disabled" },
+    { enabled: "true", code: "recovery_store_unavailable", label: "store-missing" },
+  ]) {
+    if (mode.enabled === undefined) delete process.env.CRM_ACCESS_RECOVERY_ENABLED;
+    else process.env.CRM_ACCESS_RECOVERY_ENABLED = mode.enabled;
+    const correlationId = `recovery-${mode.label}`;
+    const known = await requestRecovery("known-user@example.invalid", correlationId);
+    const unknown = await requestRecovery("unknown-user@example.invalid", `${correlationId}-unknown`);
+    assert.equal(known.response.status, 503);
+    assert.equal(unknown.response.status, 503);
+    assert.deepEqual(known.body, { code: mode.code });
+    assert.deepEqual(known.body, unknown.body);
+    assert.equal(known.response.headers.get("x-correlation-id"), correlationId);
+    assert.equal(JSON.stringify(known.body).includes("known-user"), false);
+
+    const completion: Response = await fetch(`http://127.0.0.1:${address.port}/access-recovery/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-correlation-id": `${correlationId}-completion` },
+      body: JSON.stringify({ token: localToken, returnPath: "/access-recovery/complete", nextSecret }),
+    });
+    assert.equal(completion.status, 503);
+    assert.deepEqual(await completion.json(), { code: mode.code });
+    assert.equal(completion.headers.get("x-correlation-id"), `${correlationId}-completion`);
+  }
+  assert.ok(credentials.verifyIdentity(subject, originalSecret));
+  assert.equal(credentials.verifyIdentity(subject, nextSecret), undefined);
+  assert.equal(challenges.consume(localToken, "/access-recovery/complete"), subject);
 
   const specification = await fetch(`http://127.0.0.1:${address.port}/docs-json`).then((response) => response.json()) as { paths: Record<string, unknown> };
   assert.ok(specification.paths["/access-recovery/requests"]);

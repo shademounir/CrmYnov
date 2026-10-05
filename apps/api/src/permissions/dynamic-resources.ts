@@ -44,7 +44,19 @@ async function principalCampuses(tx: PermissionTransaction, principal: Principal
   const campuses = await tx.crmReference.findMany({ where: { kind: "CAMPUS", state: "ACTIVE" }, select: { id: true } });
   return campuses.map((row) => row.id);
 }
+/** Only the persisted current account determines the self-service resource. */
+export async function ownTelephonyContext(tx: PermissionTransaction, principal: Principal): Promise<EvaluationContext> {
+  const user = await tx.collaborator.findUnique({ where: { id: principal.userId }, select: { active: true, campusId: true } });
+  if (!user?.active) permissionDenied();
+  if (!user.campusId) {
+    if (!principal.roles.includes("SUPER_ADMIN") || !principal.scopes.some((scope) => scope.kind === "GLOBAL")) permissionDenied();
+    return { ...campusContext(principal, GLOBAL_CAMPUS), own: true };
+  }
+  const campus = await canonicalCampus(tx, user.campusId);
+  return resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true, ownerId: principal.userId });
+}
 export async function routeContexts(tx: PermissionTransaction, request: AuthenticatedRequest, controller: string, key: string, principal: Principal, serverLeadIds: readonly string[] = []): Promise<EvaluationContext[]> {
+  if (controller === "TelephonyOwnController") return [await ownTelephonyContext(tx, principal)];
   if (serverLeadIds.length) return Promise.all(serverLeadIds.map(async (id) => resourceEvaluationContext(tx, principal, await leadResource(tx, id))));
   const leadId = scalar(request.params.leadId) ?? await relatedLeadId(tx, request, controller);
   if (leadId) return [await resourceEvaluationContext(tx, principal, await leadResource(tx, leadId))];

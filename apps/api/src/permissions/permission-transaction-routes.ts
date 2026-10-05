@@ -5,7 +5,7 @@ const readers: Readonly<Record<string, readonly string[]>> = {
   LeadController: ["list", "detail"],
   LeadTimelineController: ["list"],
   LeadQualificationController: ["read"],
-  ReassignmentController: ["list"],
+  ReassignmentController: ["list", "pending"],
   ClosureController: ["list"],
   LeadCollaborationController: ["list"],
   UserController: ["list"],
@@ -29,8 +29,10 @@ const readers: Readonly<Record<string, readonly string[]>> = {
   SharedContributionController: ["read"],
   OperationalRiskController: ["read"],
   TelephonyController: ["configuration", "listLeadCalls", "detail", "associationCandidates", "queue", "recording", "webhookStatus"],
+  TelephonyOwnController: ["read"],
   FollowUpController: ["list"],
   AppointmentController: ["list", "availability", "kpis", "detail"],
+  AdmissionsController: ["context", "responsibles", "windows", "slots", "bookings", "booking", "bookingSlots"],
   ChatController: ["listConversations", "listMessages"],
   BroadcastController: ["list", "recipients"],
   ReferenceController: ["list", "readAvailability"],
@@ -48,8 +50,10 @@ export function permissionTransactionMode(controller: string, handler: string): 
 export type PermissionLifecycle = "session" | "session-create" | "first-login" | "recovery";
 export function lifecyclePermissionFence(controller: string, handler: string): PermissionLifecycle | undefined {
   if (controller === "SessionController" && handler === "create") return "session-create";
+  if (controller === "SessionController" && handler === "current") return "first-login";
   if (controller === "SessionController" && ["revoke", "revokeUser"].includes(handler)) return "session";
   if (controller === "FirstLoginController" && handler === "change") return "first-login";
+  if (controller === "InvitationController" && handler === "complete") return "recovery";
   if (controller === "AccessRecoveryController" && handler === "complete") return "recovery";
   return undefined;
 }

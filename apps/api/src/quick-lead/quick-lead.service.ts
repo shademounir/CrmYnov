@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import type { Principal } from "../auth/auth.types.js";
 import { LeadAssignmentService, type BatchAssignmentStrategy } from "../assignment/lead-assignment.service.js";
 import { IngestionService } from "../ingestion/ingestion.service.js";
@@ -23,12 +23,14 @@ export class QuickLeadService {
   constructor(private readonly leads: LeadService, private readonly ingestion: IngestionService, private readonly assignments: LeadAssignmentService) {}
 
   preview(email: string | undefined, phone: string | undefined, principal: Principal): { items: ReturnType<LeadService["findIdentityCandidates"]> } {
+    this.assertPersistentAvailability();
     this.assertRole(principal);
     if (!email?.trim() && !phone?.trim()) throw new BadRequestException({ code: "quick_lead_identity_required" });
     return { items: this.leads.findIdentityCandidates(email, phone) };
   }
 
   submit(input: QuickLeadInput, principal: Principal, correlationId: string): QuickLeadResult {
+    this.assertPersistentAvailability();
     this.assertRole(principal);
     this.validate(input);
     const previous = this.receipts.get(input.idempotencyKey);
@@ -77,5 +79,8 @@ export class QuickLeadService {
 
   private assertRole(principal: Principal): void {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "quick_lead_role_forbidden" });
+  }
+  private assertPersistentAvailability(): void {
+    if (this.leads.persistenceEnabled()) throw new ServiceUnavailableException({ code: "quick_lead_persistence_unavailable", message: "Utilisez la création Lead complète : la saisie rapide persistante n’est pas encore disponible." });
   }
 }

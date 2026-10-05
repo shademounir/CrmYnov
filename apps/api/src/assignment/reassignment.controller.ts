@@ -12,6 +12,11 @@ export class ReassignmentController {
   create(@Param("leadId") leadId: string, @Body() body: CreateReassignmentInput, @Req() request: AuthenticatedRequest): ReassignmentRequest | Promise<ReassignmentRequest> { return this.reassignments.persistenceEnabled() ? this.reassignments.requestForApi(leadId, body, this.principal(request), this.correlation(request)) : this.reassignments.request(leadId, body, this.principal(request), this.correlation(request)); }
   @Get("leads/:leadId/reassignment-requests")
   list(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): { requests: ReassignmentRequest[] } | Promise<{ requests: ReassignmentRequest[] }> { return this.reassignments.persistenceEnabled() ? this.reassignments.listForLeadForApi(leadId, this.principal(request)).then((requests) => ({ requests })) : { requests: this.reassignments.listForLead(leadId, this.principal(request)) }; }
+  @Get("reassignment-requests")
+  @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
+  async pending(@Req() request: AuthenticatedRequest): Promise<{ requests: ReassignmentRequest[] }> {
+    return { requests: await this.reassignments.listRequestsForApi(this.principal(request)) };
+  }
   @Patch("reassignment-requests/:requestId/decision")
   @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
   decide(@Param("requestId") requestId: string, @Body() body: DecideReassignmentInput, @Req() request: AuthenticatedRequest): ReturnType<ReassignmentService["decide"]> | ReturnType<ReassignmentService["decideForApi"]> { return this.reassignments.persistenceEnabled() ? this.reassignments.decideForApi(requestId, body, this.principal(request), this.correlation(request)) : this.reassignments.decide(requestId, body, this.principal(request), this.correlation(request)); }

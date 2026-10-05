@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+const read=path=>readFile(new URL('../../../'+path,import.meta.url),'utf8');
+test('Admissions CI requires actual PostgreSQL concurrency proofs, not unenabled unit skips',async()=>{
+ const workflow=await read('.github/workflows/application-quality.yml');
+ const integration=workflow.match(/\n  integration-tests:[\s\S]+?(?=\n  playwright:)/)?.[0]??'';
+ assert.match(integration,/node scripts\/ci\/admissions-postgres\.mjs/);
+ const harness=await read('scripts/ci/admissions-postgres.mjs');
+ assert.match(harness,/admissions_test_must_not_inherit_database/);
+ assert.match(harness,/C:\/Program Files\/Docker\/Docker\/resources\/bin\/docker\.exe/);
+ assert.match(harness,/\/usr\/bin\/docker/);
+ assert.match(harness,/accessSync\(dockerExecutable/);
+ assert.doesNotMatch(harness,/execFileSync\(['"]docker['"]/);
+ assert.match(harness,/127\.0\.0\.1::5432/);
+ assert.match(harness,/crmy175_test_identity\.marker/);
+ assert.match(harness,/migrate','deploy'/);
+ assert.match(harness,/CRMY175_EPHEMERAL_TEST:'true'/);
+ assert.match(harness,/CRMY175_DATABASE_NONCE:nonce/);
+ assert.match(harness,/test\/admissions-postgres\.test\.ts/);
+ assert.match(harness,/test\/admissions-concurrency\.test\.ts/);
+ assert.match(harness,/test\/admissions-http-postgres\.test\.ts/);
+ assert.match(harness,/--test-concurrency=1/);
+ assert.match(harness,/if\(created\)/);
+ assert.doesNotMatch(harness,/\['rm'|migrate.*reset|seed:local/);
+});
+test('Admissions PostgreSQL evidence also participates in canonical native coverage',async()=>{
+ const source=await read('scripts/ci/coverage-runner.mjs');
+ assert.match(source,/test\/admissions-postgres\.test\.ts/);
+ assert.match(source,/test\/admissions-concurrency\.test\.ts/);
+ assert.match(source,/test\/admissions-http-postgres\.test\.ts/);
+ assert.match(source,/--test-concurrency=1/);
+ assert.match(source,/CRMY175_EPHEMERAL_TEST: "true", CRMY171_DATABASE_NONCE: nonce/);
+ assert.match(source,/await verifyDatabase\(direct, nonce\)/);
+ assert.match(source,/coverage_must_not_inherit_database/);
+});

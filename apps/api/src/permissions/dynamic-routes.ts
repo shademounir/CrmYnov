@@ -5,10 +5,10 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   LeadQualificationController: { read: ["lead.view"], update: ["lead.qualification.update"] },
   LeadTimelineController: { list: ["interaction.view"], create: ["interaction.create"], correct: ["interaction.create"] },
   LeadAssignmentController: { candidates: [], assignOne: ["lead.assign"], preview: ["lead.assign"], assignBatch: ["lead.assign"] },
-  ReassignmentController: { create: ["lead.reassign.request"], list: ["lead.view"], decide: ["lead.reassign.approve"] },
+  ReassignmentController: { create: ["lead.reassign.request"], list: ["lead.view"], pending: [], decide: ["lead.reassign.approve"] },
   ClosureController: { request: ["lead.close.request"], list: ["lead.view"], decide: ["lead.close.approve"], cancel: ["lead.close.request"] },
   LeadCollaborationController: { request: ["lead.collaborators.manage"], list: ["lead.view"], decide: ["lead.collaborators.manage"] },
-  UserController: { create: ["users.create"], list: ["users.view"], setStatus: ["users.disable"], updateAuthorization: ["users.roles.assign"], issueTemporarySecret: ["users.roles.assign"] },
+  UserController: { create: ["users.create"], list: ["users.view"], setStatus: ["users.disable"], updateAuthorization: ["users.roles.assign"], issueTemporarySecret: ["users.roles.assign"], issueInvitation: ["users.roles.assign"] },
   QuickLeadController: { matches: ["lead.view"], submit: ["lead.create"] },
   AssignmentController: { config: ["lead.assign"], configure: ["settings.campus.manage"], simulate: ["lead.assign"], assign: ["lead.assign"], history: ["lead.assign"] },
   IngestionController: { ingest: ["import.execute"], confirmPersistent: ["import.execute", "import.confirm"], provenance: ["import.view"] },
@@ -25,6 +25,9 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   ManagerDashboardController: { read: ["reporting.view"], export: ["reporting.export"] },
   TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], freeCall: ["telephony.free-call.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
   TelephonyProvisioningController: { list: [], server: [], user: [], pairing: [], revoke: [] },
+  TelephonyOwnController: { read: ["interaction.view"], pairing: ["interaction.create"], revoke: ["interaction.create"] },
+  // Admissions rechecks declared responsibility, private agenda and lead grants in the same fence.
+  AdmissionsController: { context: [], responsibles: [], configureResponsibility: [], windows: [], createWindow: [], withdrawWindow: [], slots: [], createBooking: [], bookings: [], booking: [], bookingSlots: [], decide: [], report: [] },
 };
 const grouped: Readonly<Record<string, string>> = {
   FollowUpController: "reminder.manage", AppointmentController: "appointment.manage",
@@ -40,7 +43,7 @@ const groupedHandlers: Readonly<Record<string, readonly string[]>> = {
 };
 // These controllers enforce their own permission or security lifecycle contract.
 const delegated = new Set(["ReferenceController", "LeadTagController", "DynamicPermissionController", "AuditController"]);
-export const lifecycleControllers = new Set(["HealthController", "SessionController", "AccessRecoveryController", "FirstLoginController", "ForminatorWebhookController", "TelephonyBridgeController", "TelephonyAgentController"]);
+export const lifecycleControllers = new Set(["HealthController", "SessionController", "AccessRecoveryController", "FirstLoginController", "InvitationController", "ForminatorWebhookController", "TelephonyBridgeController", "TelephonyAgentController"]);
 export function routePermissions(controller: string, handler: string): readonly string[] | null {
   // Each operation rechecks persisted audience, owner and grant inside the shared fence.
   if (controller === "ViewSharingController") return ["audiences", "received", "history", "read", "share", "revoke", "duplicate", "archive"].includes(handler) ? [] : null;

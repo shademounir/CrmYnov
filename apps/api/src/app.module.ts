@@ -18,6 +18,7 @@ import { SessionController } from "./auth/session.controller.js";
 import { SessionService } from "./auth/session.service.js";
 import { AccessRecoveryController } from "./access-recovery/access-recovery.controller.js";
 import { AccessRecoveryService } from "./access-recovery/access-recovery.service.js";
+import { AccessRecoveryRateLimitGuard } from "./access-recovery/access-recovery-rate-limit.guard.js";
 import {
   LocalCredentialAdapter,
   LocalIdentityDirectory,
@@ -30,6 +31,9 @@ import { UserController } from "./users/user.controller.js";
 import { UserService } from "./users/user.service.js";
 import { FirstLoginController } from "./first-login/first-login.controller.js";
 import { FirstLoginService } from "./first-login/first-login.service.js";
+import { InvitationController } from "./invitations/invitation.controller.js";
+import { InvitationService } from "./invitations/invitation.service.js";
+import { GmailInvitationSender } from "./invitations/gmail-invitation.sender.js";
 import { LeadController, LeadStatusController, LeadTimelineController } from "./leads/lead.controller.js";
 import { LeadService } from "./leads/lead.service.js";
 import { LeadPersistenceRepository } from "./leads/lead-persistence.repository.js";
@@ -103,7 +107,11 @@ import { TelephonyAgentController, TelephonyBridgeController, TelephonyControlle
 import { TelephonyService } from "./telephony/telephony.service.js";
 import { TelephonyPersistenceRepository } from "./telephony/telephony-persistence.repository.js";
 import { TelephonyAgentRepository } from "./telephony/telephony-agent.repository.js";
+import { TelephonyOwnController } from "./telephony/telephony-own.controller.js";
+import { TelephonyOwnService } from "./telephony/telephony-own.service.js";
 import { AppointmentController } from "./appointments/appointment.controller.js";
+import { AdmissionsController } from "./admissions/admissions.controller.js";
+import { AdmissionsService } from "./admissions/admissions.service.js";
 import { AppointmentService } from "./appointments/appointment.service.js";
 import { AppointmentPersistenceRepository } from "./appointments/appointment-persistence.repository.js";
 import { PrismaService } from "./persistence/prisma.service.js";
@@ -120,8 +128,10 @@ import { createSheetSource } from "./sheet-import/google-sheet-source.js";
 import { resolve } from "node:path";
 
 @Module({
-  controllers: [SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
+  controllers: [TelephonyOwnController, AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController],
   providers: [
+    TelephonyOwnService,
+    AdmissionsService,
     SheetImportAdminService, SheetImportExecutor, SheetImportScheduler,
     { provide: ScheduledSheetExecutor, useExisting: SheetImportExecutor },
     { provide: SheetSource, useFactory: (): ReturnType<typeof createSheetSource> => createSheetSource(process.env, resolve(__dirname, "../../..")) },
@@ -141,6 +151,7 @@ import { resolve } from "node:path";
     RateLimitService,
     RbacGuard,
     AccessRecoveryService,
+    AccessRecoveryRateLimitGuard,
     LocalIdentityDirectory,
     LocalRecoveryChallengeStore,
     LocalCredentialAdapter,
@@ -148,6 +159,8 @@ import { resolve } from "node:path";
     AuditReader,
     UserService,
     FirstLoginService,
+    InvitationService,
+    GmailInvitationSender,
     LeadService,
     LeadPersistenceRepository,
     LeadQualificationService,

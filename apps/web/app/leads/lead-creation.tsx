@@ -9,7 +9,17 @@ import { mutationBody } from "../_components/api-mutation-form";
 const requiredFields = ["firstName", "lastName", "educationLevel", "source", "campus", "program", "campaign"] as const;
 type FormState = "idle" | "submitting" | "success" | "error";
 interface CreatedLead { id: string; leadCode: string }
-interface CreationResponse { lead?: CreatedLead; duplicateCandidates?: string[]; code?: string }
+interface InitialAssignment { outcome: "ASSIGNED" | "UNASSIGNED"; reason: string; configurationVersion: number; ruleId: string | null }
+interface CreationResponse { lead?: CreatedLead; duplicateCandidates?: string[]; code?: string; assignment?: unknown }
+
+export function initialAssignmentMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Partial<InitialAssignment>;
+  if (!["ASSIGNED", "UNASSIGNED"].includes(row.outcome ?? "") || typeof row.reason !== "string" || typeof row.configurationVersion !== "number" || !Number.isSafeInteger(row.configurationVersion) || row.configurationVersion < 0) return undefined;
+  if (row.outcome === "ASSIGNED") return `Affectation automatique enregistrée dans la même transaction (configuration v${row.configurationVersion}). L’accès au dossier reste soumis à vos permissions.`;
+  const reason = ({ assignment_candidate_unavailable: "aucun Commercial éligible ou disponible", assignment_automation_disabled: "automatisation désactivée pour ce campus", assignment_configuration_absent: "configuration du campus absente", assignment_rule_unavailable: "aucune règle applicable" } as Readonly<Record<string, string>>)[row.reason] ?? "aucune affectation automatique confirmée";
+  return `Lead créé sans affectataire : ${reason}. Il reste dans la file À affecter.${row.configurationVersion > 0 ? ` Configuration v${row.configurationVersion}.` : " Aucune version de configuration active n’est confirmée."}`;
+}
 
 function Field({ name, label, type = "text", required = false, help, placeholder, inputMode }: Readonly<{
   name: string; label: string; type?: string; required?: boolean; help?: string; placeholder?: string;
@@ -50,6 +60,8 @@ export function LeadCreationForm({ onCancel, onDirtyChange }: Readonly<{ onCance
   const [error, setError] = useState("");
   const [created, setCreated] = useState<CreatedLead | null>(null);
   const [duplicateCandidates, setDuplicateCandidates] = useState<string[]>([]);
+  const [assignmentMessage, setAssignmentMessage] = useState<string>();
+  const [createdAccess, setCreatedAccess] = useState<"checking" | "allowed" | "unavailable">("checking");
   const formRef = useRef<HTMLFormElement>(null);
   const inFlight = useRef(false);
   const idempotencyKey = useRef<string | null>(null);
@@ -78,7 +90,14 @@ export function LeadCreationForm({ onCancel, onDirtyChange }: Readonly<{ onCance
         setState("error"); setError(failureMessage(response.status, result.code)); return;
       }
       setCreated(result.lead); setDuplicateCandidates(Array.isArray(result.duplicateCandidates) ? result.duplicateCandidates : []);
+      setAssignmentMessage(initialAssignmentMessage(result.assignment));
       setState("success"); onDirtyChange(false);
+      setCreatedAccess("checking");
+      try {
+        const access = await fetch(`/api/crm/leads/${encodeURIComponent(result.lead.id)}`, { credentials: "same-origin", cache: "no-store" });
+        const value: unknown = access.ok ? await access.json() : undefined;
+        setCreatedAccess(value && typeof value === "object" && "id" in value && value.id === result.lead.id ? "allowed" : "unavailable");
+      } catch { setCreatedAccess("unavailable"); }
     } catch {
       setState("error"); setError("La connexion a été interrompue. Votre saisie et votre identifiant de demande sont conservés : réessayez sans modifier les champs.");
     } finally { inFlight.current = false; }
@@ -114,9 +133,11 @@ export function LeadCreationForm({ onCancel, onDirtyChange }: Readonly<{ onCance
       {state === "error" ? <p className="lead-create-error" role="alert"><Warning size={20} aria-hidden="true" />{error}</p> : null}
       {state === "success" && created ? <div className="lead-create-success" role="status">
         <CheckCircle size={24} weight="fill" aria-hidden="true" />
-        <div><strong>{created.leadCode} a bien été créé.</strong><p>L’écriture est confirmée par l’API. Ouvrez la fiche pour poursuivre le suivi.</p>
+        <div><strong>{created.leadCode} a bien été créé.</strong><p>L’écriture est confirmée par l’API.{createdAccess === "allowed" ? " Ouvrez la fiche pour poursuivre le suivi." : " Les liens proposés respectent l’accès confirmé pour votre session."}</p>
+          {assignmentMessage ? <p>{assignmentMessage}</p> : null}
           {duplicateCandidates.length ? <p className="lead-create-collision"><Warning size={17} aria-hidden="true" /> {duplicateCandidates.length} correspondance{duplicateCandidates.length > 1 ? "s" : ""} potentielle{duplicateCandidates.length > 1 ? "s" : ""} détectée{duplicateCandidates.length > 1 ? "s" : ""}. Aucun dossier n’a été fusionné.</p> : null}
-          <div className="lead-create-success-actions"><Link className="primary-button" href={`/leads/${encodeURIComponent(created.id)}`}>Ouvrir la fiche</Link><a className="secondary-button" href={`/leads?search=${encodeURIComponent(created.leadCode)}`}>Voir dans la liste</a></div>
+          {createdAccess === "checking" ? <p>Vérification de l’accès au dossier créé…</p> : createdAccess === "unavailable" ? <p>La création est confirmée, mais l’accès à cette fiche n’est pas confirmé pour votre session. Une affectation à un autre Commercial ne vous donne pas de droits supplémentaires.</p> : null}
+          <div className="lead-create-success-actions">{createdAccess === "allowed" ? <Link className="primary-button" href={`/leads/${encodeURIComponent(created.id)}`}>Ouvrir la fiche</Link> : null}<a className="secondary-button" href={`/leads?search=${encodeURIComponent(created.leadCode)}`}>Voir dans la liste</a></div>
         </div>
       </div> : null}
     </div>

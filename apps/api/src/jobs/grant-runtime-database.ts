@@ -33,7 +33,7 @@ export interface RuntimeDatabaseGrantDependencies {
 
 const defaults: RuntimeDatabaseGrantDependencies = {
   runtimeRole: process.env.CRM_RUNTIME_DATABASE_ROLE?.trim(),
-  createClient: () => new PrismaClient() as unknown as RuntimeDatabaseClient,
+  createClient: () => new PrismaClient(),
   write: (message) => process.stdout.write(message),
 };
 

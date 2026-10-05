@@ -22,7 +22,7 @@ export function digestRecoveryValue(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function deriveSecret(secret: string, salt: string): string {
+export function deriveSecret(secret: string, salt: string): string {
   return scryptSync(secret, salt, 32).toString("hex");
 }
 
@@ -123,6 +123,17 @@ export class LocalCredentialAdapter implements OnModuleInit {
   verifyIdentity(identityDigest: string, secret: string): { subjectId: string; mustChange: boolean } | undefined {
     const current = this.lookup(identityDigest);
     return current && this.matches(current, secret) ? { subjectId: current.subjectId, mustChange: current.mustChange } : undefined;
+  }
+
+  /** A completed invitation can be written by another API instance; login reads its persisted credential. */
+  async verifyIdentityForApi(identityDigest: string, secret: string): Promise<{ subjectId: string; mustChange: boolean } | undefined> {
+    const client = this.prisma?.client;
+    if (!client) return this.verifyIdentity(identityDigest, secret);
+    const row = await client.localPasswordHash.findFirst({ where: { identityDigest } });
+    if (!row) return undefined;
+    const current: CredentialRecord = { subjectId: row.collaboratorId, identityDigest: row.identityDigest, salt: row.passwordSalt, digest: row.passwordDigest, mustChange: row.mustChange };
+    this.store(current);
+    return this.matches(current, secret) ? { subjectId: current.subjectId, mustChange: current.mustChange } : undefined;
   }
 
   requiresChange(subjectKey: string): boolean { return this.lookup(subjectKey)?.mustChange === true; }

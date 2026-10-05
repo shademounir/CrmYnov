@@ -95,3 +95,20 @@ export function evaluatePermission(principal: Principal, key: string, rows: read
   const sources = [...new Set(principal.roles)].map((role) => explainRole(role, key, rows, context));
   return { permission: key, allowed: sources.some((source) => source.allowed), sources, restriction: context.restriction ?? null };
 }
+
+/** Assignment eligibility is an authorization capability, not a fabricated login.
+ * The caller supplies the persisted, activated Commercial and canonical campus.
+ */
+export function assignmentCandidateCapability(roleList: readonly Role[], rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  if (!roleList.includes("ADMISSIONS")) return false;
+  return ["lead.view", "lead.edit", "reminder.manage"].every((key) =>
+    explainRole("ADMISSIONS", key, rows, { ...context, own: true }).allowed);
+}
+
+/** Minimized assignment alerts go only to activated recipients whose actual
+ * grants allow the linked operation. This is not an HTTP session assertion.
+ */
+export function assignmentManagerCapability(roleList: readonly Role[], permission: "lead.assign" | "lead.reassign.approve", rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  return roleList.filter((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))
+    .some((role) => explainRole(role, "lead.view", rows, context).allowed && explainRole(role, permission, rows, context).allowed);
+}

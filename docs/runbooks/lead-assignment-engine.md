@@ -41,3 +41,15 @@ Le `eventKey` existant identifie le rejeu : même clé et même Lead autorisé �
 `POST /assignment/simulate` est strictement en lecture : aucun Lead, curseur, historique de décisions ou audit métier. La simulation manuelle d'import utilise des positions virtuelles locales et ne réserve pas les destinataires ; la confirmation réévalue les règles et permissions. Ses mappings manuels restent en mémoire, limite distincte non migrée par CRMY-171.
 
 L'historique expose seulement les décisions réellement persistées et leur contexte/version, sans recalcul avec les règles actuelles. Le tableau d'affectation et les indicateurs de charge lisent les règles Prisma autorisées ; la capacité conserve l'agrégation maximale existante par conseiller. Les anciens totaux de lots non persistés restent explicitement indisponibles (`null`, `UNAVAILABLE_NOT_PERSISTED`), jamais reconstruits ni présentés comme zéro.
+
+## Création canonique et affectation initiale — CRMY-94, octobre 2026
+
+La création normale `POST /leads` applique la configuration persistante du campus dans la même transaction que le Lead : Campagne → Source → repli campus, et aucun changement du contrat décision-seule `/assignment/auto`. Une configuration absente, une automatisation désactivée ou l'absence de Commercial éligible laisse le Lead créé sans affectataire, avec motif explicite et notification interne aux Managers activés effectivement autorisés. Une erreur technique ou une règle invalide annule la transaction ; elle n'est pas transformée en succès non affecté.
+
+L'affectation initiale cible un Commercial activé, ayant terminé son premier accès, dans le campus canonique et disposant des capacités nécessaires. La capacité est relue dans PostgreSQL sous verrou transactionnel partagé avec les autres mutations d'affectation. Le curseur ou tirage reproductible n'est consommé qu'une fois avec le reçu de création. Rejouer la même création ne réévalue pas les règles actuelles et ne crée aucune notification supplémentaire. Le tirage reproductible ne promet pas une répartition statistiquement uniforme.
+
+La confirmation de création expose le résultat initial, le motif et la version via son reçu. Ces métadonnées ne sont pas une colonne du Lead et ne sont pas inventées après un `GET` ultérieur ; son propriétaire réel est durable. Un créateur Commercial n'acquiert pas de droits sur un Lead affecté à un autre Commercial. Le lien de fiche n'est proposé qu'après une relecture autorisée ; les droits serveur restent inchangés.
+
+Le formulaire rapide historique, dont le chemin était volatile, est explicitement indisponible lorsque PostgreSQL est actif (`503 quick_lead_persistence_unavailable`). L'interface oriente vers la création canonique persistante. Aucun faux succès mémoire ni nouvelle route de contournement n'est proposé.
+
+Ce raccordement n'active ni Sheets ni Zapier, ne réaffecte pas l'historique et ne nécessite aucune migration supplémentaire. Les indicateurs `/assignment/dashboard` relisent les structures API imbriquées ; les parcours globaux de dashboard, chat et frontière Sheet/Zapier T0 demeurent des lots séparés.

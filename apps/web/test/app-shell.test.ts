@@ -11,6 +11,8 @@ import {
   loadUnreadNotificationCount,
   searchItems,
   visibleNavigation,
+  ownTelephonyRoleAllowed,
+  loadOwnTelephonyAccess,
   type SearchState,
 } from "../app/_components/app-shell.js";
 
@@ -78,24 +80,24 @@ test("limits the shell navigation to the authenticated role without granting API
   assert.match(commercial, /href="\/leads"/u);
   assert.match(commercial, /Commercial/u);
   assert.doesNotMatch(commercial, /Session locale/u);
-  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" }))) as typeof fetch), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
-  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401))) as typeof fetch), { roles: [] });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" })))), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401)))), { roles: [] });
 });
 
 test("loads every bounded global-search state", async () => {
   const signal = new AbortController().signal;
-  const ready = await loadSearchResults("lead", signal, (() => Promise.resolve(response(200, { items: [{ id: "lead-1", firstName: "Lead" }] }))) as typeof fetch);
+  const ready = await loadSearchResults("lead", signal, (() => Promise.resolve(response(200, { items: [{ id: "lead-1", firstName: "Lead" }] }))));
   assert.equal(ready.kind, "ready");
-  assert.equal(await loadSearchResults("none", signal, (() => Promise.resolve(response(200, { items: [] }))) as typeof fetch).then((value) => value.kind), "empty");
-  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(401))) as typeof fetch).then((value) => value.kind), "session");
-  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(403))) as typeof fetch).then((value) => value.kind), "forbidden");
-  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(503))) as typeof fetch).then((value) => value.kind), "error");
+  assert.equal(await loadSearchResults("none", signal, (() => Promise.resolve(response(200, { items: [] })))).then((value) => value.kind), "empty");
+  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(401)))).then((value) => value.kind), "session");
+  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(403)))).then((value) => value.kind), "forbidden");
+  assert.equal(await loadSearchResults("lead", signal, (() => Promise.resolve(response(503)))).then((value) => value.kind), "error");
 });
 
 test("uses the API unread count instead of a static badge", async () => {
-  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: 3 }))) as typeof fetch), 3);
-  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: -2 }))) as typeof fetch), 0);
-  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(401))) as typeof fetch), undefined);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: 3 })))), 3);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(200, { unread: -2 })))), 0);
+  assert.equal(await loadUnreadNotificationCount((() => Promise.resolve(response(401)))), undefined);
   const withBadge = renderShell({ kind: "closed", items: [] }, { unreadNotifications: 3 });
   assert.match(withBadge, /3 non lues/);
   assert.match(withBadge, /notification-dot/);
@@ -103,7 +105,7 @@ test("uses the API unread count instead of a static badge", async () => {
 });
 
 test("renders the responsive shell and every explicit search state", () => {
-  const ready = renderShell({ kind: "ready", items: [{ id: "lead/id", label: "Lead Synthétique", detail: "LD-SYN · Programme" }] }, { collapsed: true, mobileOpen: true, profileOpen: true });
+  const ready = renderShell({ kind: "ready", items: [{ id: "lead/id", label: "Lead Synthétique", detail: "LD-SYN · Programme" }] }, { collapsed: true, mobileOpen: true, profileOpen: true, sessionRoles: ["SUPER_ADMIN"] });
   assert.match(ready, /Maroc Ynov Campus/);
   assert.match(ready, /aria-current="page"/);
   assert.match(ready, /Lead Synthétique/);
@@ -127,10 +129,21 @@ test("renders the responsive shell and every explicit search state", () => {
   assert.doesNotMatch(closed, /Résultats de la recherche globale/);
 });
 
+test("commercial navigation excludes administration and imports without replacing API permissions", () => {
+  const links = visibleNavigation(["ADMISSIONS"]).map((item) => item.href);
+  assert.ok(links.includes("/leads"));
+  assert.ok(links.includes("/appointments"));
+  assert.ok(links.every((href) => !href.startsWith("/admin/")));
+  assert.ok(!links.includes("/imports/wizard"));
+  const shell = renderShell({ kind: "closed", items: [] }, { sessionRoles: ["ADMISSIONS"], profileOpen: true });
+  assert.doesNotMatch(shell, /href="\/admin\//);
+});
+
 test("marks only Relances active for the follow-up queue", () => {
   const followUp = renderShell({ kind: "closed", items: [] }, {
     pathname: "/leads",
     locationSearch: "view=FOLLOW_UP",
+    sessionRoles: ["ADMISSIONS"],
   });
   assert.match(followUp, /class="active" aria-current="page" href="\/leads\?view=FOLLOW_UP"/u);
   assert.match(followUp, /Page actuelle : Relances/u);
@@ -145,4 +158,23 @@ test("renders the client shell initial state and bypasses chrome on authenticati
 
   const authentication = renderToStaticMarkup(createElement(AppShellClient, { pathname: "/", children: createElement("main", null, "Connexion locale") }));
   assert.match(authentication, /^<main>Connexion locale<\/main>$/u);
+});
+
+test("own telephony navigation requires both an eligible role and successful server permission verification", async () => {
+  for (const role of ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"] as const) {
+    assert.equal(ownTelephonyRoleAllowed([role]), true);
+    const allowed = renderShell({ kind: "closed", items: [] }, { pathname: "/account/telephony", profileOpen: true, sessionRoles: [role], ownTelephonyAllowed: true });
+    assert.match(allowed, /href="\/account\/telephony"/u);
+    assert.match(allowed, /Mon compte · Téléphonie/u);
+    assert.match(allowed, /Page actuelle : Mon poste d’appel/u);
+    const denied = renderShell({ kind: "closed", items: [] }, { profileOpen: true, sessionRoles: [role], ownTelephonyAllowed: false });
+    assert.doesNotMatch(denied, /href="\/account\/telephony"/u);
+  }
+  assert.equal(ownTelephonyRoleAllowed(["AUDITOR"]), false);
+  assert.equal(ownTelephonyRoleAllowed([]), false);
+  assert.doesNotMatch(renderShell({ kind: "closed", items: [] }, { profileOpen: true, sessionRoles: ["AUDITOR"], ownTelephonyAllowed: true }), /href="\/account\/telephony"/u);
+  for (const status of [200, 401, 403, 503]) assert.equal(await loadOwnTelephonyAccess((input, init) => {
+    assert.equal(input, "/api/crm/telephony/me"); assert.equal(init?.cache, "no-store"); return Promise.resolve(response(status));
+  }), status === 200);
+  assert.equal(await loadOwnTelephonyAccess(() => Promise.reject(new Error("unavailable"))), false);
 });

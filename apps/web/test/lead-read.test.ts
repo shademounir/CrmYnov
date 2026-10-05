@@ -67,7 +67,7 @@ test("renders a role-aware unified lead profile", () => {
     qualificationVersion: 1,
   };
   const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [], actionMessage: "Qualification commerciale enregistrée." }));
-  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffecter", "Réaffecter ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée"]) assert.match(html, new RegExp(expected));
+  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffectation", "Réaffectation de ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée"]) assert.match(html, new RegExp(expected));
   assert.equal(html.includes("00000000-0000-4000-8000-000000000172"), false);
   assert.equal(leadSectionHref("lead/id", "timeline"), "/leads/lead%2Fid/timeline");
   assert.doesNotMatch(html, /title="Affectez d’abord/u);
@@ -90,8 +90,8 @@ test("keeps an unassigned Lead in context while explaining how to unlock follow-
     qualificationVersion: 0,
   };
   const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [] }));
-  for (const expected of ["Affecter ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer", "Planifier une relance", "Affectation nécessaire", "Une relance doit avoir un conseiller responsable", "sans quitter la fiche"]) assert.match(html, new RegExp(expected));
-  assert.doesNotMatch(html, /Réaffecter ce Lead/u);
+  for (const expected of ["Affectation de ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer", "Planifier une relance", "Affectation nécessaire", "Une relance doit avoir un conseiller responsable", "sans quitter la fiche"]) assert.match(html, new RegExp(expected));
+  assert.doesNotMatch(html, /Réaffectation de ce Lead/u);
   assert.doesNotMatch(html, /title="Affectez d’abord le Lead à un conseiller"/u);
 });
 test("uses business labels and neutral fallbacks", () => {
@@ -180,9 +180,10 @@ test("renders timestamps in French using the explicit Africa/Casablanca timezone
   assert.equal(formatDate("2026-09-11T23:30:00.000Z"), "12 sept., 00:30");
   assert.equal(formatDate(undefined), "Non planifiée");
 });
-test("keeps every Lead action inside desktop viewports through 1800 px", () => {
+test("keeps the Lead action grid active at every desktop width, including ultra-wide screens", () => {
   const css = readFileSync(new URL("../app/leads/lead-profile.css", import.meta.url), "utf8");
-  assert.match(css, /@media \(max-width: 1800px\) and \(min-width: 821px\)[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/u);
+  assert.match(css, /^\.lead-profile__actions \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/mu);
+  assert.doesNotMatch(css, /@media \(max-width: 1800px\)/u);
   assert.match(css, /\.lead-profile__actions > \.primary-button,[\s\S]*min-width: 0/u);
 });
 test("keeps commercial context and actions ahead of the dossier on mobile", () => {

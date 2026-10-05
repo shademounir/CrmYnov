@@ -1,4 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { OwnTelephonySnapshot } from "../app/account/telephony/own-telephony-contract";
+
+const managerTelephony: OwnTelephonySnapshot = {
+  global: { enabled: false, mode: "DISABLED" }, profile: null, workstation: null,
+  readiness: { available: false, reason: "MODE_DISABLED" }, canPair: false, canRevoke: false,
+  localPreferencesOnly: true, inboundEnabled: false, recordingEnabled: false,
+};
 
 const managerReport = {
   definitionVersion: "manager-dashboard-v1", timezone: "Africa/Casablanca", filters: { period: "7d", campus: "campus-a" },
@@ -17,8 +24,13 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
   contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
 
 async function mockReporting(page: Page): Promise<void> {
-  // Reporting is isolated from the API; include the shared shell's notification query.
-  await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "manager@example.invalid" }) }));
+  // Reporting is isolated from the API; include shared shell and Admissions capabilities.
+  await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "manager@example.invalid", mustChangeSecret: false }) }));
+  await page.route("**/api/crm/telephony/me", (route) => {
+    expect(route.request().method()).toBe("GET");
+    return route.fulfill({ status: 200, contentType: "application/json", headers: { "cache-control": "private, no-store" }, body: JSON.stringify(managerTelephony) });
+  });
+  await page.route("**/api/crm/admissions/context", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: false, canUseAgenda: true, campuses: [{ id: "campus-a", code: "SYNTHETIC", label: "Campus synthétique" }], eligibleUsers: [] }) }));
   await page.route("**/api/crm/notifications?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], unread: 0, total: 0, page: 1, pageSize: 1 }) }));
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
   await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
@@ -37,6 +49,8 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   });
   await page.context().addCookies([{ name: "crm_session", value: "synthetic-manager-session", domain: "localhost", path: "/" }]);
   await mockReporting(page); await page.goto("/manager/reports/dashboard");
+  await expect(page.getByRole("link", { name: "Mon agenda Admissions", exact: true })).toHaveAttribute("href", "/appointments/admissions");
+  await expect(page.getByRole("link", { name: "Mon poste d’appel", exact: true })).toHaveAttribute("href", "/account/telephony");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "crm_session")).toBe(true);
   await page.locator("details.reporting-filter-popover > summary").click();
   await page.locator('select[name="period"]').selectOption("7d");

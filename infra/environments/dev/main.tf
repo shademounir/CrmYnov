@@ -8,11 +8,11 @@ locals {
     environment = "dev"
     managed-by  = "terraform"
   }
-  services = toset([
+  services = toset(concat([
     "artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "cloudresourcemanager.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com",
     "run.googleapis.com", "secretmanager.googleapis.com", "servicenetworking.googleapis.com",
     "serviceusage.googleapis.com", "sqladmin.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com",
-  ])
+  ], var.gmail_invitation_enabled ? ["gmail.googleapis.com"] : []))
 }
 
 data "google_project" "current" { project_id = var.project_id }
@@ -221,6 +221,33 @@ resource "google_secret_manager_secret" "synthetic_login" {
   }
   depends_on = [google_project_service.runtime]
 }
+resource "google_secret_manager_secret" "gmail_oauth_client_id" {
+  project   = var.project_id
+  secret_id = "crm-dev-gmail-oauth-client-id"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.runtime]
+}
+resource "google_secret_manager_secret" "gmail_oauth_client_secret" {
+  project   = var.project_id
+  secret_id = "crm-dev-gmail-oauth-client-secret"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.runtime]
+}
+resource "google_secret_manager_secret" "gmail_oauth_refresh_token" {
+  project   = var.project_id
+  secret_id = "crm-dev-gmail-oauth-refresh-token"
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.runtime]
+}
 resource "google_secret_manager_secret_version" "synthetic_login" {
   secret      = google_secret_manager_secret.synthetic_login.id
   secret_data = random_password.synthetic_login.result
@@ -253,6 +280,17 @@ resource "google_secret_manager_secret_iam_member" "synthetic_login" {
   secret_id = google_secret_manager_secret.synthetic_login.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.jobs.member
+}
+resource "google_secret_manager_secret_iam_member" "gmail_invitation" {
+  for_each = {
+    "crm-dev-gmail-oauth-client-id"     = google_secret_manager_secret.gmail_oauth_client_id.secret_id
+    "crm-dev-gmail-oauth-client-secret" = google_secret_manager_secret.gmail_oauth_client_secret.secret_id
+    "crm-dev-gmail-oauth-refresh-token" = google_secret_manager_secret.gmail_oauth_refresh_token.secret_id
+  }
+  project   = var.project_id
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.api.member
 }
 resource "google_project_iam_member" "cloudsql" {
   for_each = toset([google_service_account.api.member, google_service_account.jobs.member])
@@ -332,6 +370,10 @@ resource "google_cloud_run_v2_service" "api" {
         value = "external"
       }
       env {
+        name  = "CRM_ACCESS_RECOVERY_ENABLED"
+        value = tostring(var.access_recovery_enabled)
+      }
+      env {
         name  = "FORMINATOR_WEBHOOK_ENABLED"
         value = "false"
       }
@@ -351,6 +393,32 @@ resource "google_cloud_run_v2_service" "api" {
             secret  = google_secret_manager_secret.telephony_encryption.secret_id
             version = "latest"
           }
+        }
+      }
+      dynamic "env" {
+        for_each = var.gmail_invitation_enabled ? {
+          GMAIL_OAUTH_CLIENT_ID     = google_secret_manager_secret.gmail_oauth_client_id.secret_id
+          GMAIL_OAUTH_CLIENT_SECRET = google_secret_manager_secret.gmail_oauth_client_secret.secret_id
+          GMAIL_OAUTH_REFRESH_TOKEN = google_secret_manager_secret.gmail_oauth_refresh_token.secret_id
+        } : {}
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value
+              version = "latest"
+            }
+          }
+        }
+      }
+      dynamic "env" {
+        for_each = var.gmail_invitation_enabled ? {
+          GMAIL_SENDER_EMAIL = var.gmail_sender_email
+          CRM_PUBLIC_ORIGIN  = var.crm_public_origin
+        } : {}
+        content {
+          name  = env.key
+          value = env.value
         }
       }
       startup_probe {
@@ -374,7 +442,7 @@ resource "google_cloud_run_v2_service" "api" {
       }
     }
   }
-  depends_on = [google_secret_manager_secret_iam_member.database, google_secret_manager_secret_iam_member.telephony]
+  depends_on = [google_secret_manager_secret_iam_member.database, google_secret_manager_secret_iam_member.telephony, google_secret_manager_secret_iam_member.gmail_invitation]
 }
 resource "google_cloud_run_v2_service_iam_member" "web_invokes_api" {
   count    = local.deploy_services ? 1 : 0

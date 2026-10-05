@@ -60,3 +60,14 @@ test("controller exposes minimal match evidence and correlation", async () => {
   assert.equal((await controller.submit(input("PHONE_CALL", "quick-controller"), request)).activityType, "PHONE_CALL");
   assert.equal(validated, true);
 });
+
+test("PostgreSQL quick entry fails explicitly instead of reporting a volatile Lead as saved", () => {
+  const { service, leads, audit } = setup();
+  leads.persistenceEnabled = (): boolean => true;
+  const before = audit.list().length;
+  const hasCode = (error: unknown): boolean => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("quick_lead_persistence_unavailable");
+  assert.throws(() => service.preview("unknown@example.invalid", undefined, manager), hasCode);
+  assert.throws(() => service.submit(input("PHONE_CALL", "quick-persistent"), manager, "corr"), hasCode);
+  assert.equal(audit.list().length, before);
+  assert.equal(leads.listLeads({ page: 1, pageSize: 10 }, manager, "read").total, 0);
+});

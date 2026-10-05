@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import React, { useEffect, useId, useRef, useState } from "react";
+import { parseReassignmentRecords, type ReassignmentRecord } from "../../_components/reassignment-history";
 
 export interface InteractionBody {
   type: string;
@@ -79,6 +80,13 @@ const operationLabels: Readonly<Record<Operation, string>> = {
   "closure-decision": "La décision de clôture",
 };
 const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Record<string, string>>>>> = {
+  assignment: {
+    reassignment_pending_exists: "Une demande existe déjà. Le propriétaire reste inchangé ; consultez sa décision dans la gestion détaillée.",
+    reassignment_owner_required: "Seul le propriétaire autorisé peut demander cette réaffectation.",
+    reassignment_separation_of_duties: "Le demandeur ne peut pas décider sa propre demande.",
+    reassignment_idempotency_conflict: "Cette clé correspond à une autre intention. Actualisez la demande avant de poursuivre.",
+    assignment_target_ineligible: "Le conseiller proposé n’est plus éligible. Actualisez les conseillers avant toute nouvelle intention.",
+  },
   interaction: {
     next_action_invalid: "La date de prochaine action est invalide.",
     next_action_chronology_invalid: "La prochaine action doit être postérieure à l’interaction enregistrée maintenant.",
@@ -179,54 +187,106 @@ function FormFooter({ busy, submitDisabled = false, submitLabel, onCancel, secon
   </footer>;
 }
 
+function assignmentAccessMessage(state: "session" | "forbidden", assigned: boolean): string {
+  if (state === "session") return "Votre session a expiré. Reconnectez-vous avant de consulter les conseillers autorisés. Aucune affectation n’a été enregistrée.";
+  if (assigned) return "Vous n’êtes pas autorisé à demander cette réaffectation. Le propriétaire reste inchangé ; contactez un Responsable ou Administrateur autorisé dans ce campus.";
+  return "Vous n’êtes pas autorisé à effectuer l’affectation initiale. Ce Lead reste à affecter ; un Responsable ou Administrateur autorisé dans ce campus doit intervenir.";
+}
+
 export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps & { assigned: boolean }>): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" });
   const [candidates, setCandidates] = useState<AssignmentCandidate[]>([]);
-  const [candidateState, setCandidateState] = useState<"loading" | "ready" | "error">("loading");
+  const [candidateState, setCandidateState] = useState<"loading" | "ready" | "forbidden" | "session" | "error">("loading");
   const formRef = useRef<HTMLFormElement>(null);
   const candidateHelpId = useId();
   const dirty = useDirty(onDirtyChange);
+  const submissionLock = useRef(false);
+  const attempt = useRef<{ payload: string; key: string } | undefined>(undefined);
+  const [pending, setPending] = useState<ReassignmentRecord>();
+  const [requestState, setRequestState] = useState<"loading" | "ready" | "error">(assigned ? "loading" : "ready");
+
+  useEffect(() => {
+    setPending(undefined);
+    if (!assigned) { setRequestState("ready"); return; }
+    const controller = new AbortController();
+    setRequestState("loading");
+    void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/reassignment-requests`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("reassignment_history_unavailable");
+        const records = parseReassignmentRecords(await response.json());
+        if (controller.signal.aborted) return;
+        if (records.some((item) => item.leadId !== leadId)) throw new Error("reassignment_lead_mismatch");
+        setPending(records.find((item) => item.status === "PENDING")); setRequestState("ready");
+      }).catch((error: unknown) => { if (!controller.signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) setRequestState("error"); });
+    return (): void => controller.abort();
+  }, [assigned, leadId]);
 
   useEffect(() => {
     const controller = new AbortController();
     setCandidateState("loading");
+    setCandidates([]);
     void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/assignment-candidates`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
+        if (controller.signal.aborted) return;
+        if (response.status === 401) { setCandidateState("session"); return; }
+        if (response.status === 403) { setCandidateState("forbidden"); return; }
         if (!response.ok) throw new Error(`candidate_${response.status}`);
         const payload = await response.json() as { candidates?: unknown };
+        if (controller.signal.aborted) return;
         if (!Array.isArray(payload.candidates)) throw new Error("candidate_payload");
         const values = payload.candidates.filter((item): item is AssignmentCandidate => Boolean(item) && typeof item === "object" && typeof (item as AssignmentCandidate).id === "string" && typeof (item as AssignmentCandidate).label === "string");
         setCandidates(values);
         setCandidateState("ready");
       })
-      .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setCandidateState("error"); });
+      .catch((error: unknown) => { if (!controller.signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) setCandidateState("error"); });
     return (): void => controller.abort();
-  }, [leadId]);
+  }, [leadId, assigned]);
 
   async function submit(action: "preview" | "confirm"): Promise<void> {
     const formElement = formRef.current;
-    if (!formElement || busy || !formElement.reportValidity()) return;
+    if (!formElement || submissionLock.current || candidateState !== "ready" || requestState !== "ready" || pending || !formElement.reportValidity()) return;
     const form = new FormData(formElement);
     const targetUserId = formText(form, "targetUserId");
-    const idempotencyKey = `ui-lead-assignment:${crypto.randomUUID()}`;
+    if (!candidates.some((candidate) => candidate.id === targetUserId)) return;
+    if (assigned && (formText(form, "reason").length < 4 || formText(form, "reason").length > 500)) { setFeedback({ kind: "error", message: "Précisez un motif de 4 à 500 caractères." }); return; }
+    const intention = assigned ? { leadId, targetUserId, reason: formText(form, "reason"), moveOpenTasks: form.get("moveOpenTasks") === "on" } : { leadId, targetUserId, action };
+    const payload = JSON.stringify(intention);
+    if (action === "confirm" && attempt.current && attempt.current.payload !== payload) {
+      setFeedback({ kind: "error", message: "Le résultat de la dernière soumission reste incertain. Réessayez la même saisie ou consultez la demande enregistrée avant de changer d’intention." }); return;
+    }
+    const idempotencyKey = action === "preview" ? `ui-lead-assignment:${crypto.randomUUID()}` : (attempt.current ??= { payload, key: `ui-lead-assignment:${crypto.randomUUID()}` }).key;
     const endpoint = assigned ? `/api/crm/leads/${encodeURIComponent(leadId)}/reassignment-requests` : action === "preview" ? "/api/crm/lead-assignments/preview" : `/api/crm/leads/${encodeURIComponent(leadId)}/assignment`;
     const body = assigned
       ? { targetUserId, reason: formText(form, "reason"), moveOpenTasks: form.get("moveOpenTasks") === "on", idempotencyKey }
       : action === "preview"
         ? { idempotencyKey, strategy: "FIXED", targetUserId, items: [{ leadId, source: "UI_LOCAL", campaign: "UI_LOCAL" }] }
         : { targetUserId, confirmed: true, idempotencyKey };
-    setBusy(true); setFeedback({ kind: "idle" });
+    submissionLock.current = true; setBusy(true); setFeedback({ kind: "idle" });
     try {
       const response = await fetch(endpoint, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("assignment", response) }); return; }
+      if (!response.ok) { if (response.status < 500) attempt.current = undefined; setFeedback({ kind: "error", message: await responseMessage("assignment", response) }); return; }
       if (!assigned && action === "preview") { setFeedback({ kind: "preview", message: "Prévisualisation terminée. Le Lead n’a pas été modifié." }); return; }
-      dirty.clearDirty();
-      setFeedback({ kind: "success", message: assigned ? "Demande de réaffectation envoyée pour validation." : "Affectation confirmée. La fiche va être actualisée." });
+      if (assigned) {
+        const records = parseReassignmentRecords({ requests: [await response.json()] });
+        if (!records[0] || records[0].leadId !== leadId || records[0].status !== "PENDING") throw new Error("reassignment_request_unconfirmed");
+        setPending(records[0]);
+      }
+      attempt.current = undefined; dirty.clearDirty();
+      setFeedback({ kind: "success", message: assigned ? "Demande de réaffectation enregistrée. Le propriétaire reste inchangé jusqu’à la décision d’un Manager ou Administrateur distinct." : "Affectation confirmée. La fiche va être actualisée." });
       onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
-    finally { setBusy(false); }
+    finally { submissionLock.current = false; setBusy(false); }
   }
+
+  if (assigned && requestState === "loading") return <p role="status">Vérification des demandes déjà enregistrées…</p>;
+  if (pending) return <div className="lead-assignment-dialog__form"><p role="status">Demande de réaffectation en attente. Le propriétaire reste inchangé.</p><p><strong>Motif :</strong> {pending.reason}</p><p>Un Manager ou Administrateur distinct, autorisé dans ce campus, doit décider.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/collaborators`}>Consulter la demande et sa décision</Link>{onCancel ? <button type="button" className="text-button" onClick={onCancel}>Fermer</button> : null}</div>;
+  if (candidateState === "session" || candidateState === "forbidden") return <div className="lead-assignment-dialog__form">
+    <p className="lead-assignment-dialog__feedback lead-assignment-dialog__feedback--error" role="alert">{assignmentAccessMessage(candidateState, assigned)}</p>
+    {candidateState === "session" ? <Link className="secondary-button" href="/">Se reconnecter</Link> : null}
+    {onCancel ? <button type="button" className="text-button" onClick={onCancel}>Fermer</button> : null}
+  </div>;
+  if (assigned && requestState === "error") return <div role="alert"><p>Les demandes enregistrées sont indisponibles. Une nouvelle demande ne peut pas être envoyée sans vérifier leur état.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/collaborators`}>Consulter l’affectation</Link></div>;
 
   return <form ref={formRef} className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => { event.preventDefault(); void submit("confirm"); }}>
     <label>Conseiller cible
@@ -238,9 +298,9 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
     <p id={candidateHelpId} className="lead-assignment-dialog__help">La liste est limitée aux conseillers actifs, autorisés et disponibles pour le campus et la règle applicables. L’éligibilité sera revérifiée lors de la confirmation.</p>
     {candidateState === "error" ? <p className="lead-assignment-dialog__feedback lead-assignment-dialog__feedback--error" role="alert">Les conseillers éligibles sont indisponibles. Aucun identifiant technique ne peut être saisi en remplacement.</p> : null}
     {assigned ? <>
-      <label>Motif de la demande<textarea name="reason" required minLength={4} disabled={busy} rows={4} /></label>
-      <label className="lead-assignment-dialog__check"><input name="moveOpenTasks" type="checkbox" disabled={busy} /> Transférer également les tâches ouvertes</label>
-      <p className="lead-assignment-dialog__notice">La demande reste soumise à la validation prévue par vos permissions.</p>
+      <label>Motif de la demande<textarea name="reason" required minLength={4} maxLength={500} disabled={busy} rows={4} /></label>
+      <label className="lead-assignment-dialog__check"><input name="moveOpenTasks" type="checkbox" disabled={busy} /> Transférer les relances planifiées du propriétaire actuel</label>
+      <p className="lead-assignment-dialog__notice">Seules les relances encore planifiées pourront être transférées après approbation. Les relances échues, rendez-vous, réservations Admissions et appels restent sous leurs responsabilités actuelles. Le propriétaire du Lead reste inchangé jusqu’à la décision distincte.</p>
     </> : <p className="lead-assignment-dialog__notice">Prévisualisez la décision avant de confirmer l’affectation effective.</p>}
     <FormFeedback feedback={feedback} />
     <FormFooter busy={busy} submitDisabled={candidateState !== "ready" || !candidates.length} submitLabel={assigned ? "Envoyer la demande" : "Confirmer l’affectation"} {...(onCancel ? { onCancel } : {})} {...(!assigned ? { secondary: <button className="secondary-button" type="button" disabled={busy || candidateState !== "ready" || !candidates.length} onClick={() => void submit("preview")}>{busy ? "Traitement…" : "Prévisualiser"}</button> } : {})} />

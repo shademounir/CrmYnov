@@ -13,7 +13,10 @@ import "./leads/lead-profile.css";
 import "./manager/reports/commercial-funnel/pipeline-pilot.css";
 import "./calls/queue/calls.css";
 import "./admin/telephony/telephony.css";
+import "./account/telephony/own-telephony.css";
 import "./notifications/notifications.css";
+import "./appointments/admissions/admissions.css";
+import "./manager/assignment/assignment.css";
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
   return <html lang="fr"><body><Suspense fallback={children}><AppShell>{children}</AppShell></Suspense></body></html>;

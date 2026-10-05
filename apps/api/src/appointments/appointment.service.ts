@@ -18,7 +18,7 @@ const transitions: Readonly<Record<AppointmentState, readonly AppointmentState[]
   CONFIRME: ["REPORTE", "ANNULE", "REALISE", "ABSENT", "REFUSE"], REPORTE: ["CONFIRME", "ANNULE", "ABSENT", "REFUSE"],
   ANNULE: [], REALISE: [], ABSENT: [], REFUSE: [],
 };
-export interface AppointmentRecord { id: string; leadId: string; type: AppointmentType; mode: AppointmentMode; state: AppointmentState; startsAt: string; durationMinutes: number; campus?: string; adviserId: string; adviserLabel?: string; organizerId: string; organizerLabel?: string; evaluatorId?: string; participantIds: string[]; version: number; createdAt: string; updatedAt: string; conflictWarning: boolean; overloadWarning: boolean }
+export interface AppointmentRecord { id: string; leadId: string; type: AppointmentType; mode: AppointmentMode; state: AppointmentState; startsAt: string; durationMinutes: number; campus?: string; adviserId: string; adviserLabel?: string; organizerId: string; organizerLabel?: string; evaluatorId?: string; participantIds: string[]; version: number; createdAt: string; updatedAt: string; conflictWarning: boolean; overloadWarning: boolean; admissionsBookingState?: string; admissionsResponsibilityId?: string }
 export interface AppointmentEvent { id: string; appointmentId: string; type: string; fromState?: AppointmentState; toState?: AppointmentState; actorId: string; reasonCode?: string; occurredAt: string; idempotencyKey: string; compensatesEventId?: string }
 export interface InterviewReport { id: string; appointmentId: string; result: InterviewResult; comment: string; missingPoints?: string; nextAction?: string; followUpAt?: string; recommendation: string; validatedAt: string; validatedBy: string; compensatesReportId?: string }
 export interface AppointmentPage { items: AppointmentRecord[]; page: number; pageSize: number; total: number; timezone: "Africa/Casablanca" }
@@ -26,6 +26,7 @@ export interface AppointmentKpis { timezone: "Africa/Casablanca"; counts: Record
 
 @Injectable()
 export class AppointmentService implements OnModuleInit {
+  private readonly dayFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" });
   private readonly items = new Map<string, Readonly<AppointmentRecord>>(); private events: Readonly<AppointmentEvent>[] = [];
   private readonly reports = new Map<string, Readonly<InterviewReport>>(); private readonly receipts = new Map<string, { signature: string; id: string }>();
   constructor(
@@ -83,6 +84,7 @@ export class AppointmentService implements OnModuleInit {
   }
 
   async transitionForApi(id: string, input: Parameters<AppointmentService["transition"]>[1], principal: Principal, correlationId: string): Promise<AppointmentRecord> {
+    if (this.persistence?.enabled) await this.persistence.assertLegacyMutationAllowed(id, "transition");
     await this.preparePersistentMutation();
     const record = this.transition(id, input, principal, correlationId);
     if (!this.persistence?.enabled) return record;
@@ -115,6 +117,7 @@ export class AppointmentService implements OnModuleInit {
   }
 
   async validateReportForApi(id: string, input: Parameters<AppointmentService["validateReport"]>[1], principal: Principal, correlationId: string): Promise<InterviewReport> {
+    if (this.persistence?.enabled) await this.persistence.assertLegacyMutationAllowed(id, "report");
     await this.preparePersistentMutation();
     const report = this.validateReport(id, input, principal, correlationId);
     if (!this.persistence?.enabled) return report;
@@ -249,14 +252,23 @@ export class AppointmentService implements OnModuleInit {
         id: record.id,
       });
     }
+    // Historic terminal rows never contribute to workload/conflicts. Build the
+    // active participant/day indexes once instead of formatting each N² pair.
+    const activeByParticipant = new Map<string, Set<Readonly<AppointmentRecord>>>();
+    const activeByDay = new Map<string, number>();
+    const days = new Map<string, string>();
+    for (const current of this.items.values()) {
+      const day = this.localDay(new Date(current.startsAt)); days.set(current.id, day);
+      if (finalStates.has(current.state)) continue;
+      const dayKey = `${current.adviserId}:${day}`; activeByDay.set(dayKey, (activeByDay.get(dayKey) ?? 0) + 1);
+      for (const participant of this.involved(current)) { let items = activeByParticipant.get(participant); if (!items) { items = new Set(); activeByParticipant.set(participant, items); } items.add(current); }
+    }
     for (const [id, current] of this.items) {
-      const involved = new Set(this.involved(current));
+      const candidates = new Set(this.involved(current).flatMap((participant) => [...(activeByParticipant.get(participant) ?? [])]));
       const start = new Date(current.startsAt).valueOf();
       const end = start + current.durationMinutes * 60_000;
-      const conflictWarning = [...this.items.values()].some((item) => item.id !== id && !finalStates.has(item.state)
-        && this.involved(item).some((userId) => involved.has(userId)) && this.overlaps(start, end, item));
-      const overloadWarning = [...this.items.values()].filter((item) => item.id !== id && item.adviserId === current.adviserId
-        && this.localDay(new Date(item.startsAt)) === this.localDay(new Date(current.startsAt)) && !finalStates.has(item.state)).length >= 7;
+      const conflictWarning = [...candidates].some((item) => item.id !== id && this.overlaps(start, end, item));
+      const overloadWarning = (activeByDay.get(`${current.adviserId}:${days.get(id)!}`) ?? 0) - (finalStates.has(current.state) ? 0 : 1) >= 7;
       this.items.set(id, Object.freeze({ ...current, conflictWarning, overloadWarning }));
     }
   }
@@ -283,7 +295,7 @@ export class AppointmentService implements OnModuleInit {
   private isManager(principal: Principal): boolean { return principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role)); }
   private involved(item: Readonly<AppointmentRecord>): string[] { return [...new Set([item.organizerId, item.adviserId, ...item.participantIds, ...(item.evaluatorId ? [item.evaluatorId] : [])])]; }
   private overlaps(start: number, end: number, item: Readonly<AppointmentRecord>): boolean { const itemStart = new Date(item.startsAt).valueOf(); return start < itemStart + item.durationMinutes * 60_000 && end > itemStart; }
-  private localDay(date: Date): string { return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).format(date); }
+  private localDay(date: Date): string { return this.dayFormatter.format(date); }
   private copy(item: Readonly<AppointmentRecord>): AppointmentRecord { return { ...item, participantIds: [...item.participantIds] }; }
   private appendEvent(item: Readonly<AppointmentRecord>, type: string, principal: Principal, idempotencyKey: string, fromState?: AppointmentState, toState?: AppointmentState, reasonCode?: string): void { this.events = [...this.events, Object.freeze({ id: randomUUID(), appointmentId: item.id, type, ...(fromState ? { fromState } : {}), ...(toState ? { toState } : {}), actorId: principal.userId, ...(reasonCode ? { reasonCode } : {}), occurredAt: new Date().toISOString(), idempotencyKey })]; }
   private notify(item: Readonly<AppointmentRecord>, event: string, recipients: readonly string[], key: string): void { for (const recipientId of new Set(recipients)) this.notifications.create({ recipientId, type: "APPOINTMENT", priority: event.includes("CANCEL") || event.includes("ABSENT") ? "HIGH" : "NORMAL", resourceType: "APPOINTMENT", resourceId: item.id, href: `/appointments/${item.id}` }, `appointment:${event}:${key}:${recipientId}`); }
