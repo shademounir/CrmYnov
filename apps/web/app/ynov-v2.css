@@ -894,3 +894,27 @@ input, select, textarea { color: var(--onyx); }
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Dashboard-only readability fixes qualified from connected 25712a92 captures.
+   Keep all cards and labels visible instead of forcing a horizontal KPI swipe. */
+.dashboard-page .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); overflow: visible; margin-inline: 0; padding: 0; }
+.dashboard-page .kpi-card { height: auto; min-height: 112px; grid-template-columns: 43px minmax(0, 1fr) 34px; align-items: start; }
+.dashboard-page .kpi-card > div > span, .dashboard-page .kpi-card small { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+.dashboard-page .kpi-card strong { white-space: normal; overflow-wrap: anywhere; line-height: 1.15; }
+.dashboard-page .quick-queues { height: auto; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.dashboard-page .quick-queues .queue-item { min-height: 96px; padding: 12px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start; border-right: 0; border-bottom: 1px solid var(--border); }
+.dashboard-page .queue-item > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.dashboard-page .queue-item small { white-space: normal; }
+.dashboard-page .ui-page-header { display: flex; flex-wrap: wrap; align-items: flex-start; }
+.dashboard-page .ui-page-header > div:first-child { min-width: 0; flex: 1 1 18rem; }
+.dashboard-page .ui-page-header__actions { width: auto; max-width: 100%; flex-wrap: wrap; }
+.dashboard-page .ui-page-header__actions .primary-button, .dashboard-page .ui-page-header__actions .secondary-button { width: auto; min-width: 0; max-width: 100%; padding: 10px 14px; flex: 0 1 auto; font-size: 11px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.dashboard-page .ui-page-header__actions svg { flex: 0 0 20px; }
+@media (max-width: 1024px) {
+  .dashboard-page .kpi-card { grid-template-columns: 43px minmax(0, 1fr); }
+  .dashboard-page .kpi-card .mini-bars { display: none; }
+}
+@media (max-width: 768px) {
+  .dashboard-page .ui-page-header__actions { width: 100%; }
+  .dashboard-page .ui-page-header__actions > a { flex: 1 1 180px; }
+}

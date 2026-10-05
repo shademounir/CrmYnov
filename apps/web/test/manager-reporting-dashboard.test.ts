@@ -257,37 +257,118 @@ async function dashboardDom(t: TestContext): Promise<{
 
 function requestPath(input: string | URL | Request): string { return input instanceof Request ? input.url : String(input); }
 
-test("a previously granted report cannot retain actions or canonical filters while the next read is pending or forbidden", async (t) => {
-  const view = await dashboardDom(t);
-  const pending: Array<(response: Response) => void> = [];
+for (const reportingView of ["global", "personal"] as const) {
+  for (const outcome of ["session", "forbidden", "network", "unavailable"] as const) {
+    test(`${reportingView} Dashboard distinguishes ${outcome} without disclosing errors or inventing a successful read`, async (t) => {
+      const view = await dashboardDom(t); const paths: string[] = [];
+      const expectedEndpoint = reportingView === "personal" ? "personal-dashboard" : "manager-dashboard";
+      t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+        const path = requestPath(input); paths.push(path);
+        if (!path.includes(expectedEndpoint)) return Promise.resolve(Response.json({ canUseAgenda: false }));
+        if (outcome === "network") return Promise.reject(new Error("PRIVATE_REJECTED_FETCH"));
+        const status = outcome === "session" ? 401 : outcome === "forbidden" ? 403 : 503;
+        return Promise.resolve(Response.json({ detail: "PRIVATE_HTTP_BODY" }, { status }));
+      });
+      await view.render({ initialFilters: { view: reportingView, campus: "SYNTHETIC", channel: "DIGITAL" }, initialCalendar });
+      const alert = view.host.querySelector<HTMLElement>('section[role="alert"]')!;
+      assert.ok(alert);
+      const expectedText = outcome === "session" ? /Session expirée/u : outcome === "forbidden" ? /Accès refusé/u : /Erreur de chargement/u;
+      assert.match(alert.textContent ?? "", expectedText);
+      assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_REJECTED_FETCH|PRIVATE_HTTP_BODY|Données de la dernière réponse API/u);
+      assert.equal(alert.querySelector("a[href='/']")?.textContent, outcome === "session" ? "Se reconnecter" : undefined);
+      assert.equal(view.host.querySelector(".kpi-card"), null);
+      assert.equal(view.host.querySelector('a[href^="/leads/new"]'), null);
+      assert.equal(paths.filter((path) => path.includes(expectedEndpoint)).length, 1, "no automatic retry on authentication or service failure");
+      assert.equal(paths.some((path) => path.includes("recent-leads")), false);
+      assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "SYNTHETIC");
+      assert.equal(view.host.querySelector<HTMLSelectElement>('select[name="channel"]')?.value, "DIGITAL");
+    });
+  }
+}
+
+test("an aborted old unauthorized read cannot erase the current successful report", async (t) => {
+  const view = await dashboardDom(t); const pending: Array<(response: Response) => void> = [];
   t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
     if (requestPath(input).includes("manager-dashboard")) return new Promise<Response>((resolve) => { pending.push(resolve); });
     return Promise.resolve(Response.json({ canUseAgenda: false }));
   });
+  await view.render({ initialFilters: { campus: "OLD" }, initialCalendar });
+  await view.render({ initialFilters: { campus: "CURRENT" }, initialCalendar });
   const { act } = await import("react");
-  await view.render({ initialFilters: { campus: "REQUESTED_OLD", source: "OLD" }, initialCalendar });
-  await act(async () => {
-    pending[0]!(Response.json({ ...report, filters: { campus: "CANONICAL_OLD", source: "OLD" }, capabilities: { canCreateLead: true, canReadRecentLeads: false, canViewManagerDashboard: true } }));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  });
+  await act(async () => { pending[1]!(Response.json({ ...report, filters: { campus: "CURRENT" }, capabilities: { canCreateLead: true, canReadRecentLeads: false, canViewManagerDashboard: true } })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
+  await act(async () => { pending[0]!(Response.json({ detail: "PRIVATE_OLD_AUTH" }, { status: 401 })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
+  assert.ok(view.host.querySelector(".kpi-card"));
+  assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "CURRENT");
+  assert.doesNotMatch(view.host.textContent ?? "", /Session expirée|PRIVATE_OLD_AUTH/u);
+});
+
+for (const refusedStatus of [401, 403]) {
+  test(`a previously granted report cannot retain actions or canonical filters while the next read is pending or HTTP ${refusedStatus}`, async (t) => {
+    const view = await dashboardDom(t);
+    const pending: Array<(response: Response) => void> = [];
+    t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+      if (requestPath(input).includes("manager-dashboard")) return new Promise<Response>((resolve) => { pending.push(resolve); });
+      return Promise.resolve(Response.json({ canUseAgenda: true }));
+    });
+    const { act } = await import("react");
+    await view.render({ initialFilters: { campus: "REQUESTED_OLD", source: "OLD" }, initialCalendar });
+    await act(async () => {
+      pending[0]!(Response.json({ ...report, filters: { campus: "CANONICAL_OLD", source: "OLD" }, capabilities: { canCreateLead: true, canReadRecentLeads: false, canViewManagerDashboard: true } }));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    });
+    assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
+    assert.ok(view.host.querySelector('a[href="/appointments/admissions"]'));
+    assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "CANONICAL_OLD");
+    await view.render({ initialFilters: { campus: "REQUESTED_NEW", source: "NEW" }, initialCalendar });
+    const assertCurrentUnqualifiedState = (): void => {
+      assert.equal(view.host.querySelector('a[href^="/leads/new"]'), null);
+      assert.equal(view.host.querySelector('select[name="view"] option[value="global"]')?.hasAttribute("disabled"), true);
+      assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "REQUESTED_NEW");
+      const preference = new URL(view.host.querySelector<HTMLAnchorElement>(".dashboard-preferences a")!.href);
+      assert.equal(preference.searchParams.get("campus"), "REQUESTED_NEW");
+      assert.equal(preference.searchParams.get("source"), "NEW");
+      assert.equal(view.host.querySelector(".kpi-card"), null);
+    };
+    assert.match(view.host.textContent ?? "", /Calcul des indicateurs/u);
+    assertCurrentUnqualifiedState();
+    await act(async () => { pending[1]!(Response.json({ detail: "PRIVATE_PERMISSION_DETAIL" }, { status: refusedStatus })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+    assert.match(view.host.textContent ?? "", refusedStatus === 401 ? /Session expirée/u : /Accès refusé/u);
+    assertCurrentUnqualifiedState();
+    assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_PERMISSION_DETAIL/u);
+    assert.equal(Boolean(view.host.querySelector('a[href="/appointments/admissions"]')), refusedStatus !== 401);
+    assert.equal(view.host.querySelector("a[href='/']")?.textContent, refusedStatus === 401 ? "Se reconnecter" : undefined);
+  });
+}
+
+test("a Recent Leads 401 clears previously granted agenda, report and actions without restoring the initial report", async (t) => {
+  const view = await dashboardDom(t);
+  const scoped: DashboardReport = { ...report, filters: { campus: "CANONICAL_OLD", source: "OLD" }, capabilities: { canCreateLead: true, canReadRecentLeads: true, canViewManagerDashboard: true } };
+  const props = { initialFilters: { campus: "REQUESTED", source: "OLD" }, initialReport: scoped, initialCalendar };
+  let release: ((response: Response) => void) | undefined;
+  let recentReads = 0;
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+    if (requestPath(input).includes("recent-leads")) { recentReads++; return new Promise<Response>((resolve) => { release = resolve; }); }
+    return Promise.resolve(Response.json({ canUseAgenda: true }));
+  });
+  await view.render(props);
+  assert.ok(view.host.querySelector('a[href="/appointments/admissions"]'));
+  assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
+  assert.ok(view.host.querySelector(".kpi-card"));
   assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "CANONICAL_OLD");
-  await view.render({ initialFilters: { campus: "REQUESTED_NEW", source: "NEW" }, initialCalendar });
-  const assertCurrentUnqualifiedState = (): void => {
-    assert.equal(view.host.querySelector('a[href^="/leads/new"]'), null);
-    assert.equal(view.host.querySelector('select[name="view"] option[value="global"]')?.hasAttribute("disabled"), true);
-    assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "REQUESTED_NEW");
-    const preference = new URL(view.host.querySelector<HTMLAnchorElement>(".dashboard-preferences a")!.href);
-    assert.equal(preference.searchParams.get("campus"), "REQUESTED_NEW");
-    assert.equal(preference.searchParams.get("source"), "NEW");
-    assert.equal(view.host.querySelector(".kpi-card"), null);
-  };
-  assert.match(view.host.textContent ?? "", /Calcul des indicateurs/u);
-  assertCurrentUnqualifiedState();
-  await act(async () => { pending[1]!(Response.json({ detail: "PRIVATE_PERMISSION_DETAIL" }, { status: 403 })); await new Promise<void>((resolve) => setImmediate(resolve)); });
-  assert.match(view.host.textContent ?? "", /Erreur de chargement/u);
-  assertCurrentUnqualifiedState();
-  assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_PERMISSION_DETAIL/u);
+  const { act } = await import("react");
+  await act(async () => { assert.ok(release); release(Response.json({ detail: "PRIVATE_RECENT_SESSION" }, { status: 401 })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  for (const selector of ['a[href="/appointments/admissions"]', 'a[href^="/leads/new"]', ".kpi-card", ".leads-panel"]) assert.equal(view.host.querySelector(selector), null);
+  assert.match(view.host.textContent ?? "", /Session expirée/u);
+  assert.match(view.host.textContent ?? "", /filtres restent conservés dans cette page/u);
+  assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_RECENT_SESSION/u);
+  assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "REQUESTED");
+  await view.render(props);
+  assert.match(view.host.textContent ?? "", /Session expirée/u);
+  assert.equal(view.host.querySelector(".kpi-card"), null);
+  assert.equal(view.host.querySelector('a[href="/appointments/admissions"]'), null);
+  assert.equal(recentReads, 1, "a retained initialReport must not restore expired data or retry the read");
 });
 
 test("Dashboard Applying filters keeps exact UTC instants until the user explicitly edits a date", async (t) => {
@@ -361,13 +442,14 @@ test("missing or denied capabilities do not fetch recent Leads or offer creation
   assert.match(view.host.querySelector(".leads-panel")?.textContent ?? "", /indisponible.*autorisations/u);
 });
 
-for (const scenario of ["empty", "unavailable", "forbidden", "network", "malformed", "server-error", "invalid-envelope", "owner-unavailable"] as const) {
+for (const scenario of ["empty", "unavailable", "session", "forbidden", "network", "malformed", "server-error", "invalid-envelope", "owner-unavailable"] as const) {
   test(`recent Lead ${scenario} state is honest and never exposes raw error details`, async (t) => {
     const view = await dashboardDom(t);
     const scoped = { ...report, capabilities: { canCreateLead: true, canReadRecentLeads: true, canViewManagerDashboard: true } };
     t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
       if (!requestPath(input).includes("recent-leads")) return Promise.resolve(Response.json({ canUseAgenda: false }));
       if (scenario === "network") return Promise.reject(new Error("PRIVATE_RAW_ERROR"));
+      if (scenario === "session") return Promise.resolve(Response.json({ detail: "PRIVATE_RAW_ERROR" }, { status: 401 }));
       if (scenario === "forbidden") return Promise.resolve(Response.json({ detail: "PRIVATE_RAW_ERROR" }, { status: 403 }));
       if (scenario === "server-error") return Promise.resolve(Response.json({ detail: "PRIVATE_RAW_ERROR" }, { status: 500 }));
       if (scenario === "invalid-envelope") return Promise.resolve(Response.json({ availability: "UNKNOWN", leads: [] }));
@@ -376,13 +458,14 @@ for (const scenario of ["empty", "unavailable", "forbidden", "network", "malform
       return Promise.resolve(Response.json({ availability: scenario === "unavailable" ? "UNAVAILABLE" : "OBSERVED", leads: [] }));
     });
     await view.render({ initialFilters: {}, initialReport: scoped, initialCalendar });
-    const content = view.host.querySelector(".leads-panel")?.textContent ?? "";
+    const content = scenario === "session" ? view.host.textContent ?? "" : view.host.querySelector(".leads-panel")?.textContent ?? "";
     if (scenario === "empty") assert.match(content, /Aucun lead récent dans la période et le périmètre autorisés/u);
     else if (scenario === "owner-unavailable") { assert.match(content, /Libellé du responsable indisponible/u); assert.match(content, /LD-SYNTHETIC/u); }
+    else if (scenario === "session") { assert.match(content, /Session expirée/u); assert.equal(view.host.querySelector("a[href='/']")?.textContent, "Se reconnecter"); assert.equal(view.host.querySelector(".kpi-card"), null); }
     else if (scenario === "forbidden") assert.match(content, /Accès.*refusé/u);
     else { assert.match(content, /indisponible/u); assert.doesNotMatch(content, /Aucun lead récent/u); }
     assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_RAW_ERROR/u);
-    assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
+    assert.equal(Boolean(view.host.querySelector('a[href^="/leads/new"]')), scenario !== "session");
   });
 }
 

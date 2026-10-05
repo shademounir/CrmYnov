@@ -5,7 +5,62 @@ Préparation indépendante de CRMY-161 ; la dépendance n'est pas supprimée.
 Ce document ne vaut ni décision de livraison finale, ni acceptation visuelle,
 ni preuve de déploiement du dashboard sur DEV.
 
-## Point courant après intégration explicite — 5 octobre 2026
+## Point courant — recette connectée de `25712a92` et correction nécessaire
+
+La preview locale `Web3040 → API43220 → crmy175_recipe_synthetic` a réellement
+été utilisée avec le Super Admin synthétique activé, sans utiliser le compte
+professionnel ni modifier ses droits. La lecture API authentifiée acquise sur
+`25712a92ad3f7056fa7b60b8ecdb5f3e4f23e490` comporte huit scénarios PASS :
+133 Leads observés en PostgreSQL, périmètre Commercial restreint, refus des
+périmètres interdits, lectures récentes bornées sans email/téléphone, export
+agrégé cohérent et état vide honnête. Les sessions de preuve ont été révoquées.
+Ces lectures impliquent les écritures normales d'authentification/audit et le
+fence de démarrage ; aucune mutation métier, fixture, seed ou restauration.
+
+Les captures connectées aux cinq largeurs exactes 1440/1280/1024/768/390 px
+ont révélé une lisibilité insuffisante : cartes KPI à hauteur fixe, textes
+comprimés et actions d'en-tête réduites sur mobile. L'absence de débordement
+global ne suffit pas à prouver leur accessibilité. Les captures privées restent
+conservées ; ce build n'est pas présenté comme accepté visuellement.
+
+La période personnalisée du 1er septembre au 2 octobre, hors dates de création
+des fixtures, a produit l'état vide attendu. Les liens Dashboard
+vers Pipeline puis Leads ont conservé les instants ISO exacts, le canal et le
+statut. Un retour par l'historique navigateur à une URL `period=90d` sans bornes
+recalcule légitimement les bornes ; ce retour n'est pas une preuve d'instants
+figés. Les tableaux accessibles des analyses ont été observés. Le CSV est
+qualifié par API authentifiée ; le téléchargement navigateur natif n'a pas été
+capturé, donc sa réception utilisateur reste distincte et non prouvée.
+
+Le correctif indépendant CRMY-177 a été fusionné par PR122 dans develop
+`4d68e27d12ac954dc8c2a8d1b151960015a0d99a`. Il est intégré explicitement au
+Dashboard par le merge `6fa27c5df8e73931d83a2e7b81f398ae3a6e3951`, sans conflit.
+La sauvegarde `backup/crmy162-preview-25712a92-20261005` conserve l'ancien HEAD.
+Les gates de PR122 ne sont pas réattribués au nouveau Dashboard.
+
+Correction ciblée : grille KPI adaptable sans défilement horizontal imposé,
+hauteurs automatiques, textes et files de travail repliables, boutons d'en-tête
+lisibles. Le CSS reste limité à `.dashboard-page`. Les états 401/session expirée,
+403/accès refusé et réseau/5xx/erreur de lecture sont distingués. Un 401 efface le
+rapport, ses actions et son lien Agenda mémorisé ; une lecture annulée n'efface
+pas le rapport courant. Les filtres restent dans la page, sans promesse de retour
+automatique après reconnexion. Aucun droit serveur ni parcours Admissions modifié.
+
+Sur ces quatre fichiers au-dessus du merge : **55 tests Dashboard PASS / 0 FAIL
+/ 0 SKIP**, typage Web sans émission/incremental PASS, lint des deux fichiers TS
+PASS et diff-check PASS. Le premier test ajouté a utilisé le mauvais sélecteur
+`input` pour le champ `select` de canal ; ses huit échecs et la correction de test
+sont conservés, sans prétendre avoir corrigé un défaut produit pour cet artefact.
+Preuve privée de qualification SHA256
+`ffba8ede82115cf5efe80dca083b88e8393c9c38779acdd0410951655b8408ca`.
+
+Le nouveau build, ses captures aux cinq largeurs, les popovers ouverts et les
+gates du SHA final restent à qualifier. Ni Ready, ni décision, ni acceptation
+visuelle ou déploiement DEV ne sont déduits de ces tests locaux. Web3040 et
+API43220 sont arrêtés pour la reconstruction cohérente ; PostgreSQL est conservé,
+Sheets et tous les producteurs de fond de cette preview restent désactivés.
+
+## Historique après intégration explicite — 5 octobre 2026
 
 Branche : `feature/CRMY-162-dashboard-connected-20261005`.
 Le commit de merge `8c44d30ef931125c4c058a49afa499344099f72d` intègre

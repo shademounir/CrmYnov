@@ -2,7 +2,7 @@
 
 import { Alarm, ChartBar, CheckCircle, Plus, Student, TrendUp, UserPlus, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../../../_components/ui/page-header";
 import { AdmissionsAgendaLink } from "../../../appointments/admissions/agenda-link";
 import type { DashboardCalendar } from "./dashboard-calendar";
@@ -34,6 +34,7 @@ type PersonalDashboardReport = {
   safeguards: { personalScopeOnly: true; aggregatedOnly: true };
 } & ReportingEvidence;
 type ReportingReport = DashboardReport | PersonalDashboardReport;
+type ReportingStateKind = "loading" | "ready" | "empty" | "error" | "session" | "forbidden";
 
 const labels: Record<string, string> = { uniqueLeads: "Leads uniques", enrolled: "Inscriptions", unassigned: "Non affectés", overdueFollowUps: "Relances échues", activeAlerts: "Alertes actives" };
 const preferenceKey = "crm-reporting-preferences-v1";
@@ -50,8 +51,9 @@ function safePreferences(raw: Partial<Preferences>): Preferences {
 
 export default function InteractiveReportingDashboard({ initialFilters, initialReport, initialCalendar }: Readonly<{ initialFilters: Record<string, string>; initialReport?: ReportingReport; initialCalendar: DashboardCalendar }>): React.JSX.Element {
   const [report, setReport] = useState<ReportingReport | undefined>(initialReport);
-  const [state, setState] = useState<"loading" | "ready" | "empty" | "error">(initialReport ? "ready" : "loading");
+  const [state, setState] = useState<ReportingStateKind>(initialReport ? "ready" : "loading");
   const [preferences, setPreferences] = useState<Preferences>(() => safePreferences({}));
+  const markSessionExpired = useCallback((): void => { setReport(undefined); setState("session"); }, []);
   const query = useMemo(() => {
     const params = new URLSearchParams(initialFilters);
     if (!params.has("period")) params.set("period", "30d");
@@ -70,11 +72,14 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
     setState("loading");
     fetch(`/api/crm/reports/${query.get("view") === "personal" ? "personal-dashboard" : "manager-dashboard"}?${query.toString()}`, { credentials: "same-origin", signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => {
+        if (controller.signal.aborted) return;
+        if (response.status === 401) { markSessionExpired(); return; }
+        if (response.status === 403) { setReport(undefined); setState("forbidden"); return; }
         if (!response.ok) throw new Error(`reporting_${response.status}`);
         return response.json() as Promise<ReportingReport>;
       })
       .then((value) => {
-        if (controller.signal.aborted) return;
+        if (value === undefined || controller.signal.aborted) return;
         setReport(value);
         setState(reportItemCount(value) > 0 || hasUnavailableEvidence(value) ? "ready" : "empty");
       })
@@ -82,7 +87,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
         if (!controller.signal.aborted) { setReport(undefined); setState("error"); }
       });
     return (): void => controller.abort();
-  }, [initialReport, query]);
+  }, [initialReport, query, markSessionExpired]);
   const effectiveQuery = new URLSearchParams(query);
   for (const [key, value] of Object.entries(report?.filters ?? {})) if (reportingFilterKeys.has(key)) effectiveQuery.set(key, value);
   const presentationFilters = Object.fromEntries(effectiveQuery);
@@ -95,7 +100,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
     try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch { /* Keep the current display usable without storage. */ }
   };
   return <main className="dashboard-page" data-density={preferences.compact ? "compact" : "comfortable"}>
-    <PageHeader eyebrow={initialCalendar.label} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink />{report?.capabilities?.canCreateLead === true && <Link className="primary-button" href={preserveFilters("/leads/new", effectiveQuery)}><Plus size={19} weight="bold" /> Nouveau lead</Link>}</>} />
+    <PageHeader eyebrow={initialCalendar.label} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<>{state !== "session" && <AdmissionsAgendaLink />}{report?.capabilities?.canCreateLead === true && <Link className="primary-button" href={preserveFilters("/leads/new", effectiveQuery)}><Plus size={19} weight="bold" /> Nouveau lead</Link>}</>} />
     <div className="dashboard-toolbar"><ReportingFilters key={effectiveQuery.toString()} filters={presentationFilters} calendar={initialCalendar} canViewManagerDashboard={report?.capabilities?.canViewManagerDashboard === true} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
       <label><input type="checkbox" checked={preferences.compact} onChange={(event) => updatePreference({ ...preferences, compact: event.target.checked })} /> Affichage compact</label>
       <label><input type="checkbox" checked={preferences.showTables} onChange={(event) => updatePreference({ ...preferences, showTables: event.target.checked })} /> Afficher les tableaux accessibles</label>
@@ -104,7 +109,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
       <label>Seuil personnel de charge <input type="number" min={1} max={100} value={preferences.operationalThreshold} onChange={(event) => updatePreference({ ...preferences, operationalThreshold: Math.min(100, Math.max(1, Number.parseInt(event.target.value, 10) || 1)) })} /></label>
       <small>Ces préférences d’affichage restent dans ce navigateur et ne contiennent ni identifiant métier, ni donnée personnelle.</small>
     </fieldset></details><output className="freshness-indicator"><span aria-hidden="true" /> {reportingFreshnessLabel(state)}</output></div>
-    <ReportingState state={state} report={report} showTables={preferences.showTables} query={effectiveQuery} operationalThreshold={preferences.operationalThreshold} />
+    <ReportingState state={state} report={report} showTables={preferences.showTables} query={effectiveQuery} operationalThreshold={preferences.operationalThreshold} onSessionExpired={markSessionExpired} />
   </main>;
 }
 
@@ -114,8 +119,10 @@ function reportItemCount(report: ReportingReport): number {
     : report.performance.advisers.length + report.contributions.contributors.length;
 }
 
-function reportingFreshnessLabel(state: "loading" | "ready" | "empty" | "error"): string {
+function reportingFreshnessLabel(state: ReportingStateKind): string {
   if (state === "loading") return "Actualisation en cours";
+  if (state === "session") return "Session à renouveler";
+  if (state === "forbidden") return "Lecture non autorisée";
   if (state === "error") return "Actualisation indisponible";
   return "Données de la dernière réponse API";
 }
@@ -125,12 +132,14 @@ function hasUnavailableEvidence(report: ReportingReport): boolean {
     || Object.values(report.persistence?.countsObservability ?? {}).some((value) => value.state === "UNAVAILABLE");
 }
 
-function ReportingState({ state, report, showTables, query, operationalThreshold }: Readonly<{ state: "loading" | "ready" | "empty" | "error"; report: ReportingReport | undefined; showTables: boolean; query: URLSearchParams; operationalThreshold: number }>): React.JSX.Element | null {
+function ReportingState({ state, report, showTables, query, operationalThreshold, onSessionExpired }: Readonly<{ state: ReportingStateKind; report: ReportingReport | undefined; showTables: boolean; query: URLSearchParams; operationalThreshold: number; onSessionExpired: () => void }>): React.JSX.Element | null {
   if (state === "loading") return <section aria-live="polite" aria-busy="true"><h2>Chargement</h2><p>Calcul des indicateurs agrégés…</p></section>;
+  if (state === "session") return <section role="alert"><h2>Session expirée</h2><p>Votre session a expiré ou est absente. Reconnectez-vous pour consulter vos indicateurs. Vos filtres restent conservés dans cette page.</p><Link href="/">Se reconnecter</Link></section>;
+  if (state === "forbidden") return <section role="alert"><h2>Accès refusé</h2><p>Votre rôle ou votre périmètre ne permet pas de consulter ce rapport. Aucun droit supplémentaire n’est attribué.</p></section>;
   if (state === "error") return <section role="alert"><h2>Erreur de chargement</h2><p>Le rapport n’a pas pu être chargé. Réessayez sans modifier vos filtres.</p></section>;
   if (state === "empty") return <section aria-live="polite"><h2>Aucun résultat</h2><p>Aucune donnée agrégée pour les filtres sélectionnés.</p></section>;
   if (!report) return null;
-  if ("cards" in report) return <DashboardContent report={report} showTables={showTables} query={query} operationalThreshold={operationalThreshold} />;
+  if ("cards" in report) return <DashboardContent report={report} showTables={showTables} query={query} operationalThreshold={operationalThreshold} onSessionExpired={onSessionExpired} />;
   return <PersonalDashboardContent report={report} showTables={showTables} />;
 }
 
@@ -165,7 +174,7 @@ function decodeRecentLeads(value: unknown): RecentLeadsResult {
   return { availability: value.availability as RecentLeadsResult["availability"], leads };
 }
 
-function RecentDashboardLeads({ query, canRead }: Readonly<{ query: URLSearchParams; canRead: boolean }>): React.JSX.Element {
+function RecentDashboardLeads({ query, canRead, onSessionExpired }: Readonly<{ query: URLSearchParams; canRead: boolean; onSessionExpired: () => void }>): React.JSX.Element {
   const [result, setResult] = useState<RecentLeadsResult>();
   const [state, setState] = useState<"loading" | "ready" | "error" | "forbidden">("loading");
   const params = new URLSearchParams(query);
@@ -175,10 +184,12 @@ function RecentDashboardLeads({ query, canRead }: Readonly<{ query: URLSearchPar
   useEffect(() => {
     if (!canRead) return;
     const controller = new AbortController();
+    setResult(undefined);
     setState("loading");
     fetch(`/api/crm/reports/dashboard/recent-leads?${queryString}`, { credentials: "same-origin", signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => {
         if (controller.signal.aborted) return;
+        if (response.status === 401) { onSessionExpired(); return; }
         if (response.status === 403) { setState("forbidden"); return; }
         if (!response.ok) throw new Error("recent_leads_unavailable");
         const value = decodeRecentLeads(await response.json());
@@ -187,7 +198,7 @@ function RecentDashboardLeads({ query, canRead }: Readonly<{ query: URLSearchPar
       })
       .catch(() => { if (!controller.signal.aborted) setState("error"); });
     return (): void => controller.abort();
-  }, [canRead, queryString]);
+  }, [canRead, queryString, onSessionExpired]);
   if (!canRead) return <p>Liste récente indisponible pour les autorisations de cette session.</p>;
   if (state === "loading") return <p><output aria-busy="true">Chargement des leads autorisés…</output></p>;
   if (state === "forbidden") return <p role="alert">Accès aux leads récents refusé pour cette session.</p>;
@@ -228,7 +239,7 @@ function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readon
   </div>;
 }
 
-function DashboardContent({ report, showTables, query, operationalThreshold }: Readonly<{ report: DashboardReport; showTables: boolean; query: URLSearchParams; operationalThreshold: number }>): React.JSX.Element {
+function DashboardContent({ report, showTables, query, operationalThreshold, onSessionExpired }: Readonly<{ report: DashboardReport; showTables: boolean; query: URLSearchParams; operationalThreshold: number; onSessionExpired: () => void }>): React.JSX.Element {
   const funnel = Object.entries(report.panels.funnel.currentState).map(([value, count]) => ({ value, count }));
   const loads = report.panels.performance.advisers.map((item) => ({ key: item.adviserId, value: "Libellé commercial indisponible", count: item.activeLoad }));
   const contributions = report.panels.sharedContributions.contributors.map((item) => ({ key: item.contributorId, value: "Libellé contributeur indisponible", count: item.primaryActionCount + item.secondaryActionCount }));
@@ -252,7 +263,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold }: R
     </section>
     <p><Link className="text-button" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}>Ouvrir les Leads sans activité — file distincte du signal de première interaction échue</Link></p>
     <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} signal(s) observé(s) par les contrôles API</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{operationalAlertHref(alert, query) === "#" ? unavailableAlertLabel(alert) : <Link href={operationalAlertHref(alert, query)}>{operationalAlertLinkLabel(alert)}</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{pipelineShare(item.count, report.cards.uniqueLeads)}</em></div>)}</section></div>
-    <div className="dashboard-secondary-grid"><section className="panel leads-panel"><div className="panel-heading"><h2>Derniers leads</h2>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} /></section><section className="panel activity-panel"><div className="panel-heading"><h2>Activité récente</h2></div><ul className="activity-list">{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <li key={alert.code}><span className="icon-disc small red"><WarningCircle size={18} /></span><span><b>{alert.code}</b><small>{displayCount(alert.count)} élément(s) agrégé(s)</small></span></li>)}</ul></section></div>
+    <div className="dashboard-secondary-grid"><section className="panel leads-panel"><div className="panel-heading"><h2>Derniers leads</h2>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} onSessionExpired={onSessionExpired} /></section><section className="panel activity-panel"><div className="panel-heading"><h2>Activité récente</h2></div><ul className="activity-list">{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <li key={alert.code}><span className="icon-disc small red"><WarningCircle size={18} /></span><span><b>{alert.code}</b><small>{displayCount(alert.count)} élément(s) agrégé(s)</small></span></li>)}</ul></section></div>
     <details className="reporting-details"><summary>Analyses détaillées et tableaux accessibles</summary>
     <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
     {query.has("status") && query.get("status") !== "ENROLLED" && <p>Le lien Inscriptions explore le statut Inscrit en remplaçant le filtre de statut ; ce n’est pas la même cohorte que celle actuellement affichée.</p>}
