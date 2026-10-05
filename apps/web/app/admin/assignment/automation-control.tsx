@@ -39,7 +39,7 @@ export function AutomationControl(): React.JSX.Element {
   const busy = feedback.kind === "loading";
   return <section aria-label="Automatisation par campus" aria-busy={busy}>
     <ReferenceSelect name="assignment-campus" label="Campus" options={campuses} value={campus} disabled={busy} onChange={(value) => { setCampus(value); if (value) void perform(value); else { revision.current++; setSnapshot(null); setFeedback({ kind: "idle", message: "" }); } }} />
-    <p>L’activation du connecteur Sheets reste indépendante. Cette option contrôle l’affectation automatique des imports ; elle ne bloque pas les affectations manuelles autorisées.</p>
+    <p>L’activation du connecteur Sheets reste indépendante. Cette option contrôle l’affectation automatique des nouveaux Leads et des imports autorisés ; elle ne réaffecte pas les dossiers existants et ne bloque pas les affectations manuelles autorisées.</p>
     {snapshot ? <form onSubmit={(event) => { event.preventDefault(); void perform(campus, true); }}>
       <p>Configuration enregistrée : version {typeof snapshot.version === "number" ? snapshot.version : "indisponible"}</p>
       <label style={{ display: "flex", alignItems: "center", minHeight: 44 }}><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => { setEnabled(event.target.checked); setFeedback({ kind: "idle", message: "" }); }} />Activer l’affectation automatique</label>

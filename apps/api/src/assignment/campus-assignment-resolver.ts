@@ -6,21 +6,28 @@ import type { IngestionBatchInput } from "../ingestion/ingestion.service.js";
 import { canonicalCampus } from "../permissions/dynamic-resources.js";
 import { readCampusRules } from "./campus-assignment.service.js";
 import { applicableCampusRule } from "./campus-assignment-policy.js";
+import { assignmentCandidateCapability, type EvaluationContext } from "../permissions/dynamic-evaluator.js";
+import type { ConfigurationSnapshot } from "../permissions/dynamic-contract.js";
+import type { Role } from "../auth/auth.types.js";
 
 type Selection = Pick<AssignmentDecision, "ruleId" | "strategy" | "selectedUserId" | "candidateIds" | "candidateFingerprint">;
 export interface SheetAssignment { targetUserId?: string; selection?: Selection; eventKey: string; campusId?: string; configurationVersion?: number; reason?: string }
 
-async function eligible(tx: Prisma.TransactionClient, candidate: AssignmentCandidate, campusId: string): Promise<AssignmentCandidate> {
+export interface AssignmentEligibility { commercialOnly: true; permissions: readonly ConfigurationSnapshot[] }
+
+export async function eligibleAssignmentCandidate(tx: Prisma.TransactionClient, candidate: AssignmentCandidate, campusId: string, eligibility?: AssignmentEligibility): Promise<AssignmentCandidate> {
   const user = await tx.collaborator.findUnique({ where: { id: candidate.userId } });
-  if (!user?.active || !user.campusId || !user.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER")) return { ...candidate, active: false };
+  if (!user?.active || user.firstLoginRequired || !user.campusId || !user.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER")) return { ...candidate, active: false };
   const campus = await canonicalCampus(tx, user.campusId);
+  const context: EvaluationContext = { campus: campus.id, active: true, own: true, team: false, campusAllowed: campus.id === campusId, globalAllowed: false };
+  if (eligibility && !assignmentCandidateCapability(user.roles as Role[], eligibility.permissions, context)) return { ...candidate, active: false };
   const activeLeadCount = await tx.lead.count({ where: { assignedToId: user.id, status: { notIn: ["CLOSED_LOST", "ENROLLED"] } } });
   return { ...candidate, active: candidate.active && campus.id === campusId, activeLeadCount };
 }
 
 /** Selection and cursor movement stay inside the caller's fenced business transaction. */
 export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input: IngestionBatchInput["assignment"], record: { source: string; campaign?: string | undefined },
-  campusId: string, eventKey: string, previewOffset = 0, automatic = input.strategy !== "FIXED"): Promise<SheetAssignment> {
+  campusId: string, eventKey: string, previewOffset = 0, automatic = input.strategy !== "FIXED", eligibility?: AssignmentEligibility): Promise<SheetAssignment> {
   if (input.strategy === "UNASSIGNED") return { eventKey, reason: "assignment_explicitly_unassigned" };
   await canonicalCampus(tx, campusId);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, hashtext(${campusId}))`;
@@ -34,13 +41,13 @@ export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input
   if (input.strategy === "FIXED") {
     const candidate = rule.candidates.find((item) => item.userId === input.targetUserId);
     if (!candidate) throw new ConflictException({ code: "assignment_target_ineligible" });
-    const current = await eligible(tx, candidate, campusId);
+    const current = await eligibleAssignmentCandidate(tx, candidate, campusId, eligibility);
     if (!current.active || current.suspended || current.excluded || current.activeLeadCount >= current.capacity) throw new ConflictException({ code: "assignment_target_ineligible" });
     return { ...evidence, targetUserId: current.userId };
   }
   if (rule.strategy !== input.strategy) throw new ConflictException({ code: "assignment_strategy_conflict" });
   const cursor = await tx.campusAssignmentCursor.findUnique({ where: { campusId_version_ruleId: { campusId, version: configuration.version, ruleId: rule.id } } });
-  const candidates = await Promise.all(rule.candidates.map((candidate) => eligible(tx, candidate, campusId)));
+  const candidates = await Promise.all(rule.candidates.map((candidate) => eligibleAssignmentCandidate(tx, candidate, campusId, eligibility)));
   const selection = selectAssignmentCandidate({ id: rule.id, strategy: rule.strategy, cursor: cursor?.cursor ?? 0, candidates }, eventKey, previewOffset);
   return { ...evidence, targetUserId: selection.selectedUserId, selection };
 }

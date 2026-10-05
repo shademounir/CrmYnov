@@ -128,6 +128,8 @@ jobs:
         run: node scripts/ci/admissions-postgres.mjs
       - name: Prove personal telephony authorization and pairing concurrency on isolated PostgreSQL
         run: node scripts/ci/personal-telephony-postgres.mjs
+      - name: Prove new Lead assignment and distinct reassignment decisions on isolated PostgreSQL
+        run: node scripts/ci/assignment-flow-postgres.mjs
       - name: Run targeted end-to-end contracts
         run: npm run test:e2e
 

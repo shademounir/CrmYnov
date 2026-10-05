@@ -41,6 +41,7 @@ export interface LeadProfileRecord {
   source: string;
   status: string;
   assignedToId?: string;
+  assignedToLabel?: string;
   collaboratorIds: string[];
   nextActionAt?: string;
   createdAt?: string;
@@ -150,11 +151,13 @@ function parseLead(value: unknown): LeadProfileRecord | undefined {
   const email = optionalString(value, "email");
   const phone = optionalString(value, "phone");
   const assignedToId = optionalString(value, "assignedToId");
+  const assignedToLabel = optionalString(value, "assignedToLabel");
   const nextActionAt = optionalString(value, "nextActionAt");
   const createdAt = optionalString(value, "createdAt");
   if (email) lead.email = email;
   if (phone) lead.phone = phone;
   if (assignedToId) lead.assignedToId = assignedToId;
+  if (assignedToLabel) lead.assignedToLabel = assignedToLabel;
   if (nextActionAt) lead.nextActionAt = nextActionAt;
   if (createdAt) lead.createdAt = createdAt;
   return lead;
@@ -325,7 +328,7 @@ function CommercialPanel({ lead, lastContact }: Readonly<{ lead: LeadProfileReco
   return <section className="panel lead-profile__commercial" aria-label="Situation commerciale"><dl>
     <ProfileFact icon={<MapPin size={20} />} label="Étape" value={leadStatusLabel(lead.status)} emphasized />
     <ProfileFact icon={<PhoneCall size={20} />} label="Dernier résultat" value={lastContact} emphasized={lastContact.startsWith("Injoignable")} />
-    <ProfileFact icon={<UserCircle size={20} />} label="Conseiller principal" value={lead.assignedToId ? "Conseiller attribué" : "Non affecté"} />
+    <ProfileFact icon={<UserCircle size={20} />} label="Conseiller principal" value={lead.assignedToId ? lead.assignedToLabel ?? "Conseiller attribué" : "Non affecté"} />
     <ProfileFact icon={<ThermometerSimple size={20} />} label="Température" value={lead.temperatureLabel} emphasized={lead.temperature === "HOT"} />
     <ProfileFact icon={<CalendarBlank size={20} />} label="Prochaine action" value={formatDate(lead.nextActionAt)} />
   </dl></section>;
