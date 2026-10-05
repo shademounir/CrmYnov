@@ -50,6 +50,12 @@ variable "deploy_services" {
   default     = false
 }
 
+variable "access_recovery_enabled" {
+  description = "Explicitly enable the reviewed access-recovery API only after the compatible Web is deployed. Keep disabled during rollout or rollback."
+  type        = bool
+  default     = false
+}
+
 variable "gmail_invitation_enabled" {
   description = "Attach existing OAuth Secret Manager versions to the DEV API only after personal consent and a verified gmail.send grant."
   type        = bool

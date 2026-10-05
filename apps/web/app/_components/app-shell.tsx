@@ -34,7 +34,7 @@ export type SearchState =
   | { kind: "empty"; items: never[] }
   | { kind: "session" | "forbidden" | "error"; items: never[] };
 
-const authPaths = new Set(["/", "/access-recovery", "/first-login", "/invitation"]);
+const authPaths = new Set(["/", "/access-recovery", "/access-recovery/complete", "/first-login", "/invitation"]);
 const navigation = [
   { href: "/manager/reports/dashboard", label: "Vue d’ensemble", icon: House },
   { href: "/leads", label: "Tous les leads", icon: UsersThree },

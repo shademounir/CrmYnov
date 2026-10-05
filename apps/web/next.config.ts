@@ -6,7 +6,7 @@ const config: NextConfig = {
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
   poweredByHeader: false,
   headers() {
-    return Promise.resolve([{ source: "/invitation", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "no-store" }] }]);
+    return Promise.resolve(["/invitation", "/first-login", "/access-recovery", "/access-recovery/complete"].map((source) => ({ source, headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "no-store" }] })));
   },
 };
 export default config;

@@ -30,5 +30,6 @@ export function LoginForm(): React.JSX.Element {
     {capsLock ? <p className="caps-lock-note" role="status"><WarningCircle size={17} weight="fill" /> Verr. Maj. est activé</p> : null}
     <button className="primary-button" disabled={state === "submitting"} type="submit">{state === "submitting" ? "Connexion…" : "Se connecter"}</button>
     {state === "error" ? <p className="field-error" role="alert"><WarningCircle size={18} weight="fill" /> Identifiants refusés ou service indisponible.</p> : null}
+    <p><a href="/access-recovery">Mot de passe oublié ?</a></p>
   </form>;
 }

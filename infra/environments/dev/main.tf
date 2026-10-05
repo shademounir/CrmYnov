@@ -370,6 +370,10 @@ resource "google_cloud_run_v2_service" "api" {
         value = "external"
       }
       env {
+        name  = "CRM_ACCESS_RECOVERY_ENABLED"
+        value = tostring(var.access_recovery_enabled)
+      }
+      env {
         name  = "FORMINATOR_WEBHOOK_ENABLED"
         value = "false"
       }
