@@ -37,6 +37,7 @@ test("renders keyboard-focusable charts and an alternative data table for every 
   const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { period: "30d", campus: "campus-a" }, initialReport: report, initialCalendar }));
   for (const text of ["Indicateurs clés", "Funnel commercial", "Évolution temporelle", "Répartition par source", "Charge commerciale", "Contributions principales et secondaires", "Données alternatives", "Exporter les agrégats CSV"]) assert.equal(html.includes(text), true);
   assert.equal((html.match(/class="reporting-chart"/gu) ?? []).length, 8); assert.equal((html.match(/type="button"/gu) ?? []).length, 8);
+  assert.equal(html.includes("dashboard-personal-charts"), false);
   assert.equal(html.includes("Alex"), false); assert.equal(html.includes("@example"), false); assert.equal(html.includes("returnTo="), true);
 });
 
@@ -73,6 +74,33 @@ test("renders the adviser-only personal view without global cards", () => {
   const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { view: "personal" }, initialReport: personal, initialCalendar }));
   assert.equal(html.includes("Mes indicateurs autorisés"), true); assert.equal(html.includes("Mes contributions"), true); assert.equal(html.includes("Alertes actives"), false);
 });
+
+for (const zeroCounts of [false, true]) {
+  test(`personal charts keep four readable indicators and their accessible values (${zeroCounts ? "zero" : "nonzero"})`, () => {
+    const values = zeroCounts ? [0, 0, 0, 0] : [3, 1, 2, 1];
+    const personal: PersonalDashboardReport = {
+      definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" },
+      performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0]!, secondaryLeadCount: values[1]!, activeLoad: values[2]!, followUps: { overdue: values[3]! } }] },
+      contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: zeroCounts ? 0 : 4, secondaryActionCount: zeroCounts ? 0 : 2 }] },
+      safeguards: { personalScopeOnly: true, aggregatedOnly: true },
+    };
+    const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { view: "personal" }, initialReport: personal, initialCalendar })));
+    const personalCharts = dom.window.document.querySelector(".dashboard-personal-charts");
+    assert.ok(personalCharts, "isolate the personal chart layout without changing accepted dashboard panels");
+    const figures = personalCharts.querySelectorAll("figure");
+    assert.equal(figures.length, 2);
+    assert.equal(figures[0]?.querySelector("h2")?.textContent, "Ma performance");
+    const chart = figures[0]?.querySelector<HTMLButtonElement>("button.reporting-chart");
+    assert.equal(chart?.type, "button");
+    assert.deepEqual([...chart.querySelectorAll("div > span")].map((label) => label.textContent), ["Leads principaux", "Collaborations", "Charge active", "Relances échues"]);
+    assert.deepEqual([...chart.querySelectorAll("meter")].map((meter) => meter.value), values);
+    assert.deepEqual([...chart.querySelectorAll("strong")].map((count) => count.textContent), values.map(String));
+    assert.deepEqual([...figures[0].querySelectorAll("tbody td")].map((count) => count.textContent), values.map(String));
+    assert.equal(chart?.getAttribute("aria-label")?.includes(`Relances échues: ${values[3]}`), true);
+    assert.equal(personalCharts.textContent?.includes("adviser-synthetic"), false);
+    dom.window.close();
+  });
+}
 
 test("keeps hostile aggregate labels as inert text and refuses unsafe destinations", () => {
   const hostile = `<img src=x onerror=alert(1)><script>alert(1)</script>`;
