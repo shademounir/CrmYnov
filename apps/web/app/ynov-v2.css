@@ -206,7 +206,7 @@ p { line-height: 1.5; }
   .dashboard-secondary-grid--refined .panel-heading { padding: 16px 14px 10px; flex-wrap: wrap; gap: 4px 12px; }
   .dashboard-secondary-grid--refined .panel-heading .text-button { white-space: normal; }
   .dashboard-recent-leads { padding-inline: 6px; }
-  .dashboard-recent-lead__link { grid-template-columns: minmax(0, 1fr) 16px; gap: 9px 12px; padding: 12px 8px; }
+  .dashboard-secondary-grid--refined .dashboard-recent-lead__link { grid-template-columns: minmax(0, 1fr) 16px; gap: 9px 12px; padding: 12px 8px; }
   .dashboard-recent-lead__identity { grid-column: 1; }
   .dashboard-recent-lead__details { grid-column: 1; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
   .dashboard-recent-lead__arrow { grid-column: 2; grid-row: 1 / 3; }
