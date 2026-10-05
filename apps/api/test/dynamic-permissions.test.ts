@@ -4,7 +4,7 @@ import test from "node:test";
 import { ForbiddenException } from "@nestjs/common";
 import type { Principal, Role } from "../src/auth/auth.types.js";
 import { configurationKey, permissionCatalogue, scopeWithin, validateInput, validateTarget, type ConfigurationInput, type ConfigurationSnapshot, type ConfigurationTarget } from "../src/permissions/dynamic-contract.js";
-import { defaultConfiguration, evaluatePermission, resolveGrants, type EvaluationContext } from "../src/permissions/dynamic-evaluator.js";
+import { assignmentCandidateCapability, defaultConfiguration, evaluatePermission, resolveGrants, type EvaluationContext } from "../src/permissions/dynamic-evaluator.js";
 import { configurationChanges } from "../src/permissions/dynamic-service.js";
 import { GrantProvider, PermissionService, type Grant, type ResourceContext } from "../src/permissions/permission.service.js";
 import { contextualPermissions, routePermissions } from "../src/permissions/dynamic-routes.js";
@@ -18,6 +18,17 @@ function snapshot(target: ConfigurationTarget, permission: string, scope: "NONE"
 const roleTarget = (role: Role, campus = "GLOBAL"): ConfigurationTarget => ({ kind: "ROLE", role, campus });
 const ceiling = (campus = "GLOBAL"): ConfigurationTarget => ({ kind: "CEILING", role: "*", campus });
 const key = "lead.edit";
+
+test("CRMY-94 candidate capability evaluates only Commercial processing grants without a simulated session", () => {
+  assert.equal(assignmentCandidateCapability(["ADMISSIONS"], [], context), true);
+  assert.equal(assignmentCandidateCapability(["MANAGER"], [], context), false);
+  assert.equal(assignmentCandidateCapability(["AUDITOR"], [], context), false);
+  assert.equal(assignmentCandidateCapability(["ADMISSIONS"], [], { ...context, campusAllowed: false }), false);
+  for (const denied of ["lead.view", "lead.edit", "reminder.manage"]) {
+    assert.equal(assignmentCandidateCapability(["ADMISSIONS"], [snapshot(roleTarget("ADMISSIONS", "SYNTHETIC"), denied, "NONE")], context), false);
+    assert.equal(assignmentCandidateCapability(["ADMISSIONS"], [snapshot(ceiling("SYNTHETIC"), denied, "NONE")], context), false);
+  }
+});
 
 test("CRMY-169 NONE contributes nothing, another legitimate role remains effective", () => {
   const rows = [snapshot(roleTarget("ADMISSIONS"), key, "NONE")];

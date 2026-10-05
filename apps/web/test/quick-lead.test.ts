@@ -8,15 +8,14 @@ test("renders the bounded quick call and visit lead journey", () => {
   const rendered = renderToStaticMarkup(createElement(QuickLeadPage));
 
   for (const expected of [
-    "Nouveau lead après appel",
-    "Après appel",
-    "Après visite",
-    "Rechercher les correspondances",
-    "ROUND_ROBIN",
-    "CONTROLLED_RANDOM",
-    "conserve le statut, l’affectataire et la source originale",
+    "Nouveau Lead après appel ou visite",
+    "création persistante",
+    "ne sont pas raccordés à la persistance PostgreSQL",
+    "Ouvrir la création de Lead",
+    "Rechercher un Lead existant",
   ]) {
     assert.match(rendered, new RegExp(expected));
   }
   assert.equal(rendered.includes("@example."), false);
+  assert.equal(rendered.includes("<form"), false);
 });

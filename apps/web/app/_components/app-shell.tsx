@@ -46,6 +46,7 @@ const navigation = [
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/chat", label: "Chat", icon: ChatCircleDots },
   { href: "/manager/reports/commercial-performance", label: "Rapports", icon: ChartBar },
+  { href: "/manager/assignment", label: "Affectations", icon: UsersThree },
   { href: "/admin/users", label: "Administration", icon: Gear },
   { href: "/admin/references", label: "Référentiels", icon: Gear },
   { href: "/admin/roles", label: "Rôles et permissions", icon: Gear },

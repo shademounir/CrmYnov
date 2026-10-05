@@ -4,10 +4,11 @@ import Link from "next/link";
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, CalendarBlank, Clock, NotePencil, UserSwitch } from "@phosphor-icons/react";
 import { ConnectedResource } from "../../_components/connected-resource";
+import { ReassignmentHistory } from "../../_components/reassignment-history";
 import { AssignmentWorkflowForm, ClosureHistory, ClosureWorkflowForm, FollowUpHistory, FollowUpWorkflowForm, InteractionWorkflowForm, StatusWorkflowForm } from "./lead-workflow-forms";
 
 type Surface = "assignment" | "interaction" | "status" | "follow-up" | "closure";
-type LeadContext = { leadCode: string; firstName: string; lastName: string; status: string; assignedToId?: string };
+type LeadContext = { leadCode: string; firstName: string; lastName: string; status: string; assignedToId?: string; assignedToLabel?: string };
 
 const surfaceCopy: Record<Surface, { eyebrow: string; title: string; description: string; icon: React.ReactNode }> = {
   assignment: { eyebrow: "Équipe du prospect", title: "Affectation et réaffectation", description: "Sélectionnez un conseiller autorisé sans quitter le contexte du dossier.", icon: <UserSwitch size={22} aria-hidden="true" /> },
@@ -27,13 +28,13 @@ function parseLeadContext(value: unknown): LeadContext | undefined {
     lastName: typeof row.lastName === "string" ? row.lastName : "",
     status: row.status,
     ...(typeof row.assignedToId === "string" && row.assignedToId ? { assignedToId: row.assignedToId } : {}),
+    ...(typeof row.assignedToLabel === "string" && row.assignedToLabel ? { assignedToLabel: row.assignedToLabel } : {}),
   };
 }
 
 function ResourceForSurface({ leadId, surface, refreshKey }: Readonly<{ leadId: string; surface: Surface; refreshKey: number }>): React.JSX.Element | null {
   if (surface === "interaction") return <ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} />;
   if (surface === "follow-up") return <FollowUpHistory key={`${leadId}:${refreshKey}`} leadId={leadId} />;
-  if (surface === "assignment") return <ConnectedResource key={`${leadId}:${refreshKey}:assignment`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/reassignment-requests`} ariaLabel="Historique des demandes de réaffectation" emptyMessage="Aucune demande de réaffectation." fields={[{ key: "status", label: "État" }, { key: "reason", label: "Motif" }, { key: "requestedAt", label: "Demandée le" }, { key: "decisionReason", label: "Décision" }]} />;
   return null;
 }
 
@@ -42,6 +43,7 @@ function useLeadContext(leadId: string, refreshKey: number): Readonly<{ context?
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   useEffect(() => {
     const controller = new AbortController();
+    setState("loading");
     void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`lead_${response.status}`);
@@ -84,7 +86,7 @@ function WorkflowAction({ leadId, surface, context, contextState, onCompleted }:
   contextState: "loading" | "ready" | "error";
   onCompleted: () => void;
 }>): React.JSX.Element | null {
-  if (surface === "assignment") return <AssignmentWorkflowForm leadId={leadId} assigned={Boolean(context?.assignedToId)} onCompleted={onCompleted} />;
+  if (surface === "assignment") return contextState === "ready" && context ? <AssignmentWorkflowForm leadId={leadId} assigned={Boolean(context.assignedToId)} onCompleted={onCompleted} /> : <p role="status">{contextState === "error" ? "L’affectation actuelle est indisponible. Aucune modification n’est proposée." : "Chargement de l’affectation actuelle…"}</p>;
   if (surface === "interaction") return <InteractionWorkflowForm leadId={leadId} onCompleted={onCompleted} />;
   if (surface === "closure") return <ClosureWorkflowForm leadId={leadId} onCompleted={onCompleted} />;
   if (surface === "status") {
@@ -98,6 +100,7 @@ function WorkflowAction({ leadId, surface, context, contextState, onCompleted }:
 }
 
 function WorkflowHistory({ leadId, surface, refreshKey, onCompleted }: Readonly<{ leadId: string; surface: Surface; refreshKey: number; onCompleted: () => void }>): React.JSX.Element {
+  if (surface === "assignment") return <ReassignmentHistory key={`${leadId}:${refreshKey}:assignment`} leadId={leadId} onCompleted={onCompleted} />;
   if (surface === "closure") return <ClosureHistory key={`${leadId}:${refreshKey}:closure`} leadId={leadId} onCompleted={onCompleted} />;
   if (surface !== "status") return <ResourceForSurface leadId={leadId} surface={surface} refreshKey={refreshKey} />;
   return <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique. Une clôture reste soumise au parcours dédié.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></>;
@@ -114,7 +117,7 @@ export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string;
     <section className="panel lead-workflow-page__context" aria-live="polite">
       <div><span>Dossier</span><strong>{contextLeadCode(context, contextState)}</strong></div>
       <div><span>Prospect</span><strong>{contextState === "ready" ? contextDisplayName(context) : "—"}</strong></div>
-      <div><span>Principe</span><strong>Contrôles serveur conservés</strong></div>
+      <div><span>{surface === "assignment" ? "Propriétaire actuel" : "Principe"}</span><strong>{surface === "assignment" ? contextState === "ready" ? context?.assignedToLabel ?? (context?.assignedToId ? "Conseiller attribué au dossier" : "Non affecté") : "—" : "Contrôles serveur conservés"}</strong></div>
     </section>
     <div className="lead-workflow-page__grid">
       <section className="panel lead-workflow-page__form-card" aria-labelledby="workflow-action-title"><div className="lead-workflow-page__section-heading"><p className="eyebrow">Action</p><h2 id="workflow-action-title">{workflowActionTitle(surface, Boolean(context?.assignedToId))}</h2></div>

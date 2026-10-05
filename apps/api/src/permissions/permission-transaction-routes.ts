@@ -5,7 +5,7 @@ const readers: Readonly<Record<string, readonly string[]>> = {
   LeadController: ["list", "detail"],
   LeadTimelineController: ["list"],
   LeadQualificationController: ["read"],
-  ReassignmentController: ["list"],
+  ReassignmentController: ["list", "pending"],
   ClosureController: ["list"],
   LeadCollaborationController: ["list"],
   UserController: ["list"],

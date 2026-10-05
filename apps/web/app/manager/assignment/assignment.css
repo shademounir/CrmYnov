@@ -1,0 +1,25 @@
+.assignment-page { display: grid; gap: 20px; min-width: 0; }
+.assignment-page__links { display: flex; flex-wrap: wrap; gap: 12px; }
+.assignment-indicators { padding: 20px; }
+.assignment-indicators dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.assignment-indicators dd { margin: 8px 0 0; font-size: 24px; font-weight: 700; }
+.reassignment-history { min-width: 0; display: grid; gap: 16px; }
+.reassignment-history > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.reassignment-history ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.reassignment-card { min-width: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #fff); padding: 20px; overflow-wrap: anywhere; }
+.reassignment-card__heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.reassignment-state { padding: 6px 10px; border-radius: 20px; background: #edf6f5; color: #006e65; font-weight: 600; }
+.reassignment-state--pending { background: #fff4dd; color: #825506; }
+.reassignment-state--rejected { background: #fff0f1; color: #9b2731; }
+.reassignment-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.reassignment-card dt { font-size: 12px; color: var(--muted, #63707a); }
+.reassignment-card dd { margin: 6px 0 0; font-weight: 600; }
+.reassignment-card time { color: var(--muted, #63707a); font-size: 12px; }
+.reassignment-decision { display: grid; gap: 16px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.reassignment-decision label { display: grid; gap: 8px; min-width: 0; }
+.reassignment-decision select, .reassignment-decision textarea { width: 100%; min-width: 0; min-height: 44px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; }
+.reassignment-decision button { justify-self: start; min-height: 44px; white-space: normal; }
+.reassignment-feedback { padding: 12px; border-left: 4px solid #009e92; background: #edf6f5; overflow-wrap: anywhere; }
+.reassignment-feedback--error { background: #fff0f1; border-color: #b62c3a; }
+@media (max-width: 768px) { .reassignment-card { padding: 16px; } .reassignment-card dl { grid-template-columns: 1fr; gap: 12px; } .assignment-indicators dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 430px) { .reassignment-history > header button, .reassignment-decision button, .assignment-page__links > a { width: 100%; } }

@@ -7,11 +7,12 @@ import { DynamicPermissionRepository } from "../permissions/dynamic-repository.j
 import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
 import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { canonicalCampus } from "../permissions/dynamic-resources.js";
-import { prepareSheetAssignment, commitSheetAssignment, type SheetAssignment } from "./campus-assignment-resolver.js";
+import { prepareSheetAssignment, commitSheetAssignment, eligibleAssignmentCandidate, type SheetAssignment } from "./campus-assignment-resolver.js";
 import type { IngestionBatchInput } from "../ingestion/ingestion.service.js";
 import { readCampusRules } from "./campus-assignment.service.js";
 import { applicableCampusRule } from "./campus-assignment-policy.js";
 import { recordedAssignment, type RecordedAssignmentDecision } from "./recorded-assignment.js";
+import { assignmentManagerRecipients } from "./assignment-notifications.js";
 
 export interface PersistentAssignmentInput { leadId: string; eventKey: string; assignment: IngestionBatchInput["assignment"] }
 export interface PersistentAssignmentResult { outcome: "ASSIGNED" | "PRESERVED" | "UNASSIGNED"; assignment: SheetAssignment; lead: LeadRecord; replayed: boolean }
@@ -117,10 +118,11 @@ export class PersistentAssignmentService {
       const options: AssignmentCandidateOption[] = [];
       for (const candidate of rule.candidates) {
         const collaborator = await tx.collaborator.findUnique({ where: { id: candidate.userId } });
-        if (!collaborator?.active || !collaborator.campusId || !collaborator.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER")) continue;
-        if ((await canonicalCampus(tx, collaborator.campusId)).id !== campus.id || !candidate.active || candidate.suspended || candidate.excluded) continue;
-        const activeLeadCount = await tx.lead.count({ where: { assignedToId: collaborator.id, status: { notIn: ["CLOSED_LOST", "ENROLLED"] } } });
-        if (activeLeadCount >= candidate.capacity) continue;
+        if (!collaborator) continue;
+        const eligible = await eligibleAssignmentCandidate(tx, candidate, campus.id,
+          lead.assignedToId ? { commercialOnly: true, permissions: snapshots } : undefined);
+        if (!eligible.active || eligible.suspended || eligible.excluded || eligible.activeLeadCount >= eligible.capacity) continue;
+        const activeLeadCount = eligible.activeLeadCount;
         options.push({
           id: collaborator.id,
           label: collaborator.professionalDisplayName?.trim() || collaborator.professionalEmail,
@@ -130,6 +132,42 @@ export class PersistentAssignmentService {
       }
       return options.sort((left, right) => left.label.localeCompare(right.label, "fr") || left.id.localeCompare(right.id));
     });
+  }
+
+  /** Also used for terminal replay and rejection: authorization must precede
+   * receipt lookup, but a replay must not consume selection or require capacity again.
+   */
+  async withReassignmentAccess<T>(leadId: string, actor: Principal, permission: "lead.reassign.request" | "lead.reassign.approve", action: (tx: Prisma.TransactionClient, current: Principal) => Promise<T>): Promise<T> {
+    return this.repository.transaction(async (tx) => {
+      const { campusId, current } = await this.authorizedLead(tx, leadId, actor, permission);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, hashtext(${campusId}))`;
+      return action(tx, current);
+    });
+  }
+
+  async withReassignmentRead<T>(actor: Principal, action: (tx: Prisma.TransactionClient, current: Principal, authorized: (leadId: string, permission?: string) => Promise<boolean>) => Promise<T>): Promise<T> {
+    return this.repository.readTransaction(async (tx) => {
+      const current = await currentPrincipal(tx, actor);
+      const snapshots = await this.repository.snapshots(tx);
+      return action(tx, current, async (leadId, permission = "lead.view") => {
+        const lead = await tx.lead.findUnique({ where: { id: leadId } });
+        if (!lead) return false;
+        const campus = await canonicalCampus(tx, lead.campus);
+        const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true, ...(lead.assignedToId ? { ownerId: lead.assignedToId } : {}) });
+        return context.campusAllowed && evaluatePermission(current, permission, snapshots, context).allowed;
+      });
+    });
+  }
+
+  async assertReassignmentTarget(tx: Prisma.TransactionClient, lead: { campus: string; campaign: string; source: string }, target: string): Promise<void> {
+    const campus = await canonicalCampus(tx, lead.campus);
+    const selection = await prepareSheetAssignment(tx, { strategy: "FIXED", targetUserId: target }, lead, campus.id, "reassignment-target", 0, false,
+      { commercialOnly: true, permissions: await this.repository.snapshots(tx) });
+    if (selection.targetUserId !== target) throw new ConflictException({ code: "assignment_target_ineligible" });
+  }
+
+  reassignmentApprovers(tx: Prisma.TransactionClient, campus: string, requesterId: string): Promise<string[]> {
+    return this.repository.snapshots(tx).then((permissions) => assignmentManagerRecipients(tx, campus, permissions, "lead.reassign.approve", requesterId));
   }
 
   async withReassignmentTarget<T>(leadId: string, targetUserId: string, actor: Principal, permission: "lead.reassign.request" | "lead.reassign.approve", action: (target: string) => Promise<T>): Promise<T> {

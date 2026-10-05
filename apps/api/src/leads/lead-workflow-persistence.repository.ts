@@ -38,7 +38,7 @@ export class LeadWorkflowPersistenceRepository {
       reassignments: reassignments.map((row) => ({
         id: row.id, leadId: row.leadId, currentOwnerId: row.currentOwnerId, targetUserId: row.targetUserId,
         reason: row.reason, moveOpenTasks: row.moveOpenTasks, requestedBy: row.requestedBy,
-        status: row.status as ReassignmentRequest["status"], requestedAt: row.requestedAt.toISOString(),
+        status: row.status as ReassignmentRequest["status"], requestedAt: row.requestedAt.toISOString(), version: row.version,
         ...(row.decidedBy ? { decidedBy: row.decidedBy } : {}),
         ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}),
         ...(row.decisionReason ? { decisionReason: row.decisionReason } : {}),
@@ -68,7 +68,8 @@ export class LeadWorkflowPersistenceRepository {
     return client.$transaction(async (tx) => {
       const replay = await tx.reassignmentRequest.findUnique({ where: { idempotencyKey } });
       if (replay) {
-        if (replay.leadId !== item.leadId || replay.targetUserId !== item.targetUserId) throw new ConflictException({ code: "reassignment_idempotency_conflict" });
+        if (replay.leadId !== item.leadId || replay.targetUserId !== item.targetUserId || replay.requestedBy !== item.requestedBy
+          || replay.reason !== item.reason.trim() || replay.moveOpenTasks !== item.moveOpenTasks) throw new ConflictException({ code: "reassignment_idempotency_conflict" });
         return this.mapReassignment(replay);
       }
       const row = await tx.reassignmentRequest.create({ data: { ...this.reassignmentData(item), idempotencyKey } });
@@ -168,7 +169,7 @@ export class LeadWorkflowPersistenceRepository {
   private mapReassignment(row: PrismaReassignmentRequest): ReassignmentRequest {
     return { id: row.id, leadId: row.leadId, currentOwnerId: row.currentOwnerId, targetUserId: row.targetUserId,
       reason: row.reason, moveOpenTasks: row.moveOpenTasks, requestedBy: row.requestedBy, status: row.status as ReassignmentRequest["status"],
-      requestedAt: row.requestedAt.toISOString(), ...(row.decidedBy ? { decidedBy: row.decidedBy } : {}),
+      requestedAt: row.requestedAt.toISOString(), version: row.version, ...(row.decidedBy ? { decidedBy: row.decidedBy } : {}),
       ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}), ...(row.decisionReason ? { decisionReason: row.decisionReason } : {}) };
   }
   private mapCollaboration(row: PrismaCollaborationRequest): CollaborationRequest {

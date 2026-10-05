@@ -35,9 +35,11 @@ export interface LeadRecord {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
+  assignedToLabel?: string;
   nextActionAt?: string; lastActivityAt?: string; createdAt: string; version?: number;
   temperature?: LeadTemperature; temperatureLabel?: string; qualificationVersion?: number;
   qualificationReason?: string; qualificationComment?: string; qualifiedAt?: string; qualifiedBy?: string;
+  initialAssignment?: { outcome: "ASSIGNED" | "UNASSIGNED"; reason: string; configurationVersion: number; ruleId: string | null };
 }
 
 export interface LeadActivityRecord {
@@ -46,7 +48,7 @@ export interface LeadActivityRecord {
 }
 
 export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status"> & { idempotencyKey?: string };
-export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[] }
+export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[]; assignment?: LeadRecord["initialAssignment"] }
 export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">> & { expectedVersion?: number; idempotencyKey: string };
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
 export interface LeadAssignmentSnapshot {
@@ -145,7 +147,7 @@ export class LeadService implements OnModuleInit {
       const duplicateCandidates = [...this.leads.values()].filter((lead) => lead.id !== replay.id
         && Boolean((replay.email && lead.email === replay.email) || (replay.phone && lead.phone === replay.phone)))
         .map((lead) => lead.leadCode).sort((left, right) => left.localeCompare(right));
-      return { lead: this.visibleLead(replay, principal), duplicateCandidates };
+      return { lead: this.visibleLead(replay, principal), duplicateCandidates, ...(replay.initialAssignment ? { assignment: replay.initialAssignment } : {}) };
     }
     const activityIds = new Set(this.activities.map((item) => item.id));
     const result = this.createLead(leadInput, principal, correlationId, true);
@@ -156,7 +158,7 @@ export class LeadService implements OnModuleInit {
       const stored = await this.persistence.createLead(lead, activity, receiptKey, fingerprint, principal, correlationId);
       await this.refreshPersistentState();
       this.audit.record({ eventType: "LEAD_CREATED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, result: "SUCCESS", idempotencyKey: `lead-created:${stored.id}`, after: { leadId: stored.id, leadCode: stored.leadCode, duplicateCandidateCount: result.duplicateCandidates.length } });
-      return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates };
+      return { lead: this.visibleLead(stored, principal), duplicateCandidates: result.duplicateCandidates, ...(stored.initialAssignment ? { assignment: stored.initialAssignment } : {}) };
     } catch (error) {
       await this.refreshPersistentState();
       throw error;

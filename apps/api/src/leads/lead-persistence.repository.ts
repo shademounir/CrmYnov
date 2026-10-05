@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { LeadActivity as PrismaLeadActivity, Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { LocalOutboxRepository } from "../outbox/local-outbox.repository.js";
@@ -7,6 +7,14 @@ import { validateLeadReferences } from "../references/reference.repository.js";
 import type { Principal } from "../auth/auth.types.js";
 import type { AssignmentAudit } from "../assignment/assignment-audit.js";
 import type { ActivityCorrection, CorrectionReasonCode, LeadActivityRecord, LeadRecord } from "./lead.service.js";
+import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
+import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
+import { canonicalCampus } from "../permissions/dynamic-resources.js";
+import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
+import { applicableCampusRule } from "../assignment/campus-assignment-policy.js";
+import { readCampusRules } from "../assignment/campus-assignment.service.js";
+import { prepareSheetAssignment, commitSheetAssignment, type SheetAssignment } from "../assignment/campus-assignment-resolver.js";
+import { assignmentManagerRecipients, assignmentNotification } from "../assignment/assignment-notifications.js";
 
 type StoredLead = LeadRecord & { version: number };
 type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[] }>;
@@ -41,6 +49,7 @@ export class LeadPersistenceRepository {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Optional() @Inject(LocalOutboxRepository) private readonly outbox?: LocalOutboxRepository,
+    @Optional() @Inject(DynamicPermissionRepository) private readonly permissions?: DynamicPermissionRepository,
   ) {}
 
   get enabled(): boolean {
@@ -61,8 +70,11 @@ export class LeadPersistenceRepository {
       } }),
       client.leadActivity.findMany({ orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
     ]);
+    const ownerIds = [...new Set(rows.flatMap((row) => row.assignedToId ? [row.assignedToId] : []))];
+    const owners = this.permissions && ownerIds.length ? await client.collaborator.findMany({ where: { id: { in: ownerIds } }, select: { id: true, professionalDisplayName: true } }) : [];
     return {
-      leads: rows.map((row) => this.mapStoredLead(row)),
+      leads: rows.map((row) => { const label = owners.find((owner) => owner.id === row.assignedToId)?.professionalDisplayName?.trim();
+        return { ...this.mapStoredLead(row), ...(label ? { assignedToLabel: label } : {}) }; }),
       activities: activities.map((row): LeadActivityRecord => ({
         id: row.id,
         leadId: row.leadId,
@@ -100,14 +112,41 @@ export class LeadPersistenceRepository {
   ): Promise<StoredLead> {
     this.requireAuditActor(principal);
     const client = this.requiredClient();
-    return client.$transaction(async (tx) => {
+    const create = async (tx: Prisma.TransactionClient): Promise<StoredLead> => {
+      const actor = this.permissions ? await currentPrincipal(tx, principal) : principal;
+      if (this.permissions) {
+        const campus = await canonicalCampus(tx, lead.campus);
+        const context = await resourceEvaluationContext(tx, actor, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+        if (!evaluatePermission(actor, "lead.create", await this.permissions.snapshots(tx), context).allowed) permissionDenied();
+      }
       const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
       if (receipt) return this.replay(receipt.fingerprint, fingerprint, receipt.result);
       const references = await validateLeadReferences(tx, lead);
       lead = { ...lead, ...references };
+      const assignment = this.permissions ? await this.initialAssignment(tx, lead, idempotencyKey, actor) : undefined;
+      if (assignment) lead = { ...lead, ...(assignment.targetUserId ? { assignedToId: assignment.targetUserId, ...(assignment.selection ? { assignmentMode: assignment.selection.strategy } : {}) } : {}),
+        initialAssignment: { outcome: assignment.targetUserId ? "ASSIGNED" : "UNASSIGNED", reason: assignment.reason ?? "assignment_selected", configurationVersion: assignment.configurationVersion ?? 0, ruleId: assignment.selection?.ruleId ?? null } };
       await tx.lead.create({ data: this.leadCreateData(lead) });
       await tx.leadActivity.create({ data: this.activityData(activity, idempotencyKey) });
-      await this.auditMutation(tx, "LEAD_CREATED", lead.id, 1, idempotencyKey, principal, correlationId);
+      await this.auditMutation(tx, "LEAD_CREATED", lead.id, 1, idempotencyKey, actor, correlationId);
+      if (assignment?.targetUserId) {
+        await commitSheetAssignment(tx, assignment, lead.id);
+        await tx.leadActivity.create({ data: this.activityData({ ...activity, id: randomUUID(), type: "ASSIGNMENT_CHANGED", result: assignment.targetUserId }, `${idempotencyKey}:assignment`) });
+        await this.auditMutation(tx, "LEAD_ASSIGNED", lead.id, 1, `${idempotencyKey}:assignment`, actor, correlationId, {
+          origin: "AUTOMATIC", decisionRef: `initial-assignment:${createHash("sha256").update(idempotencyKey).digest("hex")}`,
+          configurationVersion: assignment.configurationVersion ?? null, ruleId: assignment.selection?.ruleId ?? null,
+          requestHash: fingerprint, selectedUserId: assignment.targetUserId,
+        });
+      } else if (assignment) {
+        await tx.auditEvent.create({ data: { eventType: "LEAD_ASSIGNMENT_PENDING", resourceType: "LEAD", resourceId: lead.id, campusId: assignment.campusId ?? lead.campus,
+          actorId: actor.userId, actorRoles: actor.roles, sessionId: actor.sessionId, correlationId, result: "SUCCESS",
+          idempotencyKey: `initial-assignment:${createHash("sha256").update(idempotencyKey).digest("hex")}`, after: { ...lead.initialAssignment } } });
+      }
+      if (assignment?.targetUserId) await assignmentNotification(tx, assignment.targetUserId, lead.id, "ASSIGNMENT", idempotencyKey);
+      else if (assignment && this.permissions) {
+        const managers = await assignmentManagerRecipients(tx, lead.campus, await this.permissions.snapshots(tx), "lead.assign");
+        for (const managerId of managers) await assignmentNotification(tx, managerId, lead.id, "ASSIGNMENT", idempotencyKey, "/collaborators");
+      }
       await tx.leadMutationReceipt.create({
         data: { leadId: lead.id, idempotencyKey, fingerprint, operation: "CREATE", result: lead as unknown as Prisma.InputJsonValue },
       });
@@ -116,10 +155,31 @@ export class LeadPersistenceRepository {
         aggregateType: "LEAD",
         aggregateId: lead.id,
         idempotencyKey: `outbox:${idempotencyKey}`,
-        payload: { operation: "CREATE", status: lead.status, version: lead.version },
+        payload: { operation: "CREATE", status: lead.status, version: lead.version, ...(assignment ? { assignmentOutcome: lead.initialAssignment!.outcome,
+          assignmentReason: lead.initialAssignment!.reason, configurationVersion: lead.initialAssignment!.configurationVersion } : {}) },
       });
       return lead;
-    }, { isolationLevel: "Serializable" });
+    };
+    return this.permissions ? this.permissions.transaction(create) : client.$transaction(create, { isolationLevel: "Serializable" });
+  }
+
+  private async initialAssignment(tx: Prisma.TransactionClient, lead: StoredLead, eventKey: string, actor: Principal): Promise<SheetAssignment> {
+    if (!this.permissions) throw new Error("assignment_permission_store_unavailable");
+    const campus = await canonicalCampus(tx, lead.campus);
+    const context = await resourceEvaluationContext(tx, actor, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+    const permissions = await this.permissions.snapshots(tx);
+    if (!evaluatePermission(actor, "lead.create", permissions, context).allowed) permissionDenied();
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, hashtext(${campus.id}))`;
+    const configuration = await readCampusRules(tx, campus.id);
+    const evidence = { eventKey, campusId: campus.id, configurationVersion: configuration.version };
+    if (!configuration.automaticEnabled) return { ...evidence, reason: configuration.version ? "assignment_automation_disabled" : "assignment_configuration_absent" };
+    const rule = applicableCampusRule(configuration.rules, lead.source, lead.campaign);
+    if (!rule) return { ...evidence, reason: "assignment_configuration_absent" };
+    try { return await prepareSheetAssignment(tx, { strategy: rule.strategy }, lead, campus.id, eventKey, 0, true, { commercialOnly: true, permissions }); }
+    catch (error) {
+      if (error instanceof ConflictException && (error.getResponse() as { code?: string }).code === "assignment_candidate_unavailable") return { ...evidence, reason: "assignment_candidate_unavailable" };
+      throw error;
+    }
   }
 
   async findActivity(idempotencyKey: string): Promise<LeadActivityRecord | undefined> {
@@ -297,7 +357,9 @@ export class LeadPersistenceRepository {
 
   private async auditMutation(tx: Prisma.TransactionClient, eventType: string, leadId: string, version: number, key: string, principal: Principal, correlationId: string, assignment?: AssignmentAudit): Promise<void> {
     const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId }, select: { campus: true } });
-    await tx.auditEvent.create({ data: { eventType, campusId: lead.campus, resourceType: "LEAD", resourceId: leadId, actorId: principal.userId, actorRoles: principal.roles, correlationId, result: "SUCCESS", idempotencyKey: assignment?.decisionRef ?? `lead-audit:${createHash("sha256").update(key).digest("hex")}`, after: { version, scope: "CAMPUS", ...(assignment ? { ...assignment } : {}) } } });
+    const automatic = eventType === "LEAD_ASSIGNED" && assignment?.origin === "AUTOMATIC";
+    const campusId = automatic ? (await canonicalCampus(tx, lead.campus)).id : lead.campus;
+    await tx.auditEvent.create({ data: { eventType, campusId, ...(automatic ? { sessionId: principal.sessionId } : {}), resourceType: "LEAD", resourceId: leadId, actorId: principal.userId, actorRoles: principal.roles, correlationId, result: "SUCCESS", idempotencyKey: assignment?.decisionRef ?? `lead-audit:${createHash("sha256").update(key).digest("hex")}`, after: { version, scope: "CAMPUS", ...(assignment ? { ...assignment } : {}) } } });
   }
 
   private replay(storedFingerprint: string, fingerprint: string, result: Prisma.JsonValue): StoredLead {
