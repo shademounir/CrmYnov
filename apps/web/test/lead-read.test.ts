@@ -67,7 +67,7 @@ test("renders a role-aware unified lead profile", () => {
     qualificationVersion: 1,
   };
   const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [], actionMessage: "Qualification commerciale enregistrée." }));
-  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffecter", "Réaffecter ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée"]) assert.match(html, new RegExp(expected));
+  for (const expected of ["Camille Essai", "À contacter", "Situation commerciale", "Chaud", "Qualifier", "Réaffectation", "Réaffectation de ce Lead", "Ajouter une interaction", "Modifier le statut", "Planifier une relance", "Historique des interactions", "Coordonnées", "Masquées ou indisponibles", "Documents", "Ouvrir la gestion détaillée", "Injoignable", "Qualification commerciale enregistrée"]) assert.match(html, new RegExp(expected));
   assert.equal(html.includes("00000000-0000-4000-8000-000000000172"), false);
   assert.equal(leadSectionHref("lead/id", "timeline"), "/leads/lead%2Fid/timeline");
   assert.doesNotMatch(html, /title="Affectez d’abord/u);
@@ -90,8 +90,8 @@ test("keeps an unassigned Lead in context while explaining how to unlock follow-
     qualificationVersion: 0,
   };
   const html = renderToStaticMarkup(createElement(LeadProfileView, { lead, events: [] }));
-  for (const expected of ["Affecter ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer", "Planifier une relance", "Affectation nécessaire", "Une relance doit avoir un conseiller responsable", "sans quitter la fiche"]) assert.match(html, new RegExp(expected));
-  assert.doesNotMatch(html, /Réaffecter ce Lead/u);
+  for (const expected of ["Affectation de ce Lead", "Conseiller cible", "Prévisualiser", "Confirmer l’affectation", "Prévisualisez la décision avant de confirmer", "Planifier une relance", "Affectation nécessaire", "Une relance doit avoir un conseiller responsable", "sans quitter la fiche"]) assert.match(html, new RegExp(expected));
+  assert.doesNotMatch(html, /Réaffectation de ce Lead/u);
   assert.doesNotMatch(html, /title="Affectez d’abord le Lead à un conseiller"/u);
 });
 test("uses business labels and neutral fallbacks", () => {
