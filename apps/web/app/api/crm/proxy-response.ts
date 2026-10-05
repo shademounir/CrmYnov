@@ -27,9 +27,15 @@ function jsonObject(bytes: ArrayBuffer): Record<string, unknown> | undefined {
 }
 
 /** Relay the original bytes unless the existing authentication contract needs redaction. */
-export async function relayApiResponse(upstream: Response, options: Readonly<{ isLogin: boolean; isFirstLoginChange: boolean; production: boolean; correlationId: string }>): Promise<Response> {
+export async function relayApiResponse(upstream: Response, options: Readonly<{ isLogin: boolean; isFirstLoginChange: boolean; isRecoveryCompletion?: boolean; production: boolean; correlationId: string }>): Promise<Response> {
   const headers = functionalHeaders(upstream.headers, options.correlationId);
   const bytes = await upstream.arrayBuffer();
+  if ((options.isFirstLoginChange || options.isRecoveryCompletion) && upstream.ok) {
+    const response = new NextResponse(bytes.byteLength === 0 ? null : bytes, { status: upstream.status, headers });
+    response.cookies.delete("crm_session");
+    response.cookies.delete("crm_first_login");
+    return response;
+  }
   if (bytes.byteLength === 0) return new Response(null, { status: upstream.status, headers });
   const object = jsonObject(bytes);
   if (options.isLogin && upstream.ok && typeof object?.token === "string" && typeof object.sessionId === "string") {
@@ -37,12 +43,6 @@ export async function relayApiResponse(upstream: Response, options: Readonly<{ i
     const response = new NextResponse(JSON.stringify({ sessionId: object.sessionId, mustChangeSecret }), { status: upstream.status, headers });
     response.cookies.set("crm_session", object.token, { httpOnly: true, sameSite: "strict", secure: options.production, path: "/", maxAge: 3600 });
     response.cookies.set("crm_first_login", mustChangeSecret ? "required" : "complete", { httpOnly: true, sameSite: "strict", secure: options.production, path: "/", maxAge: 3600 });
-    return response;
-  }
-  if (options.isFirstLoginChange && upstream.ok) {
-    const response = new NextResponse(bytes, { status: upstream.status, headers });
-    response.cookies.delete("crm_session");
-    response.cookies.delete("crm_first_login");
     return response;
   }
   if (object && Object.hasOwn(object, "token")) {

@@ -71,15 +71,14 @@ test("rate limits repeated requests without echoing the submitted identity", () 
   );
 });
 
-test("controller delegates recovery requests with the observed client address", async () => {
+test("controller delegates to the PostgreSQL recovery request path", async () => {
   const calls: unknown[][] = [];
   const recovery = {
-    request: (...args: unknown[]) => {
+    requestForApi: (...args: unknown[]) => {
       calls.push(args);
       return RECOVERY_ACCEPTED;
     },
-    complete: () => undefined,
-    flush: () => Promise.resolve(),
+    completeForApi: () => Promise.resolve(),
   } as unknown as AccessRecoveryService;
   const controller = new AccessRecoveryController(recovery);
 
@@ -89,21 +88,21 @@ test("controller delegates recovery requests with the observed client address", 
   );
 
   assert.deepEqual(result, RECOVERY_ACCEPTED);
-  assert.deepEqual(calls, [["synthetic@example.invalid", "/access-recovery/complete", "127.0.0.1"]]);
+  assert.deepEqual(calls, [["synthetic@example.invalid", "/access-recovery/complete"]]);
 });
 
-test("controller falls back to an unknown client and delegates completion", async () => {
+test("controller delegates persistent completion without a legacy cache flush", async () => {
   const requests: unknown[][] = [];
   const completions: unknown[][] = [];
   const recovery = {
-    request: (...args: unknown[]) => {
+    requestForApi: (...args: unknown[]) => {
       requests.push(args);
       return RECOVERY_ACCEPTED;
     },
-    complete: (...args: unknown[]) => {
+    completeForApi: (...args: unknown[]) => {
       completions.push(args);
+      return Promise.resolve();
     },
-    flush: () => Promise.resolve(),
   } as unknown as AccessRecoveryService;
   const controller = new AccessRecoveryController(recovery);
 
@@ -114,6 +113,6 @@ test("controller falls back to an unknown client and delegates completion", asyn
     nextSecret: "synthetic-next-value-42",
   });
 
-  assert.deepEqual(requests, [[undefined, undefined, "unknown"]]);
+  assert.deepEqual(requests, [[undefined, undefined]]);
   assert.deepEqual(completions, [["synthetic-token", "/access-recovery/complete", "synthetic-next-value-42"]]);
 });

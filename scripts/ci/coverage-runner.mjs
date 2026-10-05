@@ -84,4 +84,5 @@ if (process.env.DATABASE_URL) throw Error("coverage_must_not_inherit_database");
 npm(["test"]);
 await postgresProofs();
 run(process.execPath, ["scripts/ci/assignment-flow-postgres.mjs"]);
+run(process.execPath, ["scripts/ci/access-recovery-postgres.mjs"]);
 leadWorkflowPostgresProofs();

@@ -130,6 +130,8 @@ jobs:
         run: node scripts/ci/personal-telephony-postgres.mjs
       - name: Prove new Lead assignment and distinct reassignment decisions on isolated PostgreSQL
         run: node scripts/ci/assignment-flow-postgres.mjs
+      - name: Prove access recovery and session revocation across two isolated PostgreSQL API instances
+        run: node scripts/ci/access-recovery-postgres.mjs
       - name: Run targeted end-to-end contracts
         run: npm run test:e2e
 

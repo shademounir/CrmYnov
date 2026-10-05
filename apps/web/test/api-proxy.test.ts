@@ -96,6 +96,68 @@ test("successful first-login completion clears the restricted session", async ()
   assert.match(response.headers.get("set-cookie") ?? "", /crm_session=/u);
 });
 
+for (const operation of ["requests", "completions"] as const) {
+  test(`proxy permits only the anonymous recovery ${operation} POST and keeps service identity separate`, async () => {
+    let contacted = 0;
+    const proxy = proxyWith({
+      getSession: () => Promise.resolve(undefined),
+      getServiceAuthorization: () => Promise.resolve("Bearer synthetic-service"),
+      fetch: (_input, init) => {
+        contacted++;
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get("authorization"), null);
+        assert.equal(headers.get("x-serverless-authorization"), "Bearer synthetic-service");
+        return Promise.resolve(new Response(null, { status: operation === "requests" ? 202 : 204 }));
+      },
+    });
+    const response = await proxy(jsonRequest(`access-recovery/${operation}`, "POST", "{}"), context("access-recovery", operation));
+    assert.equal(response.status, operation === "requests" ? 202 : 204);
+    assert.equal(contacted, 1);
+    const refused = await proxy(jsonRequest(`access-recovery/${operation}`), context("access-recovery", operation));
+    assert.equal(refused.status, 401);
+    assert.equal(contacted, 1);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  });
+}
+
+for (const path of ["access-recovery/completions", "first-login/change-secret"]) {
+  test(`empty successful ${path} clears both cookies without creating a response body`, async () => {
+    const proxy = proxyWith({ production: true, fetch: () => Promise.resolve(new Response(null, { status: 204 })) });
+    const response = await proxy(jsonRequest(path, "POST", "{}"), context(...path.split("/")));
+    assert.equal(response.status, 204);
+    assert.equal(await response.text(), "");
+    const cookies = response.headers.get("set-cookie") ?? "";
+    assert.match(cookies, /crm_session=/u);
+    assert.match(cookies, /crm_first_login=/u);
+    assert.match(cookies, /Expires=Thu, 01 Jan 1970/iu);
+  });
+}
+
+test("recovery stays anonymous with a stale browser session, without permitting arbitrary recovery routes", async () => {
+  let calls = 0;
+  const proxy = proxyWith({
+    getSession: () => Promise.resolve("synthetic-stale-session"),
+    fetch: (_input, init) => { calls++; assert.equal(new Headers(init?.headers).get("authorization"), null); return Promise.resolve(new Response(null, { status: 202 })); },
+  });
+  const response = await proxy(jsonRequest("access-recovery/requests", "POST", "{}"), context("access-recovery", "requests"));
+  assert.equal(response.status, 202); assert.equal(calls, 1);
+  const anonymous = proxyWith({ getSession: () => Promise.resolve(undefined), fetch: () => { assert.fail("unexpected upstream call"); } });
+  for (const path of ["access-recovery", "access-recovery/requests/extra", "access-recovery/complete", "access-recovery/unknown"]) {
+    const refused = await anonymous(jsonRequest(path, "POST", "{}"), context(...path.split("/")));
+    assert.equal(refused.status, 401);
+  }
+  const oversized = await anonymous(jsonRequest("access-recovery/requests", "POST", "x".repeat(MAX_BODY_BYTES + 1)), context("access-recovery", "requests"));
+  assert.equal(oversized.status, 413);
+});
+
+test("refused recovery completion preserves HTTP errors without clearing a valid browser cookie", async () => {
+  const proxy = proxyWith({ fetch: () => Promise.resolve(Response.json({ code: "recovery_challenge_invalid" }, { status: 400 })) });
+  const response = await proxy(jsonRequest("access-recovery/completions", "POST", "{}"), context("access-recovery", "completions"));
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get("set-cookie"), null);
+  assert.deepEqual(await response.json(), { code: "recovery_challenge_invalid" });
+});
+
 test("proxy refuses oversized bodies and transport failures, but preserves upstream error bodies", async () => {
   const oversized = await proxyWith()(jsonRequest("leads", "POST", "x".repeat(MAX_BODY_BYTES + 1)), context("leads"));
   assert.equal(oversized.status, 413);
