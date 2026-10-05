@@ -19,7 +19,7 @@ type DashboardReport = {
   trends: Array<{ date: string; leadsCreated: number; leadsEnrolled: number }>;
   distributions: Record<"source" | "campaign" | "program" | "campus", Datum[]>;
   panels: {
-    funnel: { currentState: Record<string, number> };
+    funnel: { currentState: Record<string, number>; rates?: { enrolled: number | null } };
     performance: { advisers: Array<{ adviserId: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number }> };
     operationalRisks: { alerts: Array<{ code: string; count: number; drillDown: string }>; queues: Record<string, number | null>; sourceQualityAvailability?: "LOCAL_SYNTHETIC_OCCURRENCES" | "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" };
     sharedContributions: { contributors: Array<{ contributorId: string; primaryActionCount: number; secondaryActionCount: number }> };
@@ -66,6 +66,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
   useEffect(() => {
     if (initialReport) return;
     const controller = new AbortController();
+    setReport(undefined);
     setState("loading");
     fetch(`/api/crm/reports/${query.get("view") === "personal" ? "personal-dashboard" : "manager-dashboard"}?${query.toString()}`, { credentials: "same-origin", signal: controller.signal, headers: { accept: "application/json" } })
       .then(async (response) => {
@@ -77,8 +78,8 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
         setReport(value);
         setState(reportItemCount(value) > 0 || hasUnavailableEvidence(value) ? "ready" : "empty");
       })
-      .catch((error: unknown) => {
-        if ((error as { name?: string }).name !== "AbortError") setState("error");
+      .catch(() => {
+        if (!controller.signal.aborted) { setReport(undefined); setState("error"); }
       });
     return (): void => controller.abort();
   }, [initialReport, query]);
@@ -95,7 +96,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
   };
   return <main className="dashboard-page" data-density={preferences.compact ? "compact" : "comfortable"}>
     <PageHeader eyebrow={initialCalendar.label} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink />{report?.capabilities?.canCreateLead === true && <Link className="primary-button" href={preserveFilters("/leads/new", effectiveQuery)}><Plus size={19} weight="bold" /> Nouveau lead</Link>}</>} />
-    <div className="dashboard-toolbar"><ReportingFilters filters={presentationFilters} calendar={initialCalendar} canViewManagerDashboard={report?.capabilities?.canViewManagerDashboard === true} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
+    <div className="dashboard-toolbar"><ReportingFilters key={effectiveQuery.toString()} filters={presentationFilters} calendar={initialCalendar} canViewManagerDashboard={report?.capabilities?.canViewManagerDashboard === true} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
       <label><input type="checkbox" checked={preferences.compact} onChange={(event) => updatePreference({ ...preferences, compact: event.target.checked })} /> Affichage compact</label>
       <label><input type="checkbox" checked={preferences.showTables} onChange={(event) => updatePreference({ ...preferences, showTables: event.target.checked })} /> Afficher les tableaux accessibles</label>
       <label>Période préférée <select value={preferences.preferredPeriod} onChange={(event) => updatePreference({ ...preferences, preferredPeriod: event.target.value as PreferredPeriod })}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option></select></label>
@@ -198,6 +199,11 @@ function RecentDashboardLeads({ query, canRead }: Readonly<{ query: URLSearchPar
   </li>)}</ul>;
 }
 
+function ReportingBoundary({ name, label, initialValue }: Readonly<{ name: "from" | "to"; label: string; initialValue: string }>): React.JSX.Element {
+  const [boundary, setBoundary] = useState(initialValue);
+  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue.slice(0, 10)} onChange={(event) => setBoundary(event.target.value)} /></label>;
+}
+
 function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readonly<{ filters: Record<string, string>; calendar: DashboardCalendar; canViewManagerDashboard: boolean }>): React.JSX.Element {
   const query = new URLSearchParams(filters);
   const todayHref = dashboardPeriodHref(query, "custom", calendar);
@@ -210,7 +216,8 @@ function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readon
     </nav>
     <details className="reporting-filter-popover" suppressHydrationWarning><summary>Filtres avancés</summary><form method="get" action="/manager/reports/dashboard" aria-label="Filtres interactifs du reporting">
     <label>Période <select name="period" defaultValue={filters.period ?? "30d"}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option><option value="custom">Personnalisée</option></select></label>
-    <label>Du <input name="from" type="date" defaultValue={filters.from?.slice(0, 10)} /></label><label>Au <input name="to" type="date" defaultValue={filters.to?.slice(0, 10)} /></label>
+    <ReportingBoundary name="from" label="Du" initialValue={filters.from ?? ""} /><ReportingBoundary name="to" label="Au (borne exclue)" initialValue={filters.to ?? ""} />
+    <small>Une date saisie seule correspond à minuit UTC. Les instants ISO existants sont conservés tant que vous ne modifiez pas la date.</small>
     <label>Campus <input name="campus" defaultValue={filters.campus} /></label><label>Campagne <input name="campaign" defaultValue={filters.campaign} /></label>
     <label>Formation <input name="program" defaultValue={filters.program} /></label><label>Source <input name="source" defaultValue={filters.source} /></label>
     <label>Canal <select name="channel" defaultValue={filters.channel ?? ""}><option value="">Tous</option><option value="DIGITAL">Digital</option><option value="PHONE">Téléphone</option><option value="IN_PERSON">Présentiel</option><option value="PARTNER">Partenaire</option><option value="OTHER">Autre</option></select></label>
@@ -229,9 +236,11 @@ function DashboardContent({ report, showTables, query, operationalThreshold }: R
   return <>
     <section className="kpi-grid" aria-label="Indicateurs clés">
       <DashboardKpi icon={UserPlus} tone="teal" label="Leads uniques" value={report.cards.uniqueLeads} hint="Périmètre sélectionné" />
+      <DashboardKpi icon={CheckCircle} tone="violet" label="Qualifiés (statut actuel)" value={report.panels.funnel.currentState.QUALIFIED ?? null} hint="Statut Qualifié dans la cohorte" />
       <DashboardKpi icon={Alarm} tone="amber" label="À relancer" value={report.cards.overdueFollowUps} hint="Échéances dépassées" />
       <DashboardKpi icon={CheckCircle} tone="violet" label="Non affectés" value={report.cards.unassigned} hint="À distribuer" />
       <DashboardKpi icon={Student} tone="green" label="Inscriptions" value={report.cards.enrolled} hint="Statut inscrit" />
+      <DashboardKpi icon={TrendUp} tone="teal" label="Conversion vers inscription" value={report.panels.funnel.rates?.enrolled ?? null} format="rate" hint="Taux calculé par l’API" />
       <DashboardKpi icon={TrendUp} tone="teal" label="Alertes actives" value={report.cards.activeAlerts} hint="À surveiller" />
     </section>
     <p><small>Ces liens ouvrent des listes de travail avec les filtres de période et de périmètre conservés. Les Leads non affectés peuvent inclure des statuts terminaux ; la file des Leads à relancer n’est pas le compteur de relances ; la file sans activité est distincte du seuil de première interaction.</small></p>
@@ -260,8 +269,10 @@ function DashboardContent({ report, showTables, query, operationalThreshold }: R
   </>;
 }
 
-function DashboardKpi({ icon: Icon, tone, label, value, hint }: Readonly<{ icon: typeof UserPlus; tone: string; label: string; value: number | null; hint: string }>): React.JSX.Element {
-  return <article className="kpi-card"><span className={`icon-disc ${tone}`}><Icon size={25} weight="bold" /></span><div><span>{label}</span><strong>{displayCount(value)}</strong><small>{isObservedCount(value) ? hint : "Valeur non observée"}</small></div><span className={`mini-bars ${tone}`} aria-hidden="true"><i /><i /><i /><i /><i /></span></article>;
+function DashboardKpi({ icon: Icon, tone, label, value, hint, format = "count" }: Readonly<{ icon: typeof UserPlus; tone: string; label: string; value: number | null; hint: string; format?: "count" | "rate" }>): React.JSX.Element {
+  const observed = format === "rate" ? isObservedRate(value) : isObservedCount(value);
+  const displayed = format === "rate" ? displayRate(value) : displayCount(value);
+  return <article className="kpi-card"><span className={`icon-disc ${tone}`}><Icon size={25} weight="bold" /></span><div><span>{label}</span><strong>{displayed}</strong><small>{observed ? hint : "Valeur non observée"}</small></div><span className={`mini-bars ${tone}`} aria-hidden="true"><i /><i /><i /><i /><i /></span></article>;
 }
 
 function AccessibleChart({ title, data, showTable }: Readonly<{ title: string; data: Datum[]; showTable: boolean }>): React.JSX.Element {
@@ -315,6 +326,8 @@ function dashboardPeriodHref(query: URLSearchParams, period: PreferredPeriod | "
 
 function isObservedCount(value: number | null | undefined): value is number { return typeof value === "number" && Number.isFinite(value) && value >= 0; }
 function displayCount(value: number | null | undefined, unavailable = "Indisponible"): string { return isObservedCount(value) ? String(value) : unavailable; }
+function isObservedRate(value: number | null | undefined): value is number { return isObservedCount(value) && value <= 1; }
+function displayRate(value: number | null | undefined): string { return isObservedRate(value) ? new Intl.NumberFormat("fr-FR", { style: "percent", maximumFractionDigits: 2 }).format(value) : "Indisponible"; }
 
 function pipelineShare(count: number, total: number | null): string {
   if (!isObservedCount(total)) return "Indisponible";

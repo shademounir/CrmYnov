@@ -35,7 +35,7 @@ export function parseSnapshot(value: unknown): FunnelSnapshot {
 export function buildLeadListHref(filters: Record<string, string>, dimension?: { status?: string; temperature?: string }): string {
   const query = new URLSearchParams();
   const pipelineQuery = new URLSearchParams();
-  const mapping = { from: "createdFrom", campus: "campus", campaign: "campaign", program: "program", source: "source" } as const;
+  const mapping = { from: "createdFrom", campus: "campus", campaign: "campaign", program: "program", source: "source", channel: "channel", adviserId: "adviserId", status: "status" } as const;
   for (const [pipelineKey, leadKey] of Object.entries(mapping)) {
     const value = filters[pipelineKey]?.trim();
     if (value) { query.set(leadKey, value); pipelineQuery.set(pipelineKey, value); }
@@ -43,7 +43,7 @@ export function buildLeadListHref(filters: Record<string, string>, dimension?: {
   const exclusiveTo = filters.to?.trim();
   if (exclusiveTo) {
     const boundary = new Date(exclusiveTo);
-    if (Number.isFinite(boundary.valueOf())) { query.set("createdTo", new Date(boundary.valueOf() - 1).toISOString()); pipelineQuery.set("to", exclusiveTo); }
+    if (Number.isFinite(boundary.valueOf())) { query.set("createdBefore", exclusiveTo); pipelineQuery.set("to", exclusiveTo); }
   }
   if (dimension?.status) query.set("status", dimension.status);
   if (dimension?.temperature) query.set("temperature", dimension.temperature);

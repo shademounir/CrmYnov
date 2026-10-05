@@ -138,6 +138,10 @@ export class ManagerDashboardService {
   private serializeAggregated(report: ManagerDashboardReport): string {
     const lines = ["schemaVersion,timezone,period,from,to", ["manager-dashboard-export-v1", report.timezone, report.filters.period ?? "", report.filters.from ?? "", report.filters.to ?? ""].map((value) => this.csv(value)).join(","), "section,dimension,value,count"];
     for (const [key, value] of Object.entries(report.cards).sort(([left], [right]) => left.localeCompare(right, "en"))) lines.push(`kpi,${key},,${value}`);
+    lines.push(`kpi,qualifiedCurrentStatus,,${report.panels.funnel.currentState.QUALIFIED}`);
+    const enrolledRate = report.panels.funnel.rates.enrolled;
+    // Ratios belong to value, not count. An empty cohort has no conversion rate.
+    lines.push(`rate,enrolledConversionRatio,${this.csv(enrolledRate === null ? "UNAVAILABLE" : String(enrolledRate))},`);
     for (const trend of report.trends) { lines.push(`trend,leadsCreated,${trend.date},${trend.leadsCreated}`); lines.push(`trend,leadsEnrolled,${trend.date},${trend.leadsEnrolled}`); }
     for (const [dimension, values] of Object.entries(report.distributions).sort(([left], [right]) => left.localeCompare(right, "en"))) {
       for (const item of values) lines.push(`distribution,${dimension},${this.csv(item.value)},${item.count}`);

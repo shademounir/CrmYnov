@@ -40,6 +40,32 @@ test("renders keyboard-focusable charts and an alternative data table for every 
   assert.equal(html.includes("Alex"), false); assert.equal(html.includes("@example"), false); assert.equal(html.includes("returnTo="), true);
 });
 
+test("qualification and conversion KPIs display the exact backend status count and rate", () => {
+  const scoped = { ...report, panels: { ...report.panels, funnel: {
+    currentState: { PROSPECT: 1, CONTACTED: 1, QUALIFIED: 7, ENROLLED: 1, CLOSED_LOST: 0 },
+    attainment: { qualifiedOrBeyond: 8, enrolled: 1 }, rates: { enrolled: 0.1234 },
+  } } };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar })));
+  const cards = [...dom.window.document.querySelectorAll(".kpi-card")];
+  const qualified = cards.find((card) => card.textContent?.includes("Qualifiés (statut actuel)"));
+  assert.equal(qualified?.querySelector("strong")?.textContent, "7", "do not substitute qualified-or-beyond or a temperature count");
+  const conversion = cards.find((card) => card.textContent?.includes("Conversion vers inscription"));
+  assert.match(conversion?.querySelector("strong")?.textContent ?? "", /^12,34\s*%$/u, "format the server rate; never recompute enrolled / cards.uniqueLeads");
+  assert.match(conversion?.textContent ?? "", /Taux calculé par l’API/u);
+  dom.window.close();
+});
+
+for (const rate of [null, undefined, 1.2, 0] as const) {
+  test(`conversion distinguishes rate ${String(rate)} from an observed zero when unavailable or invalid`, () => {
+    const scoped = { ...report, panels: { ...report.panels, funnel: { ...report.panels.funnel, ...(rate === undefined ? {} : { rates: { enrolled: rate } }) } } };
+    const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar })));
+    const conversion = [...dom.window.document.querySelectorAll(".kpi-card")].find((card) => card.textContent?.includes("Conversion vers inscription"));
+    assert.equal(conversion?.querySelector("strong")?.textContent?.replace(/\s/gu, ""), rate === 0 ? "0%" : "Indisponible");
+    if (rate !== 0) assert.match(conversion?.textContent ?? "", /Valeur non observée/u);
+    dom.window.close();
+  });
+}
+
 test("renders the adviser-only personal view without global cards", () => {
   const personal: PersonalDashboardReport = { definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" },
     performance: { advisers: [{ adviserId: "adviser-synthetic", activeLoad: 2, primaryLeadCount: 3, secondaryLeadCount: 1, followUps: { overdue: 1 } }] },
@@ -192,6 +218,71 @@ async function dashboardDom(t: TestContext): Promise<{
 }
 
 function requestPath(input: string | URL | Request): string { return input instanceof Request ? input.url : String(input); }
+
+test("a previously granted report cannot retain actions or canonical filters while the next read is pending or forbidden", async (t) => {
+  const view = await dashboardDom(t);
+  const pending: Array<(response: Response) => void> = [];
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+    if (requestPath(input).includes("manager-dashboard")) return new Promise<Response>((resolve) => { pending.push(resolve); });
+    return Promise.resolve(Response.json({ canUseAgenda: false }));
+  });
+  const { act } = await import("react");
+  await view.render({ initialFilters: { campus: "REQUESTED_OLD", source: "OLD" }, initialCalendar });
+  await act(async () => {
+    pending[0]!(Response.json({ ...report, filters: { campus: "CANONICAL_OLD", source: "OLD" }, capabilities: { canCreateLead: true, canReadRecentLeads: false, canViewManagerDashboard: true } }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+  assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
+  assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "CANONICAL_OLD");
+  await view.render({ initialFilters: { campus: "REQUESTED_NEW", source: "NEW" }, initialCalendar });
+  const assertCurrentUnqualifiedState = (): void => {
+    assert.equal(view.host.querySelector('a[href^="/leads/new"]'), null);
+    assert.equal(view.host.querySelector('select[name="view"] option[value="global"]')?.hasAttribute("disabled"), true);
+    assert.equal(view.host.querySelector<HTMLInputElement>('input[name="campus"]')?.value, "REQUESTED_NEW");
+    const preference = new URL(view.host.querySelector<HTMLAnchorElement>(".dashboard-preferences a")!.href);
+    assert.equal(preference.searchParams.get("campus"), "REQUESTED_NEW");
+    assert.equal(preference.searchParams.get("source"), "NEW");
+    assert.equal(view.host.querySelector(".kpi-card"), null);
+  };
+  assert.match(view.host.textContent ?? "", /Calcul des indicateurs/u);
+  assertCurrentUnqualifiedState();
+  await act(async () => { pending[1]!(Response.json({ detail: "PRIVATE_PERMISSION_DETAIL" }, { status: 403 })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.match(view.host.textContent ?? "", /Erreur de chargement/u);
+  assertCurrentUnqualifiedState();
+  assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_PERMISSION_DETAIL/u);
+});
+
+test("Dashboard Applying filters keeps exact UTC instants until the user explicitly edits a date", async (t) => {
+  const view = await dashboardDom(t);
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(Response.json({ canUseAgenda: false })));
+  const filters = { period: "custom", view: "personal", campus: "campus-a", from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z", channel: "DIGITAL", adviserId: "adviser-synthetic", status: "QUALIFIED" };
+  await view.render({ initialFilters: filters, initialReport: report, initialCalendar });
+  const form = view.host.querySelector<HTMLFormElement>('form[aria-label="Filtres interactifs du reporting"]')!;
+  const window = form.ownerDocument.defaultView!;
+  let submitted = new window.FormData(form);
+  assert.deepEqual(submitted.getAll("from"), [filters.from]);
+  assert.deepEqual(submitted.getAll("to"), [filters.to]);
+  for (const key of ["view", "channel", "adviserId", "status"] as const) assert.equal(submitted.get(key), filters[key]);
+  const dates = form.querySelectorAll<HTMLInputElement>('input[type="date"]');
+  assert.equal(dates[0]?.value, "2026-10-01"); assert.equal(dates[1]?.value, "2026-10-05");
+  assert.match(form.textContent ?? "", /minuit UTC/u);
+  const { act } = await import("react");
+  act(() => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(dates[0], "2026-10-02");
+    dates[0]!.dispatchEvent(new window.Event("input", { bubbles: true }));
+    dates[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
+  submitted = new window.FormData(form);
+  assert.deepEqual(submitted.getAll("from"), ["2026-10-02"]);
+  assert.deepEqual(submitted.getAll("to"), [filters.to]);
+  act(() => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(dates[1], "2026-10-06");
+    dates[1]!.dispatchEvent(new window.Event("input", { bubbles: true }));
+    dates[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
+  submitted = new window.FormData(form);
+  assert.deepEqual(submitted.getAll("to"), ["2026-10-06"]);
+});
 
 test("recent Leads use the exact normalized report cohort and observed owner label", async (t) => {
   const view = await dashboardDom(t);
