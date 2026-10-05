@@ -1,10 +1,11 @@
 "use client";
 
-import { Alarm, ChartBar, CheckCircle, Plus, Student, TrendUp, UserPlus, WarningCircle } from "@phosphor-icons/react";
+import { Alarm, CaretRight, ChartBar, CheckCircle, Plus, Student, TrendUp, User, UserPlus, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../../../_components/ui/page-header";
 import { AdmissionsAgendaLink } from "../../../appointments/admissions/agenda-link";
+import { leadDirectoryStatus } from "../../../leads/lead-directory";
 import type { DashboardCalendar } from "./dashboard-calendar";
 
 type Datum = { value: string; count: number; key?: string };
@@ -199,15 +200,57 @@ function RecentDashboardLeads({ query, canRead, onSessionExpired }: Readonly<{ q
       .catch(() => { if (!controller.signal.aborted) setState("error"); });
     return (): void => controller.abort();
   }, [canRead, queryString, onSessionExpired]);
-  if (!canRead) return <p>Liste récente indisponible pour les autorisations de cette session.</p>;
-  if (state === "loading") return <p><output aria-busy="true">Chargement des leads autorisés…</output></p>;
-  if (state === "forbidden") return <p role="alert">Accès aux leads récents refusé pour cette session.</p>;
-  if (state === "error" || result?.availability === "UNAVAILABLE") return <p role="alert">Liste récente indisponible. Aucune absence de lead ne peut être déduite.</p>;
-  if (!result?.leads.length) return <p>Aucun lead récent dans la période et le périmètre autorisés.</p>;
-  return <ul aria-label="Derniers leads autorisés">{result.leads.map((lead) => <li key={lead.id}>
-    <Link href={preserveFilters(`/leads/${encodeURIComponent(lead.id)}`, query)}>{lead.leadCode} — {lead.name}</Link>
-    <span> — {lead.status} — {lead.assignedToLabel ?? "Libellé du responsable indisponible"}</span>
-  </li>)}</ul>;
+  if (!canRead) return <p className="dashboard-panel-state">Liste récente indisponible pour les autorisations de cette session.</p>;
+  if (state === "loading") return <p className="dashboard-panel-state"><output aria-busy="true">Chargement des leads autorisés…</output></p>;
+  if (state === "forbidden") return <p className="dashboard-panel-state" role="alert">Accès aux leads récents refusé pour cette session.</p>;
+  if (state === "error" || result?.availability === "UNAVAILABLE") return <p className="dashboard-panel-state" role="alert">Liste récente indisponible. Aucune absence de lead ne peut être déduite.</p>;
+  if (!result?.leads.length) return <p className="dashboard-panel-state">Aucun lead récent dans la période et le périmètre autorisés.</p>;
+  return <ul className="dashboard-recent-leads" aria-label="Derniers leads autorisés">{result.leads.map((lead) => {
+    const knownStatus = Object.hasOwn(recentLeadStatusClasses, lead.status);
+    return <li className="dashboard-recent-lead" key={lead.id}>
+      <Link className="dashboard-recent-lead__link" href={preserveFilters(`/leads/${encodeURIComponent(lead.id)}`, query)}>
+        <span className="dashboard-recent-lead__identity"><strong><bdi dir="auto">{lead.name}</bdi></strong><small><bdi dir="auto">{lead.leadCode}</bdi></small></span>
+        <span className="dashboard-recent-lead__details">
+          <span className={`status-badge${knownStatus ? ` ${recentLeadStatusClasses[lead.status]}` : ""}`}>{leadDirectoryStatus(knownStatus ? lead.status : "UNKNOWN")}</span>
+          <span className="dashboard-recent-lead__owner"><User size={14} aria-hidden="true" /><span className="sr-only">Responsable : </span><bdi dir="auto">{lead.assignedToLabel ?? "Libellé du responsable indisponible"}</bdi></span>
+        </span>
+        <CaretRight className="dashboard-recent-lead__arrow" size={16} aria-hidden="true" />
+      </Link>
+    </li>;
+  })}</ul>;
+}
+
+const recentLeadStatusClasses: Readonly<Record<string, string>> = {
+  PROSPECT: "nouveau", CONTACTED: "contacte", QUALIFIED: "qualifie", ENROLLED: "inscrit", CLOSED_LOST: "sans-suite",
+};
+
+const attentionLabels: Readonly<Record<string, { label: string; hint: string }>> = {
+  unassigned_leads: { label: "Leads actifs non affectés", hint: "Responsable principal non attribué" },
+  first_interaction_overdue: { label: "Première prise de contact en retard", hint: "Délai de première interaction dépassé" },
+  follow_up_overdue: { label: "Relances échues", hint: "Relances planifiées dont l’échéance est dépassée" },
+  closure_decision_pending: { label: "Décisions de clôture en attente", hint: "Décision contrôlée encore attendue" },
+  reassignment_decision_pending: { label: "Décisions de réaffectation en attente", hint: "Décision contrôlée encore attendue" },
+  load_gap: { label: "Écart de charge commerciale", hint: "Différence de charge atteignant le seuil configuré" },
+};
+
+function dashboardAttentionText(code: string): { label: string; hint: string } {
+  if (code.startsWith("capacity_warning:")) return { label: "Capacité commerciale à examiner", hint: "Le seuil de capacité configuré est atteint" };
+  if (code.startsWith("source_quality:")) return { label: "Qualité d’une source à vérifier", hint: "Rejets ou éléments à vérifier observés pour cette source" };
+  return Object.hasOwn(attentionLabels, code) ? attentionLabels[code]! : { label: "Signal à vérifier", hint: "Signal agrégé fourni par les contrôles API" };
+}
+
+function DashboardAttentionList({ alerts, sourceQualityAvailability }: Readonly<{ alerts: OperationalAlert[]; sourceQualityAvailability: DashboardReport["panels"]["operationalRisks"]["sourceQualityAvailability"] }>): React.JSX.Element {
+  return <>
+    {alerts.length ? <ul className="dashboard-attention-list" aria-label="Points d’attention observés">{alerts.slice(0, 5).map((alert) => {
+      const text = dashboardAttentionText(alert.code);
+      return <li className="dashboard-attention-item" key={alert.code}>
+        <span className="icon-disc small red" aria-hidden="true"><WarningCircle size={18} /></span>
+        <span className="dashboard-attention-item__content"><strong>{text.label}</strong><small>{text.hint}</small></span>
+        <span className="dashboard-attention-item__count">{displayCount(alert.count)}<span className="sr-only"> élément(s) concerné(s)</span></span>
+      </li>;
+    })}</ul> : <p className="dashboard-panel-state">Aucun point d’attention observé dans les contrôles disponibles.</p>}
+    {sourceQualityAvailability === "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" && <p className="dashboard-panel-state">Qualité des sources : non observée durablement. L’absence de signal ne garantit pas l’absence d’erreur d’import.</p>}
+  </>;
 }
 
 function ReportingBoundary({ name, label, initialValue }: Readonly<{ name: "from" | "to"; label: string; initialValue: string }>): React.JSX.Element {
@@ -263,7 +306,10 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
     </section>
     <p><Link className="text-button" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}>Ouvrir les Leads sans activité — file distincte du signal de première interaction échue</Link></p>
     <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} signal(s) observé(s) par les contrôles API</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{operationalAlertHref(alert, query) === "#" ? unavailableAlertLabel(alert) : <Link href={operationalAlertHref(alert, query)}>{operationalAlertLinkLabel(alert)}</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{pipelineShare(item.count, report.cards.uniqueLeads)}</em></div>)}</section></div>
-    <div className="dashboard-secondary-grid"><section className="panel leads-panel"><div className="panel-heading"><h2>Derniers leads</h2>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} onSessionExpired={onSessionExpired} /></section><section className="panel activity-panel"><div className="panel-heading"><h2>Activité récente</h2></div><ul className="activity-list">{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <li key={alert.code}><span className="icon-disc small red"><WarningCircle size={18} /></span><span><b>{alert.code}</b><small>{displayCount(alert.count)} élément(s) agrégé(s)</small></span></li>)}</ul></section></div>
+    <div className="dashboard-secondary-grid dashboard-secondary-grid--refined">
+      <section className="panel leads-panel"><div className="panel-heading"><div><h2>Derniers leads</h2><p>Créés récemment dans votre périmètre</p></div>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} onSessionExpired={onSessionExpired} /></section>
+      <section className="panel activity-panel"><div className="panel-heading"><div><h2>Points d’attention</h2><p>Signaux agrégés — pas un historique d’activités</p></div></div><DashboardAttentionList alerts={report.panels.operationalRisks.alerts} sourceQualityAvailability={report.panels.operationalRisks.sourceQualityAvailability} /></section>
+    </div>
     <details className="reporting-details"><summary>Analyses détaillées et tableaux accessibles</summary>
     <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
     {query.has("status") && query.get("status") !== "ENROLLED" && <p>Le lien Inscriptions explore le statut Inscrit en remplaçant le filtre de statut ; ce n’est pas la même cohorte que celle actuellement affichée.</p>}

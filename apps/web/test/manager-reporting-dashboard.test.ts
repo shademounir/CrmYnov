@@ -277,6 +277,8 @@ for (const reportingView of ["global", "personal"] as const) {
       assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_REJECTED_FETCH|PRIVATE_HTTP_BODY|Données de la dernière réponse API/u);
       assert.equal(alert.querySelector("a[href='/']")?.textContent, outcome === "session" ? "Se reconnecter" : undefined);
       assert.equal(view.host.querySelector(".kpi-card"), null);
+      assert.equal(view.host.querySelector(".dashboard-recent-leads"), null);
+      assert.equal(view.host.querySelector(".activity-panel"), null);
       assert.equal(view.host.querySelector('a[href^="/leads/new"]'), null);
       assert.equal(paths.filter((path) => path.includes(expectedEndpoint)).length, 1, "no automatic retry on authentication or service failure");
       assert.equal(paths.some((path) => path.includes("recent-leads")), false);
@@ -440,6 +442,140 @@ test("missing or denied capabilities do not fetch recent Leads or offer creation
   assert.equal(paths.some((path) => path.includes("recent-leads")), false);
   assert.equal(view.host.querySelector('a[href^="/leads/new"]'), null);
   assert.match(view.host.querySelector(".leads-panel")?.textContent ?? "", /indisponible.*autorisations/u);
+  assert.equal(view.host.querySelector(".dashboard-recent-leads"), null);
+});
+
+test("five observed recent Leads retain safe destinations, exact filters and French status labels", async (t) => {
+  const view = await dashboardDom(t);
+  const filters = { view: "global", period: "custom", campus: "CAMPUS_CANONICAL", adviserId: "adviser-synthetic", channel: "DIGITAL", source: "SYNTHETIC", from: "2026-09-05T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z" };
+  const statuses = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
+  const statusLabels = ["Prospect", "Contacté", "Qualifié", "Inscrit", "Sans suite"];
+  const leads = statuses.map((status, index) => ({ id: `lead-synthetic-${index}`, leadCode: `LD-SYNTHETIC-${index}`, name: `Lead synthétique ${index}`, status, createdAt: filters.from, assignedToLabel: "Responsable synthétique" }));
+  const reads: URL[] = [];
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+    const url = new URL(requestPath(input), "https://dev.example.invalid");
+    if (!url.pathname.endsWith("/recent-leads")) return Promise.resolve(Response.json({ canUseAgenda: false }));
+    reads.push(url); return Promise.resolve(Response.json({ availability: "OBSERVED", leads }));
+  });
+  await view.render({ initialFilters: filters, initialReport: { ...report, filters, capabilities: { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true } }, initialCalendar });
+  assert.equal(reads.length, 1); assert.equal(reads[0]!.searchParams.get("limit"), "5", "the existing API request is bounded to five; do not invent a separate client cap");
+  const links = [...view.host.querySelectorAll<HTMLAnchorElement>(".dashboard-recent-leads .dashboard-recent-lead__link")];
+  assert.equal(links.length, 5);
+  for (const [index, link] of links.entries()) {
+    assert.equal(link.getAttribute("href"), preserveFilters(`/leads/${leads[index]!.id}`, new URLSearchParams(filters)));
+    const url = new URL(link.href);
+    assert.equal(url.origin, "https://dev.example.invalid"); assert.equal(url.pathname, `/leads/${leads[index]!.id}`);
+    for (const key of ["campus", "adviserId", "channel", "source"] as const) assert.equal(url.searchParams.get(key), filters[key]);
+    assert.equal(url.searchParams.get("createdFrom"), filters.from); assert.equal(url.searchParams.get("createdBefore"), filters.to);
+    assert.equal(url.searchParams.has("createdTo"), false);
+    const back = new URL(url.searchParams.get("returnTo")!, url.origin);
+    assert.equal(back.pathname, "/manager/reports/dashboard");
+    for (const [key, value] of Object.entries(filters)) assert.equal(back.searchParams.get(key), value);
+    assert.equal(link.querySelector(".status-badge")?.textContent, statusLabels[index]);
+    assert.equal(link.querySelector(".dashboard-recent-lead__identity strong bdi")?.textContent, leads[index]!.name);
+    assert.equal(link.querySelector(".dashboard-recent-lead__identity small bdi")?.textContent, leads[index]!.leadCode);
+    assert.equal(link.querySelector(".dashboard-recent-lead__owner bdi")?.textContent, leads[index]!.assignedToLabel);
+  }
+  assert.equal(view.host.querySelector(".dashboard-recent-leads time"), null, "created-at data must not be repurposed into an activity timeline");
+});
+
+for (const status of ["FUTURE_STATUS", "__proto__", "constructor"]) {
+  test(`recent Lead status ${status} remains an honest neutral fallback with isolated inert labels`, async (t) => {
+    const view = await dashboardDom(t);
+    const name = `${"Nom synthétique très long ".repeat(20)}مرحبا <script>inert</script>`;
+    const leadCode = "LD-SYNTHETIC-مرحبا"; const owner = "Responsable synthétique مسؤول <img src=x>";
+    t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => Promise.resolve(Response.json(requestPath(input).includes("recent-leads")
+      ? { availability: "OBSERVED", leads: [{ id: "lead-synthetic", leadCode, name, status, createdAt: "2026-10-05T08:00:00.000Z", assignedToLabel: owner }] }
+      : { canUseAgenda: false })));
+    await view.render({ initialFilters: {}, initialReport: { ...report, capabilities: { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true } }, initialCalendar });
+    const row = view.host.querySelector(".dashboard-recent-lead")!; assert.ok(row);
+    const badge = row.querySelector(".status-badge")!;
+    assert.equal(badge.textContent, "À vérifier"); assert.equal(badge.className, "status-badge");
+    assert.equal(row.textContent?.includes(status), false, "an unknown status is neither a translated valid status nor a raw technical label");
+    const isolated = [...row.querySelectorAll("bdi")];
+    assert.deepEqual(isolated.map((item) => item.textContent), [name, leadCode, owner]);
+    assert.equal(isolated.every((item) => item.getAttribute("dir") === "auto"), true);
+    assert.equal(row.querySelector("script, img"), null);
+    assert.equal(row.querySelectorAll("a").length, 1);
+    assert.ok(row.querySelector(".dashboard-recent-lead__owner svg[aria-hidden='true']"));
+    assert.ok(row.querySelector(".dashboard-recent-lead__arrow[aria-hidden='true']"));
+  });
+}
+
+test("an otherwise valid recent Lead cannot manufacture an unsafe destination", async (t) => {
+  const view = await dashboardDom(t);
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => Promise.resolve(Response.json(requestPath(input).includes("recent-leads")
+    ? { availability: "OBSERVED", leads: [{ id: "../admin", leadCode: "LD-SYNTHETIC", name: "Rejected synthetic name", status: "PROSPECT", createdAt: "2026-10-05T08:00:00.000Z" }] }
+    : { canUseAgenda: false })));
+  await view.render({ initialFilters: {}, initialReport: { ...report, capabilities: { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true } }, initialCalendar });
+  const panel = view.host.querySelector(".leads-panel")!;
+  assert.match(panel.textContent ?? "", /Liste récente indisponible/u);
+  assert.doesNotMatch(panel.textContent ?? "", /Rejected synthetic name|Aucun lead récent/u);
+  assert.equal(panel.querySelector(".dashboard-recent-lead__link"), null);
+  assert.equal(view.host.querySelector("a[href*='../admin']"), null);
+});
+
+test("Points d’attention translate known aggregate signals without links, raw codes or a fabricated timeline", () => {
+  const cases = [
+    ["unassigned_leads", "Leads actifs non affectés"], ["first_interaction_overdue", "Première prise de contact en retard"],
+    ["follow_up_overdue", "Relances échues"], ["closure_decision_pending", "Décisions de clôture en attente"],
+    ["reassignment_decision_pending", "Décisions de réaffectation en attente"], ["capacity_warning:synthetic-internal-id", "Capacité commerciale à examiner"],
+    ["load_gap", "Écart de charge commerciale"], ["source_quality:synthetic-internal-source", "Qualité d’une source à vérifier"],
+    ["future_signal:synthetic-internal-id", "Signal à vérifier"], ["constructor", "Signal à vérifier"],
+  ];
+  for (const [code, label] of cases) {
+    const scoped: DashboardReport = { ...report, panels: { ...report.panels, operationalRisks: { alerts: [{ code: code!, count: 37, drillDown: "javascript:PRIVATE_DESTINATION" }], queues: {} } } };
+    const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar })));
+    try {
+      const panel = dom.window.document.querySelector(".activity-panel")!;
+      assert.equal(panel.querySelector("h2")?.textContent, "Points d’attention");
+      assert.match(panel.textContent ?? "", /Signaux agrégés — pas un historique d’activités/u);
+      assert.equal(panel.querySelector(".dashboard-attention-item__content strong")?.textContent, label);
+      assert.equal(panel.querySelector(".dashboard-attention-item__count")?.textContent, "37 élément(s) concerné(s)", "display the observed API count, not the number of signals or Leads");
+      assert.equal(panel.textContent?.includes(code!), false); assert.equal(panel.querySelector("a, time"), null);
+      assert.equal(panel.textContent?.includes("2026-"), false);
+      assert.equal(panel.textContent?.includes("PRIVATE_DESTINATION"), false);
+      if (code === "first_interaction_overdue") assert.match(panel.textContent ?? "", /Délai de première interaction dépassé/u);
+      if (code === "follow_up_overdue") assert.match(panel.textContent ?? "", /Relances planifiées dont l’échéance est dépassée/u);
+    } finally { dom.window.close(); }
+  }
+});
+
+test("Points d’attention keep five observed signals and do not turn an observed zero into an empty panel", () => {
+  const codes = ["unassigned_leads", "first_interaction_overdue", "follow_up_overdue", "closure_decision_pending", "reassignment_decision_pending", "load_gap", "source_quality:synthetic"];
+  const scoped: DashboardReport = { ...report, panels: { ...report.panels, operationalRisks: { alerts: codes.map((code, index) => ({ code, count: index === 0 ? 0 : index + 10, drillDown: "/leads" })), queues: {} } } };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar })));
+  try {
+    const panel = dom.window.document.querySelector(".activity-panel")!;
+    assert.equal(panel.querySelectorAll(".dashboard-attention-item").length, 5);
+    assert.deepEqual([...panel.querySelectorAll(".dashboard-attention-item__count")].map((item) => item.textContent), ["0 élément(s) concerné(s)", "11 élément(s) concerné(s)", "12 élément(s) concerné(s)", "13 élément(s) concerné(s)", "14 élément(s) concerné(s)"]);
+    assert.doesNotMatch(panel.textContent ?? "", /Aucun point d’attention|Écart de charge commerciale|Qualité d’une source/u);
+    assert.equal(panel.querySelector("a"), null);
+  } finally { dom.window.close(); }
+});
+
+for (const count of [null, -1, 1.5, "3"] as const) {
+  test(`attention count ${String(count)} preserves the existing finite-count observation contract`, () => {
+    const scoped = { ...report, panels: { ...report.panels, operationalRisks: { alerts: [{ code: "follow_up_overdue", count, drillDown: "/leads?view=FOLLOW_UP" }], queues: {} } } } as unknown as DashboardReport;
+    const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar })));
+    try {
+      const panel = dom.window.document.querySelector(".activity-panel")!;
+      assert.equal(panel.querySelector(".dashboard-attention-item__count")?.textContent, `${count === 1.5 ? "1.5" : "Indisponible"} élément(s) concerné(s)`, "preserve the existing finite non-negative number contract; no new rounding or count recomputation");
+      assert.doesNotMatch(panel.textContent ?? "", /Aucun point d’attention/u);
+    } finally { dom.window.close(); }
+  });
+}
+
+test("an empty attention panel scopes its absence claim and retains the unavailable source-quality reservation", () => {
+  const scoped: DashboardReport = { ...report, panels: { ...report.panels, operationalRisks: { alerts: [], queues: {}, sourceQualityAvailability: "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" } } };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar })));
+  try {
+    const panel = dom.window.document.querySelector(".activity-panel")!;
+    assert.match(panel.textContent ?? "", /Aucun point d’attention observé dans les contrôles disponibles/u);
+    assert.match(panel.textContent ?? "", /non observée durablement.*ne garantit pas l’absence d’erreur d’import/u);
+    assert.equal(panel.querySelector(".dashboard-attention-item__count"), null);
+    assert.equal(panel.querySelector("a, time"), null);
+  } finally { dom.window.close(); }
 });
 
 for (const scenario of ["empty", "unavailable", "session", "forbidden", "network", "malformed", "server-error", "invalid-envelope", "owner-unavailable"] as const) {
@@ -461,8 +597,8 @@ for (const scenario of ["empty", "unavailable", "session", "forbidden", "network
     const content = scenario === "session" ? view.host.textContent ?? "" : view.host.querySelector(".leads-panel")?.textContent ?? "";
     if (scenario === "empty") assert.match(content, /Aucun lead récent dans la période et le périmètre autorisés/u);
     else if (scenario === "owner-unavailable") { assert.match(content, /Libellé du responsable indisponible/u); assert.match(content, /LD-SYNTHETIC/u); }
-    else if (scenario === "session") { assert.match(content, /Session expirée/u); assert.equal(view.host.querySelector("a[href='/']")?.textContent, "Se reconnecter"); assert.equal(view.host.querySelector(".kpi-card"), null); }
-    else if (scenario === "forbidden") assert.match(content, /Accès.*refusé/u);
+    else if (scenario === "session") { assert.match(content, /Session expirée/u); assert.equal(view.host.querySelector("a[href='/']")?.textContent, "Se reconnecter"); assert.equal(view.host.querySelector(".kpi-card"), null); assert.equal(view.host.querySelector(".activity-panel"), null); }
+    else if (scenario === "forbidden") { assert.match(content, /Accès.*refusé/u); assert.ok(view.host.querySelector(".activity-panel")); assert.equal(view.host.querySelector(".dashboard-recent-leads"), null); assert.doesNotMatch(content, /Aucun lead récent/u); }
     else { assert.match(content, /indisponible/u); assert.doesNotMatch(content, /Aucun lead récent/u); }
     assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_RAW_ERROR/u);
     assert.equal(Boolean(view.host.querySelector('a[href^="/leads/new"]')), scenario !== "session");
