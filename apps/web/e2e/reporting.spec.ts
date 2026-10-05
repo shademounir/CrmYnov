@@ -99,6 +99,7 @@ test("dashboard cards, actions and opened panels stay readable at five widths", 
   await mockReporting(page);
   await page.goto("/manager/reports/dashboard?period=7d&campus=campus-a");
   await expect(page.locator(".kpi-card")).toHaveCount(7);
+  await page.getByText("Analyses détaillées et tableaux accessibles", { exact: true }).click();
   for (const width of [1440, 1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     if (width <= 768) {
@@ -107,11 +108,11 @@ test("dashboard cards, actions and opened panels stay readable at five widths", 
       await expect(page.locator("#crm-sidebar")).not.toBeVisible();
       await expect(page.getByRole("button", { name: "Ouvrir la navigation", exact: true })).toHaveAttribute("aria-expanded", "false");
     }
-    const overflowing = await page.locator(".kpi-card,.queue-item,.ui-page-header__actions a").evaluateAll((elements) => elements.filter((element) => {
+    const overflowing = await page.locator(".kpi-card,.queue-item,.ui-page-header__actions a,.reporting-chart,.reporting-chart > div").evaluateAll((elements) => elements.filter((element) => {
       const bounds = element.getBoundingClientRect();
       return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1 || element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
     }).map((element) => element.textContent));
-    expect(overflowing, `Cards and actions at ${width}px`).toEqual([]);
+    expect(overflowing, `Cards, actions and shared charts at ${width}px`).toEqual([]);
     for (const panel of ["filters", "preferences"] as const) {
       const details = page.locator(panel === "filters" ? "details.reporting-filter-popover" : "details.dashboard-preferences");
       await details.locator("summary").click();
@@ -126,6 +127,46 @@ test("dashboard cards, actions and opened panels stay readable at five widths", 
     }
   }
 });
+
+for (const zeroCounts of [false, true]) {
+  test(`personal performance remains readable and keyboard-accessible at five widths (${zeroCounts ? "zero" : "nonzero"})`, async ({ page }) => {
+    await mockReporting(page);
+    await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["COMMERCIAL"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "adviser@example.invalid", mustChangeSecret: false }) }));
+    const values = zeroCounts ? [0, 0, 0, 0] : [3, 1, 2, 1];
+    const scoped = { ...personalReport,
+      performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0], secondaryLeadCount: values[1], activeLoad: values[2], followUps: { overdue: values[3] } }] },
+      contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: zeroCounts ? 0 : 4, secondaryActionCount: zeroCounts ? 0 : 2 }] },
+    };
+    await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(scoped) }));
+    await page.goto("/manager/reports/dashboard?view=personal&period=30d");
+    const performance = page.locator(".dashboard-personal-charts > figure").filter({ has: page.getByRole("heading", { name: "Ma performance", exact: true }) });
+    const chart = performance.locator("button.reporting-chart");
+    await expect(chart.locator("div > span")).toHaveText(["Leads principaux", "Collaborations", "Charge active", "Relances échues"]);
+    await expect(chart.locator("strong")).toHaveText(values.map(String));
+    await expect(performance.getByRole("table", { name: "Données alternatives — Ma performance", exact: true })).toBeVisible();
+    for (const width of [1440, 1280, 1024, 768, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (width <= 768) await expect(page.locator("#crm-sidebar")).not.toBeVisible();
+      await chart.focus();
+      await expect(chart).toBeFocused();
+      await expect(page.locator(".kpi-card")).toHaveCount(0);
+      const layout = await page.locator(".dashboard-personal-charts").evaluate((element) => ({
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        overflowing: [...element.querySelectorAll("figure,.reporting-chart,.reporting-chart > div,.reporting-chart span,.reporting-chart strong,meter,table")].filter((item) => {
+          const bounds = item.getBoundingClientRect();
+          return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1 || item.scrollWidth > item.clientWidth + 1 || item.scrollHeight > item.clientHeight + 1;
+        }).map((item) => item.textContent),
+      }));
+      expect(layout.documentWidth, `Personal document at ${width}px`).toBeLessThanOrEqual(layout.viewportWidth + 1);
+      expect(layout.overflowing, `All personal indicators at ${width}px`).toEqual([]);
+      if (width <= 768) {
+        expect(await chart.evaluate((element) => getComputedStyle(element).display)).toBe("grid");
+        expect((await chart.evaluate((element) => getComputedStyle(element).gridTemplateColumns)).trim().split(/\s+/u)).toHaveLength(2);
+      }
+    }
+  });
+}
 
 test("hostile labels remain inert and external destinations are refused", async ({ page }) => {
   const hostile = `<img src=x onerror=alert(1)><script>window.__unsafe = true</script>`;

@@ -536,6 +536,14 @@ input, select, textarea { color: var(--onyx); }
   .freshness-indicator { grid-column: 1 / -1; }
   .reporting-chart > div { grid-template-columns: 1fr; }
   .dashboard-page a, .dashboard-page button { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; }
+  .dashboard-page button.reporting-chart { display: grid; min-width: 0; }
+  .dashboard-page .reporting-chart > div, .dashboard-page .reporting-chart > div > span { min-width: 0; overflow-wrap: anywhere; }
+  .dashboard-page .reporting-chart meter { min-width: 0; max-width: 100%; }
+  .dashboard-personal-charts > figure { margin: 22px 0; min-width: 0; }
+  .dashboard-personal-charts .reporting-chart { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-personal-charts .reporting-chart > div { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  .dashboard-personal-charts .reporting-chart meter { grid-column: 1 / -1; grid-row: 2; }
+  .dashboard-personal-charts .reporting-chart strong { grid-column: 2; grid-row: 1; min-width: 0; overflow-wrap: anywhere; }
   .dashboard-preferences > summary { min-height: 44px; }
   .saved-views, .provenance-views, .kpi-grid { scrollbar-width: none; }
   .saved-views::-webkit-scrollbar, .provenance-views::-webkit-scrollbar, .kpi-grid::-webkit-scrollbar { display: none; }
