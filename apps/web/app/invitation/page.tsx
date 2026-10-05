@@ -34,7 +34,7 @@ export default function InvitationPage(): React.JSX.Element {
     <p className="eyebrow">Invitation personnelle</p><h1>Définir mon mot de passe</h1>
     {state === "loading" ? <p role="status">Vérification du lien…</p> : null}
     {state === "complete" ? <p role="status">Mot de passe enregistré. <a href="/">Se connecter</a></p> : null}
-    {["ready", "saving", "invalid", "unavailable"].includes(state) && code ? <form onSubmit={(event) => { event.preventDefault(); void submit(new FormData(event.currentTarget)); }} aria-label="Définir le mot de passe du compte invité">
+    {["ready", "saving", "invalid", "unavailable"].includes(state) && code ? <form method="post" onSubmit={(event) => { event.preventDefault(); void submit(new FormData(event.currentTarget)); }} aria-label="Définir le mot de passe du compte invité">
       <label>Nouveau mot de passe<input name="nextSecret" type="password" autoComplete="new-password" minLength={14} required /></label>
       <label>Confirmer le mot de passe<input name="confirmation" type="password" autoComplete="new-password" minLength={14} required /></label>
       <p>14 caractères minimum, avec majuscule, minuscule, chiffre et symbole, sans espace.</p>

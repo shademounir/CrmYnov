@@ -14,9 +14,9 @@ export default function Home(): React.JSX.Element {
       <div className="login-card">
         <p className="eyebrow">Espace sécurisé</p>
         <h2>Bienvenue</h2>
-        <p className="muted">Connectez-vous à votre CRM local persistant.</p>
+        <p className="muted">Connectez-vous à votre CRM Admissions.</p>
         <LoginForm />
-        <p className="security-note">Vos identifiants sont transmis uniquement à l’API locale sécurisée.</p>
+        <p className="security-note">Vos identifiants sont transmis uniquement au service sécurisé du CRM.</p>
       </div>
     </section>
   </main>;

@@ -34,6 +34,7 @@ test("opening an invitation does not submit it; explicit password confirmation c
   assert.equal(dom.window.location.hash, "");
   assert.equal(requests.length, 0);
   const form = dom.window.document.querySelector("form")!;
+  assert.equal(form.method, "post");
   form.querySelector<HTMLInputElement>('input[name="nextSecret"]')!.value = "Synthetic-Password-2026!";
   form.querySelector<HTMLInputElement>('input[name="confirmation"]')!.value = "Synthetic-Password-2026!";
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
