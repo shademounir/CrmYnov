@@ -57,7 +57,7 @@ test("distinct decision uses a retained key after transport uncertainty then rel
   await page.goto("/leads/lead-synthetic/collaborators"); await expect(page.getByText("Commercial initial", { exact: true }).first()).toBeVisible();
   await page.getByRole("textbox", { name: "Motif de la décision", exact: true }).fill("Décision motivée pour le dossier synthétique");
   const confirm = page.getByRole("button", { name: "Confirmer la décision", exact: true }); await confirm.click();
-  await expect(page.getByRole("alert")).toContainText("clé de décision"); await confirm.click();
+  await expect(page.locator(".reassignment-history").getByRole("alert")).toContainText("clé de décision"); await confirm.click();
   expect(writes).toHaveLength(2); expect(writes[1]).toEqual(writes[0]); expect(writes[0]).toMatchObject({ approved: true, expectedVersion: 1, idempotencyKey: expect.stringMatching(/^ui-reassignment-decision:/u) });
   await expect(page.getByText("Approuvée", { exact: true })).toBeVisible();
   await expect(page.locator(".lead-workflow-page__context")).toContainText("Commercial proposé");
