@@ -101,8 +101,12 @@ test("dashboard cards, actions and opened panels stay readable at five widths", 
   await expect(page.locator(".kpi-card")).toHaveCount(7);
   for (const width of [1440, 1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    const closeNavigation = page.getByRole("button", { name: "Fermer la navigation", exact: true });
-    if (await closeNavigation.isVisible()) await closeNavigation.click();
+    if (width <= 768) {
+      // The closed sidebar remains visible during its CSS exit transition.
+      // Await the actual closed state instead of clicking a transient close control.
+      await expect(page.locator("#crm-sidebar")).not.toBeVisible();
+      await expect(page.getByRole("button", { name: "Ouvrir la navigation", exact: true })).toHaveAttribute("aria-expanded", "false");
+    }
     const overflowing = await page.locator(".kpi-card,.queue-item,.ui-page-header__actions a").evaluateAll((elements) => elements.filter((element) => {
       const bounds = element.getBoundingClientRect();
       return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1 || element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
