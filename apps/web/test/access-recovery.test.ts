@@ -19,6 +19,12 @@ test("recovery has a native POST method before hydration", () => {
   dom.window.close();
 });
 
+test("recovery keeps the existing auth layout and provides a login return", () => {
+  const markup = renderToStaticMarkup(createElement(AccessRecoveryPage));
+  assert.match(markup, /login-card/u);
+  assert.match(markup, /href="\/"/u);
+});
+
 async function browser(t: TestContext): Promise<{
   dom: JSDOM;
   form: HTMLFormElement;
@@ -55,8 +61,8 @@ async function browser(t: TestContext): Promise<{
   return { dom, form, interact, submit, settle };
 }
 
-function assertGenericResult(b: Awaited<ReturnType<typeof browser>>): void {
-  assert.equal(b.form.querySelector('[role="status"]')?.textContent, GENERIC_MESSAGE);
+function assertUnconfirmedResult(b: Awaited<ReturnType<typeof browser>>): void {
+  assert.match(b.form.querySelector('[role="alert"]')?.textContent ?? "", /demande n’a pas pu être confirmée/u);
   assert.equal(b.form.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled, false);
   assert.doesNotMatch(b.dom.window.document.body.textContent ?? "", /synthetic@example\.invalid|internal transport detail|account existence detail/u);
 }
@@ -75,10 +81,10 @@ test("a rejected recovery fetch is handled without escaping and permits delibera
   });
   b.submit();
   await b.settle();
-  assertGenericResult(b);
+  assertUnconfirmedResult(b);
   b.submit();
   await b.settle();
-  assertGenericResult(b);
+  assertUnconfirmedResult(b);
   assert.equal(requests.length, 2);
   assert.equal(logs.length, 0, "transport and account details must not be logged");
   for (const request of requests) {
@@ -89,19 +95,19 @@ test("a rejected recovery fetch is handled without escaping and permits delibera
   }
 });
 
-test("recovery returns the same non-enumerating feedback for accepted and refused accounts", async (t) => {
+test("recovery returns the same non-enumerating feedback for uniformly accepted requests", async (t) => {
   const b = await browser(t);
   let requests = 0;
   t.mock.method(globalThis, "fetch", (): Promise<Response> => {
     requests += 1;
-    return Promise.resolve(new Response("account existence detail", { status: requests === 1 ? 201 : 403 }));
+    return Promise.resolve(new Response("account existence detail", { status: 202 }));
   });
   b.submit();
   await b.settle();
-  assertGenericResult(b);
+  assert.equal(b.form.querySelector('[role="status"]')?.textContent, GENERIC_MESSAGE);
   b.submit();
   await b.settle();
-  assertGenericResult(b);
+  assert.equal(b.form.querySelector('[role="status"]')?.textContent, GENERIC_MESSAGE);
   assert.equal(requests, 2);
 });
 
@@ -120,5 +126,25 @@ test("concurrent recovery submissions issue one request and release pending stat
   assert.equal(b.form.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled, true);
   b.interact(() => resolveRequest(new Response(null, { status: 503 })));
   await b.settle();
-  assertGenericResult(b);
+  assertUnconfirmedResult(b);
+});
+
+test("recovery throttling is non-enumerating and never claims a mail was sent", async (t) => {
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(Response.json({ detail: "private account detail" }, { status: 429 })));
+  const b = await browser(t); b.submit(); await b.settle();
+  assert.match(b.form.querySelector('[role="alert"]')?.textContent ?? "", /Trop de demandes/u);
+  assert.equal(b.form.querySelector('[role="status"]'), null);
+  assert.doesNotMatch(b.dom.window.document.body.textContent ?? "", /private account detail|mail envoyé/u);
+});
+
+test("recovery timeout aborts and releases the form without automatic resend", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let requests = 0; let signal: AbortSignal | undefined;
+  t.mock.method(globalThis, "fetch", (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    requests++; signal = init?.signal ?? undefined;
+    return new Promise<Response>((_resolve, reject) => { signal?.addEventListener("abort", () => reject(new DOMException("synthetic timeout", "AbortError")), { once: true }); });
+  });
+  const b = await browser(t); b.submit(); await b.settle();
+  b.interact(() => t.mock.timers.tick(30_000)); await b.settle();
+  assert.equal(signal?.aborted, true); assert.equal(requests, 1); assertUnconfirmedResult(b);
 });

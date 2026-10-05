@@ -18,6 +18,7 @@ import { SessionController } from "./auth/session.controller.js";
 import { SessionService } from "./auth/session.service.js";
 import { AccessRecoveryController } from "./access-recovery/access-recovery.controller.js";
 import { AccessRecoveryService } from "./access-recovery/access-recovery.service.js";
+import { AccessRecoveryRateLimitGuard } from "./access-recovery/access-recovery-rate-limit.guard.js";
 import {
   LocalCredentialAdapter,
   LocalIdentityDirectory,
@@ -150,6 +151,7 @@ import { resolve } from "node:path";
     RateLimitService,
     RbacGuard,
     AccessRecoveryService,
+    AccessRecoveryRateLimitGuard,
     LocalIdentityDirectory,
     LocalRecoveryChallengeStore,
     LocalCredentialAdapter,

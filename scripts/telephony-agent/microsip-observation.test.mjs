@@ -14,7 +14,7 @@ const observation = (observationId, type, occurredAt, overrides = {}) => ({
   phoneFingerprint: base.phoneFingerprint, ...overrides,
 });
 
-test("calculates only a local observed duration after CONNECTED then ENDED", () => {
+await test("calculates only a local observed duration after CONNECTED then ENDED", () => {
   let call = createObservedCall(base);
   call = applyMicroSipObservation(call, observation("obs:connected:1", "CONNECTED", "2026-09-16T10:00:05Z"));
   call = applyMicroSipObservation(call, observation("obs:ended:0001", "ENDED", "2026-09-16T10:01:08Z"));
@@ -23,28 +23,28 @@ test("calculates only a local observed duration after CONNECTED then ENDED", () 
   assert.equal(call.reasonCode, "LOCAL_CALLBACK_DURATION");
 });
 
-test("does not turn an ambiguous end into a completed or missed call", () => {
+await test("does not turn an ambiguous end into a completed or missed call", () => {
   const call = applyMicroSipObservation(createObservedCall(base), observation("obs:ended:0002", "ENDED", "2026-09-16T10:00:12Z"));
   assert.equal(call.state, "UNCONFIRMED");
   assert.equal(call.durationSeconds, null);
   assert.equal(call.observations[0].decision, "REVIEW_REQUIRED");
 });
 
-test("replays one observation without a second business event", () => {
+await test("replays one observation without a second business event", () => {
   const input = observation("obs:ringing:01", "RINGING", "2026-09-16T10:00:03Z");
   const replayed = applyMicroSipObservation(applyMicroSipObservation(createObservedCall(base), input), input);
   assert.equal(replayed.observations.length, 1);
   assert.equal(replayed.state, "RINGING");
 });
 
-test("quarantines a callback that cannot be correlated", () => {
+await test("quarantines a callback that cannot be correlated", () => {
   const call = applyMicroSipObservation(createObservedCall(base), observation("obs:ringing:02", "RINGING", "2026-09-16T10:00:03Z", { workstationId: "sales-pc-02" }));
   assert.equal(call.state, "REQUESTED");
   assert.equal(call.attemptObserved, false);
   assert.equal(call.observations[0].decision, "REVIEW_REQUIRED");
 });
 
-test("rejects conflicting callback reuse", () => {
+await test("rejects conflicting callback reuse", () => {
   const once = applyMicroSipObservation(createObservedCall(base), observation("obs:event:0001", "RINGING", "2026-09-16T10:00:03Z"));
   assert.throws(() => applyMicroSipObservation(once, observation("obs:event:0001", "CONNECTED", "2026-09-16T10:00:05Z")), /observation_idempotency_conflict/);
 });

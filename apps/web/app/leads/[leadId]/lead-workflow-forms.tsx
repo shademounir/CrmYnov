@@ -187,11 +187,17 @@ function FormFooter({ busy, submitDisabled = false, submitLabel, onCancel, secon
   </footer>;
 }
 
+function assignmentAccessMessage(state: "session" | "forbidden", assigned: boolean): string {
+  if (state === "session") return "Votre session a expiré. Reconnectez-vous avant de consulter les conseillers autorisés. Aucune affectation n’a été enregistrée.";
+  if (assigned) return "Vous n’êtes pas autorisé à demander cette réaffectation. Le propriétaire reste inchangé ; contactez un Responsable ou Administrateur autorisé dans ce campus.";
+  return "Vous n’êtes pas autorisé à effectuer l’affectation initiale. Ce Lead reste à affecter ; un Responsable ou Administrateur autorisé dans ce campus doit intervenir.";
+}
+
 export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps & { assigned: boolean }>): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" });
   const [candidates, setCandidates] = useState<AssignmentCandidate[]>([]);
-  const [candidateState, setCandidateState] = useState<"loading" | "ready" | "error">("loading");
+  const [candidateState, setCandidateState] = useState<"loading" | "ready" | "forbidden" | "session" | "error">("loading");
   const formRef = useRef<HTMLFormElement>(null);
   const candidateHelpId = useId();
   const dirty = useDirty(onDirtyChange);
@@ -201,6 +207,7 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
   const [requestState, setRequestState] = useState<"loading" | "ready" | "error">(assigned ? "loading" : "ready");
 
   useEffect(() => {
+    setPending(undefined);
     if (!assigned) { setRequestState("ready"); return; }
     const controller = new AbortController();
     setRequestState("loading");
@@ -208,33 +215,40 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
       .then(async (response) => {
         if (!response.ok) throw new Error("reassignment_history_unavailable");
         const records = parseReassignmentRecords(await response.json());
+        if (controller.signal.aborted) return;
         if (records.some((item) => item.leadId !== leadId)) throw new Error("reassignment_lead_mismatch");
         setPending(records.find((item) => item.status === "PENDING")); setRequestState("ready");
-      }).catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setRequestState("error"); });
+      }).catch((error: unknown) => { if (!controller.signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) setRequestState("error"); });
     return (): void => controller.abort();
   }, [assigned, leadId]);
 
   useEffect(() => {
     const controller = new AbortController();
     setCandidateState("loading");
+    setCandidates([]);
     void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/assignment-candidates`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
+        if (controller.signal.aborted) return;
+        if (response.status === 401) { setCandidateState("session"); return; }
+        if (response.status === 403) { setCandidateState("forbidden"); return; }
         if (!response.ok) throw new Error(`candidate_${response.status}`);
         const payload = await response.json() as { candidates?: unknown };
+        if (controller.signal.aborted) return;
         if (!Array.isArray(payload.candidates)) throw new Error("candidate_payload");
         const values = payload.candidates.filter((item): item is AssignmentCandidate => Boolean(item) && typeof item === "object" && typeof (item as AssignmentCandidate).id === "string" && typeof (item as AssignmentCandidate).label === "string");
         setCandidates(values);
         setCandidateState("ready");
       })
-      .catch((error: unknown) => { if (!(error instanceof DOMException && error.name === "AbortError")) setCandidateState("error"); });
+      .catch((error: unknown) => { if (!controller.signal.aborted && !(error instanceof DOMException && error.name === "AbortError")) setCandidateState("error"); });
     return (): void => controller.abort();
-  }, [leadId]);
+  }, [leadId, assigned]);
 
   async function submit(action: "preview" | "confirm"): Promise<void> {
     const formElement = formRef.current;
-    if (!formElement || submissionLock.current || requestState !== "ready" || pending || !formElement.reportValidity()) return;
+    if (!formElement || submissionLock.current || candidateState !== "ready" || requestState !== "ready" || pending || !formElement.reportValidity()) return;
     const form = new FormData(formElement);
     const targetUserId = formText(form, "targetUserId");
+    if (!candidates.some((candidate) => candidate.id === targetUserId)) return;
     if (assigned && (formText(form, "reason").length < 4 || formText(form, "reason").length > 500)) { setFeedback({ kind: "error", message: "Précisez un motif de 4 à 500 caractères." }); return; }
     const intention = assigned ? { leadId, targetUserId, reason: formText(form, "reason"), moveOpenTasks: form.get("moveOpenTasks") === "on" } : { leadId, targetUserId, action };
     const payload = JSON.stringify(intention);
@@ -266,8 +280,13 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
   }
 
   if (assigned && requestState === "loading") return <p role="status">Vérification des demandes déjà enregistrées…</p>;
-  if (assigned && requestState === "error") return <div role="alert"><p>Les demandes enregistrées sont indisponibles. Une nouvelle demande ne peut pas être envoyée sans vérifier leur état.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/collaborators`}>Consulter l’affectation</Link></div>;
   if (pending) return <div className="lead-assignment-dialog__form"><p role="status">Demande de réaffectation en attente. Le propriétaire reste inchangé.</p><p><strong>Motif :</strong> {pending.reason}</p><p>Un Manager ou Administrateur distinct, autorisé dans ce campus, doit décider.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/collaborators`}>Consulter la demande et sa décision</Link>{onCancel ? <button type="button" className="text-button" onClick={onCancel}>Fermer</button> : null}</div>;
+  if (candidateState === "session" || candidateState === "forbidden") return <div className="lead-assignment-dialog__form">
+    <p className="lead-assignment-dialog__feedback lead-assignment-dialog__feedback--error" role="alert">{assignmentAccessMessage(candidateState, assigned)}</p>
+    {candidateState === "session" ? <Link className="secondary-button" href="/">Se reconnecter</Link> : null}
+    {onCancel ? <button type="button" className="text-button" onClick={onCancel}>Fermer</button> : null}
+  </div>;
+  if (assigned && requestState === "error") return <div role="alert"><p>Les demandes enregistrées sont indisponibles. Une nouvelle demande ne peut pas être envoyée sans vérifier leur état.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/collaborators`}>Consulter l’affectation</Link></div>;
 
   return <form ref={formRef} className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => { event.preventDefault(); void submit("confirm"); }}>
     <label>Conseiller cible
