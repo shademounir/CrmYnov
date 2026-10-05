@@ -18,6 +18,7 @@ const styles = {
 
 type Result = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; data: FunnelSnapshot };
 const fields = [{ key: "campus", label: "Campus" }, { key: "campaign", label: "Campagne" }, { key: "program", label: "Formation" }, { key: "source", label: "Source" }];
+const preservedCohortFields = ["channel", "adviserId", "status"] as const;
 const number = new Intl.NumberFormat("fr-FR");
 function failure(status: number): string {
   if (status === 401) return "Votre session a expiré. Reconnectez-vous pour consulter le Pipeline.";
@@ -26,6 +27,10 @@ function failure(status: number): string {
   return "Le rapport est momentanément indisponible. Vos filtres sont conservés.";
 }
 function filtersFromQuery(query: string): Record<string, string> { return Object.fromEntries(new URLSearchParams(query)); }
+function CohortBoundary({ name, label, initialValue }: Readonly<{ name: "from" | "to"; label: string; initialValue: string }>): React.JSX.Element {
+  const [boundary, setBoundary] = useState(initialValue);
+  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue.slice(0, 10)} onChange={(event) => setBoundary(event.target.value)} /></label>;
+}
 function Volumes({ data, filters }: { data: FunnelSnapshot; filters: Record<string, string> }): React.JSX.Element {
   return <>
     <ol className={styles.volumes}>{stages.map((stage, index) => {
@@ -75,7 +80,7 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
     event.preventDefault();
     const values = new FormData(event.currentTarget);
     const next = new URLSearchParams();
-    for (const key of ["from", "to", ...fields.map((field) => field.key)]) {
+    for (const key of ["from", "to", ...fields.map((field) => field.key), ...preservedCohortFields]) {
       const value = values.get(key);
       if (typeof value === "string" && value.trim()) next.set(key, value.trim());
     }
@@ -92,15 +97,16 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
   return <main className={styles.page}>
     <PageHeader eyebrow="Pilotage commercial" title="Pipeline" description="Une photographie exploitable de vos leads, dans leur état commercial actuel." actions={<Link className="secondary-button" href={buildLeadListHref(selectedFilters)}><UsersThree size={18} aria-hidden="true" />Voir les leads</Link>} />
     <form key={query} className={styles.filters} onSubmit={apply} onReset={reset} aria-label="Filtres du Pipeline">
+      {preservedCohortFields.map((key) => selectedFilters[key] ? <input key={key} type="hidden" name={key} value={selectedFilters[key]} /> : null)}
       <div className={styles.activeFilters}><div><strong>Affiner la sélection</strong><span>{activeFilterCount ? `${activeFilterCount} filtre${activeFilterCount > 1 ? "s" : ""} actif${activeFilterCount > 1 ? "s" : ""}` : "Tous les leads accessibles"}</span></div></div>
       <div className={styles.primaryFilters}>
-        <label>Créés à partir du<input type="date" name="from" defaultValue={selectedFilters.from} /></label>
-        <label>Créés avant le<input type="date" name="to" defaultValue={selectedFilters.to} /></label>
+        <CohortBoundary name="from" label="Créés à partir du" initialValue={selectedFilters.from ?? ""} />
+        <CohortBoundary name="to" label="Créés avant le" initialValue={selectedFilters.to ?? ""} />
         <button className={styles.apply} type="submit"><ArrowClockwise size={18} aria-hidden="true" />Actualiser</button>
         <button className={styles.reset} type="reset">Réinitialiser</button>
       </div>
       <details className={styles.advanced}><summary><SlidersHorizontal size={18} aria-hidden="true" />Filtres supplémentaires</summary><div>{fields.map((field) => <label key={field.key}>{field.label}<input name={field.key} defaultValue={selectedFilters[field.key]} /></label>)}</div></details>
-      <p className={styles.hint}>Sans période : tous les leads accessibles. La date de fin est exclue.</p>
+      <p className={styles.hint}>Sans période : tous les leads accessibles. La date de fin est exclue. Une date saisie seule correspond à minuit UTC ; un instant ISO existant est conservé tant que la date n’est pas modifiée.</p>
     </form>
     {result.kind === "loading" ? <section className={`${styles.panel} ${styles.state}`} role="status" aria-busy="true"><span className={styles.skeleton} aria-hidden="true" /><strong>Chargement du Pipeline…</strong><p>Nous préparons les volumes de votre sélection.</p></section> : null}
     {result.kind === "error" ? <section className={`${styles.panel} ${styles.state}`}><div role="alert"><strong>Rapport indisponible</strong><p>{result.message}</p><span>Aucun compteur n’est affiché tant que l’API n’a pas répondu.</span></div><div>{result.message.includes("session") ? <Link className={styles.reconnect} href="/">Se reconnecter</Link> : null}<button className={styles.retry} type="button" onClick={(): void => setRevision((value) => value + 1)}>Réessayer</button></div></section> : null}

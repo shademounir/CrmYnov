@@ -3,25 +3,19 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
+import { collectTypeScriptInputs } from "../postgres-proof-runtime.mjs";
 
 const runnerUrl = new URL("../access-recovery-postgres.mjs", import.meta.url);
 const readRunner = () => readFile(runnerUrl, "utf8");
 const entry = (name, kind) => ({ name, isDirectory: () => kind === "directory", isFile: () => kind === "file" });
 
-// Exercise pure source discovery only; never import the runner's side effects.
-async function orderedInputs(directories, testSource) {
-  const runner = await readRunner();
-  const start = runner.indexOf("const sourceFiles = ");
-  const end = runner.indexOf("const sourceHashes = ", start);
-  assert.ok(start >= 0 && end > start);
-  return Array.from(runInNewContext(`${runner.slice(start, end)}\ninputs;`, {
-    apiDirectory: "synthetic-api", testSource, join,
-    readdirSync: (directory, options) => {
-      assert.deepEqual(Object.keys(options), ["withFileTypes"]); assert.equal(options.withFileTypes, true);
-      assert.ok(directories.has(directory), "only the declared in-memory directories may be read");
-      return directories.get(directory);
-    },
-  }));
+// Only pure shared discovery is exercised; the startup runner is not imported.
+function orderedInputs(directories, testSource) {
+  return collectTypeScriptInputs("synthetic-api", testSource, (directory, options) => {
+    assert.equal(options.withFileTypes, true);
+    assert.ok(directories.has(directory), "only the declared in-memory directories may be read");
+    return directories.get(directory);
+  });
 }
 
 test("recovery manifest discovers real TypeScript inputs in explicit lexicographic order", async () => {
@@ -37,26 +31,24 @@ test("recovery manifest discovers real TypeScript inputs in explicit lexicograph
 test("recovery manifest retains equal entries and fails closed on source discovery errors", async () => {
   const source = join("synthetic-api", "src"), duplicate = join(source, "same.ts");
   assert.deepEqual(await orderedInputs(new Map([[source, [entry("same.ts", "file")]]]), duplicate), [duplicate, duplicate]);
-  await assert.rejects(orderedInputs(new Map(), "synthetic-test.ts"), /declared in-memory directories/u);
+  assert.throws(() => orderedInputs(new Map(), "synthetic-test.ts"), /declared in-memory directories/u);
 });
 
 test("recovery compilation binds fresh sources and emitted CJS metadata without generation or unrelated tests", async () => {
   const runner = await readRunner();
-  for (const marker of ["recovery_repository_cwd_required", "recovery_compilation_requires_commonjs", 'const moduleType = "commonjs"',
-    "recovery_compile_source_changed", "recovery_test_source_changed", "recovery_emitted_path_invalid", "recovery_compiled_output_exceeds_bound",
-    "emitDecoratorMetadata: true", "incremental: false", "sourceMap: true", "AccessRecoveryService", "AccessRecoveryController", "AccessRecoveryRateLimitGuard",
-    "DynamicPermissionRepository", "GmailInvitationSender", "packageLockSha256", "prismaSchemaSha256", 'flag: "wx"', "dependenciesReusedReadOnly: true",
-    "noPrismaGeneration: true", "noSharedBuild: true", "compiled/test/integration/access-recovery-postgres.test.js"]) assert.ok(runner.includes(marker), marker);
+  for (const marker of ["recovery_repository_cwd_required", 'requireCommonJs: true', 'includeDatabaseBindings: true', 'metadataInputType: "commonjs"',
+    "compilePostgresProof", 'errorPrefix: "recovery"', "recovery_test_source_changed", "AccessRecoveryService", "AccessRecoveryController", "AccessRecoveryRateLimitGuard",
+    "DynamicPermissionRepository", "GmailInvitationSender", 'flag: "wx"', "compiled/test/integration/access-recovery-postgres.test.js"]) assert.ok(runner.includes(marker), marker);
   assert.doesNotMatch(runner, /reporting-freshness-postgres|ManagerDashboardService|prisma.*generate|shared.*build|npm ci/u);
 });
 
 test("recovery runner retains nonce-bound loopback isolation and targeted preserved cleanup", async () => {
   const runner = await readRunner();
-  for (const marker of ["recovery_must_not_inherit_database", "recovery_container_name_occupied", "recovery_container_identity_mismatch", "recovery_database_not_empty",
-    "recovery_loopback_binding_invalid", "crmy161_recovery_synthetic", "crmy161_recovery_test_identity.marker", 'CRMY161_RECOVERY_EPHEMERAL_TEST: "true"',
-    "CRMY161_RECOVERY_DATABASE_NONCE: nonce", 'CRM_BACKGROUND_WORKERS: "external"', 'SHEETS_ENABLED: "false"', "withPreservedCleanup", "HostConfig.Tmpfs",
-    'mount.Type !== "tmpfs"', '"127.0.0.1::5432"', '"--pull", "never"', '"image", "inspect", "postgres:17.6-bookworm"',
-    'ownedContainer(); docker(["stop", "--timeout", "60", container])', "tmpfsDatabaseNotABackup: true", "realMailSent: false"]) assert.ok(runner.includes(marker), marker);
+  for (const marker of ["recovery_must_not_inherit_database", "createPostgresDocker", 'nonceLabel: "crmy161-recovery-test-nonce"', "recovery_database_not_empty",
+    "loopbackBinding(image)", "assertContainerAvailable(); image = pinImage();", "crmy161_recovery_synthetic", "crmy161_recovery_test_identity.marker", 'CRMY161_RECOVERY_EPHEMERAL_TEST: "true"',
+    "CRMY161_RECOVERY_DATABASE_NONCE: nonce", 'CRM_BACKGROUND_WORKERS: "external"', 'SHEETS_ENABLED: "false"', "withPreservedCleanup",
+    '"127.0.0.1::5432"', '"--pull", "never"', "timeout: 420_000",
+    'ownedContainer(image); docker(["stop", "--timeout", "60", container])', "tmpfsDatabaseNotABackup: true", "realMailSent: false"]) assert.ok(runner.includes(marker), marker);
   assert.doesNotMatch(runner, /migrate.*reset|seed:local|\["rm"|gcloud|terraform|docker\(\["pull"/u);
 });
 

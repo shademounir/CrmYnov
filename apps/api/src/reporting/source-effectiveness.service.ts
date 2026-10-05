@@ -13,13 +13,14 @@ export type SourceEffectivenessQuery = InteractiveReportingQuery;
 export interface EffectivenessGroup {
   value: string; evidence: "ingestion-occurrences" | "lead-cohort"; volumeReceived: number; uniqueLeadCount: number;
   rates: { duplicate: number | null; incomplete: number | null; contact: number | null; qualification: number | null; enrollment: number | null; closedLost: number | null };
-  medianProcessingMinutes: number | null; unassigned: number; toVerify: number; drillDown: string;
+  medianProcessingMinutes: number | null; unassigned: number; toVerify: number | null; drillDown: string;
 }
 export interface SourceEffectivenessReport {
   definitionVersion: string; timezone: string; generatedAt: string; cohort: { from?: string; to?: string; uniqueLeadCount: number };
   breakdowns: Record<Dimension, EffectivenessGroup[]>;
   definitions: Array<{ key: string; numerator: string; denominator: string; unavailableWhen: string }>;
   financialMetrics: { calculated: false; reason: string };
+  sourceQualityAvailability: "LOCAL_SYNTHETIC_OCCURRENCES" | "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED";
 }
 
 const dimensions: readonly Dimension[] = ["source", "channel", "campaign", "program", "campus", "provenanceMode"];
@@ -37,7 +38,8 @@ export class SourceEffectivenessService {
     const leads = [...new Map(this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized))
       .map((lead) => [lead.id, lead])).values()];
     const leadIds = new Set(leads.map((lead) => lead.id));
-    const occurrences = this.ingestion.reportingSnapshot(principal).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
+    const persistent = this.leads.persistenceEnabled();
+    const occurrences = (persistent ? [] : this.ingestion.reportingSnapshot(principal)).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
       && exact(item.source, query.source) && (!query.channel || sourceChannel(item.source) === query.channel) && exact(item.campaign ?? "UNSPECIFIED", query.campaign)
       && exact(item.program ?? "UNSPECIFIED", query.program) && exact(item.campus ?? "UNSPECIFIED", query.campus)
       && (!item.leadId ? !query.adviserId && !query.status : leadIds.has(item.leadId)));
@@ -54,6 +56,7 @@ export class SourceEffectivenessService {
         { key: "closedLostRate", numerator: "distinct leads currently CLOSED_LOST", denominator: "distinct leads in the group", unavailableWhen: "the group contains no lead" },
       ],
       financialMetrics: { calculated: false, reason: "validated financial inputs are not available" },
+      sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",
     };
     this.audit.record({ eventType: "SOURCE_EFFECTIVENESS_VIEWED", actorId: principal.userId, actorRoles: principal.roles,
       sessionId: principal.sessionId, correlationId, after: { definitionVersion: SOURCE_EFFECTIVENESS_VERSION, uniqueLeadCount: leads.length,
@@ -80,7 +83,7 @@ export class SourceEffectivenessService {
           enrollment: leadRate(groupLeads.filter((lead) => lead.status === "ENROLLED").length),
           closedLost: leadRate(groupLeads.filter((lead) => lead.status === "CLOSED_LOST").length) },
         medianProcessingMinutes: this.median(processing), unassigned: groupLeads.filter((lead) => !lead.assignedToId).length,
-        toVerify: groupOccurrences.filter((item) => item.outcome === "MANUAL_REVIEW").length, drillDown: `/leads?${params.toString()}` };
+        toVerify: groupOccurrences.length ? groupOccurrences.filter((item) => item.outcome === "MANUAL_REVIEW").length : null, drillDown: `/leads?${params.toString()}` };
     });
   }
 

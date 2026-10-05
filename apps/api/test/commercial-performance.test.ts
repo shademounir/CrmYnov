@@ -65,8 +65,8 @@ test("limits advisers to their own authorised indicators and fails closed on inv
   assert.throws(() => service.read({ from: "invalid" }, manager, "corr-invalid"), hasCode("performance_from_invalid"));
 });
 
-test("controller fails closed without a principal", () => {
+test("controller fails closed without a principal", async () => {
   const { service } = setup(); const controller = new CommercialPerformanceController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
-  assert.equal(controller.read({}, { principal: manager, header: () => "corr-controller" } as never).cohort.uniqueLeadCount, 0);
+  assert.equal((await controller.read({}, { principal: manager, header: () => "corr-controller" } as never)).cohort.uniqueLeadCount, 0);
 });

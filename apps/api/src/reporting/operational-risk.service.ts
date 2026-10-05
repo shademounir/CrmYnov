@@ -23,8 +23,9 @@ export interface OperationalRiskReport {
   definitionVersion: string; generatedAt: string; timezone: "Africa/Casablanca";
   thresholds: { noInteractionHours: number; capacityWarningPercent: number; loadGap: number; sourceRiskPercent: number; minSourceVolume: number };
   queues: { unassigned: number; withoutFirstInteraction: number; overdueFollowUps: number; pendingClosures: number; pendingReassignments: number };
-  capacity: Array<{ adviserId: string; activeLeads: number; capacity: number; utilizationPercent: number }>;
+  capacity: Array<{ adviserId: string; activeLeads: number; capacity: number | null; utilizationPercent: number | null }>;
   sourceRisks: Array<{ source: string; volume: number; rejectedOrReview: number; rate: number }>;
+  sourceQualityAvailability: "LOCAL_SYNTHETIC_OCCURRENCES" | "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED";
   alerts: OperationalAlert[]; safeguards: { disciplinaryScore: false; financialDecision: false };
 }
 
@@ -37,11 +38,11 @@ export class OperationalRiskService {
     @Optional() @Inject(CampusAssignmentService) private readonly campusAssignments?: CampusAssignmentService,
   ) {}
 
-  async readForApi(query: OperationalRiskQuery, principal: Principal, correlationId: string): Promise<OperationalRiskReport> {
-    if (!this.leads.persistenceEnabled()) return this.read(query, principal, correlationId);
+  async readForApi(query: OperationalRiskQuery, principal: Principal, correlationId: string, now = new Date()): Promise<OperationalRiskReport> {
+    if (!this.leads.persistenceEnabled()) return this.read(query, principal, correlationId, now);
     if (!this.campusAssignments) throw new ConflictException({ code: "persistent_assignment_unavailable" });
     const { rules } = await this.campusAssignments.reporting(principal);
-    return this.read(query, principal, correlationId, new Date(), rules);
+    return this.read(query, principal, correlationId, now, rules);
   }
 
   read(query: OperationalRiskQuery, principal: Principal, correlationId: string, now = new Date(), rules: AssignmentRule[] = this.assignments.listRules()): OperationalRiskReport {
@@ -74,10 +75,11 @@ export class OperationalRiskService {
     }
     const capacity = [...visibleOwners].sort((a, b) => a.localeCompare(b, "en")).map((adviserId) => {
       const activeLeads = active.filter((row) => row.assignedToId === adviserId).length;
-      const configured = candidateCapacity.get(adviserId) ?? 0;
-      return { adviserId, activeLeads, capacity: configured, utilizationPercent: configured ? Number((activeLeads / configured * 100).toFixed(2)) : 100 };
+      const configured = candidateCapacity.get(adviserId) ?? null;
+      return { adviserId, activeLeads, capacity: configured, utilizationPercent: configured && configured > 0 ? Number((activeLeads / configured * 100).toFixed(2)) : null };
     });
-    const occurrences = this.ingestion.reportingSnapshot(principal).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
+    const persistent = this.leads.persistenceEnabled();
+    const occurrences = (persistent ? [] : this.ingestion.reportingSnapshot(principal)).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
       && (!query.campus || (item.campus ?? "UNSPECIFIED").localeCompare(query.campus, "fr", { sensitivity: "accent" }) === 0)
       && (!query.campaign || (item.campaign ?? "UNSPECIFIED") === query.campaign) && (!query.program || (item.program ?? "UNSPECIFIED") === query.program)
       && (!query.source || item.source === query.source) && (!query.channel || sourceChannel(item.source) === query.channel)
@@ -90,7 +92,8 @@ export class OperationalRiskService {
     const queues = { unassigned: active.filter((row) => !row.assignedToId).length, withoutFirstInteraction, overdueFollowUps, pendingClosures, pendingReassignments };
     const alerts = this.alerts(queues, capacity, sourceRisks, thresholds);
     const report: OperationalRiskReport = { definitionVersion: OPERATIONAL_RISK_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
-      thresholds, queues, capacity, sourceRisks, alerts, safeguards: { disciplinaryScore: false, financialDecision: false } };
+      thresholds, queues, capacity, sourceRisks, alerts, sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",
+      safeguards: { disciplinaryScore: false, financialDecision: false } };
     this.audit.record({ eventType: "OPERATIONAL_RISK_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { definitionVersion: OPERATIONAL_RISK_VERSION, alertCount: alerts.length, thresholds }, result: "SUCCESS",
       idempotencyKey: `operational-risk:${randomUUID()}` });
@@ -105,7 +108,7 @@ export class OperationalRiskService {
     add("follow_up_overdue", queues.overdueFollowUps, "/leads?view=FOLLOW_UP", "scheduled follow-up due date is in the past", "CRITICAL");
     add("closure_decision_pending", queues.pendingClosures, "/manager/closures", "controlled closure awaits a Manager/Admin decision", "INFO");
     add("reassignment_decision_pending", queues.pendingReassignments, "/manager/assignment", "reassignment awaits a Manager/Admin decision", "INFO");
-    for (const item of capacity.filter((row) => row.utilizationPercent >= thresholds.capacityWarningPercent)) add(`capacity_warning:${item.adviserId}`, item.activeLeads, `/leads?assignedToId=${encodeURIComponent(item.adviserId)}`, `configured capacity utilization is ${item.utilizationPercent}%`);
+    for (const item of capacity.filter((row) => row.utilizationPercent !== null && row.utilizationPercent >= thresholds.capacityWarningPercent)) add(`capacity_warning:${item.adviserId}`, item.activeLeads, `/leads?assignedToId=${encodeURIComponent(item.adviserId)}`, `configured capacity utilization is ${item.utilizationPercent}%`);
     if (capacity.length > 1) { const loads = capacity.map((item) => item.activeLeads); const gap = Math.max(...loads) - Math.min(...loads); add("load_gap", gap >= thresholds.loadGap ? gap : 0, "/manager/reports/commercial-performance", `active load difference meets the explicit ${thresholds.loadGap} lead threshold`, "INFO"); }
     for (const item of sourceRisks) add(`source_quality:${item.source}`, item.rejectedOrReview, `/leads?source=${encodeURIComponent(item.source)}`, `structured rejection or review rate is ${item.rate}%`);
     return alerts.sort((a, b) => a.code.localeCompare(b.code, "en"));

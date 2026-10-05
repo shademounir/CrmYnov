@@ -14,7 +14,8 @@ import type { SourceEffectivenessService } from "../src/reporting/source-effecti
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-manager" };
 const calls: Array<{ panel: string; query: unknown }> = [];
-const dependency = <T>(panel: string, value: unknown): T => ({ read: (query: unknown) => { calls.push({ panel, query }); return value; } }) as T;
+const dependency = <T>(panel: string, value: unknown): T => ({ read: (query: unknown) => { calls.push({ panel, query }); return value; },
+  readForApi: (query: unknown): Promise<unknown> => { calls.push({ panel, query }); return Promise.resolve(value); } }) as T;
 const hasCode = (code: string) => (error: unknown): boolean => typeof error === "object" && error !== null && "getResponse" in error
   && (error as { getResponse: () => unknown }).getResponse() !== null
   && (error as { getResponse: () => { code?: string } }).getResponse().code === code;
@@ -22,7 +23,7 @@ const hasCode = (code: string) => (error: unknown): boolean => typeof error === 
 test("consolidates versioned reports with common filters and explicit safeguards", () => {
   calls.length = 0; const audit = new AuditService();
   const service = new ManagerDashboardService(
-    dependency<CommercialFunnelService>("funnel", { definitionVersion: "commercial-funnel-v1", generatedAt: "2026-08-24T12:00:00.000Z", cohort: { totalUniqueLeads: 2 }, attainment: { enrolled: 1 }, breakdowns: { source: [{ value: "SYNTHETIC", count: 2 }, { value: "=FORMULA", count: 1 }], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialFunnelService>("funnel", { definitionVersion: "commercial-funnel-v1", generatedAt: "2026-08-24T12:00:00.000Z", cohort: { totalUniqueLeads: 2 }, currentState: { QUALIFIED: 1 }, attainment: { enrolled: 1 }, rates: { enrolled: 0.5 }, breakdowns: { source: [{ value: "SYNTHETIC", count: 2 }, { value: "=FORMULA", count: 1 }], campaign: [], program: [], campus: [] } }),
     dependency<CommercialPerformanceService>("performance", { definitionVersion: "commercial-performance-v1", generatedAt: "2026-08-24T12:00:00.000Z" }),
     dependency<SourceEffectivenessService>("sources", { definitionVersion: "source-effectiveness-v1", generatedAt: "2026-08-24T12:00:00.000Z" }),
     dependency<OperationalRiskService>("risks", { definitionVersion: "operational-risk-v1", generatedAt: "2026-08-24T12:00:00.000Z", queues: { unassigned: 1, overdueFollowUps: 1 }, alerts: [{ code: "synthetic" }] }),
@@ -41,6 +42,8 @@ test("consolidates versioned reports with common filters and explicit safeguards
   const csv = service.exportAggregated(query, manager, "corr-export", new Date("2026-08-24T12:00:00.000Z"));
   assert.equal(csv.includes("lead-synthetic"), false); assert.equal(csv.includes("manager-dashboard-export-v1"), true); assert.equal(csv.includes("distribution,source,\"SYNTHETIC\",2"), true);
   assert.equal(csv.includes("kpi,uniqueLeads,,2"), true);
+  assert.equal(csv.includes("kpi,qualifiedCurrentStatus,,1"), true);
+  assert.equal(csv.includes('rate,enrolledConversionRatio,"0.5",'), true);
   assert.equal(csv.includes("distribution,source,\"'=FORMULA\",1"), true);
   assert.equal(result.drillDowns.every((item) => item.href.includes("returnTo=")), true);
   assert.equal(audit.list().some((event) => event.eventType === "MANAGER_DASHBOARD_VIEWED"), true);
@@ -104,17 +107,26 @@ test("personal dashboard exposes only authenticated adviser aggregates", () => {
 test("API reporting refreshes PostgreSQL-backed state and exposes scoped persistence evidence", async () => {
   const calls: string[] = [];
   const persistence = {
-    refresh: (): Promise<void> => { calls.push("refresh"); return Promise.resolve(); },
+    withReportingScope: async <T>(principal: Principal, read: (current: Principal) => Promise<T>): Promise<T> => { calls.push("refresh"); return read(principal); },
+    normalizeCampusQuery: (_principal: Principal, query: unknown): Promise<unknown> => Promise.resolve(query),
+    capabilities: (): Promise<{ canCreateLead: boolean; canReadRecentLeads: boolean }> => Promise.resolve({ canCreateLead: false, canReadRecentLeads: true }),
     evidence: (): Promise<{ source: "POSTGRESQL"; distinctLeadCount: number; appointmentCount: number; documentMetadataCount: number; importBatchCount: number }> => Promise.resolve({ source: "POSTGRESQL", distinctLeadCount: 2, appointmentCount: 1, documentMetadataCount: 3, importBatchCount: 1 }),
   };
   const service = new ManagerDashboardService(
-    dependency<CommercialFunnelService>("funnel", { definitionVersion: "commercial-funnel-v1", cohort: { totalUniqueLeads: 0 }, attainment: { enrolled: 0 }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialFunnelService>("funnel", { definitionVersion: "commercial-funnel-v1", cohort: { totalUniqueLeads: 0 }, currentState: { QUALIFIED: 0 }, attainment: { enrolled: 0 }, rates: { enrolled: null }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
     dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
     dependency<OperationalRiskService>("risks", { queues: { unassigned: 0, overdueFollowUps: 0 }, alerts: [] }),
     dependency<SharedContributionService>("contributions", {}),
     { reportingSnapshot: () => [] } as unknown as LeadService, new AuditService(), persistence as never,
   );
-  const report = await service.readForApi({ period: "30d" }, { ...manager, scopes: [{ kind: "GLOBAL" }] }, "corr-persistent", new Date("2026-08-24T12:00:00.000Z"));
+  const report = await service.readForApi({ period: "30d", adviserId: manager.userId }, { ...manager, scopes: [{ kind: "GLOBAL" }] }, "corr-persistent", new Date("2026-08-24T12:00:00.000Z"));
   assert.deepEqual(calls, ["refresh"]);
   assert.deepEqual(report.persistence, { source: "POSTGRESQL", distinctLeadCount: 2, appointmentCount: 1, documentMetadataCount: 3, importBatchCount: 1 });
+  const drillDown = new URL(report.drillDowns[0]!.href, "http://localhost");
+  assert.equal(drillDown.searchParams.get("adviserId"), manager.userId); assert.equal(drillDown.searchParams.has("assignedToId"), false);
+  assert.equal(drillDown.searchParams.get("createdBefore"), report.filters.to); assert.equal(drillDown.searchParams.has("createdTo"), false);
+  const csv = await service.exportAggregatedForApi({ period: "30d" }, { ...manager, scopes: [{ kind: "GLOBAL" }] }, "corr-export-empty", new Date("2026-08-24T12:00:00.000Z"));
+  assert.equal(csv.includes("kpi,qualifiedCurrentStatus,,0"), true);
+  assert.equal(csv.includes('rate,enrolledConversionRatio,"UNAVAILABLE",'), true);
+  assert.equal(csv.includes('rate,enrolledConversionRatio,"0",'), false);
 });
