@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 const GENERIC_MESSAGE = "Si le compte est éligible, les instructions de récupération seront fournies.";
 
 export function RecoveryForm(): React.JSX.Element {
   const [message, setMessage] = useState<string>();
   const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
 
   async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setPending(true);
     const data = new FormData(event.currentTarget);
     try {
@@ -18,14 +21,17 @@ export function RecoveryForm(): React.JSX.Element {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email: data.get("email"), returnPath: "/access-recovery/complete" }),
       });
+    } catch {
+      // Keep the same non-enumerating response when the transport is unavailable.
     } finally {
+      submitting.current = false;
       setPending(false);
       setMessage(GENERIC_MESSAGE);
     }
   }
 
   return (
-    <form onSubmit={(event) => { void submit(event); }} aria-describedby="recovery-guidance">
+    <form method="post" onSubmit={(event) => { void submit(event); }} aria-describedby="recovery-guidance">
       <label htmlFor="recovery-email">Adresse professionnelle</label>
       <input id="recovery-email" name="email" type="email" autoComplete="email" maxLength={254} required />
       <p id="recovery-guidance">La réponse reste identique, que le compte existe ou non.</p>

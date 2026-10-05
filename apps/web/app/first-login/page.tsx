@@ -35,7 +35,7 @@ export default function FirstLoginPage(): React.JSX.Element {
     <p className="eyebrow">Accès initial protégé</p>
     <h1>Première connexion</h1>
     <p>Remplacez le secret temporaire avant d’accéder au CRM. Vous devrez ensuite vous reconnecter.</p>
-    <form onSubmit={(event) => { event.preventDefault(); void submit(new FormData(event.currentTarget)); }} aria-label="Remplacer le secret temporaire">
+    <form method="post" onSubmit={(event) => { event.preventDefault(); void submit(new FormData(event.currentTarget)); }} aria-label="Remplacer le secret temporaire">
       <label>Secret temporaire<input name="currentSecret" type="password" autoComplete="current-password" required /></label>
       <label>Nouveau secret<input name="nextSecret" type="password" autoComplete="new-password" required /></label>
       <label>Confirmer le nouveau secret<input name="confirmation" type="password" autoComplete="new-password" required /></label>
