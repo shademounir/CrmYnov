@@ -72,4 +72,3 @@ export async function assignmentFlowFixture(): Promise<AssignmentFixture> {
   };
   return { prisma, db, suffix, campus, otherCampus, program, campaign, commercial, target, secondTarget, firstLogin, manager, otherManager, admin, reader, outsider, key, leadInput, ownedLead };
 }
-
