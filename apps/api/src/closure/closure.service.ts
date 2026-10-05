@@ -22,6 +22,8 @@ export class ClosureService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> { await this.refreshPersistentState(); }
+
+  async refreshReportingForApi(): Promise<void> { await this.refreshPersistentState(); }
   persistenceEnabled(): boolean { return this.persistence?.enabled === true; }
 
   async requestForApi(leadId: string, input: { target?: string; reason?: string; comment?: string; evidence?: string[] }, principal: Principal, correlationId: string): Promise<ClosureRequest> {

@@ -53,8 +53,8 @@ test("handles a reasonable synthetic volume and exposes no lead identity", () =>
   assert.match(serialized, /"totalUniqueLeads":2000/); assert.equal(serialized.includes("LD-VOLUME"), false); assert.equal(serialized.includes("firstName"), false);
 });
 
-test("controller fails closed without an authenticated principal", () => {
+test("controller fails closed without an authenticated principal", async () => {
   const { service } = setup(); const controller = new CommercialFunnelController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
-  assert.equal(controller.read({}, { principal: manager, header: () => "corr-controller" } as never).cohort.totalUniqueLeads, 0);
+  assert.equal((await controller.read({}, { principal: manager, header: () => "corr-controller" } as never)).cohort.totalUniqueLeads, 0);
 });

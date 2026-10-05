@@ -49,8 +49,20 @@ test("returns unavailable evidence honestly and fails closed for roles and dates
     campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "PHONE_CALL", assignedToId: "adviser-a" });
   const source = service.read({}, manager, "corr-direct").breakdowns.source[0]!;
   assert.equal(source.evidence, "lead-cohort"); assert.equal(source.rates.duplicate, null); assert.equal(source.rates.incomplete, null);
+  assert.equal(source.toVerify, null);
   assert.throws(() => service.read({}, adviser, "corr-forbidden"), hasCode("ingestion_role_forbidden"));
   assert.throws(() => service.read({ from: "invalid" }, manager, "corr-invalid"), hasCode("source_report_from_invalid"));
+});
+
+test("durable lead cohort does not pretend that local ingestion quality has been reconstructed", () => {
+  const { leads, ingestion, service } = setup();
+  leads.registerLocalLead({ leadCode: "LD-PG-SOURCE", firstName: "Lead", lastName: "Synthétique", campus: "Campus synthétique", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM" });
+  leads.persistenceEnabled = (): boolean => true;
+  ingestion.reportingSnapshot = (): never => { throw new Error("local ingestion is not durable evidence"); };
+  const report = service.read({}, manager, "corr-source-pg");
+  assert.equal(report.sourceQualityAvailability, "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED");
+  assert.equal(report.breakdowns.source[0]?.toVerify, null); assert.equal(report.breakdowns.source[0]?.rates.incomplete, null);
+  assert.equal(report.breakdowns.source[0]?.evidence, "lead-cohort");
 });
 
 test("controller refuses a missing principal", () => {

@@ -63,8 +63,8 @@ export interface LeadReportingRow {
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
-  page: number; pageSize: number; search?: string; assignedToId?: string; collaboratorId?: string; status?: string; source?: string; channel?: string;
-  program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string;
+  page: number; pageSize: number; search?: string; assignedToId?: string; collaboratorId?: string; adviserId?: string; status?: string; source?: string; channel?: string;
+  program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string; createdBefore?: string;
   assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
   savedView?: string;
   temperature?: string;
@@ -81,6 +81,7 @@ type ValidatedLeadListQuery = Readonly<{
   sortDirection: "asc" | "desc";
   createdFrom?: string | undefined;
   createdTo?: string | undefined;
+  createdBefore?: string | undefined;
   search?: string | undefined;
   view: LeadWorkView;
   savedView?: LeadSavedView | undefined;
@@ -412,7 +413,9 @@ export class LeadService implements OnModuleInit {
     const sortDirection = requiredChoice<"asc" | "desc">(query.sortDirection as "asc" | "desc" | undefined, "desc", ["asc", "desc"], "lead_sort_direction_invalid");
     const createdFrom = this.parseBoundary(query.createdFrom, "lead_created_from_invalid");
     const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
+    const createdBefore = this.parseBoundary(query.createdBefore, "lead_created_before_invalid");
     assertListDateRange(createdFrom, createdTo);
+    if (createdFrom && createdBefore && createdFrom >= createdBefore) throw new BadRequestException({ code: "lead_date_range_invalid" });
     const search = query.search?.trim().toLocaleLowerCase("fr");
     const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"], "lead_view_invalid");
     const savedView = normalizedOptionalChoice<LeadSavedView>(query.savedView, leadSavedViews, "lead_saved_view_invalid");
@@ -427,6 +430,7 @@ export class LeadService implements OnModuleInit {
       temperature,
       createdFrom,
       createdTo,
+      createdBefore,
       search,
       savedView,
       channel,
@@ -452,6 +456,7 @@ export class LeadService implements OnModuleInit {
       && this.matchesSavedView(lead, validated.savedView)
       && (!query.assignedToId || lead.assignedToId === query.assignedToId)
       && (!query.collaboratorId || Boolean(lead.collaboratorIds?.includes(query.collaboratorId)))
+      && (!query.adviserId || lead.assignedToId === query.adviserId || Boolean(lead.collaboratorIds?.includes(query.adviserId)))
       && (!validated.status || lead.status === validated.status)
       && (!validated.temperature || (lead.temperature ?? "UNEVALUATED") === validated.temperature)
       && matches(lead.source, query.source)
@@ -462,7 +467,8 @@ export class LeadService implements OnModuleInit {
       && matches(lead.assignmentMode, query.assignmentMode)
       && matches(lead.importBatchId, query.importBatchId)
       && (!validated.createdFrom || lead.createdAt >= validated.createdFrom)
-      && (!validated.createdTo || lead.createdAt <= validated.createdTo);
+      && (!validated.createdTo || lead.createdAt <= validated.createdTo)
+      && (!validated.createdBefore || lead.createdAt < validated.createdBefore);
   }
 
   private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {
@@ -587,7 +593,7 @@ export class LeadService implements OnModuleInit {
     const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
     const campuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
     return [...this.leads.values()]
-      .filter((lead) => (global || campuses.has(lead.campus))
+      .filter((lead) => (principal.permissionLeadIds ? principal.permissionLeadIds.has(lead.id) : global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
       .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, temperature }) => ({
         id, status, campus, campaign, program, source, createdAt,

@@ -8,7 +8,7 @@ import { CommercialPerformanceService, type CommercialPerformanceReport } from "
 import { OperationalRiskService, type OperationalRiskReport } from "./operational-risk.service.js";
 import { SharedContributionService, type SharedContributionReport } from "./shared-contribution.service.js";
 import { SourceEffectivenessService, type SourceEffectivenessReport } from "./source-effectiveness.service.js";
-import { ReportingPersistenceService, type PersistentReportingEvidence } from "./reporting-persistence.service.js";
+import { ReportingPersistenceService, type DashboardCapabilities, type PersistentReportingEvidence } from "./reporting-persistence.service.js";
 import { matchesInteractiveFilters, normalizeReportingQuery, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
 
 export const MANAGER_DASHBOARD_VERSION = "manager-dashboard-v1";
@@ -28,11 +28,14 @@ export interface ManagerDashboardReport {
   export: { href: string; schemaVersion: "manager-dashboard-export-v1"; aggregatedOnly: true };
   safeguards: { singlePrimaryConversionAttribution: true; financialDecision: false; disciplinaryScore: false };
   persistence?: PersistentReportingEvidence;
+  capabilities?: DashboardCapabilities;
 }
 export interface PersonalDashboardReport {
   definitionVersion: "personal-dashboard-v1"; generatedAt: string; timezone: "Africa/Casablanca"; filters: ManagerDashboardQuery;
   performance: CommercialPerformanceReport; contributions: SharedContributionReport;
   safeguards: { personalScopeOnly: true; aggregatedOnly: true; financialDecision: false; disciplinaryScore: false };
+  persistence?: PersistentReportingEvidence;
+  capabilities?: DashboardCapabilities;
 }
 
 @Injectable()
@@ -49,14 +52,23 @@ export class ManagerDashboardService {
   ) {}
 
   async readForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): Promise<ManagerDashboardReport> {
-    await this.persistence?.refresh();
-    const report = this.read(raw, principal, correlationId, now);
-    return this.persistence ? { ...report, persistence: await this.persistence.evidence(principal, report.filters) } : report;
+    if (!this.persistence) return this.read(raw, principal, correlationId, now);
+    return this.persistence.withReportingScope(principal, async (current) => {
+      const canonical = await this.persistence!.normalizeCampusQuery(current, raw);
+      const query = normalizeReportingQuery(canonical, current, now);
+      const risks = await this.risks.readForApi(query, current, correlationId, now);
+      const report = this.read(canonical, current, correlationId, now, risks);
+      return { ...report, persistence: await this.persistence!.evidence(current, report.filters), capabilities: await this.persistence!.capabilities(current, report.filters) };
+    });
   }
 
   async readPersonalForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): Promise<PersonalDashboardReport> {
-    await this.persistence?.refresh();
-    return this.readPersonal(raw, principal, correlationId, now);
+    if (!this.persistence) return this.readPersonal(raw, principal, correlationId, now);
+    return this.persistence.withReportingScope(principal, async (current) => {
+      const canonical = await this.persistence!.normalizeCampusQuery(current, raw);
+      const report = this.readPersonal(canonical, current, correlationId, now);
+      return { ...report, persistence: await this.persistence!.evidence(current, report.filters), capabilities: await this.persistence!.capabilities(current, report.filters) };
+    });
   }
 
   async exportAggregatedForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): Promise<string> {
@@ -64,14 +76,14 @@ export class ManagerDashboardService {
     return this.serializeAggregated(report);
   }
 
-  read(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): ManagerDashboardReport {
+  read(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date(), persistedRisks?: OperationalRiskReport): ManagerDashboardReport {
     const query = normalizeReportingQuery(raw, principal, now);
     const common = { ...query };
     const panels = {
       funnel: this.funnel.read(common, principal, correlationId),
       performance: this.performance.read(common, principal, correlationId, now),
       sourceEffectiveness: this.sources.read(common, principal, correlationId, now),
-      operationalRisks: this.risks.read(common, principal, correlationId, now),
+      operationalRisks: persistedRisks ?? this.risks.read(common, principal, correlationId, now),
       sharedContributions: this.contributions.read(common, principal, correlationId, now),
     };
     const rows = this.filteredRows(query, principal);
@@ -126,6 +138,10 @@ export class ManagerDashboardService {
   private serializeAggregated(report: ManagerDashboardReport): string {
     const lines = ["schemaVersion,timezone,period,from,to", ["manager-dashboard-export-v1", report.timezone, report.filters.period ?? "", report.filters.from ?? "", report.filters.to ?? ""].map((value) => this.csv(value)).join(","), "section,dimension,value,count"];
     for (const [key, value] of Object.entries(report.cards).sort(([left], [right]) => left.localeCompare(right, "en"))) lines.push(`kpi,${key},,${value}`);
+    lines.push(`kpi,qualifiedCurrentStatus,,${report.panels.funnel.currentState.QUALIFIED}`);
+    const enrolledRate = report.panels.funnel.rates.enrolled;
+    // Ratios belong to value, not count. An empty cohort has no conversion rate.
+    lines.push(`rate,enrolledConversionRatio,${this.csv(enrolledRate === null ? "UNAVAILABLE" : String(enrolledRate))},`);
     for (const trend of report.trends) { lines.push(`trend,leadsCreated,${trend.date},${trend.leadsCreated}`); lines.push(`trend,leadsEnrolled,${trend.date},${trend.leadsEnrolled}`); }
     for (const [dimension, values] of Object.entries(report.distributions).sort(([left], [right]) => left.localeCompare(right, "en"))) {
       for (const item of values) lines.push(`distribution,${dimension},${this.csv(item.value)},${item.count}`);
@@ -144,7 +160,7 @@ export class ManagerDashboardService {
   private sortedKeys(value: object): string[] { const keys = Object.keys(value); keys.sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" })); return keys; }
   private leadHref(query: ManagerDashboardQuery, overrides: Record<string, string> = {}): string {
     const params = new URLSearchParams();
-    const mapping: Array<[keyof ManagerDashboardQuery, string]> = [["from", "createdFrom"], ["to", "createdTo"], ["campus", "campus"], ["campaign", "campaign"], ["program", "program"], ["source", "source"], ["channel", "channel"], ["adviserId", "assignedToId"], ["status", "status"]];
+    const mapping: Array<[keyof ManagerDashboardQuery, string]> = [["from", "createdFrom"], ["to", "createdBefore"], ["campus", "campus"], ["campaign", "campaign"], ["program", "program"], ["source", "source"], ["channel", "channel"], ["adviserId", "adviserId"], ["status", "status"]];
     for (const [source, target] of mapping) {
       const value = query[source];
       if (value) params.set(target, value);
