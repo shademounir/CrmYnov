@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach, afterEach } from "node:test";
 import type { ExecutionContext, HttpException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { AccessRecoveryService, RECOVERY_ACCEPTED, RECOVERY_ACKNOWLEDGEMENT_MS } from "../src/access-recovery/access-recovery.service.js";
@@ -36,6 +36,9 @@ interface RecoveryFixture {
 const path = "/access-recovery/complete";
 const email = "activated@example.invalid";
 const nextSecret = "Synthetic-Reset-2026!";
+let previousEnabled: string | undefined;
+beforeEach(() => { previousEnabled = process.env.CRM_ACCESS_RECOVERY_ENABLED; process.env.CRM_ACCESS_RECOVERY_ENABLED = "true"; });
+afterEach(() => { if (previousEnabled === undefined) delete process.env.CRM_ACCESS_RECOVERY_ENABLED; else process.env.CRM_ACCESS_RECOVERY_ENABLED = previousEnabled; });
 function hasCode(code: string): (error: unknown) => boolean {
   return (error) => (error as HttpException).getResponse?.() !== null
     && ((error as HttpException).getResponse?.() as { code?: string })?.code === code;
@@ -114,7 +117,7 @@ function fixture(): RecoveryFixture {
   return { userId, state: (): State => state, service, deliveries, token, failEvent: (value: string): void => { failEvent = value; }, deliveryFailure: (): void => { deliveryFailure = true; } };
 }
 
-test("persistent requests read current eligibility and return the same padded acknowledgement", async () => {
+test("explicitly enabled persistent requests read current eligibility and return the same padded acknowledgement", async () => {
   const f = fixture(), service = f.service(), before = Date.now();
   assert.deepEqual(await service.requestForApi(email.toUpperCase(), path), RECOVERY_ACCEPTED);
   assert.deepEqual(await service.requestForApi("absent@example.invalid", path), RECOVERY_ACCEPTED);
@@ -131,6 +134,25 @@ test("persistent requests read current eligibility and return the same padded ac
   assert.ok(!stored.includes(f.token()) && !stored.includes(email));
   const requested = f.state().auditEvent.find((row) => row.eventType === "ACCESS_RECOVERY_REQUESTED")!;
   assert.deepEqual(requested.after, { challengeId: f.state().localRecoveryChallenge[0]!.id, authenticationVersion: 4 });
+});
+
+test("recovery is fail-closed unless explicitly true, preserving existing challenges, credentials, sessions and audit quotas", async () => {
+  const f = fixture(), service = f.service();
+  await service.requestForApi(email, path);
+  const token = f.token(), before = structuredClone(f.state()), deliveries = f.deliveries.length, deadlines = service.deadlines.length;
+  for (const value of [undefined, "false", "TRUE", "1", " true "]) {
+    if (value === undefined) delete process.env.CRM_ACCESS_RECOVERY_ENABLED;
+    else process.env.CRM_ACCESS_RECOVERY_ENABLED = value;
+    await assert.rejects(service.requestForApi(email, path), hasCode("recovery_disabled"));
+    await assert.rejects(service.completeForApi(token, path, nextSecret), hasCode("recovery_disabled"));
+    await assert.rejects(service.assertClientAllowedForApi("REQUEST", "127.0.0.1"), hasCode("recovery_disabled"));
+    assert.deepEqual(f.state(), before);
+    assert.equal(f.deliveries.length, deliveries);
+    assert.equal(service.deadlines.length, deadlines, "disabled infrastructure has no eligibility-dependent acknowledgement work");
+  }
+  process.env.CRM_ACCESS_RECOVERY_ENABLED = "true";
+  await service.completeForApi(token, path, nextSecret);
+  assert.equal(f.state().collaborator[0]!.authenticationVersion, 5);
 });
 
 test("inactive, must-change and missing hash subjects remain silent and account issuance is bounded", async () => {

@@ -24,6 +24,7 @@ test("CRMY-161 recovery is fenced, single-use and versioned across two real Post
   assert.equal(process.env.CRMY161_RECOVERY_EPHEMERAL_TEST, "true");
   assert.equal(process.env.SHEETS_ENABLED, "false");
   assert.equal(process.env.CRM_BACKGROUND_WORKERS, "external");
+  assert.equal(process.env.CRM_ACCESS_RECOVERY_ENABLED, "true", "the isolated runner explicitly enables the coherent API/Web feature contract");
   const url = new URL(process.env.DATABASE_URL ?? "");
   assert.equal(url.protocol, "postgresql:"); assert.equal(url.hostname, "127.0.0.1");
   assert.equal(url.pathname, "/crmy161_recovery_synthetic"); assert.equal(url.username, "postgres");
@@ -99,6 +100,23 @@ test("CRMY-161 recovery is fenced, single-use and versioned across two real Post
       for (const action of actions) { pending.push(action()); await new Promise<void>((resolve) => setTimeout(resolve, 150)); }
       return Promise.all(pending);
     };
+
+    await context.test("disabled recovery refuses both anonymous routes before mail, challenges, quota audits or identity mutations", async () => {
+      const before = await effects(positive), auditsBefore = await db.auditEvent.count();
+      const configured = process.env.CRM_ACCESS_RECOVERY_ENABLED;
+      try {
+        for (const value of [undefined, "false"]) {
+          if (value === undefined) delete process.env.CRM_ACCESS_RECOVERY_ENABLED; else process.env.CRM_ACCESS_RECOVERY_ENABLED = value;
+          const request = await requestRecovery(positive, "127.0.0.3");
+          const completion = await http(1, "POST", "/access-recovery/completions", { token: "a".repeat(43), returnPath, nextSecret }, undefined, "127.0.0.3");
+          assert.equal(request.status, 503); assert.deepEqual(request.body, { code: "recovery_disabled" });
+          assert.equal(completion.status, 503); assert.deepEqual(completion.body, { code: "recovery_disabled" });
+          assert.deepEqual(await effects(positive), before);
+          assert.equal(await db.auditEvent.count(), auditsBefore);
+          assert.equal(delivered.size, 0);
+        }
+      } finally { if (configured === undefined) delete process.env.CRM_ACCESS_RECOVERY_ENABLED; else process.env.CRM_ACCESS_RECOVERY_ENABLED = configured; }
+    });
 
     await context.test("request audit binds a hash-only token to its auth version; exactly one concurrent completion succeeds and no session is created", async () => {
       const original = await http<Session>(0, "POST", "/sessions", { email: positive.email, password: positive.password });

@@ -2,7 +2,8 @@
 
 État du dossier au 5 octobre 2026 : préparation technique, pas une preuve de
 release ni de déploiement. Branche `feature/CRMY-161-recovery-complete-20261005`,
-base `5f27db1c776294d63e1443215d5befdb2b70dff8`. Les preuves ci-dessous portent
+base `d1d4f1be7e2076fe58617bea7c589f44736699d1` après intégration explicite de
+PR117 par merge, sans réintroduire son correctif dans le diff. Les preuves portent
 sur le patch de travail ; elles devront être rattachées au SHA publié exact.
 Exécutant : Codex, sous `crm-ynov-po-delegation-20261001`, sans attestation de
 revue esthétique personnelle du PO.
@@ -27,16 +28,21 @@ revue esthétique personnelle du PO.
 - Pas de migration Prisma, modification de droits, dépendance ajoutée,
   changement IAM/WIF, configuration Gmail ou nouveau connecteur dans ce lot.
   Les dépendances Jira existantes restent conservées.
+- Gate de livraison : `CRM_ACCESS_RECOVERY_ENABLED` doit être exactement `true`.
+  Absent ou désactivé : `503 recovery_disabled` avant quota, challenge, mail ou
+  mutation d'identité. DEV reçoit un booléen Terraform `access_recovery_enabled`,
+  désactivé par défaut et câblé uniquement sur l'API. Aucun couplage au paramètre
+  Gmail, aucun changement de secret/IAM ou de provisionnement.
 
 ## Preuves acquises et limites
 
 | Contrôle | Résultat obtenu | Portée / limite |
 | --- | --- | --- |
 | Web ciblé | **77/77 PASS** | DOM/SSR, récupération, fragments, concurrence, erreurs réseau, proxy anonyme, cookies `204`, régressions login/premier accès/invitation/shell ; pas une recette navigateur connectée. |
-| API ciblée | **22/22 PASS** | Contrats locaux, persistance simulée et transport Gmail substitué ; pas une preuve PostgreSQL réelle ni d’envoi Gmail. |
-| Runner / couverture | **7/7 PASS** | 5 contrats du nouveau runner et 2 contrats de couverture existants, hors Docker ; filtres et seuils canoniques inchangés. |
+| API ciblée | **23/23 PASS** | Contrats locaux, persistance simulée et transport Gmail substitué ; gate absent/false/ambigu sans effet et true explicite. Pas une preuve d’envoi Gmail. |
+| Runner / couverture / gate DEV | **10/10 PASS** | 6 contrats runner, 2 contrats de couverture et 2 contrats Terraform DEV, hors Docker ; filtres et seuils canoniques inchangés. |
 | Qualité locale Web | **PASS** | ESLint ciblé, TypeScript `--noEmit --incremental false`, `git diff --check` ; ne remplace pas les gates distants du futur SHA. |
-| PostgreSQL à deux API | **5/5 PASS, 0 FAIL, 0 SKIP** | Deux API réelles, 46 migrations sur une base tmpfs isolée ; transport mail substitué, aucune base partagée utilisée. Source et métadonnées DI qualifiées avant/après le test ; arrêt ciblé vérifié. |
+| PostgreSQL à deux API | **6/6 PASS, 0 FAIL, 0 SKIP** | Deux API réelles, 46 migrations sur une base tmpfs isolée ; refus HTTP503 du gate avant effets puis cas activés. Transport mail substitué, aucune base partagée utilisée. Source et métadonnées DI qualifiées avant/après le test ; arrêt ciblé vérifié. |
 | Gmail réel / réception | **Non prouvé pour la récupération** | Les preuves historiques d’invitation ne valident pas ce nouveau mail. Aucune livraison réelle déclenchée par les tests. |
 | Responsive / navigateur | **10 tests Playwright préparés, non exécutés** | `apps/web/e2e/access-recovery.spec.ts` : demande et complétion à 1440/1280/1024/768/390 px, labels, clavier, absence de débordement, retrait du fragment et absence de token SSR ; réponses `202`/`204` simulées, aucun mail ni effet PostgreSQL. Captures et résultat navigateur à obtenir en CI sur le SHA exact ; aucune acceptation visuelle personnelle déduite. |
 | CI, scans, Sonar, politique | **À obtenir sur le SHA publié** | Aucun ancien résultat ne couvre automatiquement le patch courant. |
@@ -49,7 +55,7 @@ Exécution Web depuis `apps/web` avec le runtime officiel Node **22.23.3** :
 node --import tsx --test --test-timeout=12000 test/access-recovery.test.ts test/recovery-completion.test.ts test/api-proxy.test.ts test/proxy-json.test.ts test/login-form.test.ts test/invitation.test.ts test/first-login.test.ts test/app-shell.test.ts
 ```
 
-Exécution API depuis `apps/api`, même runtime officiel (22 PASS, 0 FAIL, 0 SKIP) :
+Exécution API depuis `apps/api`, même runtime officiel (23 PASS, 0 FAIL, 0 SKIP) :
 
 ```text
 node --import tsx --test --test-concurrency=1 test/access-recovery.test.ts test/access-recovery-persistence.test.ts test/gmail-invitation.sender.test.ts test/permission-transaction-routes.test.ts
@@ -73,7 +79,8 @@ de livraison. Le délai commun de réponse de 15 secondes n’a pas été accél
 Seul le transport mail était substitué avant l’écoute HTTP ; la concurrence des
 complétions était simultanée, les demandes de quota espacées de 150 ms.
 
-Exécution le 5 octobre 2026, Node 22.23.3, environ 120 s ; image PostgreSQL locale
+Première preuve, avant ajout du gate, conservée historiquement : 5 PASS le
+5 octobre 2026, Node 22.23.3, environ 120 s ; image PostgreSQL locale
 `sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3`.
 Manifeste compilé : 180 sources / 350 fichiers émis, SHA-256
 `2afa1248b098a2a56aaed89d18d85f02657652667223ac675efe6fc795e2405c`.
@@ -82,6 +89,16 @@ Sortie TAP : SHA-256
 Les références privées exactes sont conservées au checkpoint, pas les tokens,
 profils ou sorties Terraform dans Git. La lisibilité du manifeste n’est pas une
 restauration testée. Le conteneur tmpfs est conservé arrêté et n’est pas un dump.
+
+Preuve renouvelée après le risque de transition identifié : 6 PASS, 0 FAIL,
+0 SKIP ; départ 06:44:43 UTC, test HTTP environ 110 s, même image PostgreSQL.
+Manifeste compilé courant : 180 sources / 350 fichiers émis, SHA-256
+`ad1ab82af148f42a837eef7151eb7897d9d980bb8ee758d0fc481a1c5914f168`.
+Sortie TAP : SHA-256
+`401c748aa47351ca61cb642d25beaf5e1d6dc550f7d2a604d6fff12df1632ad8`.
+Le refus HTTP503 absent/false a laissé audits, quotas, challenges, identités,
+sessions et transports inchangés ; activation explicite dans le seul runner.
+L'arrêt ciblé et la conservation du conteneur possédé ont été relus après sortie0.
 
 La revue indépendante a levé le défaut de timeout OAuth : `retryConfig.retry=0`
 survit aux options injectées par OAuth/Gaxios ; le signal borne aussi OAuth et
@@ -104,6 +121,13 @@ servis et parcours synthétique sans exposer de secret. La réception réelle du
 mail et la première connexion avec le nouveau secret restent des preuves
 séparées. Aucun changement PROD implicite, Sheets ou téléphonie activée.
 
+Transition obligatoire : API nouvelle image avec gate false, puis Web compatible,
+puis seule activation API true après convergence et preuve de refus des deux
+endpoints avant activation. L'ancien Web envoyait déjà le chemin de complétion,
+mais ne le servait pas : il ne doit pas déclencher de nouveau lien entre étapes.
+Le gate serveur est la protection effective, pas un simple bandeau. Chaque plan
+DEV doit refuser toute autre mutation ; Gmail/IAM/SQL/jobs/Scheduler conservés.
+
 Rollback : privilégier un correctif en avant ou un retour Web borné rendant la
 récupération temporairement inaccessible. L’ancienne API de récupération ne
 vérifie pas l’audit/version et ne révoque pas les sessions de façon équivalente :
@@ -112,6 +136,9 @@ Avant tout inverse API, qualifier le refus des endpoints legacy et le traitement
 des challenges ouverts. Ne pas restaurer une base pour annuler ce lot, réactiver
 les sessions révoquées, réouvrir les challenges consommés ou modifier
 artificiellement l’historique. Un rollback n’annule pas une révocation persistée.
+Pour suspendre la récupération, requalifier d'abord un plan image-constant/gate
+true vers false. Une ancienne image API peut ignorer ce gate : false dans son
+environnement ne constitue pas une protection legacy suffisante.
 
 Une fusion fonctionnelle ou un déploiement DEV ne suffit pas pour passer le
 ticket Done : appliquer le [contrat de release](../runbooks/release-process.md),

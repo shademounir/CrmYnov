@@ -60,6 +60,19 @@ test("recovery runner retains nonce-bound loopback isolation and targeted preser
   assert.doesNotMatch(runner, /migrate.*reset|seed:local|\["rm"|gcloud|terraform|docker\(\["pull"/u);
 });
 
+test("recovery runner explicitly enables only its isolated test contract, regardless of inherited feature state", async () => {
+  const runner = await readRunner(), start = runner.indexOf("  const env = "), end = runner.indexOf("  const run = ", start);
+  assert.ok(start >= 0 && end > start);
+  for (const inherited of [undefined, "false", "TRUE", "true"]) {
+    const inheritedEnv = inherited === undefined ? {} : { CRM_ACCESS_RECOVERY_ENABLED: inherited };
+    const env = runInNewContext(`${runner.slice(start, end)}\nenv;`, { process: { env: inheritedEnv }, binding: "127.0.0.1:54321", database: "crmy161_recovery_synthetic", nonce: "synthetic-nonce" });
+    assert.equal(env.CRM_ACCESS_RECOVERY_ENABLED, "true", "the runner must not inherit a disabled or ambiguous feature state");
+    assert.equal(env.DATABASE_URL, "postgresql://postgres@127.0.0.1:54321/crmy161_recovery_synthetic");
+    assert.equal(env.CRM_BACKGROUND_WORKERS, "external");
+    assert.equal(env.SHEETS_ENABLED, "false");
+  }
+});
+
 test("recovery PostgreSQL proof is required by integration and canonical coverage without weaker filters", async () => {
   const workflow = await readFile(new URL("../../../.github/workflows/application-quality.yml", import.meta.url), "utf8");
   const integration = workflow.slice(workflow.indexOf("  integration-tests:"), workflow.indexOf("  playwright:"));

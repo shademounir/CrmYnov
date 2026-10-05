@@ -25,6 +25,9 @@ const ATTEMPT_LIMIT = 5;
 const SUBJECT_LIMIT_PER_HOUR = 3;
 export type RecoveryOperation = "REQUEST" | "COMPLETION";
 const requestAuditKey = (challengeId: string): string => `access-recovery-requested:${challengeId}`;
+function assertRecoveryEnabled(): void {
+  if (process.env.CRM_ACCESS_RECOVERY_ENABLED !== "true") throw new ServiceUnavailableException({ code: "recovery_disabled" });
+}
 function invalidChallenge(): never { throw new ForbiddenException({ code: "recovery_challenge_invalid" }); }
 function acceptableSecret(value: string): boolean {
   return value.length >= 14 && value.length <= 128 && /[a-z]/.test(value) && /[A-Z]/.test(value)
@@ -62,6 +65,7 @@ export class AccessRecoveryService {
   /** Committed by the HTTP guard before the completion's outer business fence.
    * Rejected completions therefore cannot roll back their rate-limit attempt. */
   async assertClientAllowedForApi(operation: RecoveryOperation, clientKey: string, now = Date.now()): Promise<void> {
+    assertRecoveryEnabled();
     const permissions = this.requiredPermissions();
     const clientDigest = digestRecoveryValue(`crmy161-access-recovery-client:${clientKey}`);
     const eventType = `ACCESS_RECOVERY_${operation}_ATTEMPT`;
@@ -81,6 +85,8 @@ export class AccessRecoveryService {
   }
 
   async requestForApi(emailValue: unknown, returnPathValue: unknown): Promise<typeof RECOVERY_ACCEPTED> {
+    // An API-first rollout cannot emit a link until the compatible Web is ready.
+    assertRecoveryEnabled();
     const startedAt = Date.now(), deadline = startedAt + RECOVERY_ACKNOWLEDGEMENT_MS;
     try {
       const email = normalizedEmail(emailValue), returnPath = allowedReturnPath(returnPathValue);
@@ -127,6 +133,7 @@ export class AccessRecoveryService {
   }
 
   async completeForApi(tokenValue: unknown, returnPathValue: unknown, nextSecretValue: unknown, now = Date.now()): Promise<void> {
+    assertRecoveryEnabled();
     if (typeof tokenValue !== "string" || typeof nextSecretValue !== "string"
       || !/^[A-Za-z0-9_-]{40,128}$/.test(tokenValue) || !acceptableSecret(nextSecretValue)) {
       throw new BadRequestException({ code: "recovery_completion_invalid" });

@@ -121,7 +121,7 @@ await withPreservedCleanup(async () => {
   const empty = docker(["exec", container, "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", database, "-Atc", "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"]).trim();
   if (empty !== "0") throw new Error("recovery_database_not_empty");
   const env = { ...process.env, DATABASE_URL: `postgresql://postgres@${binding}/${database}`, CRMY161_RECOVERY_EPHEMERAL_TEST: "true", CRMY161_RECOVERY_DATABASE_NONCE: nonce,
-    CRM_BACKGROUND_WORKERS: "external", SHEETS_ENABLED: "false" };
+    CRM_BACKGROUND_WORKERS: "external", SHEETS_ENABLED: "false", CRM_ACCESS_RECOVERY_ENABLED: "true" };
   const run = { runtime: process.version, image, database, container, nonce, binding, generatedAt: new Date().toISOString(), twoApiInstances: true, sharedDatabaseUsed: false, realMailSent: false };
   writeFileSync(join(proofDirectory, "run-start.json"), `${JSON.stringify(run, null, 2)}\n`, { flag: "wx" });
   execFileSync(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", "apps/api/prisma/schema.prisma"], { env, stdio: "inherit", windowsHide: true, timeout: 120_000 });
