@@ -38,7 +38,7 @@ revue esthétique personnelle du PO.
 | Qualité locale Web | **PASS** | ESLint ciblé, TypeScript `--noEmit --incremental false`, `git diff --check` ; ne remplace pas les gates distants du futur SHA. |
 | PostgreSQL à deux API | **5/5 PASS, 0 FAIL, 0 SKIP** | Deux API réelles, 46 migrations sur une base tmpfs isolée ; transport mail substitué, aucune base partagée utilisée. Source et métadonnées DI qualifiées avant/après le test ; arrêt ciblé vérifié. |
 | Gmail réel / réception | **Non prouvé pour la récupération** | Les preuves historiques d’invitation ne valident pas ce nouveau mail. Aucune livraison réelle déclenchée par les tests. |
-| Responsive / navigateur | **Non prouvé pour ce patch** | Pas de captures qualifiées à 1440/1280/1024/768/390 px ni d’acceptation visuelle personnelle déduite des tests. |
+| Responsive / navigateur | **10 tests Playwright préparés, non exécutés** | `apps/web/e2e/access-recovery.spec.ts` : demande et complétion à 1440/1280/1024/768/390 px, labels, clavier, absence de débordement, retrait du fragment et absence de token SSR ; réponses `202`/`204` simulées, aucun mail ni effet PostgreSQL. Captures et résultat navigateur à obtenir en CI sur le SHA exact ; aucune acceptation visuelle personnelle déduite. |
 | CI, scans, Sonar, politique | **À obtenir sur le SHA publié** | Aucun ancien résultat ne couvre automatiquement le patch courant. |
 
 Les tests Web ont d’abord exposé six échecs réels sur les erreurs de demande,
@@ -104,11 +104,14 @@ servis et parcours synthétique sans exposer de secret. La réception réelle du
 mail et la première connexion avec le nouveau secret restent des preuves
 séparées. Aucun changement PROD implicite, Sheets ou téléphonie activée.
 
-Rollback : revert protégé du code et retour à la paire d’images compatible
-précédemment vérifiée. Ne pas restaurer une base pour annuler ce lot, réactiver
+Rollback : privilégier un correctif en avant ou un retour Web borné rendant la
+récupération temporairement inaccessible. L’ancienne API de récupération ne
+vérifie pas l’audit/version et ne révoque pas les sessions de façon équivalente :
+le seul inverse d’image API n’est pas un retour arrière de sécurité qualifié.
+Avant tout inverse API, qualifier le refus des endpoints legacy et le traitement
+des challenges ouverts. Ne pas restaurer une base pour annuler ce lot, réactiver
 les sessions révoquées, réouvrir les challenges consommés ou modifier
-artificiellement l’historique. Les demandes en cours doivent être prises en
-compte ; un rollback applicatif n’annule pas une révocation déjà persistée.
+artificiellement l’historique. Un rollback n’annule pas une révocation persistée.
 
 Une fusion fonctionnelle ou un déploiement DEV ne suffit pas pour passer le
 ticket Done : appliquer le [contrat de release](../runbooks/release-process.md),
