@@ -43,8 +43,9 @@ revue esthétique personnelle du PO.
 | Runner / couverture / gate DEV | **10/10 PASS** | 6 contrats runner, 2 contrats de couverture et 2 contrats Terraform DEV, hors Docker ; filtres et seuils canoniques inchangés. |
 | Qualité locale Web | **PASS** | ESLint ciblé, TypeScript `--noEmit --incremental false`, `git diff --check` ; ne remplace pas les gates distants du futur SHA. |
 | PostgreSQL à deux API | **6/6 PASS, 0 FAIL, 0 SKIP** | Deux API réelles, 46 migrations sur une base tmpfs isolée ; refus HTTP503 du gate avant effets puis cas activés. Transport mail substitué, aucune base partagée utilisée. Source et métadonnées DI qualifiées avant/après le test ; arrêt ciblé vérifié. |
+| E2E API synthétique sans base | **9/9 PASS** | Refus503 sans autorité persistante, corrélation et absence de consommation du token mémoire ; pas de faux202 ou de fallback HTTP. |
 | Gmail réel / réception | **Non prouvé pour la récupération** | Les preuves historiques d’invitation ne valident pas ce nouveau mail. Aucune livraison réelle déclenchée par les tests. |
-| Responsive / navigateur | **10 tests Playwright préparés, non exécutés** | `apps/web/e2e/access-recovery.spec.ts` : demande et complétion à 1440/1280/1024/768/390 px, labels, clavier, absence de débordement, retrait du fragment et absence de token SSR ; réponses `202`/`204` simulées, aucun mail ni effet PostgreSQL. Captures et résultat navigateur à obtenir en CI sur le SHA exact ; aucune acceptation visuelle personnelle déduite. |
+| Responsive / navigateur | **10 nouveaux cas exécutés avec succès sur 6b82d7e** | CI Playwright job111648170346 : 51PASS/1SKIP global, les10cas récupération exécutés (1440/1280/1024/768/390px). Labels, clavier, absence de débordement, retrait du fragment et absence de token SSR ; réponses `202`/`204` simulées, aucun mail ni effet PostgreSQL. Pas d'acceptation visuelle personnelle ; renouvellement sur le nouveau HEAD après correctif E2E. |
 | CI, scans, Sonar, politique | **À obtenir sur le SHA publié** | Aucun ancien résultat ne couvre automatiquement le patch courant. |
 
 Les tests Web ont d’abord exposé six échecs réels sur les erreurs de demande,
@@ -63,6 +64,17 @@ node --import tsx --test --test-concurrency=1 test/access-recovery.test.ts test/
 
 L’annotation du double de test OAuth a ensuite été normalisée pour ESLint
 (`Promise.reject`, sans changement de comportement). Typage et lint finaux PASS.
+
+Sur le premier HEAD publié `6b82d7e2dcaaf1d30d3ea35033d846c12bd972bb`,
+l'intégration CI job111648170186 a réellement échoué à la dernière étape E2E :
+le harness historique sans `DATABASE_URL` attendait encore202. Les quatre
+runners PostgreSQL, dont récupération, avaient réussi. L'attente était fausse :
+le contrôleur HTTP ne doit jamais utiliser le magasin mémoire comme autorité.
+Correction du seul test :503 disabled sans opt-in,503 store-unavailable avec
+opt-in mais sans PostgreSQL, réponses identiques connu/inconnu, corrélation et
+token/secret mémoire inchangés. Exécution directe sans génération Prisma :9PASS,
+0FAIL,0SKIP, typage API et lint ciblé PASS. Aucun changement production : la
+preuve PG6 ci-dessus reste applicable ; CI renouvelée sur le nouveau SHA.
 
 ## Preuve PostgreSQL acquise et réserve du quota
 
