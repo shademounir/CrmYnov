@@ -11,7 +11,7 @@ type Surface = "assignment" | "interaction" | "status" | "follow-up" | "closure"
 type LeadContext = { leadCode: string; firstName: string; lastName: string; status: string; assignedToId?: string; assignedToLabel?: string };
 
 const surfaceCopy: Record<Surface, { eyebrow: string; title: string; description: string; icon: React.ReactNode }> = {
-  assignment: { eyebrow: "Équipe du prospect", title: "Affectation et réaffectation", description: "Sélectionnez un conseiller autorisé sans quitter le contexte du dossier.", icon: <UserSwitch size={22} aria-hidden="true" /> },
+  assignment: { eyebrow: "Équipe du prospect", title: "Affectation et réaffectation", description: "Consultez le propriétaire et les demandes. Les actions disponibles sont vérifiées selon vos autorisations.", icon: <UserSwitch size={22} aria-hidden="true" /> },
   interaction: { eyebrow: "Suivi commercial", title: "Historique et interactions", description: "Consultez l’historique protégé et ajoutez un nouveau contact sans réécriture.", icon: <Clock size={22} aria-hidden="true" /> },
   status: { eyebrow: "Parcours du prospect", title: "Étape commerciale", description: "Appliquez une transition contrôlée ; le résultat de contact reste une dimension distincte.", icon: <NotePencil size={22} aria-hidden="true" /> },
   "follow-up": { eyebrow: "Prochaine action", title: "Relances du Lead", description: "Planifiez une échéance claire et consultez les relances déjà enregistrées.", icon: <CalendarBlank size={22} aria-hidden="true" /> },
@@ -76,7 +76,8 @@ function workflowActionTitle(surface: Surface, assigned: boolean): string {
     "follow-up": "Nouvelle relance",
     closure: "Nouvelle demande",
   };
-  return surface === "assignment" ? assigned ? "Demander une réaffectation" : "Affecter le Lead" : titles[surface];
+  if (surface === "assignment") return assigned ? "Réaffectation du Lead" : "Affectation du Lead";
+  return titles[surface];
 }
 
 function WorkflowAction({ leadId, surface, context, contextState, onCompleted }: Readonly<{
