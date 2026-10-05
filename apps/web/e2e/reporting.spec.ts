@@ -76,7 +76,51 @@ test("personal scope, empty and error states fail closed", async ({ page }) => {
   await page.unroute("**/api/crm/reports/manager-dashboard?*"); await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...managerReport, cards: { uniqueLeads: 0, enrolled: 0, unassigned: 0, overdueFollowUps: 0, activeAlerts: 0 } }) }));
   await page.goto("/manager/reports/dashboard?period=7d"); await expect(page.getByRole("heading", { name: "Aucun résultat" })).toBeVisible();
   await page.unroute("**/api/crm/reports/manager-dashboard?*"); await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 403, contentType: "application/json", body: "{}" }));
-  await page.goto("/manager/reports/dashboard?period=7d&adviserId=outside-scope"); await expect(page.locator("main section[role=alert]")).toContainText("Erreur de chargement");
+  await page.goto("/manager/reports/dashboard?period=7d&adviserId=outside-scope"); await expect(page.locator("main section[role=alert]")).toContainText("Accès refusé");
+  await expect(page.locator("main section[role=alert]")).not.toContainText("Erreur de chargement");
+  await expect(page.locator(".kpi-card")).toHaveCount(0);
+  for (const status of [401, 503]) {
+    await page.unroute("**/api/crm/reports/manager-dashboard?*");
+    await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ detail: "PRIVATE_AUTH_OR_SERVICE_DETAIL" }) }));
+    await page.goto("/manager/reports/dashboard?period=7d&campus=campus-a");
+    await expect(page.locator("main section[role=alert]")).toContainText(status === 401 ? "Session expirée" : "Erreur de chargement");
+    await expect(page.locator("main")).not.toContainText("PRIVATE_AUTH_OR_SERVICE_DETAIL");
+    await expect(page.locator(".kpi-card")).toHaveCount(0);
+    if (status === 401) {
+      await expect(page.getByRole("link", { name: "Se reconnecter", exact: true })).toHaveAttribute("href", "/");
+      await expect(page.getByRole("link", { name: "Mon agenda Admissions", exact: true })).toHaveCount(0);
+    } else {
+      await expect(page.getByRole("link", { name: "Se reconnecter", exact: true })).toHaveCount(0);
+    }
+  }
+});
+
+test("dashboard cards, actions and opened panels stay readable at five widths", async ({ page }) => {
+  await mockReporting(page);
+  await page.goto("/manager/reports/dashboard?period=7d&campus=campus-a");
+  await expect(page.locator(".kpi-card")).toHaveCount(7);
+  for (const width of [1440, 1280, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const closeNavigation = page.getByRole("button", { name: "Fermer la navigation", exact: true });
+    if (await closeNavigation.isVisible()) await closeNavigation.click();
+    const overflowing = await page.locator(".kpi-card,.queue-item,.ui-page-header__actions a").evaluateAll((elements) => elements.filter((element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1 || element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+    }).map((element) => element.textContent));
+    expect(overflowing, `Cards and actions at ${width}px`).toEqual([]);
+    for (const panel of ["filters", "preferences"] as const) {
+      const details = page.locator(panel === "filters" ? "details.reporting-filter-popover" : "details.dashboard-preferences");
+      await details.locator("summary").click();
+      const bounds = await details.locator(panel === "filters" ? "form" : "fieldset").evaluate((element) => ({ left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right, viewport: document.documentElement.clientWidth }));
+      expect(bounds.left, `${panel} left at ${width}px`).toBeGreaterThanOrEqual(0);
+      expect(bounds.right, `${panel} right at ${width}px`).toBeLessThanOrEqual(bounds.viewport);
+      if (panel === "filters") {
+        await page.getByRole("button", { name: "Appliquer", exact: true }).focus();
+        await expect(page.getByRole("button", { name: "Appliquer", exact: true })).toBeFocused();
+      }
+      await details.locator("summary").click();
+    }
+  }
 });
 
 test("hostile labels remain inert and external destinations are refused", async ({ page }) => {

@@ -7,6 +7,56 @@ ni preuve de déploiement du dashboard sur DEV.
 
 ## Point courant — recette connectée de `25712a92` et correction nécessaire
 
+### Qualification responsive connectée de `4ede56df` — complément du 5 octobre
+
+Le build production `Lez0hwtkNlDkIV9xUA2Uh`, issu exactement de
+`4ede56df09fd40ff44cfd9f0a9c68ac4605ef580`, a été raccordé sur Web3040 à
+l'API43220 du même SHA et à la base synthétique conservée. Après reconnexion
+du Super Admin synthétique, les cartes, files rapides et deux actions d'en-tête
+ont été contrôlées à 1440/1280/1024/768/390 px, hauteur 900 px : aucun
+débordement ou texte tronqué mesuré dans ces éléments. Les captures privées
+restent conservées ; cette preuve technique n'est pas une acceptation esthétique.
+
+L'ouverture réelle des panneaux a cependant montré un **défaut bloquant à
+1024 px** : le formulaire de filtres, ancré à son bouton, atteint x=1141,39
+pour un canevas utile de 1009 px. Le panneau Préférences et les deux panneaux
+à 390 px restent dans leur canevas ; le bas des filtres mobile est atteignable
+par défilement et clavier. Le correctif est limité à l'ancrage des panneaux
+sur leur toolbar et à une largeur bornée par celle-ci, dans `.dashboard-page`.
+
+Un test Playwright ajouté au vrai fichier `e2e/reporting.spec.ts` reproduit
+ce défaut sur le build `4ede56df` : **3 PASS / 1 FAIL / 0 SKIP**, l'unique
+échec étant `filters right at 1024px` (1141,39 > 1024). Le wrapper privé
+utilise quatre tests bornés, des contextes neufs et une interception
+fail-closed des requêtes CRM, sans forwarding, serveur supplémentaire ou
+mutation de la base. Il ne s'agit pas d'une recette d'authentification réelle.
+Le contrôle de téléchargement CSV passe dans cette simulation ; la réception
+réelle du fichier par l'utilisateur reste séparée et non prouvée.
+
+L'attendu 403 du test existant est aligné sur « Accès refusé », sans supprimer
+son refus ; les assertions 401/503 ajoutées prouvent la distinction des états,
+l'absence de KPI et de détails privés et le retrait d'Agenda en session expirée.
+La suite vérifie désormais aussi les panneaux ouverts aux cinq largeurs.
+La reconstruction et le résultat vert de cette non-régression restent à
+obtenir sur le nouveau SHA ; aucun résultat du build précédent ne les remplace.
+Les contrôles sources de ce correctif passent : 55 tests Dashboard, typage Web
+sans émission ni incremental, lint du fichier Playwright et diff-check. La première
+invocation locale des tests depuis la racine a utilisé le mauvais contexte JSX
+(`React is not defined`) ; le résultat rouge est conservé, puis la commande canonique
+depuis `apps/web` a obtenu 55 PASS / 0 FAIL / 0 SKIP sans modifier les composants.
+Il ne s'agit pas d'un correctif produit supplémentaire. L'API `4ede56df` reste
+active et ses sources/Shared n'ont pas changé ; la future preview indiquera
+explicitement cette compatibilité, sans prétendre que l'API exécute le nouveau SHA.
+
+Sur le SHA `4ede56df`, les 24 derniers contrôles distants par nom donnent
+21 SUCCESS / 3 FAILURE : Playwright, agrégateur qualité et politique refusent.
+La politique indique `jira_codex_ready_missing`. Sonar de ce SHA a réellement
+réussi : analyse `f5dcc54d-cf91-4781-bdc9-92db360bace8`, Quality Gate OK,
+couverture nouvelle 97,98 %, duplication nouvelle 0 %, notes A/A/A et hotspots
+revus 100 %. La couverture globale distincte est 91,8 %. Ces métriques restent
+attachées à `4ede56df`, pas au prochain SHA. PR116 reste Draft sans décision,
+Ready ou déploiement déduit de ces preuves partielles.
+
 La preview locale `Web3040 → API43220 → crmy175_recipe_synthetic` a réellement
 été utilisée avec le Super Admin synthétique activé, sans utiliser le compte
 professionnel ni modifier ses droits. La lecture API authentifiée acquise sur
