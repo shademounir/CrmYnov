@@ -402,13 +402,13 @@ export class TelephonyService implements OnModuleInit {
   }
   private fingerprint(value: string): string { return createHash("sha256").update(value).digest("hex"); }
   private leadCallReplay(call: Readonly<CallRecord> | undefined, principal: Principal, leadId: string, normalized: string): CallRecord {
-    if (!call || call.createdBy !== principal.userId || call.provider !== "LINPHONE" || call.direction !== "OUTBOUND" || call.leadId !== leadId
+    if (call?.createdBy !== principal.userId || call.provider !== "LINPHONE" || call.direction !== "OUTBOUND" || call.leadId !== leadId
       || call.phoneFingerprint !== this.fingerprint(normalized)) throw new ConflictException({ code: "telephony_call_idempotency_conflict" });
     return this.copy(call);
   }
   /** A globally unique receipt key never grants access to another actor or intent. */
   private freeCallReplay(call: Readonly<CallRecord> | undefined, principal: Principal, normalized: string, purposeCode: string, comment: string | undefined): CallRecord {
-    if (!call || call.createdBy !== principal.userId || call.provider !== "LINPHONE" || call.direction !== "OUTBOUND" || call.leadId
+    if (call?.createdBy !== principal.userId || call.provider !== "LINPHONE" || call.direction !== "OUTBOUND" || call.leadId
       || call.phoneFingerprint !== this.fingerprint(normalized) || call.purposeCode !== purposeCode || (call.purposeComment ?? "") !== (comment ?? "")) {
       throw new ConflictException({ code: "telephony_free_call_idempotency_conflict" });
     }

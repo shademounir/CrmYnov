@@ -44,6 +44,11 @@ configuration du serveur SIP. La présence d'une extension ne prouve pas un
 enregistrement SIP. Un ancien heartbeat ne prouve pas une disponibilité actuelle.
 Une association CRM, le chargement du SDK et l'enregistrement SIP sont distincts.
 
+Les heures techniques du dernier contact et d'expiration du code sont affichées
+en UTC explicitement, à partir des instants fournis par le serveur. Elles ne
+dépendent pas de la version des règles Casablanca du navigateur. Les horaires
+métier Admissions conservent leur propre affichage Africa/Casablanca qualifié.
+
 `crmynov-telephony://open` ouvre l'interface de l'agent ; il ne constitue ni une
 commande d'appel, ni une preuve de sonnerie ou de décroché. Il ne transporte pas
 le code temporaire ou un numéro. Une confirmation de sécurité du navigateur peut
@@ -79,6 +84,14 @@ Le retour arrière applicatif doit conserver les profils, postes, codes expirés
 et audits. Ne jamais ressusciter un ancien jeton révoqué ou supprimer l'historique
 pour revenir à l'ancienne interface. Le retrait de l'écran personnel laisse
 l'administration existante disponible aux seuls administrateurs autorisés.
+
+Un retour aux images de `develop` antérieures à ce lot ne conserve pas le même
+niveau de protection : elles ne contiennent pas toutes les nouvelles vérifications
+de droits, de version d'authentification et d'intention du rejeu. Pendant un tel
+incident, les appels doivent rester bloqués avant toute reprise contrôlée. Conserver
+les versions, révocations, reçus et événements ; aucune réactivation ou réassociation
+implicite, aucun changement du client natif ou de sa configuration SIP. Le rollback
+reste applicatif et examiné, jamais une restauration automatique de données.
 
 ## Limites conservées
 

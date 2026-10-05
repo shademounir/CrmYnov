@@ -160,7 +160,7 @@ export class TelephonyAgentRepository {
       await tx.telephonyPairingCode.updateMany({ where: { userProfileId: id, usedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
       const row = await tx.telephonyPairingCode.create({ data: { id: randomUUID(), userProfileId: id, codeDigest: this.digest(code), expiresAt, createdBy: principal.userId } });
       const updated = await tx.telephonyUserProfile.update({ where: { id }, data: { version: { increment: 1 } } });
-      await this.audit(tx, principal, profile.user.campusId, "TELEPHONY_PAIRING_ISSUED", id, `telephony-pairing:${row.id}`, correlationId, { profileId: id, expiresAt: expiresAt.toISOString(), version: updated.version });
+      await this.audit(tx, principal, { campusId: profile.user.campusId, eventType: "TELEPHONY_PAIRING_ISSUED", resourceId: id, idempotencyKey: `telephony-pairing:${row.id}`, correlationId, after: { profileId: id, expiresAt: expiresAt.toISOString(), version: updated.version } });
       return { code, expiresAt: expiresAt.toISOString(), profileId: id, version: updated.version };
     });
   }
@@ -203,7 +203,7 @@ export class TelephonyAgentRepository {
         : await tx.telephonyWorkstation.create({ data: { id: randomUUID(), userProfileId: profile.id, publicId, displayName, tokenDigest: this.digest(rawToken), agentVersion, sdkVersion } });
       await tx.telephonyPairingCode.updateMany({ where: { userProfileId: profile.id, usedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
       await tx.telephonyUserProfile.update({ where: { id: profile.id }, data: { state: "LOCAL_CONFIGURATION_REQUIRED", version: { increment: 1 } } });
-      await this.audit(tx, { userId: profile.userId, roles: profile.user.roles.filter(isRole), scopes: [], sessionId: "" }, profile.user.campusId, "TELEPHONY_WORKSTATION_PAIRED", workstation.id, `telephony-paired:${pairing.id}`, "telephony-agent-pair", { profileId: profile.id, workstationId: workstation.id, version: workstation.version });
+      await this.audit(tx, { userId: profile.userId, roles: profile.user.roles.filter(isRole), scopes: [], sessionId: "" }, { campusId: profile.user.campusId, eventType: "TELEPHONY_WORKSTATION_PAIRED", resourceId: workstation.id, idempotencyKey: `telephony-paired:${pairing.id}`, correlationId: "telephony-agent-pair", after: { profileId: profile.id, workstationId: workstation.id, version: workstation.version } });
       return { token: rawToken, workstationId: workstation.id, profile: this.agentProfile(profile, workstation.id) };
     });
   }
@@ -434,7 +434,7 @@ export class TelephonyAgentRepository {
       const revoked = await tx.telephonyWorkstation.update({ where: { id }, data: { active: false, connectionState: "OFFLINE", sdkLoaded: false, sipRegistered: false, revokedAt: now, version: { increment: 1 } } });
       await tx.telephonyPairingCode.updateMany({ where: { userProfileId: profileId, usedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
       await tx.telephonyUserProfile.update({ where: { id: profileId }, data: { state: "PAIRING_REQUIRED", version: { increment: 1 } } });
-      await this.audit(tx, principal, workstation.userProfile.user.campusId, "TELEPHONY_WORKSTATION_REVOKED", id, `telephony-revoked:${id}:${workstation.version}`, correlationId, { workstationId: id, active: false, version: revoked.version });
+      await this.audit(tx, principal, { campusId: workstation.userProfile.user.campusId, eventType: "TELEPHONY_WORKSTATION_REVOKED", resourceId: id, idempotencyKey: `telephony-revoked:${id}:${workstation.version}`, correlationId, after: { workstationId: id, active: false, version: revoked.version } });
       return this.publicWorkstation(revoked);
     });
   }
@@ -470,7 +470,7 @@ export class TelephonyAgentRepository {
     if (!workstation?.active || workstation.userProfileId !== identity.profileId || workstation.userProfile.userId !== identity.userId
       || workstation.tokenDigest !== identity.tokenDigest || workstation.userProfile.user.campusId !== (identity.campusId ?? null)
       || workstation.userProfile.user.authenticationVersion !== identity.authenticationVersion
-      || [...workstation.userProfile.user.roles].sort().join(",") !== [...identity.roles].sort().join(",")
+      || [...workstation.userProfile.user.roles].sort((left, right) => left.localeCompare(right)).join(",") !== [...identity.roles].sort((left, right) => left.localeCompare(right)).join(",")
       || !this.profileEligible(workstation.userProfile)) throw new UnauthorizedException({ code: "telephony_agent_authentication_refused" });
   }
   private machinePrincipal(identity: { userId: string; roles: string[]; campusId?: string | undefined; workstationId: string }): Principal {
@@ -487,7 +487,8 @@ export class TelephonyAgentRepository {
     const permission = call.leadId ? "interaction.create" : "telephony.free-call.create";
     if (!evaluatePermission(principal, permission, await new DynamicPermissionRepository(this.prisma).snapshots(tx), context).allowed) throw new ForbiddenException({ code: "telephony_agent_command_scope_forbidden" });
   }
-  private async audit(tx: Prisma.TransactionClient, principal: Principal, campusId: string | null, eventType: string, resourceId: string, idempotencyKey: string, correlationId: string, after: Prisma.InputJsonValue): Promise<void> {
+  private async audit(tx: Prisma.TransactionClient, principal: Principal, input: { campusId: string | null; eventType: string; resourceId: string; idempotencyKey: string; correlationId: string; after: Prisma.InputJsonValue }): Promise<void> {
+    const { campusId, eventType, resourceId, idempotencyKey, correlationId, after } = input;
     await tx.auditEvent.create({ data: { id: randomUUID(), campusId, resourceType: "TELEPHONY_PROFILE", resourceId, eventType,
       actorId: principal.userId, actorRoles: principal.roles, ...( /^[0-9a-f-]{36}$/iu.test(principal.sessionId) ? { sessionId: principal.sessionId } : {}),
       correlationId: correlationId.slice(0, 64), after, result: "SUCCESS", idempotencyKey } });

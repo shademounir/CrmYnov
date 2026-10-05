@@ -98,7 +98,10 @@ export class TelephonyOwnService {
     const mode = configuration?.mode ?? "DISABLED";
     const globalEnabled = mode === "LINPHONE" && configuration?.outboundEnabled === true && configuration.clickToCallEnabled;
     const active = profile?.workstations.filter((row) => row.active) ?? [];
-    const workstation = active.length === 1 ? active[0] : active.length ? undefined : profile?.workstations[0];
+    let workstation = profile?.workstations[0];
+    if (active.length) {
+      workstation = active.length === 1 ? active[0] : undefined;
+    }
     const serverScopeValid = !profile?.serverProfile.campusId || profile.serverProfile.campusId === profile.user.campusId;
     const writable = evaluatePermission(actor, "interaction.create", await this.permissions.snapshots(tx), await ownTelephonyContext(tx, actor)).allowed;
     const readiness = ownTelephonyReadiness({ globalEnabled: Boolean(globalEnabled), canCall: writable, configured: Boolean(profile),

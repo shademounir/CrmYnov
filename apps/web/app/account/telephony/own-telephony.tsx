@@ -25,9 +25,9 @@ export function OwnTelephony(): React.JSX.Element {
       setSnapshot(next);
       setFeedback((current) => current?.kind === "success" ? current : undefined);
       if (next.workstation?.active || !next.canPair) clearPairing();
-    } catch (failure) {
+    } catch (error_) {
       if (!mounted.current || requestGeneration !== generation.current) return;
-      setSnapshot(undefined); clearPairing(); setFeedback(ownTelephonyError(failure));
+      setSnapshot(undefined); clearPairing(); setFeedback(ownTelephonyError(error_));
     } finally { if (mounted.current && requestGeneration === generation.current) setLoading(false); }
   }, [clearPairing]);
 
@@ -69,7 +69,7 @@ export function OwnTelephony(): React.JSX.Element {
       if (next.profileId !== snapshot.profile.id) throw new Error("telephony_pairing_invalid");
       setSnapshot((current) => current?.profile?.id === next.profileId ? { ...current, profile: { ...current.profile, version: next.version } } : current);
       setPairing(next); setConfirmedPairing(false);
-    } catch (failure) { if (mounted.current && requestGeneration === generation.current) { const error = ownTelephonyError(failure); setFeedback(error); if (error.kind === "session" || error.kind === "forbidden") setSnapshot(undefined); } }
+    } catch (error_) { if (mounted.current && requestGeneration === generation.current) { const error = ownTelephonyError(error_); setFeedback(error); if (error.kind === "session" || error.kind === "forbidden") setSnapshot(undefined); } }
     finally { if (requestGeneration === generation.current) { busyRef.current = false; if (mounted.current) { setBusy(false); setLoading(false); } } }
   }
 
@@ -80,7 +80,7 @@ export function OwnTelephony(): React.JSX.Element {
       const next = parseOwnTelephonySnapshot(await ownTelephonyRequest(`/workstations/${encodeURIComponent(snapshot.workstation.id)}/revoke`, { method: "PATCH", body: JSON.stringify({ expectedVersion: snapshot.workstation.version }) }));
       if (!mounted.current || requestGeneration !== generation.current) return;
       setSnapshot(next); setFeedback({ kind: "success", message: "L’accès CRM de ce poste est révoqué. Cela ne confirme pas l’arrêt du client SIP : arrêtez l’ancien agent avant toute réassociation." }); closeRevoke();
-    } catch (failure) { if (mounted.current && requestGeneration === generation.current) { const error = ownTelephonyError(failure); setFeedback(error); if (error.kind === "session" || error.kind === "forbidden") { setSnapshot(undefined); closeRevoke(); } } }
+    } catch (error_) { if (mounted.current && requestGeneration === generation.current) { const error = ownTelephonyError(error_); setFeedback(error); if (error.kind === "session" || error.kind === "forbidden") { setSnapshot(undefined); closeRevoke(); } } }
     finally { if (requestGeneration === generation.current) { busyRef.current = false; if (mounted.current) { setBusy(false); setLoading(false); } } }
   }
 

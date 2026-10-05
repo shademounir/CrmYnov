@@ -58,6 +58,17 @@ test("own page fails closed on expired session, denied read, API outage and malf
   assert.doesNotMatch(b.body(), /Votre poste est prêt/u);
 });
 
+test("loading uses a native polite output until the own snapshot is received", async (t) => {
+  const b = await browser(t); let release: ((response: Response) => void) | undefined;
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => new Promise((resolve) => { release = resolve; }));
+  await b.render();
+  const loading = b.dom.window.document.querySelector("output.own-telephony__loading");
+  assert.match(loading?.textContent ?? "", /Chargement de votre profil personnel/u);
+  assert.equal(loading?.getAttribute("aria-live"), "polite"); assert.equal(loading?.getAttribute("aria-atomic"), "true");
+  assert.ok(release); release(Response.json(unpaired)); await b.settle();
+  assert.equal(b.dom.window.document.querySelector("output.own-telephony__loading"), null);
+});
+
 test("pairing needs explicit confirmation, suppresses double submission and keeps the code transient and masked", async (t) => {
   const b = await browser(t); let dto = structuredClone(unpaired); let writes = 0; let release: (() => void) | undefined; const payloads: unknown[] = [];
   t.mock.method(globalThis, "fetch", async (input: string, init?: RequestInit): Promise<Response> => {
@@ -73,6 +84,9 @@ test("pairing needs explicit confirmation, suppresses double submission and keep
   assert.equal(writes, 1); assert.deepEqual(payloads, [{ expectedVersion: 1 }]); assert.ok(release); release(); await b.settle();
   const code = b.dom.window.document.querySelector<HTMLInputElement>("#own-pairing-code")!;
   assert.equal(code.type, "password"); assert.equal(code.value, "SYNTHETIC_ONLY_CODE"); assert.equal(code.readOnly, true);
+  const pairingStatus = b.dom.window.document.querySelector(".own-telephony__pairing output");
+  assert.equal(pairingStatus?.getAttribute("aria-live"), "polite"); assert.equal(pairingStatus?.getAttribute("aria-atomic"), "true");
+  assert.match(pairingStatus?.textContent ?? "", /Code à usage unique disponible/u); assert.doesNotMatch(pairingStatus?.textContent ?? "", /SYNTHETIC_ONLY_CODE/u);
   assert.equal(b.button("Générer mon code d’association").disabled, true);
   await b.click("Afficher le code"); assert.equal(code.type, "text"); await b.click("Masquer le code"); assert.equal(code.type, "password");
   assert.equal(b.dom.window.localStorage.length, 0); assert.equal(b.dom.window.sessionStorage.length, 0); assert.equal(b.dom.window.location.search, "");
@@ -91,6 +105,29 @@ test("expired code is removed before reveal without another mutation", async (t)
   });
   await b.render(); b.act(() => b.dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()); await b.click("Générer mon code d’association");
   now = Date.parse("2026-10-04T21:10:00Z"); await b.click("Afficher le code"); assert.equal(b.dom.window.document.querySelector("#own-pairing-code"), null); assert.equal(writes, 1);
+});
+
+test("diagnostic contact and code expiry use explicit UTC despite divergent browser Casablanca data", async (t) => {
+  const b = await browser(t); let dto = structuredClone(ready); let now = Date.parse("2026-10-04T21:00:00Z"); let utcFormats = 0;
+  const NativeFormatter = Intl.DateTimeFormat;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(Intl, "DateTimeFormat", (function BrowserFormatter(locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+    assert.equal(options?.timeZone, "UTC", "Diagnostic display must not depend on potentially obsolete Casablanca browser data");
+    utcFormats++; return new NativeFormatter(locales, options);
+  }) as typeof Intl.DateTimeFormat);
+  t.mock.method(globalThis, "fetch", (input: string, init?: RequestInit): Promise<Response> => {
+    if (!init?.method) return Promise.resolve(Response.json(dto));
+    assert.equal(input, "/api/crm/telephony/me/pairing-codes");
+    return Promise.resolve(Response.json({ code: "SYNTHETIC_ONLY_CODE", profileId: unpaired.profile!.id, expiresAt: "2026-10-04T21:10:00Z", version: 2 }));
+  });
+  await b.render();
+  const lastSeen = [...b.dom.window.document.querySelectorAll("dt")].find((item) => item.textContent === "Dernier contact")?.nextElementSibling;
+  assert.match(lastSeen?.textContent ?? "", /04\/10\/2026 21:00:00\s+Heure UTC/u);
+  dto = structuredClone(unpaired); await b.click("Actualiser");
+  b.act(() => b.dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()); await b.click("Générer mon code d’association");
+  const expiry = b.dom.window.document.querySelector(".own-telephony__pairing output");
+  assert.match(expiry?.textContent ?? "", /04\/10\/2026 21:10:00, heure UTC/u); assert.ok(utcFormats >= 2);
+  now = Date.parse("2026-10-04T21:10:00Z"); await b.click("Afficher le code"); assert.equal(b.dom.window.document.querySelector("#own-pairing-code"), null);
 });
 
 test("a delayed pairing response cannot restore a credential after pagehide or a cached page return", async (t) => {
@@ -129,5 +166,6 @@ test("own revocation is explicitly confirmed, rejects in-flight work and never r
   assert.equal(b.button("Confirmer la révocation").disabled, true);
   await b.click("Conserver mon poste"); await b.click("Actualiser"); status = 200; await b.click("Révoquer mon poste"); await b.click("Confirmer la révocation");
   assert.equal(writes.length, 2); assert.equal(b.dom.window.document.querySelector("dialog"), null); assert.match(b.body(), /Cela ne confirme pas l’arrêt du client SIP/u);
+  assert.equal(b.dom.window.document.querySelector("output.ui-state")?.getAttribute("aria-live"), "polite");
   assert.equal(b.button("Générer mon code d’association").disabled, true); assert.equal(b.dom.window.document.querySelector("#own-pairing-code"), null);
 });

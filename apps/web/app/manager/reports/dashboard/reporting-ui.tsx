@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConnectedResource } from "../../../_components/connected-resource";
 import { PageHeader } from "../../../_components/ui/page-header";
 import { AdmissionsAgendaLink } from "../../../appointments/admissions/agenda-link";
+import type { DashboardCalendar } from "./dashboard-calendar";
 
 type Datum = { value: string; count: number };
 type DashboardReport = {
@@ -48,7 +49,7 @@ function safePreferences(raw: Partial<Preferences>): Preferences {
   return { compact: raw.compact === true, showTables: raw.showTables !== false, preferredPeriod, operationalThreshold: threshold };
 }
 
-export default function InteractiveReportingDashboard({ initialFilters, initialReport }: Readonly<{ initialFilters: Record<string, string>; initialReport?: ReportingReport }>): React.JSX.Element {
+export default function InteractiveReportingDashboard({ initialFilters, initialReport, initialCalendar }: Readonly<{ initialFilters: Record<string, string>; initialReport?: ReportingReport; initialCalendar: DashboardCalendar }>): React.JSX.Element {
   const [report, setReport] = useState<ReportingReport | undefined>(initialReport);
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">(initialReport ? "ready" : "loading");
   const [preferences, setPreferences] = useState<Preferences>(() => safePreferences({}));
@@ -84,10 +85,9 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
     return (): void => controller.abort();
   }, [initialReport, query]);
   const updatePreference = (next: Preferences): void => { setPreferences(next); localStorage.setItem(preferenceKey, JSON.stringify(next)); };
-  const dashboardDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Africa/Casablanca" }).format(new Date());
   return <main className="dashboard-page" data-density={preferences.compact ? "compact" : "comfortable"}>
-    <PageHeader eyebrow={dashboardDate} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink /><Link className="primary-button" href="/leads/new"><Plus size={19} weight="bold" /> Nouveau lead</Link></>} />
-    <div className="dashboard-toolbar"><ReportingFilters filters={initialFilters} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
+    <PageHeader eyebrow={initialCalendar.label} title="Centre d’activité" description="Pilotez les priorités commerciales et les admissions du jour." actions={<><AdmissionsAgendaLink /><Link className="primary-button" href="/leads/new"><Plus size={19} weight="bold" /> Nouveau lead</Link></>} />
+    <div className="dashboard-toolbar"><ReportingFilters filters={initialFilters} calendar={initialCalendar} /><details className="dashboard-preferences"><summary>Préférences</summary><fieldset><legend>Préférences locales non sensibles</legend>
       <label><input type="checkbox" checked={preferences.compact} onChange={(event) => updatePreference({ ...preferences, compact: event.target.checked })} /> Affichage compact</label>
       <label><input type="checkbox" checked={preferences.showTables} onChange={(event) => updatePreference({ ...preferences, showTables: event.target.checked })} /> Afficher les tableaux accessibles</label>
       <label>Période préférée <select value={preferences.preferredPeriod} onChange={(event) => updatePreference({ ...preferences, preferredPeriod: event.target.value as PreferredPeriod })}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option></select></label>
@@ -121,11 +121,8 @@ function PersonalDashboardContent({ report, showTables }: Readonly<{ report: Per
   return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p></section><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></>;
 }
 
-function ReportingFilters({ filters }: Readonly<{ filters: Record<string, string> }>): React.JSX.Element {
-  const start = new Date();
-  const end = new Date(start.getTime() + 86_400_000);
-  const date = (value: Date): string => value.toLocaleDateString("en-CA", { timeZone: "Africa/Casablanca" });
-  const todayHref = `/manager/reports/dashboard?${new URLSearchParams({ period: "custom", from: date(start), to: date(end) }).toString()}`;
+function ReportingFilters({ filters, calendar }: Readonly<{ filters: Record<string, string>; calendar: DashboardCalendar }>): React.JSX.Element {
+  const todayHref = `/manager/reports/dashboard?${new URLSearchParams({ period: "custom", from: calendar.from, to: calendar.to }).toString()}`;
   return <div className="reporting-toolbar-content">
     <nav className="period-selector" aria-label="Période globale du dashboard">
       <Link href={todayHref} className={filters.period === "custom" ? "active" : ""}>Aujourd’hui</Link>

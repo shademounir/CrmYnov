@@ -87,9 +87,14 @@ export async function ownTelephonyRequest(path: string, init?: RequestInit, requ
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     const safeCode = payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string" && /^telephony_[a-z_]{1,100}$/u.test(payload.code) ? payload.code : "telephony_unavailable";
-    throw new OwnTelephonyRequestError(response.status === 401 ? "session" : response.status === 403 ? "forbidden" : "unavailable", safeCode);
+    throw new OwnTelephonyRequestError(responseFailureKind(response.status), safeCode);
   }
   return response.json() as Promise<unknown>;
+}
+
+function responseFailureKind(status: number): OwnTelephonyFailure {
+  if (status === 401) return "session";
+  return status === 403 ? "forbidden" : "unavailable";
 }
 
 export const readinessLabels: Readonly<Record<string, string>> = {

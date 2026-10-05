@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ManagerReportsDashboardPage from "../app/manager/reports/dashboard/page.js";
 import InteractiveReportingDashboard, { preserveFilters, safeInternalHref, type DashboardReport, type PersonalDashboardReport } from "../app/manager/reports/dashboard/reporting-ui.js";
 import { containsControlCharacter } from "../app/leads/dashboard-return-link.js";
+import { dashboardCalendar } from "../app/manager/reports/dashboard/dashboard-calendar.js";
+
+const initialCalendar = dashboardCalendar(new Date("2026-10-04T23:53:00.000Z"));
 
 const report: DashboardReport = {
   definitionVersion: "manager-dashboard-v1", timezone: "Africa/Casablanca", filters: { period: "30d", campus: "campus-a" },
@@ -29,7 +32,7 @@ test("renders URL-backed filters and the non-sensitive loading state", async () 
 });
 
 test("renders keyboard-focusable charts and an alternative data table for every visualization", () => {
-  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { period: "30d", campus: "campus-a" }, initialReport: report }));
+  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { period: "30d", campus: "campus-a" }, initialReport: report, initialCalendar }));
   for (const text of ["Indicateurs clés", "Funnel commercial", "Évolution temporelle", "Répartition par source", "Charge commerciale", "Contributions principales et secondaires", "Données alternatives", "Exporter les agrégats CSV"]) assert.equal(html.includes(text), true);
   assert.equal((html.match(/class="reporting-chart"/gu) ?? []).length, 8); assert.equal((html.match(/type="button"/gu) ?? []).length, 8);
   assert.equal(html.includes("Alex"), false); assert.equal(html.includes("@example"), false); assert.equal(html.includes("returnTo="), true);
@@ -39,7 +42,7 @@ test("renders the adviser-only personal view without global cards", () => {
   const personal: PersonalDashboardReport = { definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" },
     performance: { advisers: [{ adviserId: "adviser-synthetic", activeLoad: 2, primaryLeadCount: 3, secondaryLeadCount: 1, followUps: { overdue: 1 } }] },
     contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
-  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { view: "personal" }, initialReport: personal }));
+  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { view: "personal" }, initialReport: personal, initialCalendar }));
   assert.equal(html.includes("Mes indicateurs autorisés"), true); assert.equal(html.includes("Mes contributions"), true); assert.equal(html.includes("Alertes actives"), false);
 });
 
@@ -51,7 +54,7 @@ test("keeps hostile aggregate labels as inert text and refuses unsafe destinatio
     drillDowns: [{ key: "uniqueLeads", count: 1, href: "javascript:alert(1)" }],
     export: { ...report.export, href: "https://external.invalid/export" },
   };
-  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: hostileReport }));
+  const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: hostileReport, initialCalendar }));
   assert.equal(html.includes("<script>alert(1)</script>"), false);
   assert.equal(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), true);
   assert.equal(html.includes("onerror="), true);

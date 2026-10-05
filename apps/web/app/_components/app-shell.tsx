@@ -13,7 +13,7 @@ import {
   List,
   MagnifyingGlass,
   MapPin,
-  PhoneCall,
+  PhoneCallIcon,
   SidebarSimple,
   UploadSimple,
   UsersThree,
@@ -41,7 +41,7 @@ const navigation = [
   { href: "/manager/reports/commercial-funnel", label: "Pipeline", icon: GitBranch },
   { href: "/leads?view=FOLLOW_UP", label: "Relances", icon: Alarm },
   { href: "/appointments", label: "Rendez-vous", icon: CalendarBlank },
-  { href: "/calls/queue", label: "Appels", icon: PhoneCall },
+  { href: "/calls/queue", label: "Appels", icon: PhoneCallIcon },
   { href: "/imports/wizard", label: "Imports", icon: UploadSimple },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/chat", label: "Chat", icon: ChatCircleDots },
@@ -49,7 +49,7 @@ const navigation = [
   { href: "/admin/users", label: "Administration", icon: Gear },
   { href: "/admin/references", label: "Référentiels", icon: Gear },
   { href: "/admin/roles", label: "Rôles et permissions", icon: Gear },
-  { href: "/admin/telephony", label: "Téléphonie", icon: PhoneCall },
+  { href: "/admin/telephony", label: "Téléphonie", icon: PhoneCallIcon },
   { href: "/admin/audit", label: "Journal d’audit", icon: List },
   { href: "/admin/scheduled-sheets", label: "Sheets planifié", icon: UploadSimple },
 ];
@@ -58,7 +58,7 @@ type SessionRole = "SUPER_ADMIN" | "ADMIN" | "MANAGER" | "ADMISSIONS" | "AUDITOR
 type SessionProfile = { roles: SessionRole[]; professionalEmail?: string; scopeLabel?: string };
 const roleNames: Record<SessionRole, string> = { SUPER_ADMIN: "Super Admin", ADMIN: "Administrateur", MANAGER: "Manager", ADMISSIONS: "Commercial", AUDITOR: "Lecteur" };
 const commercialNavigation = new Set(["/manager/reports/dashboard", "/leads", "/leads?view=FOLLOW_UP", "/appointments", "/calls/queue", "/notifications", "/chat", "/manager/reports/commercial-performance"]);
-const ownTelephonyNavigation = { href: "/account/telephony", label: "Mon poste d’appel", icon: PhoneCall };
+const ownTelephonyNavigation = { href: "/account/telephony", label: "Mon poste d’appel", icon: PhoneCallIcon };
 
 export function ownTelephonyRoleAllowed(roles: readonly SessionRole[]): boolean {
   return roles.some((role) => ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS"].includes(role));
@@ -346,7 +346,7 @@ export function AppShellView({
           <Link className="icon-button" href="/notifications" aria-label={unreadNotifications ? `Ouvrir les notifications, ${unreadNotifications} non lue${unreadNotifications > 1 ? "s" : ""}` : "Ouvrir les notifications"}><Bell size={22} />{unreadNotifications ? <span className="notification-dot" aria-hidden="true">{unreadNotifications > 99 ? "99+" : unreadNotifications}</span> : null}</Link>
           <div className="popover-anchor">
             <button type="button" className="user-button" onClick={onProfileToggle} aria-expanded={profileOpen} aria-label="Ouvrir le menu du compte"><span className="avatar">CRM</span><span>{profileLabel}<small>{roleLabel}</small></span><CaretDown size={15} aria-hidden="true" /></button>
-            {profileOpen ? <div className="user-menu" role="menu">{canUseOwnTelephony ? <Link href="/account/telephony" role="menuitem"><PhoneCall size={18} /> Mon compte · Téléphonie</Link> : null}{canManageUsers ? <Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link> : null}<form action="/api/logout" method="post"><button type="submit" role="menuitem">Se déconnecter</button></form></div> : null}
+            {profileOpen ? <div className="user-menu" role="menu">{canUseOwnTelephony ? <Link href="/account/telephony" role="menuitem"><PhoneCallIcon size={18} /> Mon compte · Téléphonie</Link> : null}{canManageUsers ? <Link href="/admin/users" role="menuitem"><Gear size={18} /> Administration</Link> : null}<form action="/api/logout" method="post"><button type="submit" role="menuitem">Se déconnecter</button></form></div> : null}
           </div>
         </div>
       </header>

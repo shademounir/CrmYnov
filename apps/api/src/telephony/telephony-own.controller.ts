@@ -14,6 +14,11 @@ export class TelephonyOwnController {
   pairing(@Body() body: { expectedVersion?: number }, @Req() request: AuthenticatedRequest): ReturnType<TelephonyOwnService["pairing"]> { return this.own.pairing(body, this.principal(request), this.correlation(request)); }
   @Patch("workstations/:workstationId/revoke") @Header("Cache-Control", "private, no-store")
   revoke(@Param("workstationId") id: string, @Body() body: { expectedVersion?: number }, @Req() request: AuthenticatedRequest): ReturnType<TelephonyOwnService["revoke"]> { return this.own.revoke(id, body, this.principal(request), this.correlation(request)); }
-  private principal(request: AuthenticatedRequest): Principal { if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" }); return request.principal; }
+  private principal(request: AuthenticatedRequest): Principal {
+    if (!request.principal) {
+      throw new UnauthorizedException({ code: "session_invalid" });
+    }
+    return request.principal;
+  }
   private correlation(request: AuthenticatedRequest): string { return request.header("x-correlation-id")?.slice(0, 64) ?? "telephony-own"; }
 }
