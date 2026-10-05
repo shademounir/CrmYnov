@@ -84,4 +84,7 @@ if (process.env.DATABASE_URL) throw Error("coverage_must_not_inherit_database");
 npm(["test"]);
 await postgresProofs();
 run(process.execPath, ["scripts/ci/assignment-flow-postgres.mjs"]);
+// Measure the same isolated reporting proof as the integration job. Child
+// runtimes inherit NODE_V8_COVERAGE; its source maps are remapped by c8.
+run(process.execPath, ["scripts/ci/reporting-freshness-postgres.mjs"]);
 leadWorkflowPostgresProofs();

@@ -23,9 +23,16 @@ const apiPackage = JSON.parse(readFileSync(join(apiDirectory, "package.json"), "
 const moduleType = apiPackage.type === "module" ? "module" : "commonjs";
 const testSource = resolve(apiDirectory, "test/reporting-freshness-postgres.test.ts");
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
-const sourceFiles = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? sourceFiles(join(directory, entry.name))
-  : entry.isFile() && entry.name.endsWith(".ts") ? [join(directory, entry.name)] : []);
-const inputs = [...sourceFiles(join(apiDirectory, "src")), testSource].sort();
+const sourceFiles = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+  if (entry.isDirectory()) return sourceFiles(join(directory, entry.name));
+  if (entry.isFile() && entry.name.endsWith(".ts")) return [join(directory, entry.name)];
+  return [];
+});
+const inputs = [...sourceFiles(join(apiDirectory, "src")), testSource].sort((first, second) => {
+  if (first < second) return -1;
+  if (first > second) return 1;
+  return 0;
+});
 const sourceHashes = () => inputs.map(path => ({ path: relative(repository, path).replaceAll("\\", "/"), sha256: hash(readFileSync(path)) }));
 const sourcesBefore = sourceHashes();
 const configuration = { extends: resolve(apiDirectory, "tsconfig.json"), compilerOptions: {

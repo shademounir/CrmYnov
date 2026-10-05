@@ -148,6 +148,20 @@ test("the Lead list preserves the readonly adviser cohort and exclusive upper bo
   dom.window.close();
 });
 
+test("the existing follow-up filter form retains entered values and its dedicated work view", () => {
+  const filters = { search: "Synthétique", status: "CONTACTED", temperature: "WARM", assignedToId: "adviser-owner",
+    source: "SYNTHETIC", program: "PROGRAM_SYNTHETIC", campaign: "CAMPAIGN_SYNTHETIC", campus: "CAMPUS_SYNTHETIC",
+    assignmentMode: "MANUAL", importBatchId: "batch-synthetic", createdFrom: "2026-10-01", createdTo: "2026-10-06", sortBy: "lastName" };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(LeadFilterForm, { current: new URLSearchParams(filters), mode: "follow-up" })));
+  const form = dom.window.document.querySelector<HTMLFormElement>("form")!;
+  assert.equal(form.getAttribute("aria-label"), "Recherche dans les relances");
+  const submitted = new dom.window.FormData(form);
+  for (const [key, value] of Object.entries(filters)) assert.equal(submitted.get(key), value);
+  assert.equal(submitted.get("view"), "FOLLOW_UP"); assert.equal(submitted.get("page"), "1"); assert.equal(submitted.get("pageSize"), "25");
+  assert.equal(submitted.has("adviserId"), false);
+  dom.window.close();
+});
+
 async function dashboardDom(t: TestContext): Promise<{
   host: HTMLElement;
   render: (props: Parameters<typeof InteractiveReportingDashboard>[0]) => Promise<void>;
@@ -218,7 +232,7 @@ test("missing or denied capabilities do not fetch recent Leads or offer creation
   assert.match(view.host.querySelector(".leads-panel")?.textContent ?? "", /indisponible.*autorisations/u);
 });
 
-for (const scenario of ["empty", "unavailable", "forbidden", "network", "malformed"] as const) {
+for (const scenario of ["empty", "unavailable", "forbidden", "network", "malformed", "server-error", "invalid-envelope", "owner-unavailable"] as const) {
   test(`recent Lead ${scenario} state is honest and never exposes raw error details`, async (t) => {
     const view = await dashboardDom(t);
     const scoped = { ...report, capabilities: { canCreateLead: true, canReadRecentLeads: true, canViewManagerDashboard: true } };
@@ -226,18 +240,176 @@ for (const scenario of ["empty", "unavailable", "forbidden", "network", "malform
       if (!requestPath(input).includes("recent-leads")) return Promise.resolve(Response.json({ canUseAgenda: false }));
       if (scenario === "network") return Promise.reject(new Error("PRIVATE_RAW_ERROR"));
       if (scenario === "forbidden") return Promise.resolve(Response.json({ detail: "PRIVATE_RAW_ERROR" }, { status: 403 }));
+      if (scenario === "server-error") return Promise.resolve(Response.json({ detail: "PRIVATE_RAW_ERROR" }, { status: 500 }));
+      if (scenario === "invalid-envelope") return Promise.resolve(Response.json({ availability: "UNKNOWN", leads: [] }));
+      if (scenario === "owner-unavailable") return Promise.resolve(Response.json({ availability: "OBSERVED", leads: [{ id: "lead-synthetic", leadCode: "LD-SYNTHETIC", name: "Prospect synthétique", status: "PROSPECT", createdAt: "2026-10-05T08:00:00.000Z" }] }));
       if (scenario === "malformed") return Promise.resolve(Response.json({ availability: "OBSERVED", leads: [{ id: "javascript:PRIVATE_RAW_ERROR" }] }));
       return Promise.resolve(Response.json({ availability: scenario === "unavailable" ? "UNAVAILABLE" : "OBSERVED", leads: [] }));
     });
     await view.render({ initialFilters: {}, initialReport: scoped, initialCalendar });
     const content = view.host.querySelector(".leads-panel")?.textContent ?? "";
     if (scenario === "empty") assert.match(content, /Aucun lead récent dans la période et le périmètre autorisés/u);
+    else if (scenario === "owner-unavailable") { assert.match(content, /Libellé du responsable indisponible/u); assert.match(content, /LD-SYNTHETIC/u); }
     else if (scenario === "forbidden") assert.match(content, /Accès.*refusé/u);
     else { assert.match(content, /indisponible/u); assert.doesNotMatch(content, /Aucun lead récent/u); }
     assert.doesNotMatch(view.host.textContent ?? "", /PRIVATE_RAW_ERROR/u);
     assert.ok(view.host.querySelector('a[href^="/leads/new"]'));
   });
 }
+
+test("Manager fetch uses capabilities and qualified aggregate data rather than a fallback cohort", async (t) => {
+  const view = await dashboardDom(t);
+  const scoped: DashboardReport = { ...report, filters: { period: "7d", status: "PROSPECT", campus: "CAMPUS_CANONICAL", from: "2026-09-28T08:00:00.000Z", to: "2026-10-05T08:00:00.000Z" },
+    capabilities: { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true },
+    persistence: { countsObservability: { appointmentCount: { state: "AUTHORIZED_SUBSET", reason: "current_permissions" } } },
+    panels: { ...report.panels, operationalRisks: { alerts: [{ code: "pending_closure", count: 1, drillDown: "/manager/closures" }], queues: { withoutFirstInteraction: 1 } } },
+    drillDowns: [
+      { key: "overdueFollowUps", count: 1, href: "/leads?view=FOLLOW_UP&source=QUALIFIED_SOURCE" },
+      { key: "unassigned", count: 1, href: "/leads?view=UNASSIGNED&source=QUALIFIED_SOURCE" },
+      { key: "futureMetric", count: 1, href: "/leads" },
+    ] };
+  let release: ((response: Response) => void) | undefined;
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+    if (requestPath(input).includes("manager-dashboard")) return new Promise<Response>((resolve) => { release = resolve; });
+    if (requestPath(input).includes("recent-leads")) return Promise.resolve(Response.json({ availability: "OBSERVED", leads: [] }));
+    return Promise.resolve(Response.json({ canUseAgenda: false }));
+  });
+  await view.render({ initialFilters: { period: "7d", campus: "uuid-campus", status: "PROSPECT" }, initialCalendar });
+  assert.equal(view.host.querySelector(".freshness-indicator")?.tagName, "OUTPUT");
+  assert.match(view.host.querySelector(".freshness-indicator")?.textContent ?? "", /en cours/u);
+  const { act } = await import("react");
+  await act(async () => { assert.ok(release); release(Response.json(scoped)); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.match(view.host.querySelector(".freshness-indicator")?.textContent ?? "", /dernière réponse API/u);
+  assert.equal(view.host.querySelector('select[name="view"] option[value="global"]')?.hasAttribute("disabled"), false);
+  assert.match(view.host.textContent ?? "", /uniquement les données autorisées/u);
+  assert.match(view.host.textContent ?? "", /ce n’est pas la même cohorte/u);
+  assert.match(view.host.querySelector(".priority-panel")?.textContent ?? "", /File indisponible/u);
+  assert.equal(view.host.querySelector('.priority-panel a[href*="closures"]'), null);
+  const href = view.host.querySelector<HTMLAnchorElement>(".quick-queues a")!.href;
+  assert.equal(new URL(href).searchParams.get("source"), "QUALIFIED_SOURCE");
+  assert.equal(new URL(href).searchParams.get("createdBefore"), scoped.filters.to);
+});
+
+for (const value of [0, null] as const) {
+  test(`pipeline share for ${value === null ? "unobserved" : "observed zero"} totals remains honest`, () => {
+    const scoped = { ...report, cards: { ...report.cards, uniqueLeads: value }, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, alerts: [] } } };
+    const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { period: "90d" }, initialReport: scoped, initialCalendar })));
+    const shares = [...dom.window.document.querySelectorAll(".pipeline-row em")].map((row) => row.textContent);
+    assert.equal(shares.length > 0, true);
+    assert.equal(shares.every((share) => share === (value === null ? "Indisponible" : "0 %")), true);
+    assert.match(dom.window.document.body.textContent ?? "", /Aucune alerte observée/u);
+    dom.window.close();
+  });
+}
+
+test("preferences restore and update only non-sensitive presentation settings", async (t) => {
+  const view = await dashboardDom(t);
+  globalThis.localStorage.setItem("crm-reporting-preferences-v1", JSON.stringify({ compact: true, showTables: false, preferredPeriod: "90d", operationalThreshold: 10 }));
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(Response.json({ canUseAgenda: false })));
+  await view.render({ initialFilters: { view: "personal", campus: "CAMPUS_CANONICAL" }, initialReport: report, initialCalendar });
+  assert.equal(view.host.querySelector("main")?.getAttribute("data-density"), "compact");
+  assert.equal(view.host.querySelector("table"), null);
+  const window = view.host.ownerDocument.defaultView!;
+  const { act } = await import("react");
+  const checkboxes = view.host.querySelectorAll<HTMLInputElement>('.dashboard-preferences input[type="checkbox"]');
+  act(() => { checkboxes[0]!.click(); checkboxes[1]!.click(); });
+  assert.equal(view.host.querySelector("main")?.getAttribute("data-density"), "comfortable");
+  assert.ok(view.host.querySelector("table"));
+  const period = view.host.querySelector<HTMLSelectElement>(".dashboard-preferences select")!;
+  const threshold = view.host.querySelector<HTMLInputElement>('.dashboard-preferences input[type="number"]')!;
+  act(() => {
+    period.value = "7d"; period.dispatchEvent(new window.Event("change", { bubbles: true }));
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(threshold, "101");
+    threshold.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  let settings = JSON.parse(globalThis.localStorage.getItem("crm-reporting-preferences-v1")!) as Record<string, unknown>;
+  assert.equal(settings.preferredPeriod, "7d"); assert.equal(settings.operationalThreshold, 100);
+  act(() => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(threshold, "");
+    threshold.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  settings = JSON.parse(globalThis.localStorage.getItem("crm-reporting-preferences-v1")!) as Record<string, unknown>;
+  assert.equal(settings.operationalThreshold, 1);
+  assert.deepEqual(Object.keys(settings).sort(), ["compact", "operationalThreshold", "preferredPeriod", "showTables"]);
+  const preferenceHref = view.host.querySelector<HTMLAnchorElement>(".dashboard-preferences a")!.href;
+  assert.equal(new URL(preferenceHref).searchParams.get("view"), "personal");
+  assert.equal(new URL(preferenceHref).searchParams.get("period"), "7d");
+});
+
+test("unavailable browser storage does not lock display preferences", async (t) => {
+  const view = await dashboardDom(t);
+  const storagePrototype = Object.getPrototypeOf(globalThis.localStorage) as Storage;
+  t.mock.method(storagePrototype, "getItem", (): never => { throw new Error("STORAGE_UNAVAILABLE"); });
+  t.mock.method(storagePrototype, "setItem", (): never => { throw new Error("STORAGE_UNAVAILABLE"); });
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(Response.json({ canUseAgenda: false })));
+  await view.render({ initialFilters: {}, initialReport: report, initialCalendar });
+  const { act } = await import("react");
+  act(() => { view.host.querySelector<HTMLInputElement>('.dashboard-preferences input[type="checkbox"]')!.click(); });
+  assert.equal(view.host.querySelector("main")?.getAttribute("data-density"), "compact");
+  assert.doesNotMatch(view.host.textContent ?? "", /STORAGE_UNAVAILABLE/u);
+});
+
+test("an obsolete personal request cannot replace a newer report after a filter change", async (t) => {
+  const view = await dashboardDom(t);
+  const pending: Array<{ resolve: (response: Response) => void; signal: AbortSignal | null | undefined }> = [];
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (requestPath(input).includes("personal-dashboard")) return new Promise<Response>((resolve) => { pending.push({ resolve, signal: init?.signal }); });
+    return Promise.resolve(Response.json({ canUseAgenda: false }));
+  });
+  await view.render({ initialFilters: { view: "personal", source: "OLD" }, initialCalendar });
+  await view.render({ initialFilters: { view: "personal", source: "NEW" }, initialCalendar });
+  assert.equal(pending.length, 2); assert.equal(pending[0]!.signal?.aborted, true);
+  const emptyReport = { definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" }, performance: { advisers: [] }, contributions: { contributors: [] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
+  const { act } = await import("react");
+  await act(async () => { pending[1]!.resolve(Response.json(emptyReport)); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.match(view.host.textContent ?? "", /Aucune donnée agrégée/u);
+  await act(async () => { pending[0]!.resolve(Response.json(report)); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.match(view.host.textContent ?? "", /Aucune donnée agrégée/u);
+  assert.equal(view.host.querySelector(".kpi-card"), null);
+});
+
+for (const stage of ["before-headers", "during-json"] as const) {
+  test(`a recent Lead read cancelled ${stage} remains a native loading status and never restores obsolete rows`, async (t) => {
+    const view = await dashboardDom(t);
+    let signal: AbortSignal | null | undefined;
+    let releaseHeaders: ((response: Response) => void) | undefined;
+    let releaseJson: ((value: unknown) => void) | undefined;
+    const errors = t.mock.method(console, "error", (): void => {});
+    t.mock.method(globalThis, "fetch", (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (!requestPath(input).includes("recent-leads")) return Promise.resolve(Response.json({ canUseAgenda: false }));
+      signal = init?.signal;
+      if (stage === "before-headers") return new Promise<Response>((resolve) => { releaseHeaders = resolve; });
+      const response = Response.json({});
+      t.mock.method(response, "json", (): Promise<unknown> => new Promise<unknown>((resolve) => { releaseJson = resolve; }));
+      return Promise.resolve(response);
+    });
+    await view.render({ initialFilters: {}, initialReport: { ...report, capabilities: { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true } }, initialCalendar });
+    const loading = view.host.querySelector(".leads-panel output");
+    assert.ok(loading); assert.equal(loading.getAttribute("aria-busy"), "true");
+    assert.match(loading.textContent ?? "", /Chargement des leads autorisés/u);
+    await view.renderElement(createElement("div", null, "Lecture fermée"));
+    assert.equal(signal?.aborted, true);
+    const oldRows = { availability: "OBSERVED", leads: [{ id: "old-lead", leadCode: "LD-OLD", name: "Ancienne cohorte", status: "PROSPECT", createdAt: "2026-10-05T08:00:00.000Z" }] };
+    const { act } = await import("react");
+    await act(async () => {
+      if (stage === "before-headers") { assert.ok(releaseHeaders); releaseHeaders(Response.json(oldRows)); }
+      else { assert.ok(releaseJson); releaseJson(oldRows); }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    });
+    assert.equal(view.host.textContent, "Lecture fermée");
+    assert.doesNotMatch(view.host.textContent ?? "", /Ancienne cohorte|LD-OLD/u);
+    assert.equal(errors.mock.callCount(), 0);
+  });
+}
+
+test("a fetched Manager report with unobserved cards is not treated as an empty cohort", async (t) => {
+  const view = await dashboardDom(t);
+  const scoped: DashboardReport = { ...report, cards: { uniqueLeads: null, enrolled: 0, unassigned: 0, overdueFollowUps: 0, activeAlerts: null } };
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => Promise.resolve(Response.json(requestPath(input).includes("manager-dashboard") ? scoped : { canUseAgenda: false })));
+  await view.render({ initialFilters: { period: "30d" }, initialCalendar });
+  assert.match(view.host.querySelector(".kpi-grid")?.textContent ?? "", /Indisponible/u);
+  assert.doesNotMatch(view.host.textContent ?? "", /Aucune donnée agrégée/u);
+});
 
 test("personal reporting fetch stays personal and distinguishes loading, empty and unavailable evidence", async (t) => {
   const view = await dashboardDom(t);

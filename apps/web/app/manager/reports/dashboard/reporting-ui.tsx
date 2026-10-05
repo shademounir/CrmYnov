@@ -102,7 +102,7 @@ export default function InteractiveReportingDashboard({ initialFilters, initialR
       <a href={dashboardPeriodHref(effectiveQuery, preferences.preferredPeriod)}>Appliquer la période préférée</a>
       <label>Seuil personnel de charge <input type="number" min={1} max={100} value={preferences.operationalThreshold} onChange={(event) => updatePreference({ ...preferences, operationalThreshold: Math.min(100, Math.max(1, Number.parseInt(event.target.value, 10) || 1)) })} /></label>
       <small>Ces préférences d’affichage restent dans ce navigateur et ne contiennent ni identifiant métier, ni donnée personnelle.</small>
-    </fieldset></details><span className="freshness-indicator" role="status"><span aria-hidden="true" /> {state === "loading" ? "Actualisation en cours" : state === "error" ? "Actualisation indisponible" : "Données de la dernière réponse API"}</span></div>
+    </fieldset></details><output className="freshness-indicator"><span aria-hidden="true" /> {reportingFreshnessLabel(state)}</output></div>
     <ReportingState state={state} report={report} showTables={preferences.showTables} query={effectiveQuery} operationalThreshold={preferences.operationalThreshold} />
   </main>;
 }
@@ -111,6 +111,12 @@ function reportItemCount(report: ReportingReport): number {
   return "cards" in report
     ? Object.values(report.cards).reduce<number>((sum, item) => sum + (isObservedCount(item) ? item : 0), 0)
     : report.performance.advisers.length + report.contributions.contributors.length;
+}
+
+function reportingFreshnessLabel(state: "loading" | "ready" | "empty" | "error"): string {
+  if (state === "loading") return "Actualisation en cours";
+  if (state === "error") return "Actualisation indisponible";
+  return "Données de la dernière réponse API";
 }
 
 function hasUnavailableEvidence(report: ReportingReport): boolean {
@@ -136,7 +142,7 @@ function PersonalDashboardContent({ report, showTables }: Readonly<{ report: Per
 
 function ReportingAvailability({ report }: Readonly<{ report: ReportingReport }>): React.JSX.Element | null {
   const observations = Object.values(report.persistence?.countsObservability ?? {});
-  if (observations.some((value) => value.state === "UNAVAILABLE")) return <p role="status">Certains compteurs de persistance sont indisponibles ; ils ne sont pas assimilés à zéro.</p>;
+  if (observations.some((value) => value.state === "UNAVAILABLE")) return <p><output>Certains compteurs de persistance sont indisponibles ; ils ne sont pas assimilés à zéro.</output></p>;
   if (observations.some((value) => value.state === "AUTHORIZED_SUBSET")) return <p>Les compteurs de persistance couvrent uniquement les données autorisées pour cette session.</p>;
   return null;
 }
@@ -182,7 +188,7 @@ function RecentDashboardLeads({ query, canRead }: Readonly<{ query: URLSearchPar
     return (): void => controller.abort();
   }, [canRead, queryString]);
   if (!canRead) return <p>Liste récente indisponible pour les autorisations de cette session.</p>;
-  if (state === "loading") return <p role="status" aria-busy="true">Chargement des leads autorisés…</p>;
+  if (state === "loading") return <p><output aria-busy="true">Chargement des leads autorisés…</output></p>;
   if (state === "forbidden") return <p role="alert">Accès aux leads récents refusé pour cette session.</p>;
   if (state === "error" || result?.availability === "UNAVAILABLE") return <p role="alert">Liste récente indisponible. Aucune absence de lead ne peut être déduite.</p>;
   if (!result?.leads.length) return <p>Aucun lead récent dans la période et le périmètre autorisés.</p>;
@@ -235,7 +241,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold }: R
       <Link className="queue-item" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}><span className="icon-disc small blue"><ChartBar size={20} /></span><span>Première interaction échue<strong>{displayCount(report.panels.operationalRisks.queues.withoutFirstInteraction, "Non observé")}</strong></span></Link>
       <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
     </section>
-    <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} signal(s) observé(s) par les contrôles API</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{preserveFilters(alert.drillDown, query) === "#" ? "File indisponible" : <Link href={preserveFilters(alert.drillDown, query)}>Ouvrir</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{isObservedCount(report.cards.uniqueLeads) ? report.cards.uniqueLeads > 0 ? `${Math.round((item.count / report.cards.uniqueLeads) * 100)} %` : "0 %" : "Indisponible"}</em></div>)}</section></div>
+    <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} signal(s) observé(s) par les contrôles API</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{preserveFilters(alert.drillDown, query) === "#" ? "File indisponible" : <Link href={preserveFilters(alert.drillDown, query)}>Ouvrir</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{pipelineShare(item.count, report.cards.uniqueLeads)}</em></div>)}</section></div>
     <div className="dashboard-secondary-grid"><section className="panel leads-panel"><div className="panel-heading"><h2>Derniers leads</h2>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} /></section><section className="panel activity-panel"><div className="panel-heading"><h2>Activité récente</h2></div><ul className="activity-list">{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <li key={alert.code}><span className="icon-disc small red"><WarningCircle size={18} /></span><span><b>{alert.code}</b><small>{displayCount(alert.count)} élément(s) agrégé(s)</small></span></li>)}</ul></section></div>
     <details className="reporting-details"><summary>Analyses détaillées et tableaux accessibles</summary>
     <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
@@ -309,6 +315,12 @@ function dashboardPeriodHref(query: URLSearchParams, period: PreferredPeriod | "
 
 function isObservedCount(value: number | null | undefined): value is number { return typeof value === "number" && Number.isFinite(value) && value >= 0; }
 function displayCount(value: number | null | undefined, unavailable = "Indisponible"): string { return isObservedCount(value) ? String(value) : unavailable; }
+
+function pipelineShare(count: number, total: number | null): string {
+  if (!isObservedCount(total)) return "Indisponible";
+  if (total === 0) return "0 %";
+  return `${Math.round((count / total) * 100)} %`;
+}
 
 function safeInternalHref(href: string, allowedRoots: readonly string[] = dashboardDestinationRoots): string {
   if (!href || href.includes("\0") || href.includes("\\") || href.startsWith("//") || /^[a-z][a-z\d+.-]*:/iu.test(href)) return "#";

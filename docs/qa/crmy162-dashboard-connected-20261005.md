@@ -42,7 +42,10 @@ résultats.
 ## Résultats locaux réellement obtenus
 
 - 37 tests API ciblés PASS, typage API et lint ciblés PASS.
-- 22 tests Dashboard Web et 15 tests Lead-read PASS ; lint des quatre fichiers PASS.
+- 35 tests Dashboard Web (22 initiaux, 13 branches supplémentaires) et 15 tests
+  Lead-read PASS ; lint ciblé et typage Web sans émission PASS.
+  États natifs `output`, lectures annulées/obsolètes, préférences refusées par le
+  navigateur et compteurs indisponibles sont qualifiés sans changer les calculs.
 - PostgreSQL isolé : 5 PASS / 0 FAIL / 0 SKIP (quatre scénarios et leur parent),
   deux API réelles et 46 migrations appliquées sur une base tmpfs indépendante.
 - Compilation TypeScript 5.9.2 réelle, CommonJS conforme au package API,
@@ -71,9 +74,22 @@ Les conteneurs conservés d'autres chantiers sont intacts.
 
 ## Contrôles distants et limites de livraison
 
-Le runner PostgreSQL est ajouté au job d'intégration existant, sans affaiblir un
-seuil ni remplacer les gates. CI, Sonar, scans et politique du SHA publié restent
-à obtenir ; les résultats locaux ne leur sont pas attribués.
+Sur `b05182e8eca66bc830f8c3bc8bbf74d27fe2c377`, le workflow
+[37264036844](https://github.com/shademounir/CrmYnov/actions/runs/37264036844)
+a réussi lint, typage, unitaires, intégrations, Playwright, build, secrets,
+dépendances, scans API/Web et CodeQL. Prisma, Terraform/IaC et simulate ont réussi.
+Le runner reporting PostgreSQL distant a obtenu 5 PASS / 0 FAIL / 0 SKIP.
+
+Sonar et l'agrégateur quality-gate ont réellement échoué : couverture nouvelle
+79,2 % sous le seuil 80 %, fiabilité D liée au tri du runner sans comparateur.
+Corrections ciblées et tests réels ajoutés, sans seuil/exclusion modifié.
+Le runner isolé, déjà exécuté dans le job d'intégration, est aussi raccordé à la
+commande canonique c8 : ses processus enfants héritent de `NODE_V8_COVERAGE`.
+Le prochain SHA doit obtenir sa propre mesure distante ; aucun succès supposé.
+
+Le premier refus de politique était `jira_audit_comment_missing`. Un audit
+factuel a été publié après relecture Jira, sans prétendre que codex-ready ou la
+dépendance CRMY-161 sont satisfaits. Aucun contrôle local ne vaut gate distant.
 
 CRMY-161 est encore In Review : récupération complète à finaliser et release
 requise à qualifier avant sa clôture. CRMY-162 reste techniquement préparée,
