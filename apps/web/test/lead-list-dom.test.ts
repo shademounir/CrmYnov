@@ -63,6 +63,38 @@ test("retry only rereads the list and displays the confirmed server count", asyn
   assert.match(host.textContent ?? "", /1–1 sur 64 résultats · Page 1 sur 3/u);
 });
 
+test("relative list requests and pagination retain encoded query context without navigating to the parsing base", async (t) => {
+  const { host, root, act, createElement } = await mount(t);
+  const { LeadDirectory } = await import("../app/leads/lead-directory.js");
+  const query = new URLSearchParams({
+    page: "2", pageSize: "50", view: "MINE", savedView: "LEGACY_RELAUNCH", sharedViewId: "shared-synthetic",
+    collaboratorId: "collaborator-synthetic", sortBy: "lastName", sortDirection: "desc", search: "A+B & Noor#? é",
+    createdFrom: "2026-09-01T10:15:00.000Z", createdTo: "2026-09-30T18:45:00.000Z", createdBefore: "2026-10-01T00:00:00.000Z",
+    returnTo: "/manager/reports/dashboard?period=30d&source=YNOV_COM#cohorte",
+  });
+  const endpoint = `/api/crm/leads?${query.toString()}`;
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request, init?: RequestInit) => {
+    calls++;
+    assert.equal(requestUrl(input), endpoint);
+    assert.equal(init?.method ?? "GET", "GET");
+    assert.equal(init?.credentials, "same-origin");
+    assert.equal(init?.cache, "no-store");
+    return Promise.resolve(Response.json({ items: [{ id: "synthetic-lead", leadCode: "LD-SYN" }], page: 2, pageSize: 50, total: 151 }));
+  });
+  await act(async () => { root.render(createElement(LeadDirectory, { ...props, endpoint })); await flush(); });
+  assert.equal(calls, 1);
+  for (const [relation, page] of [["prev", "1"], ["next", "3"]]) {
+    const href = host.querySelector(`a[rel="${relation}"]`)?.getAttribute("href"); assert.ok(href);
+    assert.match(href, /^\/leads\?/u);
+    const actual = new URL(href, "https://example.invalid");
+    const expected = new URLSearchParams(query); expected.set("page", page);
+    assert.deepEqual([...actual.searchParams], [...expected]);
+    assert.equal(actual.origin, "https://example.invalid");
+    assert.equal(actual.hash, "");
+  }
+});
+
 test("missing pagination metadata is reported as an invalid server response, not an empty directory", async (t) => {
   const { host, root, act, createElement } = await mount(t);
   const { LeadDirectory } = await import("../app/leads/lead-directory.js");

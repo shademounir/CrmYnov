@@ -11,6 +11,8 @@
     "node": ">=22"
   },
   "overrides": {
+    "proxy-addr": "2.0.8",
+    "source-map-js": "1.2.2",
     "js-yaml": "5.4.2",
     "deepmerge-ts": "8.0.0",
     "multer": "2.4.0",

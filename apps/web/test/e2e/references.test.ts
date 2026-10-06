@@ -39,12 +39,16 @@ test("the creation drawer opens the filtered list with a document navigation", a
   const campus = { id: "00000000-0000-4000-8000-000000000461", code: "SYNTHETIC", label: "Campus synthétique", kind: "CAMPUS", scope: "GLOBAL", campusId: null, state: "ACTIVE", version: 1 };
   const lead = { id: "00000000-0000-4000-8000-000000000462", leadCode: "LD-SYNTHETIC-LIST", firstName: "Lead", lastName: "Liste", status: "PROSPECT", temperature: "UNEVALUATED", temperatureLabel: "Non évalué", program: "B1" };
   await page.route("**/api/crm/**", (route) => route.fulfill({ json: { items: [] } }));
+  await page.route("**/api/crm/reports/dashboard/capabilities", (route) => route.fulfill({ json: { canCreateLead: true, canReadRecentLeads: true, canViewManagerDashboard: false, canViewPersonalDashboard: true, canViewPilotageDashboard: false, canExportReporting: false } }));
   await page.route("**/api/crm/lead-views", (route) => route.fulfill({ json: [] }));
   await page.route(/\/api\/crm\/view-sharing\/(?:received|audiences|history)$/u, (route) => route.fulfill({ json: [] }));
   await page.route("**/api/crm/references?*", async (route) => { const kind = new URL(route.request().url()).searchParams.get("kind"); await route.fulfill({ json: { items: [{ ...campus, kind, code: kind === "PROGRAM" ? "B1" : "SYNTHETIC" }] } }); });
   await page.route("**/api/crm/leads*", async (route) => {
     if (route.request().method() === "POST") await route.fulfill({ status: 201, json: { lead } });
-    else await route.fulfill({ json: { items: [lead] } });
+    else {
+      const query = new URL(route.request().url()).searchParams;
+      await route.fulfill({ json: { items: [lead], page: Number(query.get("page") ?? "1"), pageSize: Number(query.get("pageSize") ?? "25"), total: 1 } });
+    }
   });
   await page.setViewportSize({ width: 820, height: 900 });
   await page.goto("/leads"); await page.getByRole("button", { name: "Nouveau Lead", exact: true }).click();

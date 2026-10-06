@@ -12,6 +12,8 @@ for (const width of [1280, 390]) {
     await page.route("**/api/crm/**", async (route) => {
       const url = new URL(route.request().url());
       let body: object = {};
+      if (url.pathname === "/api/crm/reports/dashboard/capabilities") body = { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: false, canViewPersonalDashboard: true, canViewPilotageDashboard: false, canExportReporting: false };
+      if (url.pathname === "/api/crm/leads") body = { items: [], page: Number(url.searchParams.get("page") ?? "1"), pageSize: Number(url.searchParams.get("pageSize") ?? "25"), total: 0 };
       if (url.pathname === "/api/crm/lead-views") body = [own];
       if (url.pathname === `/api/crm/view-sharing/views/${own.id}`) body = own;
       if (url.pathname.endsWith("/received")) body = [received];
@@ -25,6 +27,7 @@ for (const width of [1280, 390]) {
       await route.fulfill({ status: route.request().method() === "POST" ? 201 : 200, json: body });
     });
     await page.goto("/leads");
+    await page.locator("details.lead-view-tools > summary").click();
     const panel = page.getByRole("region", { name: "Partage des vues", exact: true });
     await expect(panel.getByText("Vue synthétique reçue", { exact: true })).toBeVisible();
     const receivedCard = panel.getByRole("article", { name: received.name });

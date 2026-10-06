@@ -159,7 +159,7 @@ export function LeadDirectory({ endpoint, ariaLabel, emptyMessage, context = "di
     const failure = failureMessages[state.kind];
     return <section className="ui-state ui-state--error" role="alert"><h2>{failure.title}</h2><p>{failure.message}</p>{state.kind === "session" ? <Link className="secondary-button" href="/">Se reconnecter</Link> : <button className="secondary-button" type="button" onClick={() => setRetry((value) => value + 1)}>Réessayer</button>}</section>;
   }
-  const current = new URL(endpoint, "http://crm.local").searchParams;
+  const current = new URL(endpoint, "https://crm.invalid").searchParams;
   return <>{state.result.items.length ? <LeadDirectoryTable items={state.result.items} total={state.result.total} ariaLabel={ariaLabel} context={context} />
     : <section className="ui-state" aria-live="polite"><h2>{state.result.total > 0 ? "Aucun résultat sur cette page" : "Aucun résultat"}</h2><p>{state.result.total > 0 ? "D’autres pages contiennent des résultats. Revenez à la première page pour les consulter." : emptyMessage}</p>{state.result.total > 0 ? <Link className="secondary-button" href={leadListHref(current, { page: "1" }, false)}>Première page</Link> : null}</section>}
     <LeadListPagination result={state.result} current={current} /></>;
