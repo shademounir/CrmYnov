@@ -84,7 +84,7 @@ test("relative list requests and pagination retain encoded query context without
   });
   await act(async () => { root.render(createElement(LeadDirectory, { ...props, endpoint })); await flush(); });
   assert.equal(calls, 1);
-  for (const [relation, page] of [["prev", "1"], ["next", "3"]]) {
+  for (const [relation, page] of [["prev", "1"], ["next", "3"]] as const) {
     const href = host.querySelector(`a[rel="${relation}"]`)?.getAttribute("href"); assert.ok(href);
     assert.match(href, /^\/leads\?/u);
     const actual = new URL(href, "https://example.invalid");
