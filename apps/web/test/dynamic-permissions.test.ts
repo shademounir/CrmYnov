@@ -5,9 +5,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { PermissionEditor } from "../app/admin/roles/permission-editor";
 import { ChangePreview, EffectivePermissions, PermissionHistory } from "../app/admin/roles/permission-evidence";
 import { ConfigurationImpact, DashboardGuidance } from "../app/admin/roles/permission-guidance";
-import { changeLabel, draftChanges, isLocked, lockReason, offeredScopes, permissionRequest, scopeLabels, type Catalogue, type Configuration, type Definition } from "../app/admin/roles/permission-types";
+import { changeLabel, draftChanges, isLocked, lockReason, moduleLabel, offeredScopes, permissionLabel, permissionRequest, scopeLabels, type Catalogue, type Configuration, type Definition } from "../app/admin/roles/permission-types";
 const item: Definition = { key: "lead.edit", module: "lead", mutation: true, sensitive: true, scopes: ["NONE", "OWN", "TEAM", "CAMPUS", "GLOBAL"], reserved: false };
 const config: Configuration = { kind: "ROLE", role: "AUDITOR", campus: "GLOBAL", version: 0, inherited: true, grants: { "lead.edit": "NONE" }, globalCeiling: { "lead.edit": "GLOBAL" } };
+
+test("CRMY-178 free-call permission has an explicit label in editor, preview and effective explanation", () => {
+  const freeCall: Definition = { key: "telephony.free-call.create", module: "telephony", mutation: true, sensitive: true, scopes: ["NONE", "CAMPUS", "GLOBAL"], reserved: false };
+  const saved = { ...config, role: "MANAGER", grants: { [freeCall.key]: "NONE" as const }, globalCeiling: { [freeCall.key]: "GLOBAL" as const } };
+  assert.equal(moduleLabel("telephony"), "Téléphonie");
+  assert.equal(permissionLabel(freeCall.key), "Composer un appel hors CRM");
+  const editor = renderToStaticMarkup(createElement(PermissionEditor, { items: [freeCall], configuration: saved, grants: saved.grants, editable: true, busy: false, onChange: () => {} }));
+  assert.match(editor, /Téléphonie/); assert.match(editor, /Activer cette capacité : Composer un appel hors CRM/);
+  const preview = renderToStaticMarkup(createElement(ChangePreview, { preview: { changes: [{ permission: freeCall.key, from: "NONE", to: "CAMPUS", widening: true, sensitive: true }], affectedUsers: 2, expectedVersion: 0, mutated: false } }));
+  const explanation = renderToStaticMarkup(createElement(EffectivePermissions, { explanation: { permissions: [{ permission: freeCall.key, allowed: false, restriction: "permission_or_session_invalid", sources: [] }], businessRules: "" } }));
+  for (const html of [editor, preview, explanation]) { assert.match(html, /Composer un appel hors CRM/); assert.doesNotMatch(html, /Capacité à examiner|telephony\.free-call\.create/); }
+  assert.equal(isLocked(freeCall, config, true), true); // The clearer label grants no mutation to a Reader.
+});
 test("CRMY-169 AUDITOR mutative toggle and scope are disabled with an accessible explanation", () => {
   const html = renderToStaticMarkup(createElement(PermissionEditor, { items: [item], configuration: config, grants: config.grants, editable: true, busy: false, onChange: () => { throw new Error("render must not mutate"); } }));
   assert.match(html, /role="switch"[^>]*disabled=""/); assert.match(html, /non attribuables/); assert.match(html, /Affecté ou collaborateur actif/);

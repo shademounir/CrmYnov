@@ -1,6 +1,6 @@
 export type Scope = "NONE" | "OWN" | "TEAM" | "CAMPUS" | "GLOBAL";
 export const scopeLabels: Record<Scope, string> = { NONE: "Aucun droit", OWN: "Affecté ou collaborateur actif", TEAM: "Équipe actuelle du conseiller principal", CAMPUS: "Campus", GLOBAL: "Global" };
-const moduleNames: Record<string, string> = { lead: "Leads et dossiers", interaction: "Interactions", reminder: "Relances", appointment: "Rendez-vous", import: "Imports", reporting: "Pilotage", users: "Utilisateurs", roles: "Rôles et droits", settings: "Paramétrage", audit: "Journal d’audit", chat: "Communication", notification: "Notifications" };
+const moduleNames: Record<string, string> = { lead: "Leads et dossiers", interaction: "Interactions", reminder: "Relances", appointment: "Rendez-vous", import: "Imports", reporting: "Pilotage", users: "Utilisateurs", roles: "Rôles et droits", settings: "Paramétrage", audit: "Journal d’audit", chat: "Communication", notification: "Notifications", telephony: "Téléphonie" };
 const permissionNames: Record<string, string> = {
   "lead.view": "Consulter les Leads", "lead.create": "Créer un Lead", "lead.edit": "Corriger les informations d’un Lead", "lead.qualification.update": "Qualifier la température commerciale",
   "lead.assign": "Affecter un Lead", "lead.reassign.request": "Demander une réaffectation", "lead.reassign.approve": "Décider une réaffectation", "lead.close.request": "Demander une clôture", "lead.close.approve": "Décider une clôture",
@@ -12,6 +12,7 @@ const permissionNames: Record<string, string> = {
   "users.view": "Consulter les utilisateurs", "users.create": "Créer un utilisateur", "users.edit": "Modifier le profil d’un utilisateur", "users.disable": "Désactiver un utilisateur", "users.roles.assign": "Attribuer les rôles",
   "roles.permissions.view": "Consulter la configuration des droits", "roles.permissions.manage": "Modifier la configuration des droits", "settings.campus.manage": "Administrer un campus", "settings.global.manage": "Administrer les paramètres globaux",
   "audit.view": "Consulter le journal d’audit", "audit.export": "Exporter le journal d’audit", "chat.use": "Utiliser le chat interne", "chat.broadcast": "Publier une annonce interne", "notification.manage": "Gérer les notifications",
+  "telephony.free-call.create": "Composer un appel hors CRM",
 };
 export function moduleLabel(module: string): string { return moduleNames[module] ?? "Autres fonctions"; }
 export function permissionLabel(key: string): string { return permissionNames[key] ?? "Capacité à examiner"; }
