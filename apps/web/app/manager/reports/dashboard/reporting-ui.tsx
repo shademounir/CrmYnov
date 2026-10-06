@@ -9,7 +9,7 @@ import { leadDirectoryStatus } from "../../../leads/lead-directory";
 import type { DashboardCalendar } from "./dashboard-calendar";
 
 type Datum = { value: string; count: number; key?: string };
-type ReportingCapabilities = { canCreateLead: boolean; canReadRecentLeads: boolean; canViewManagerDashboard: boolean };
+type ReportingCapabilities = { canCreateLead: boolean; canReadRecentLeads: boolean; canViewManagerDashboard: boolean; canExportReporting?: boolean };
 type ReportingEvidence = {
   generatedAt?: string; capabilities?: ReportingCapabilities;
   persistence?: { countsObservability?: Record<string, { state: "OBSERVED" | "AUTHORIZED_SUBSET" | "UNAVAILABLE"; reason: string | null }> };
@@ -321,7 +321,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
     <AccessibleChart title="Contributions principales et secondaires" data={contributions} showTable={showTables} />
     <section aria-label="Alertes opérationnelles"><h2>Relances et alertes</h2>{report.panels.operationalRisks.alerts.length ? <ul>{report.panels.operationalRisks.alerts.map((alert) => <li key={alert.code}>{operationalAlertHref(alert, query) === "#" ? <span>{alert.code} : {displayCount(alert.count)} — {unavailableAlertLabel(alert).toLocaleLowerCase("fr-FR")}</span> : <a href={operationalAlertHref(alert, query)}>{alert.code} : {displayCount(alert.count)} — {operationalAlertLinkLabel(alert)}</a>}</li>)}</ul> : <p>Aucune alerte observée dans les contrôles disponibles.</p>}{report.panels.operationalRisks.sourceQualityAvailability === "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" && <p>Qualité des sources : non observée durablement. L’absence de signal ne garantit pas l’absence d’erreur d’import.</p>}</section>
     <ReportingAvailability report={report} />
-    <p><a href={preserveFilters(report.export.href, query)} download="crm-manager-dashboard-v1.csv">Exporter les agrégats CSV</a></p>
+    {report.capabilities?.canExportReporting === true && <p><a href={preserveFilters(report.export.href, query)} download="crm-manager-dashboard-v1.csv">Exporter les agrégats CSV</a></p>}
     <p><small>Contrat {report.definitionVersion} — export {report.export.schemaVersion} — {report.timezone}</small></p>
     </details>
   </>;

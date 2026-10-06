@@ -7,6 +7,7 @@ import type { AssignmentAudit } from "../assignment/assignment-audit.js";
 import { ReferenceService } from "../references/reference.service.js";
 import { strictBody } from "../references/reference.contract.js";
 import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
+import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -585,10 +586,10 @@ export class LeadService implements OnModuleInit {
   }
 
   reportingSnapshot(principal: Principal): LeadReportingRow[] {
-    if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
+    if (!hasPilotageReportingScope(principal) && !principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
       throw new ForbiddenException({ code: "reporting_manager_required" });
     }
-    const adviserOnly = principal.roles.includes("ADMISSIONS")
+    const adviserOnly = !hasPilotageReportingScope(principal) && principal.roles.includes("ADMISSIONS")
       && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
     const campuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));

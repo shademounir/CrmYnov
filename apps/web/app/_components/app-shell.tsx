@@ -57,6 +57,7 @@ const navigation = [
 
 type SessionRole = "SUPER_ADMIN" | "ADMIN" | "MANAGER" | "ADMISSIONS" | "AUDITOR";
 type SessionProfile = { roles: SessionRole[]; professionalEmail?: string; scopeLabel?: string };
+export type ShellReportingAccess = Readonly<{ canViewPersonalDashboard: boolean; canViewPilotageDashboard: boolean }>;
 const roleNames: Record<SessionRole, string> = { SUPER_ADMIN: "Super Admin", ADMIN: "Administrateur", MANAGER: "Manager", ADMISSIONS: "Commercial", AUDITOR: "Lecteur" };
 const commercialNavigation = new Set(["/manager/reports/dashboard", "/leads", "/leads?view=FOLLOW_UP", "/appointments", "/calls/queue", "/notifications", "/chat", "/manager/reports/commercial-performance"]);
 const ownTelephonyNavigation = { href: "/account/telephony", label: "Mon poste d’appel", icon: PhoneCallIcon };
@@ -72,13 +73,40 @@ export async function loadOwnTelephonyAccess(request: typeof fetch = fetch): Pro
   } catch { return false; }
 }
 
-export function visibleNavigation(roles: readonly SessionRole[]): typeof navigation[number][] {
+function roleNavigation(roles: readonly SessionRole[]): typeof navigation[number][] {
   if (roles.includes("SUPER_ADMIN")) return [...navigation];
   if (roles.includes("ADMIN")) return navigation.filter((item) => item.href !== "/admin/users");
   if (roles.includes("MANAGER")) return navigation.filter((item) => !item.href.startsWith("/admin/"));
   if (roles.includes("ADMISSIONS")) return navigation.filter((item) => commercialNavigation.has(item.href)).map((item) => item.href === "/manager/reports/dashboard" ? { ...item, href: "/manager/reports/dashboard?view=personal" } : item);
   if (roles.includes("AUDITOR")) return navigation.filter((item) => ["/leads", "/notifications", "/admin/audit"].includes(item.href));
   return [];
+}
+
+/** Presentation only: the API rechecks grants and campus/team scope on every read. */
+export function visibleNavigation(roles: readonly SessionRole[], reportingAccess?: ShellReportingAccess | null): typeof navigation[number][] {
+  const base = roleNavigation(roles);
+  // Undefined is retained for isolated legacy renderers; live shell passes null until server proof.
+  if (reportingAccess === undefined) return base;
+  const reportingRoutes = new Set(["/manager/reports/dashboard", "/manager/reports/dashboard?view=personal", "/manager/reports/commercial-funnel", "/manager/reports/commercial-performance"]);
+  const other = base.filter((item) => !reportingRoutes.has(item.href));
+  if (!roles.length || !reportingAccess) return other;
+  const dashboard = navigation.find((item) => item.href === "/manager/reports/dashboard")!;
+  const performance = navigation.find((item) => item.href === "/manager/reports/commercial-performance")!;
+  const pipeline = navigation.find((item) => item.href === "/manager/reports/commercial-funnel")!;
+  if (reportingAccess.canViewPilotageDashboard) return [dashboard, ...other.slice(0, 1), pipeline, ...other.slice(1), { ...performance, href: "/manager/reports/commercial-performance?view=global" }];
+  if (reportingAccess.canViewPersonalDashboard) return [{ ...dashboard, href: "/manager/reports/dashboard?view=personal" }, ...other, { ...performance, href: "/manager/reports/commercial-performance?view=personal" }];
+  return other;
+}
+
+export async function loadShellReportingAccess(request: typeof fetch = fetch, signal?: AbortSignal): Promise<ShellReportingAccess | null> {
+  try {
+    const response = await request("/api/crm/reports/dashboard/capabilities", { credentials: "same-origin", cache: "no-store", headers: { accept: "application/json" }, ...(signal ? { signal } : {}) });
+    if (!response.ok) return null;
+    const value: unknown = await response.json();
+    if (!value || typeof value !== "object" || !("canViewPersonalDashboard" in value) || !("canViewPilotageDashboard" in value)
+      || typeof value.canViewPersonalDashboard !== "boolean" || typeof value.canViewPilotageDashboard !== "boolean") return null;
+    return { canViewPersonalDashboard: value.canViewPersonalDashboard, canViewPilotageDashboard: value.canViewPilotageDashboard };
+  } catch { return null; }
 }
 
 export async function loadShellSession(request: typeof fetch = fetch): Promise<SessionProfile> {
@@ -159,6 +187,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   const [unreadNotifications, setUnreadNotifications] = useState<number>();
   const [sessionProfile, setSessionProfile] = useState<SessionProfile>({ roles: [] });
   const [ownTelephonyAllowed, setOwnTelephonyAllowed] = useState(false);
+  const [reportingAccess, setReportingAccess] = useState<ShellReportingAccess | null>(null);
   const mobileMenuRef = useRef<HTMLButtonElement>(null);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -168,6 +197,24 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     if (isAuthPath) return;
     void loadShellSession().then(setSessionProfile).catch(() => setSessionProfile({ roles: [] }));
   }, [isAuthPath]);
+
+  useEffect(() => {
+    if (isAuthPath) { setReportingAccess(null); return; }
+    let current = true;
+    let controller: AbortController | undefined;
+    const refresh = (): void => {
+      controller?.abort();
+      controller = new AbortController();
+      const pending = controller;
+      setReportingAccess(null);
+      void loadShellReportingAccess(fetch, pending.signal).then((value) => {
+        if (current && !pending.signal.aborted) setReportingAccess(value);
+      });
+    };
+    refresh();
+    globalThis.addEventListener("focus", refresh);
+    return (): void => { current = false; controller?.abort(); globalThis.removeEventListener("focus", refresh); };
+  }, [isAuthPath, pathname, profileOpen]);
 
   useEffect(() => {
     let current = true;
@@ -246,6 +293,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     professionalEmail={sessionProfile.professionalEmail}
     scopeLabel={sessionProfile.scopeLabel}
     ownTelephonyAllowed={ownTelephonyAllowed}
+    reportingAccess={reportingAccess}
     onCollapse={() => setCollapsed((value) => !value)}
     onMobileOpen={() => setMobileOpen(true)}
     onMobileClose={closeMobileMenu}
@@ -273,6 +321,7 @@ type AppShellViewProps = Readonly<{
   professionalEmail?: string | undefined;
   scopeLabel?: string | undefined;
   ownTelephonyAllowed?: boolean;
+  reportingAccess?: ShellReportingAccess | null;
   onCollapse: () => void;
   onMobileOpen: () => void;
   onMobileClose: () => void;
@@ -299,6 +348,7 @@ export function AppShellView({
   professionalEmail,
   scopeLabel = "Périmètre contrôlé",
   ownTelephonyAllowed = false,
+  reportingAccess,
   onCollapse,
   onMobileOpen,
   onMobileClose,
@@ -311,7 +361,7 @@ export function AppShellView({
   onSearchSelect,
 }: AppShellViewProps): React.JSX.Element {
   const canUseOwnTelephony = ownTelephonyAllowed && ownTelephonyRoleAllowed(sessionRoles);
-  const allowedNavigation = [...visibleNavigation(sessionRoles), ...(canUseOwnTelephony ? [ownTelephonyNavigation] : [])];
+  const allowedNavigation = [...visibleNavigation(sessionRoles, reportingAccess), ...(canUseOwnTelephony ? [ownTelephonyNavigation] : [])];
   const canManageUsers = sessionRoles.includes("SUPER_ADMIN");
   const roleLabel = sessionRoles[0] ? roleNames[sessionRoles[0]] : "Session CRM";
   const profileLabel = professionalEmail ?? roleLabel;

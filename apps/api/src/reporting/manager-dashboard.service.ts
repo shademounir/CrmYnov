@@ -51,7 +51,7 @@ export class ManagerDashboardService {
     private readonly persistence?: ReportingPersistenceService,
   ) {}
 
-  async readForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): Promise<ManagerDashboardReport> {
+  async readForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date(), additionalKeys: readonly string[] = []): Promise<ManagerDashboardReport> {
     if (!this.persistence) return this.read(raw, principal, correlationId, now);
     return this.persistence.withReportingScope(principal, async (current) => {
       const canonical = await this.persistence!.normalizeCampusQuery(current, raw);
@@ -59,7 +59,7 @@ export class ManagerDashboardService {
       const risks = await this.risks.readForApi(query, current, correlationId, now);
       const report = this.read(canonical, current, correlationId, now, risks);
       return { ...report, persistence: await this.persistence!.evidence(current, report.filters), capabilities: await this.persistence!.capabilities(current, report.filters) };
-    });
+    }, ["reporting.pilotage.view", ...additionalKeys]);
   }
 
   async readPersonalForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): Promise<PersonalDashboardReport> {
@@ -72,7 +72,7 @@ export class ManagerDashboardService {
   }
 
   async exportAggregatedForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): Promise<string> {
-    const report = await this.readForApi(raw, principal, correlationId, now);
+    const report = await this.readForApi(raw, principal, correlationId, now, ["reporting.export"]);
     return this.serializeAggregated(report);
   }
 

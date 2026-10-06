@@ -8,9 +8,10 @@ import { PageHeader } from "../_components/ui/page-header";
 import DashboardReturnLink from "./dashboard-return-link";
 import { LeadDirectory } from "./lead-directory";
 import { SavedViews } from "./saved-views";
-import { LeadCreationDrawer } from "./lead-creation";
+import { LeadCreateAccess } from "./lead-create-access";
 import { leadPageMode, type LeadPageMode } from "./lead-page-mode";
-import { LeadFilterForm } from "./lead-filter-form";
+import { LeadFilterChips, LeadFilterForm } from "./lead-filter-form";
+import { leadListHref, leadListResetHref, leadProvenanceViews, leadWorkViews } from "./lead-list-query";
 
 function LeadResults({ queryString, mode }: Readonly<{ queryString: string; mode: LeadPageMode }>): React.JSX.Element {
   const query = new URLSearchParams(queryString);
@@ -18,21 +19,13 @@ function LeadResults({ queryString, mode }: Readonly<{ queryString: string; mode
   if (!query.has("pageSize")) query.set("pageSize", "25");
   const followUp = mode === "follow-up";
   return <LeadDirectory
+    key={query.toString()}
     endpoint={`/api/crm/leads?${query.toString()}`}
-    ariaLabel={followUp ? "Relances arrivées à échéance issues de PostgreSQL" : "Leads issus de PostgreSQL"}
+    ariaLabel={followUp ? "Relances arrivées à échéance dans votre périmètre" : "Leads visibles dans votre périmètre"}
     emptyMessage={followUp ? "Aucune relance arrivée à échéance ne correspond aux filtres." : "Aucun lead ne correspond aux filtres."}
     context={mode}
   />;
 }
-
-const workViews = [
-  ["ALL", "Tous les leads"],
-  ["MINE", "Mes leads"],
-  ["FOLLOW_UP", "À relancer"],
-  ["UNASSIGNED", "Non affectés"],
-  ["NO_ACTIVITY", "Sans activité"],
-  ["CLOSED", "Clôturés"],
-] as const;
 
 function LeadsPageContent(): React.JSX.Element {
   const searchParams = useSearchParams();
@@ -40,6 +33,9 @@ function LeadsPageContent(): React.JSX.Element {
   const mode = leadPageMode(current.get("view"));
   const followUp = mode === "follow-up";
   const activeView = current.get("view")?.toUpperCase() ?? "ALL";
+  const activeProvenance = current.get("savedView")?.toUpperCase();
+  const sharedView = Boolean(current.get("sharedViewId"));
+  const importErrors = activeProvenance === "IMPORT_ERRORS" && !sharedView;
   const results = <Suspense fallback={<section className="connected-state" aria-busy="true"><span className="ui-skeleton connected-state__skeleton" /><span className="sr-only">Préparation des filtres…</span></section>}><LeadResults queryString={current.toString()} mode={mode} /></Suspense>;
 
   return <main className={`leads-page${followUp ? " leads-page--follow-up" : ""}`}>
@@ -47,24 +43,25 @@ function LeadsPageContent(): React.JSX.Element {
       eyebrow={followUp ? "Suivi commercial" : "Base prospects"}
       title={followUp ? "Relances" : "Tous les leads"}
       description={followUp ? "Traitez les échéances arrivées à terme, de la plus ancienne à la plus récente." : "Centralisez, qualifiez et affectez chaque opportunité."}
-      actions={followUp ? <Link className="secondary-button" href="/leads"><ArrowLeft size={18} aria-hidden="true" /> Tous les leads</Link> : <LeadCreationDrawer />}
+      actions={<>{followUp ? <Link className="secondary-button" href={leadListHref(current, { view: "ALL", sharedViewId: null })}><ArrowLeft size={18} aria-hidden="true" /> Tous les leads</Link> : null}<LeadCreateAccess /></>}
     />
     <DashboardReturnLink />
-    <nav className="saved-views" aria-label="Vues Leads">{workViews.map(([view, label]) => <Link key={view} href={`/leads?view=${view}`} className={activeView === view ? "active" : undefined} aria-current={activeView === view ? "page" : undefined}>{label}</Link>)}</nav>
+    <nav className="saved-views lead-work-views" aria-label="Files de travail Leads">{leadWorkViews.map(([view, label]) => sharedView
+      ? <span key={view} aria-disabled="true">{label}</span>
+      : <Link key={view} prefetch={false} href={leadListHref(current, { view })} className={activeView === view ? "active" : undefined} aria-current={activeView === view ? "page" : undefined}>{label}</Link>)}</nav>
     <section className="panel leads-work-panel">
-      {followUp ? <>
+      <LeadFilterChips current={current} />
+      <LeadFilterForm key={current.toString()} current={current} mode={mode} />
+      <nav className="provenance-views" aria-label="Vues par provenance">
+        {leadProvenanceViews.map(([view, label]) => sharedView ? <span key={view} aria-disabled="true">{label}</span> : <Link key={view} prefetch={false} href={leadListHref(current, { savedView: activeProvenance === view ? null : view })} className={activeProvenance === view ? "active" : undefined} aria-current={activeProvenance === view ? "page" : undefined}>{label}</Link>)}
+        <span className="lead-import-unavailable" aria-disabled="true" title="L’API ne restitue pas les erreurs d’import dans la liste Leads.">Imports en erreur · indisponible</span>
+      </nav>
+      {importErrors ? <section className="ui-state" role="status"><h2>File d’erreurs d’import indisponible</h2><p>L’API Leads ne restitue pas les erreurs d’import. Cette vue ne peut pas être interprétée comme « aucun import en erreur ».</p><Link className="secondary-button" href={leadListHref(current, { savedView: null })}>Revenir à la liste des leads</Link></section> : followUp ? <>
         <section className="follow-up-context" aria-label="Priorité de la file"><div><strong>Échéances à traiter</strong><span>La date affichée est restituée en heure de Casablanca.</span></div><span>Ordre : plus ancienne d’abord</span></section>
         {results}
-        <LeadFilterForm current={current} mode={mode} />
-        <details className="lead-view-tools"><summary>Gérer mes vues et partages</summary><LeadSavedViews current={current} resetHref="/leads?view=FOLLOW_UP" /></details>
-      </> : <>
-        <LeadSavedViews current={current} resetHref="/leads" />
-        <LeadFilterForm current={current} mode={mode} />
-        <nav className="provenance-views" aria-label="Vues par provenance"><Link href="/leads?savedView=FORMINATOR_ZAPIER">Forminator/Zapier</Link><Link href="/leads?savedView=YNOV_MA_LEGACY">Ynov.ma historique</Link><Link href="/leads?savedView=PHONE_CALLS">Appels</Link><Link href="/leads?savedView=PHYSICAL_VISITS">Visites</Link><Link href="/leads?savedView=JOBINTECH">JobInTech</Link><Link href="/leads?savedView=UNCLASSIFIED_SOURCES">Sources non classifiées</Link><Link href="/leads?savedView=INCOMPLETE">À compléter</Link><Link href="/leads?savedView=IMPORT_ERRORS">Imports en erreur</Link></nav>
-        {results}
-      </>}
+      </> : results}
+      <details className="lead-view-tools"><summary>Gérer mes vues et partages</summary><LeadSavedViews current={current} resetHref={leadListResetHref(current)} /></details>
     </section>
-    <nav className="api-pagination-note" aria-label="Pagination">Pagination pilotée par l’API</nav>
   </main>;
 }
 

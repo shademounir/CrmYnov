@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import type { Principal } from "../auth/auth.types.js";
 import { leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
+import { hasPilotageReportingScope } from "./reporting-authority.js";
 
 export const REPORTING_TIMEZONE = "Africa/Casablanca" as const;
 export const reportingPeriods = ["7d", "30d", "90d", "custom"] as const;
@@ -10,6 +11,19 @@ export const reportingChannels = ["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "O
 export interface InteractiveReportingQuery {
   period?: string; from?: string; to?: string; campus?: string; campaign?: string; program?: string;
   source?: string; channel?: string; adviserId?: string; status?: string; view?: string;
+}
+
+/** Mode is derived under the permission fence from the current account. An
+ * omitted mode is personal only for the legacy Commercial-only audience. */
+export function isPersonalReportingRequest(raw: Pick<InteractiveReportingQuery, "view">, principal: Principal): boolean {
+  if (raw.view && !(reportingViews as readonly string[]).includes(raw.view)) throw new BadRequestException({ code: "reporting_view_invalid" });
+  return raw.view === "personal" || !raw.view && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+}
+export function reportingScopeRequirements(raw: Pick<InteractiveReportingQuery, "view">, principal: Principal): readonly string[] {
+  return isPersonalReportingRequest(raw, principal) ? [] : ["reporting.pilotage.view"];
+}
+export function normalizeScopedReportingQuery(raw: Record<string, string | undefined>, principal: Principal, now = new Date()): InteractiveReportingQuery {
+  return normalizeReportingQuery(isPersonalReportingRequest(raw, principal) ? { ...raw, view: "personal", adviserId: principal.userId } : { ...raw, view: "global" }, principal, now);
 }
 
 const allowedKeyList = ["period", "from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "view"] as const;
@@ -142,5 +156,5 @@ function boundary(value: string, code: string): string {
   return parsed.toISOString();
 }
 function isAdviserOnly(principal: Principal): boolean {
-  return principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+  return !hasPilotageReportingScope(principal) && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
 }
