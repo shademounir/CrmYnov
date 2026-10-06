@@ -14,6 +14,8 @@ import { PrismaService } from "../src/persistence/prisma.service.js";
 import { referenceKey } from "../src/references/reference.contract.js";
 import type { ManagerDashboardReport, PersonalDashboardReport } from "../src/reporting/manager-dashboard.service.js";
 import type { RecentDashboardLeads } from "../src/reporting/reporting-persistence.service.js";
+import type { DashboardCapabilities } from "../src/reporting/reporting-persistence.service.js";
+import type { PermissionScope } from "../src/permissions/dynamic-contract.js";
 
 type Actor = Collaborator & { email: string; password: string };
 type Session = { token: string; sessionId: string };
@@ -91,9 +93,9 @@ test("CRMY-162 real PostgreSQL dashboard freshness, cohort parity and live autho
     const query = (campus = f.campus.code): string => new URLSearchParams({ ...interval, campus }).toString();
     const dashboard = (token = manager.token, campus = f.campus.code, instance = 1): Promise<HttpResult<ManagerDashboardReport>> => http("GET", `/reports/manager-dashboard?${query(campus)}`, token, undefined, instance);
     const recent = (token = manager.token, campus = f.campus.code, instance = 1): Promise<HttpResult<RecentDashboardLeads>> => http("GET", `/reports/dashboard/recent-leads?${query(campus)}&limit=10`, token, undefined, instance);
-    const setGrants = async (role: "MANAGER" | "ADMISSIONS", patch: Record<string, "NONE" | "OWN" | "CAMPUS">): Promise<void> => {
+    const setGrants = async (role: "MANAGER" | "ADMISSIONS" | "SUPER_ADMIN", patch: Record<string, PermissionScope>, campus = f.campus.id): Promise<void> => {
       const permissions = apps[0]!.get(DynamicPermissionService), actor: Principal = { userId: f.admin.id, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: admin.sessionId };
-      const target = { kind: "ROLE" as const, role, campus: f.campus.id }, previous = await permissions.read(actor, target);
+      const target = { kind: "ROLE" as const, role, campus }, previous = await permissions.read(actor, target);
       await permissions.save(actor, { ...target, expectedVersion: previous.version, grants: { ...previous.grants, ...patch }, confirmed: true, reason: "ACCESS_REVIEW" });
     };
     const owned = f.leads[0]!, second = f.leads[1]!, digital = f.leads[2]!, foreign = f.leads[3]!;
@@ -181,6 +183,63 @@ test("CRMY-162 real PostgreSQL dashboard freshness, cohort parity and live autho
       assert.equal((await http("GET", `/reports/personal-dashboard?${query()}`, commercial.token, undefined, 1)).status, 403);
       assert.equal((await recent(commercial.token)).status, 403);
       assert.equal(await f.db.lead.count(), 6, "Read/refusal checks cannot manufacture additional business rows");
+    });
+
+    await t.test("CRMY-178 explicit Commercial pilotage uses the same real dashboard, with live revocation and no admin authority", async () => {
+      await setGrants("ADMISSIONS", { "reporting.view": "CAMPUS", "lead.view": "CAMPUS" });
+      await f.db.admissionsResponsibility.create({ data: { userId: f.commercial.id, campus: f.campus.code, active: true } });
+      assert.equal((await dashboard(commercial.token)).status, 403, "An active Admissions agenda profile is not director/pilotage authority");
+      const shell = (): Promise<HttpResult<DashboardCapabilities>> => http("GET", "/reports/dashboard/capabilities", commercial.token, undefined, 1);
+      assert.equal((await shell()).body.canViewPilotageDashboard, false);
+      // A Super Admin must first open the role envelope; a campus toggle cannot
+      // override the global NONE. Only this nonce-verified synthetic DB changes.
+      await setGrants("ADMISSIONS", { "reporting.pilotage.view": "CAMPUS" }, "GLOBAL");
+      await setGrants("ADMISSIONS", { "reporting.pilotage.view": "CAMPUS" });
+      const dueAt = new Date(Date.now() - 60_000);
+      await f.db.leadFollowUp.create({ data: { leadId: second.id, ownerId: f.secondCommercial.id, dueAt, createdAt: new Date(dueAt.valueOf() - 60_000), state: "DUE", reason: "Synthetic pilotage projection", idempotencyKey: `pilotage-${f.suffix}-${second.id}`, fingerprint: createHash("sha256").update(second.id).digest("hex") } });
+      for (const lead of [second, foreign]) await f.db.leadClosureRequest.create({ data: { leadId: lead.id, target: "ENROLLED", reason: "ADMISSION_CONFIRMED", comment: "Synthetic projection only", evidence: ["SYNTHETIC"], requesterId: lead.assignedToId! } });
+      await f.db.reassignmentRequest.create({ data: { leadId: second.id, currentOwnerId: f.secondCommercial.id, targetUserId: f.commercial.id, reason: "Synthetic projection only", moveOpenTasks: false, requestedBy: f.secondCommercial.id } });
+      const expected = await dashboard(), actual = await dashboard(commercial.token);
+      assert.equal(actual.status, 200); assert.equal(actual.body.definitionVersion, expected.body.definitionVersion);
+      assert.deepEqual(actual.body.cards, expected.body.cards);
+      assert.deepEqual(actual.body.panels.operationalRisks.queues, expected.body.panels.operationalRisks.queues);
+      assert.deepEqual(actual.body.panels.performance.advisers, expected.body.panels.performance.advisers);
+      assert.equal(actual.body.cards.uniqueLeads, 2); assert.equal(actual.body.cards.overdueFollowUps, 2);
+      assert.equal(actual.body.panels.operationalRisks.queues.pendingClosures, 2); assert.equal(actual.body.panels.operationalRisks.queues.pendingReassignments, 1);
+      assert.equal((await shell()).body.canViewPilotageDashboard, true);
+      assert.deepEqual((await f.db.collaborator.findUniqueOrThrow({ where: { id: f.commercial.id } })).roles, ["ADMISSIONS"]);
+      assert.equal((await http("GET", "/admin/role-permissions/catalogue", commercial.token, undefined, 1)).status, 403);
+      assert.equal((await http("GET", "/users", commercial.token, undefined, 1)).status, 403);
+      assert.equal((await dashboard(commercial.token, f.otherCampus.id)).status, 403);
+      assert.equal((await http("GET", `/reports/manager-dashboard?${query()}&role=SUPER_ADMIN`, commercial.token, undefined, 1)).status, 400);
+      const fullRecent = await http<RecentDashboardLeads>("GET", `/reports/dashboard/recent-leads?${query()}&view=global`, commercial.token, undefined, 1);
+      assert.equal(fullRecent.status, 200); assert.deepEqual(new Set(fullRecent.body.leads.map((row) => row.id)), new Set([owned.id, second.id]));
+      await setGrants("ADMISSIONS", { "reporting.export": "NONE" });
+      assert.equal((await shell()).body.canExportReporting, false);
+      const deniedExport = await fetch(`${origins[1]}/reports/manager-dashboard/export?${query()}`, { headers: { authorization: `Bearer ${commercial.token}` }, signal: AbortSignal.timeout(20_000) });
+      assert.equal(deniedExport.status, 403); assert.equal((await dashboard(commercial.token)).status, 200);
+      await setGrants("ADMISSIONS", { "reporting.pilotage.view": "OWN" });
+      assert.equal((await dashboard(commercial.token)).body.cards.uniqueLeads, 1);
+      await setGrants("ADMISSIONS", { "reporting.pilotage.view": "NONE" });
+      assert.equal((await dashboard(commercial.token)).status, 403); assert.equal((await shell()).body.canViewPilotageDashboard, false);
+      await setGrants("ADMISSIONS", { "reporting.view": "NONE" });
+      const creationOnly = await shell(); assert.equal(creationOnly.status, 200); assert.equal(creationOnly.body.canCreateLead, true); assert.equal(creationOnly.body.canViewPersonalDashboard, false);
+    });
+
+    await t.test("CRMY-178 TEAM pilotage uses explicit persisted responsibility, not historical teamId, and reserved GLOBAL stays independent", async () => {
+      const teamId = `pilotage-team-${f.suffix}`;
+      for (const user of [f.manager, f.commercial]) await f.db.collaborator.update({ where: { id: user.id }, data: { teamId } });
+      await setGrants("MANAGER", { "reporting.view": "TEAM", "reporting.pilotage.view": "TEAM", "lead.view": "TEAM" });
+      assert.equal((await dashboard()).status, 403);
+      const permissions = apps[0]!.get(DynamicPermissionService), actor: Principal = { userId: f.admin.id, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: admin.sessionId };
+      const input = { teamId, campusId: f.campus.id, managerId: f.manager.id, active: true, expectedVersion: 0, confirmed: true };
+      await permissions.teamResponsibilities(actor, input);
+      const allowed = await dashboard(); assert.equal(allowed.status, 200); assert.equal(allowed.body.cards.uniqueLeads, 1);
+      await permissions.teamResponsibilities(actor, { ...input, active: false, expectedVersion: 1 });
+      assert.equal((await dashboard()).status, 403);
+      await setGrants("SUPER_ADMIN", { "reporting.global.view": "NONE" }, "GLOBAL");
+      assert.equal((await http("GET", `/reports/manager-dashboard?${new URLSearchParams(interval)}`, admin.token, undefined, 1)).status, 403);
+      assert.equal((await dashboard(admin.token)).status, 200, "A reserved global revocation does not erase explicitly campus-bounded reporting");
     });
   } finally {
     for (const app of apps) { (app.getHttpServer() as Server).closeAllConnections(); await app.close(); }

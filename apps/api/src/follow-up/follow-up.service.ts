@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { NotificationService } from "../notifications/notification.service.js";
 import { FollowUpPersistenceRepository } from "./follow-up-persistence.repository.js";
+import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 
 export type FollowUpState = "SCHEDULED" | "DUE" | "COMPLETED" | "CANCELLED";
 export interface FollowUpRecord { id: string; leadId: string; ownerId: string; dueAt: string; state: FollowUpState; reason: string; version: number; createdAt: string; updatedAt: string }
@@ -181,6 +182,7 @@ export class FollowUpService implements OnModuleInit {
       .sort((a, b) => a.dueAt.localeCompare(b.dueAt) || a.id.localeCompare(b.id)).map((item) => ({ ...item }));
   }
   reportingSnapshot(principal: Principal): FollowUpRecord[] {
+    if (hasPilotageReportingScope(principal)) return [...this.items.values()].filter((item) => principal.permissionLeadIds!.has(item.leadId)).map((item) => ({ ...item }));
     const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     if (!manager && !principal.roles.includes("ADMISSIONS")) throw new ForbiddenException({ code: "reporting_role_required" });
     return [...this.items.values()].filter((item) => manager || item.ownerId === principal.userId)

@@ -137,10 +137,12 @@ export class DynamicPermissionRepository {
         const existing = new Set(latest.grants.map((grant) => grant.permission));
         const missingQualification = !existing.has("lead.qualification.update");
         const missingFreeCall = !existing.has("telephony.free-call.create");
-        if (!missingQualification && !missingFreeCall) continue;
+        const missingPilotage = !existing.has("reporting.pilotage.view");
+        if (!missingQualification && !missingFreeCall && !missingPilotage) continue;
         const target = { kind: row.kind, role: row.role, campus: row.campus } as ConfigurationTarget;
         validateTarget(target);
-        const previous = historicalGrants(Object.fromEntries(latest.grants.map((grant) => [grant.permission, grant.scope])), target);
+        const persistedPrevious = Object.fromEntries(latest.grants.map((grant) => [grant.permission, grant.scope]));
+        const previous = historicalGrants(persistedPrevious, target);
         const defaultScope = (): PermissionScope => target.kind === "CEILING" || target.role === "SUPER_ADMIN"
           ? target.campus === "GLOBAL" ? "GLOBAL" : "CAMPUS"
           : target.role === "ADMIN" ? "CAMPUS" : "NONE";
@@ -152,7 +154,7 @@ export class DynamicPermissionRepository {
         await tx.rolePermissionVersion.create({ data: {
           configurationId: row.id, number: version,
           grants: { create: Object.entries(next).map(([permission, grantScope]) => ({ permission, scope: grantScope })) },
-          audits: { create: { actorId: "00000000-0000-4000-8000-000000000165", actorRoles: ["SYSTEM"], reason: "CATALOGUE_UPGRADE", previous, next } },
+          audits: { create: { actorId: "00000000-0000-4000-8000-000000000165", actorRoles: ["SYSTEM"], reason: "CATALOGUE_UPGRADE", previous: persistedPrevious, next } },
         } });
         upgraded += 1;
       }

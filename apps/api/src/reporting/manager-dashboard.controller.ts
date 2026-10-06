@@ -2,11 +2,11 @@ import { BadRequestException, Controller, Get, Header, Inject, Query, Req, UseGu
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { ManagerDashboardService, type ManagerDashboardReport, type PersonalDashboardReport } from "./manager-dashboard.service.js";
-import { ReportingPersistenceService, type RecentDashboardLeads } from "./reporting-persistence.service.js";
+import { ReportingPersistenceService, type DashboardCapabilities, type RecentDashboardLeads } from "./reporting-persistence.service.js";
 
 @Controller("reports/manager-dashboard")
 @UseGuards(RbacGuard)
-@RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
+@RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
 export class ManagerDashboardController {
   constructor(@Inject(ManagerDashboardService) private readonly dashboard: ManagerDashboardService) {}
   @Get()
@@ -37,7 +37,7 @@ export class PersonalDashboardController {
 
 @Controller("reports/dashboard/recent-leads")
 @UseGuards(RbacGuard)
-@RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
+@RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
 export class DashboardRecentLeadsController {
   constructor(@Inject(ReportingPersistenceService) private readonly persistence: ReportingPersistenceService) {}
   @Get()
@@ -45,5 +45,16 @@ export class DashboardRecentLeadsController {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     const { limit, ...filters } = query;
     return this.persistence.recentLeads(request.principal, filters, limit === undefined ? 5 : Number(limit));
+  }
+}
+
+@Controller("reports/dashboard/capabilities")
+@UseGuards(RbacGuard)
+export class DashboardCapabilitiesController {
+  constructor(@Inject(ReportingPersistenceService) private readonly persistence: ReportingPersistenceService) {}
+  @Get()
+  read(@Query() query: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): Promise<DashboardCapabilities> {
+    if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
+    return this.persistence.dashboardCapabilities(request.principal, query);
   }
 }

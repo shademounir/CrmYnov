@@ -8,6 +8,7 @@ const managerTelephony: OwnTelephonySnapshot = {
 };
 
 const managerReport = {
+  capabilities: { canCreateLead: true, canReadRecentLeads: true, canViewManagerDashboard: true, canExportReporting: true },
   definitionVersion: "manager-dashboard-v1", timezone: "Africa/Casablanca", filters: { period: "7d", campus: "campus-a" },
   cards: { uniqueLeads: 3, enrolled: 1, unassigned: 1, overdueFollowUps: 1, activeAlerts: 1 },
   trends: [{ date: "2026-08-24", leadsCreated: 3, leadsEnrolled: 1 }],
@@ -20,12 +21,14 @@ const managerReport = {
   export: { href: "/reports/manager-dashboard/export?period=7d&campus=campus-a", schemaVersion: "manager-dashboard-export-v1", aggregatedOnly: true },
 };
 const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" },
+  capabilities: { canCreateLead: true, canReadRecentLeads: true, canViewManagerDashboard: true, canExportReporting: true },
   performance: { advisers: [{ adviserId: "adviser-synthetic", activeLoad: 2, primaryLeadCount: 3, secondaryLeadCount: 1, followUps: { overdue: 1 } }] },
   contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
 
 async function mockReporting(page: Page): Promise<void> {
   // Reporting is isolated from the API; include shared shell and Admissions capabilities.
   await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "manager@example.invalid", mustChangeSecret: false }) }));
+  await page.route("**/api/crm/reports/dashboard/capabilities", (route) => route.fulfill({ json: { canViewPersonalDashboard: true, canViewPilotageDashboard: true } }));
   await page.route("**/api/crm/telephony/me", (route) => {
     expect(route.request().method()).toBe("GET");
     return route.fulfill({ status: 200, contentType: "application/json", headers: { "cache-control": "private, no-store" }, body: JSON.stringify(managerTelephony) });
@@ -34,7 +37,10 @@ async function mockReporting(page: Page): Promise<void> {
   await page.route("**/api/crm/notifications?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], unread: 0, total: 0, page: 1, pageSize: 1 }) }));
   await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(managerReport) }));
   await page.route("**/api/crm/reports/personal-dashboard?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(personalReport) }));
-  await page.route("**/api/crm/leads?*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }));
+  await page.route("**/api/crm/leads?*", (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], page: Number(query.get("page") ?? "1"), pageSize: Number(query.get("pageSize") ?? "25"), total: 0 }) });
+  });
   await page.route("**/api/crm/lead-views", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route("**/api/crm/view-sharing/received", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route("**/api/crm/view-sharing/audiences", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
@@ -131,7 +137,8 @@ test("dashboard cards, actions and opened panels stay readable at five widths", 
 for (const zeroCounts of [false, true]) {
   test(`personal performance remains readable and keyboard-accessible at five widths (${zeroCounts ? "zero" : "nonzero"})`, async ({ page }) => {
     await mockReporting(page);
-    await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["COMMERCIAL"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "adviser@example.invalid", mustChangeSecret: false }) }));
+    await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "adviser@example.invalid", mustChangeSecret: false }) }));
+    await page.route("**/api/crm/reports/dashboard/capabilities", (route) => route.fulfill({ json: { canViewPersonalDashboard: true, canViewPilotageDashboard: false } }));
     const values = zeroCounts ? [0, 0, 0, 0] : [3, 1, 2, 1];
     const scoped = { ...personalReport,
       performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0], secondaryLeadCount: values[1], activeLoad: values[2], followUps: { overdue: values[3] } }] },
@@ -169,6 +176,7 @@ for (const zeroCounts of [false, true]) {
 }
 
 test("hostile labels remain inert and external destinations are refused", async ({ page }) => {
+  await mockReporting(page);
   const hostile = `<img src=x onerror=alert(1)><script>window.__unsafe = true</script>`;
   const hostileReport = {
     ...managerReport,

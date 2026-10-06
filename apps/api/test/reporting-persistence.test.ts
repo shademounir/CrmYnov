@@ -12,10 +12,16 @@ import { AuditService } from "../src/audit/audit.service.js";
 import type { PrismaService } from "../src/persistence/prisma.service.js";
 import type { DynamicPermissionRepository } from "../src/permissions/dynamic-repository.js";
 import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
-import { configurationKey, type ConfigurationSnapshot, type ConfigurationTarget } from "../src/permissions/dynamic-contract.js";
+import { configurationKey, type ConfigurationSnapshot, type ConfigurationTarget, type PermissionScope } from "../src/permissions/dynamic-contract.js";
 import { referenceKey } from "../src/references/reference.contract.js";
 import { ReportingPersistenceGuard } from "../src/reporting/reporting-persistence.guard.js";
 import { ReportingPersistenceService } from "../src/reporting/reporting-persistence.service.js";
+import { hasPilotageReportingScope } from "../src/reporting/reporting-authority.js";
+import { CommercialPerformanceController } from "../src/reporting/commercial-performance.controller.js";
+import { SharedContributionController } from "../src/reporting/shared-contribution.controller.js";
+import type { InteractiveReportingQuery } from "../src/reporting/reporting-filter.js";
+import { DashboardCapabilitiesController } from "../src/reporting/manager-dashboard.controller.js";
+import { dashboardCapabilityFields, dashboardCapabilityPaths } from "../src/reporting/dashboard-capabilities.openapi.js";
 
 const campusId = "00000000-0000-4000-8000-000000000162";
 const foreignId = "00000000-0000-4000-8000-000000000163";
@@ -29,12 +35,13 @@ const row = (id: string, campus: string, source = "WEB_FORM", assignedToId = man
 });
 
 function fixture(): { service: ReportingPersistenceService; requests: Array<{ model: string; where: unknown }>;
-  account: { id: string; active: boolean; roles: string[]; campusId: string; teamId: null; firstLoginRequired: boolean; authenticationVersion: number };
-  rows: LeadReportingRow[]; configure: (role: "MANAGER" | "ADMISSIONS", grants: Record<string, "NONE" | "OWN" | "CAMPUS">) => void; fail: () => void } {
+  account: { id: string; active: boolean; roles: string[]; campusId: string; teamId: string | null; firstLoginRequired: boolean; authenticationVersion: number };
+  rows: LeadReportingRow[]; configure: (role: "MANAGER" | "ADMISSIONS" | "AUDITOR", grants: Record<string, PermissionScope>) => void; fail: () => void; responsibility: { active: boolean } } {
   const requests: Array<{ model: string; where: unknown }> = [];
   let configurations: ConfigurationSnapshot[] = [];
   let failCount = false;
-  const account = { id: manager.userId, active: true, roles: ["MANAGER"], campusId, teamId: null, firstLoginRequired: false, authenticationVersion: 1 };
+  const account = { id: manager.userId, active: true, roles: ["MANAGER"], campusId, teamId: null as string | null, firstLoginRequired: false, authenticationVersion: 1 };
+  const responsibility = { active: true };
   const campus = { id: campusId, kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC", label: "Campus synthétique" };
   const foreign = { ...campus, id: foreignId, code: "FOREIGN", label: "Campus étranger" };
   const rows = [row("lead-digital", campus.code), row("lead-phone", campus.code, "PHONE_CALL", "other-owner"), row("lead-foreign", foreign.code)];
@@ -45,7 +52,8 @@ function fixture(): { service: ReportingPersistenceService; requests: Array<{ mo
   };
   const tx = {
     collaborator: { findUnique: ({ where }: { where: { id: string } }): Promise<typeof account> => Promise.resolve(where.id === manager.userId ? account : { ...account, id: where.id }),
-      findMany: ({ where }: { where: { id: { in: string[] } } }): Promise<Array<{ id: string; professionalDisplayName: string | null }>> => Promise.resolve(where.id.in.map((id) => ({ id, professionalDisplayName: id === "other-owner" ? null : "Conseiller synthétique" }))) },
+      findMany: ({ where }: { where: { id?: { in: string[] }; campusId?: { in: string[] } } }): Promise<Array<{ id: string; professionalDisplayName: string | null }>> => Promise.resolve((where.id?.in ?? [manager.userId, "other-owner"]).map((id) => ({ id, professionalDisplayName: id === "other-owner" ? null : "Conseiller synthétique" }))) },
+    teamResponsibility: { findUnique: (): Promise<typeof responsibility> => Promise.resolve(responsibility) },
     localSession: { findUnique: (): Promise<{ active: boolean; collaboratorId: string; authenticationVersion: number; expiresAt: Date }> => Promise.resolve({ active: true, collaboratorId: manager.userId, authenticationVersion: 1, expiresAt: new Date("2099-01-01") }) },
     crmReference: { findUnique: ({ where }: { where: { id: string } }): Promise<typeof campus | undefined> => Promise.resolve([campus, foreign].find((value) => value.id === where.id)) },
     crmReferenceKey: { findMany: ({ where, include }: { where: { referenceId?: string; key?: string }; include?: unknown }): Promise<Array<{ reference: typeof campus } | { key: string }>> => {
@@ -64,11 +72,11 @@ function fixture(): { service: ReportingPersistenceService; requests: Array<{ mo
   const leads = { ...refreshNoop, reportingSnapshot: (principal: Principal): LeadReportingRow[] => rows.filter((value) => principal.permissionLeadIds?.has(value.id)) };
   const service = new ReportingPersistenceService({ client: tx } as unknown as PrismaService, leads as unknown as LeadService,
     refreshNoop as ReassignmentService, refreshNoop as FollowUpService, refreshNoop as ClosureService, repository as unknown as DynamicPermissionRepository);
-  const configure = (role: "MANAGER" | "ADMISSIONS", grants: Record<string, "NONE" | "OWN" | "CAMPUS">): void => {
+  const configure = (role: "MANAGER" | "ADMISSIONS" | "AUDITOR", grants: Record<string, PermissionScope>): void => {
     const target: ConfigurationTarget = { kind: "ROLE", role, campus: "GLOBAL" };
     configurations = [{ ...target, id: configurationKey(target), version: 1, grants: { ...defaultConfiguration(target), ...grants } }];
   };
-  return { service, requests, account, rows, configure, fail: (): void => { failCount = true; } };
+  return { service, requests, account, rows, configure, responsibility, fail: (): void => { failCount = true; } };
 }
 
 test("refreshes all four persisted projections; missing PostgreSQL is unavailable, not zero", async () => {
@@ -123,6 +131,97 @@ test("PostgreSQL count failure is a controlled unavailable error, not a successf
   const f = fixture(); f.fail(); await assert.rejects(() => f.service.evidence(manager, {}), hasCode("reporting_store_unavailable"));
 });
 
+test("explicit Commercial pilotage grant gives a bounded cohort, not admin identity, and revokes immediately", async () => {
+  const f = fixture(); f.account.roles = ["ADMISSIONS"];
+  const staleActor: Principal = { ...manager, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }] };
+  await assert.rejects(() => f.service.withReportingScope(staleActor, () => {}, ["reporting.pilotage.view"]), hasCode("permission_denied"));
+  f.configure("ADMISSIONS", { "reporting.pilotage.view": "CAMPUS" });
+  let scoped: Principal | undefined;
+  await f.service.withReportingScope(staleActor, (current) => {
+    scoped = current; assert.deepEqual(current.roles, ["ADMISSIONS"]);
+    assert.equal(hasPilotageReportingScope(current), true);
+    assert.deepEqual([...current.permissionLeadIds!].sort(), ["lead-digital", "lead-phone"]);
+  }, ["reporting.pilotage.view"]);
+  assert.equal(hasPilotageReportingScope(scoped!), false);
+  f.configure("ADMISSIONS", { "reporting.pilotage.view": "OWN" });
+  await f.service.withReportingScope(staleActor, (current) => assert.deepEqual([...current.permissionLeadIds!], ["lead-digital"]), ["reporting.pilotage.view"]);
+  f.configure("ADMISSIONS", { "reporting.pilotage.view": "CAMPUS", "reporting.export": "NONE" });
+  await assert.rejects(() => f.service.withReportingScope(staleActor, () => {}, ["reporting.pilotage.view", "reporting.export"]), hasCode("permission_denied"));
+  f.configure("ADMISSIONS", { "reporting.pilotage.view": "NONE" });
+  await assert.rejects(() => f.service.withReportingScope(staleActor, () => {}, ["reporting.pilotage.view"]), hasCode("permission_denied"));
+});
+
+test("shell capabilities evaluate creation independently, pilotage/export grants and real TEAM revocation", async () => {
+  const f = fixture(); f.account.roles = ["ADMISSIONS"];
+  f.configure("ADMISSIONS", { "reporting.view": "NONE" });
+  const creation = await f.service.dashboardCapabilities(manager, {});
+  assert.equal(creation.canCreateLead, true); assert.equal(creation.canViewPersonalDashboard, false); assert.equal(creation.canViewPilotageDashboard, false);
+  f.configure("ADMISSIONS", { "reporting.pilotage.view": "CAMPUS", "reporting.export": "NONE" });
+  const full = await f.service.dashboardCapabilities(manager, {});
+  assert.equal(full.canViewPilotageDashboard, true); assert.equal(full.canViewPersonalDashboard, true); assert.equal(full.canExportReporting, false);
+  f.account.roles = ["MANAGER"]; f.account.teamId = "synthetic-team";
+  f.configure("MANAGER", { "reporting.view": "TEAM", "reporting.pilotage.view": "TEAM", "lead.view": "TEAM" });
+  assert.equal((await f.service.dashboardCapabilities(manager, {})).canViewPilotageDashboard, true);
+  f.responsibility.active = false;
+  assert.equal((await f.service.dashboardCapabilities(manager, {})).canViewPilotageDashboard, false);
+  await assert.rejects(() => f.service.withReportingScope(manager, () => {}, ["reporting.pilotage.view"]), hasCode("permission_denied"));
+  await assert.rejects(() => f.service.dashboardCapabilities(manager, { campus: "FOREIGN" }), hasCode("reporting_campus_scope_forbidden"));
+});
+
+test("adaptive report reads require pilotage for omitted/global Manager mode and force self on personal mode", async () => {
+  const f = fixture(); f.configure("MANAGER", { "reporting.pilotage.view": "NONE" });
+  const captured: InteractiveReportingQuery[] = [];
+  const dependency = { read: (query: InteractiveReportingQuery): never => { captured.push(query); return {} as never; } };
+  const performance = new CommercialPerformanceController(dependency as never, f.service);
+  const contributions = new SharedContributionController(dependency as never, f.service);
+  // The session's old Commercial role cannot affect omitted-mode selection:
+  // currentPrincipal reloads the real Manager before determining requirements.
+  const staleActor: Principal = { ...manager, roles: ["ADMISSIONS"] };
+  const request = { principal: staleActor, header: (): string => "synthetic" } as never;
+  for (const query of [{}, { view: "global" }]) {
+    await assert.rejects(() => Promise.resolve(performance.read(query, request)), hasCode("permission_denied"));
+    await assert.rejects(() => Promise.resolve(contributions.read(query, request)), hasCode("permission_denied"));
+    await assert.rejects(() => f.service.recentLeads(staleActor, query), hasCode("permission_denied"));
+  }
+  await performance.read({ view: "personal", adviserId: "other-owner" }, request);
+  await contributions.read({ view: "personal", adviserId: "other-owner" }, request);
+  assert.ok(captured.every((query) => query.view === "personal" && query.adviserId === manager.userId));
+  const recent = await f.service.recentLeads(staleActor, { view: "personal", adviserId: "other-owner", from: "2026-08-01", to: "2026-09-01" });
+  assert.deepEqual(recent.leads.map((row) => row.id), ["lead-digital"]);
+  await assert.rejects(() => f.service.dashboardCapabilities(staleActor, { view: "global" }), hasCode("reporting_capability_filter_unknown"));
+});
+
+test("explicit Commercial and Lecteur pilotage can read the same adapters; none or default Lecteur cannot", async () => {
+  const f = fixture();
+  const dependency = { read: (query: InteractiveReportingQuery, actor: Principal): never => {
+    assert.equal(query.view, "global"); assert.equal(hasPilotageReportingScope(actor), true); return {} as never;
+  } };
+  const performance = new CommercialPerformanceController(dependency as never, f.service);
+  const contributions = new SharedContributionController(dependency as never, f.service);
+  for (const role of ["ADMISSIONS", "AUDITOR"] as const) {
+    f.account.roles = [role]; f.configure(role, { "reporting.pilotage.view": "CAMPUS" });
+    const request = { principal: manager, header: (): string => "synthetic" } as never;
+    await performance.read({ view: "global" }, request); await contributions.read({ view: "global" }, request);
+    f.configure(role, { "reporting.pilotage.view": "NONE" });
+    await assert.rejects(() => Promise.resolve(performance.read({ view: "global" }, request)), hasCode("permission_denied"));
+    await assert.rejects(() => Promise.resolve(contributions.read({ view: "global" }, request)), hasCode("permission_denied"));
+  }
+});
+
+test("capability endpoint matches the authenticated read-only OpenAPI boolean contract", async () => {
+  const f = fixture(); const controller = new DashboardCapabilitiesController(f.service);
+  assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
+  const response = await controller.read({}, { principal: manager } as never);
+  const operation = dashboardCapabilityPaths["/reports/dashboard/capabilities"].get;
+  assert.deepEqual(operation.security, [{ bearerAuth: [] }]);
+  assert.deepEqual(operation.parameters.map((parameter) => parameter.name), ["campus"]);
+  const schema = operation.responses["200"].content["application/json"].schema;
+  assert.equal(schema.additionalProperties, false); assert.deepEqual(schema.required, dashboardCapabilityFields);
+  assert.deepEqual(Object.keys(response).sort(), [...dashboardCapabilityFields].sort());
+  assert.ok(Object.values(response).every((value) => typeof value === "boolean"));
+  assert.equal(JSON.stringify(response).includes(manager.userId), false);
+});
+
 test("recent leads share exact owner OR collaborator, channel and period cohort with a bounded authorized projection", async () => {
   const f = fixture();
   f.rows.push({ ...row("lead-secondary", "SYNTHETIC", "WEB_FORM", "other-owner"), collaboratorIds: [manager.userId], createdAt: "2026-08-16T10:00:00.000Z" });
@@ -130,7 +229,7 @@ test("recent leads share exact owner OR collaborator, channel and period cohort 
   const response = await f.service.recentLeads(manager, { campus: campusId, adviserId: manager.userId, channel: "DIGITAL", from: "2026-08-01", to: "2026-09-01" }, 5);
   assert.deepEqual(response.leads.map((lead) => lead.id), ["lead-secondary", "lead-digital"]);
   assert.equal(response.leads[0]?.assignedToLabel, undefined); assert.equal(response.leads[1]?.assignedToLabel, "Conseiller synthétique");
-  assert.equal(response.filters.campus, "SYNTHETIC"); assert.deepEqual(response.capabilities, { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true });
+  assert.equal(response.filters.campus, "SYNTHETIC"); assert.deepEqual(response.capabilities, { canCreateLead: false, canReadRecentLeads: true, canViewManagerDashboard: true, canViewPersonalDashboard: true, canViewPilotageDashboard: true, canExportReporting: true });
   const serialized = JSON.stringify(response); assert.equal(serialized.includes("other-owner"), false); assert.equal(serialized.includes("professionalEmail"), false);
   await assert.rejects(() => f.service.recentLeads(manager, {}, 11), hasCode("reporting_recent_limit_invalid"));
   f.configure("MANAGER", { "lead.view": "NONE" }); await assert.rejects(() => f.service.recentLeads(manager, {}), hasCode("permission_denied"));

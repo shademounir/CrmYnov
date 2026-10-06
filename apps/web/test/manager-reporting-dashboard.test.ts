@@ -12,6 +12,7 @@ import { LeadFilterForm } from "../app/leads/lead-filter-form.js";
 const initialCalendar = dashboardCalendar(new Date("2026-10-04T23:53:00.000Z"));
 
 const report: DashboardReport = {
+  capabilities: { canCreateLead: false, canReadRecentLeads: false, canViewManagerDashboard: true, canExportReporting: true },
   definitionVersion: "manager-dashboard-v1", timezone: "Africa/Casablanca", filters: { period: "30d", campus: "campus-a" },
   cards: { uniqueLeads: 3, enrolled: 1, unassigned: 1, overdueFollowUps: 1, activeAlerts: 1 },
   trends: [{ date: "2026-08-24", leadsCreated: 3, leadsEnrolled: 1 }],
@@ -40,6 +41,15 @@ test("renders keyboard-focusable charts and an alternative data table for every 
   assert.equal(html.includes("dashboard-personal-charts"), false);
   assert.equal(html.includes("Alex"), false); assert.equal(html.includes("@example"), false); assert.equal(html.includes("returnTo="), true);
 });
+
+for (const canExportReporting of [false, undefined, true]) {
+  test(`CSV link follows the exact server export capability (${String(canExportReporting)})`, () => {
+    const scoped: DashboardReport = { ...report, capabilities: { canCreateLead: false, canReadRecentLeads: false, canViewManagerDashboard: true, ...(canExportReporting === undefined ? {} : { canExportReporting }) } };
+    const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: scoped, initialCalendar }));
+    assert.equal(html.includes("Exporter les agrégats CSV"), canExportReporting === true);
+    assert.equal(html.includes("Analyses détaillées et tableaux accessibles"), true, "reporting display is distinct from export authority");
+  });
+}
 
 test("qualification and conversion KPIs display the exact backend status count and rate", () => {
   const scoped = { ...report, panels: { ...report.panels, funnel: {
@@ -250,6 +260,7 @@ test("the existing follow-up filter form retains entered values and its dedicate
   const submitted = new dom.window.FormData(form);
   for (const [key, value] of Object.entries(filters)) assert.equal(submitted.get(key), value);
   assert.equal(submitted.get("view"), "FOLLOW_UP"); assert.equal(submitted.get("page"), "1"); assert.equal(submitted.get("pageSize"), "25");
+  assert.deepEqual(submitted.getAll("view"), ["FOLLOW_UP"], "the dedicated work view is submitted exactly once");
   assert.equal(submitted.has("adviserId"), false);
   dom.window.close();
 });
@@ -832,7 +843,9 @@ test("the Lead date input keeps its exact instant until an explicit date edit", 
     input.dispatchEvent(new window.Event("change", { bubbles: true }));
   });
   values = new window.FormData(form);
-  assert.deepEqual(values.getAll("createdFrom"), ["2026-10-02"], "use legacy date-only parsing only after the user explicitly edits the date");
+  assert.deepEqual(values.getAll("createdFrom"), ["2026-10-02T00:00:00.000Z"], "an explicit date edit encodes the exact UTC lower bound, still submitted only once");
+  assert.equal(values.get("createdFrom"), new Date("2026-10-02").toISOString(), "the API normalizes the old date-only value to this same instant");
+  assert.equal(values.get("createdBefore"), "2026-10-05T08:00:00.000Z", "editing the lower bound must not weaken the exclusive upper bound");
 });
 
 for (const scenario of ["observed-empty", "failed"] as const) {

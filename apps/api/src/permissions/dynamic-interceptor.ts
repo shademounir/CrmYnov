@@ -5,7 +5,7 @@ import { RbacGuard } from "../auth/rbac.guard.js";
 import { UserService } from "../users/user.service.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "./dynamic-repository.js";
 import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "./dynamic-context.js";
-import { contextualPermissions, lifecycleControllers, routePermissions } from "./dynamic-routes.js";
+import { contextualPermissions, lifecycleControllers, routePermissions, usesScopedReportingAuthorization } from "./dynamic-routes.js";
 import { evaluatePermission } from "./dynamic-evaluator.js";
 import { leadResource, routeContexts } from "./dynamic-resources.js";
 import type { ConfigurationSnapshot } from "./dynamic-contract.js";
@@ -52,6 +52,7 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
       }
       const serverLeadIds = await this.locator.leadIds(controller, context.getHandler().name, request);
       for (const key of contextualPermissions(controller, keys, request.body, request.query, request.principal.roles.includes("SUPER_ADMIN"))) {
+        if (usesScopedReportingAuthorization(controller, handler) && key.startsWith("reporting.") && key !== "reporting.global.view") continue;
         if (controller === "LeadController" && context.getHandler().name === "list") {
           await this.filterLeadCollection(tx, request, rows);
         } else {
