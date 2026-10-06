@@ -10,6 +10,7 @@ import { FollowUpService } from "../follow-up/follow-up.service.js";
 import { IngestionService } from "../ingestion/ingestion.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { hasPilotageReportingScope } from "./reporting-authority.js";
 
 export const OPERATIONAL_RISK_VERSION = "operational-risk-v1";
 const interactionTypes = new Set(["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING"]);
@@ -66,7 +67,7 @@ export class OperationalRiskService {
       && !row.activities.some((activity) => interactionTypes.has(activity.type))).length;
     const followUps = this.followUps.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId));
     const overdueFollowUps = followUps.filter((item) => (item.state === "DUE" || item.state === "SCHEDULED") && new Date(item.dueAt) < now).length;
-    const pendingClosures = this.closures.list(principal).filter((item) => leadIds.has(item.leadId) && item.state === "PENDING").length;
+    const pendingClosures = this.closures.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.state === "PENDING").length;
     const pendingReassignments = this.reassignments.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.status === "PENDING").length;
     const visibleOwners = new Set(active.flatMap((row) => row.assignedToId ? [row.assignedToId] : []));
     const candidateCapacity = new Map<string, number>();
@@ -115,5 +116,5 @@ export class OperationalRiskService {
   }
   private integer(value: string | undefined, fallback: number, min: number, max: number, code: string): number { const parsed = value === undefined ? fallback : Number(value); if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new BadRequestException({ code }); return parsed; }
   private boundary(value: string | undefined, code: string): string | undefined { if (!value) return undefined; const parsed = new Date(value); if (Number.isNaN(parsed.valueOf())) throw new BadRequestException({ code }); return parsed.toISOString(); }
-  private assertManager(principal: Principal): void { if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "operational_reporting_role_required" }); }
+  private assertManager(principal: Principal): void { if (!hasPilotageReportingScope(principal) && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "operational_reporting_role_required" }); }
 }

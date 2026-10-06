@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadService, leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
+import { hasPilotageReportingScope } from "./reporting-authority.js";
 
 export const FUNNEL_DEFINITION_VERSION = "commercial-funnel-v1";
 export const FUNNEL_TIMEZONE = "Africa/Casablanca";
@@ -25,7 +26,7 @@ export class CommercialFunnelService {
   constructor(private readonly leads: LeadService, private readonly audit: AuditService) {}
 
   read(query: CommercialFunnelQuery, principal: Principal, correlationId: string): CommercialFunnel {
-    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
+    if (!hasPilotageReportingScope(principal) && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
       throw new ForbiddenException({ code: "reporting_manager_required" });
     }
     const from = this.boundary(query.from, "funnel_from_invalid");

@@ -4,6 +4,7 @@ import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { hasPilotageReportingScope } from "./reporting-authority.js";
 
 export const SHARED_CONTRIBUTION_VERSION = "shared-contribution-v1";
 export type SharedContributionQuery = InteractiveReportingQuery;
@@ -25,9 +26,9 @@ export class SharedContributionService {
     if (from && to && from >= to) {
       throw new BadRequestException({ code: "contribution_period_invalid" });
     }
-    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}), ...(query.view === "personal" ? { adviserId: principal.userId } : {}) };
     const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
-    const adviserOnly = principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+    const adviserOnly = query.view === "personal" || !hasPilotageReportingScope(principal) && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
     const ids = new Set(rows.flatMap((lead) => [lead.assignedToId, ...lead.collaboratorIds]).filter((value): value is string => Boolean(value)));
     if (adviserOnly) {
       ids.clear();

@@ -6,6 +6,7 @@ import { ReassignmentService } from "../assignment/reassignment.service.js";
 import { FollowUpService } from "../follow-up/follow-up.service.js";
 import { LeadService, type LeadReportingRow } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { hasPilotageReportingScope } from "./reporting-authority.js";
 
 export const COMMERCIAL_PERFORMANCE_VERSION = "commercial-performance-v1";
 export const COMMERCIAL_PERFORMANCE_TIMEZONE = "Africa/Casablanca";
@@ -52,11 +53,11 @@ export class CommercialPerformanceService {
     if (!Number.isInteger(inactivityHours) || inactivityHours < 1 || inactivityHours > 2160) {
       throw new BadRequestException({ code: "performance_inactivity_threshold_invalid" });
     }
-    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}), ...(query.view === "personal" ? { adviserId: principal.userId } : {}) };
     const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const unique = new Map(rows.map((row) => [row.id, row]));
     const cohort = [...unique.values()];
-    const adviserOnly = principal.roles.includes("ADMISSIONS")
+    const adviserOnly = query.view === "personal" || !hasPilotageReportingScope(principal) && principal.roles.includes("ADMISSIONS")
       && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     const adviserIds = new Set<string>();
     for (const lead of cohort) {

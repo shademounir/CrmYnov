@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadService, type LeadStatus } from "../leads/lead.service.js";
 import { LeadWorkflowPersistenceRepository } from "../leads/lead-workflow-persistence.repository.js";
 import { NotificationService } from "../notifications/notification.service.js";
+import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 
 export type ClosureState = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 export type ClosureTarget = "ENROLLED" | "CLOSED_LOST";
@@ -95,6 +96,10 @@ export class ClosureService implements OnModuleInit {
   }
 
   list(principal: Principal): ClosureRequest[] { const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN"); return [...this.requests.values()].filter((item) => manager || item.requesterId === principal.userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).map((item) => this.copy(item)); }
+  reportingSnapshot(principal: Principal): ClosureRequest[] {
+    if (!hasPilotageReportingScope(principal)) return this.list(principal);
+    return [...this.requests.values()].filter((item) => principal.permissionLeadIds!.has(item.leadId)).map((item) => this.copy(item));
+  }
   private copy(item: Readonly<ClosureRequest>): ClosureRequest { return { ...item, evidence: [...item.evidence] }; }
   private record(item: Readonly<ClosureRequest>, principal: Principal, correlationId: string, eventType: string): void { this.audit.record({ eventType, actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId, after: { requestId: item.id, leadId: item.leadId, target: item.target, state: item.state, version: item.version, evidenceCount: item.evidence.length }, result: "SUCCESS", idempotencyKey: `${eventType}:${item.id}:${item.version}` }); }
   private async refreshPersistentState(): Promise<void> { if (!this.persistence?.enabled) return; const snapshot = await this.persistence.snapshot(); this.requests.clear(); for (const item of snapshot.closures) this.requests.set(item.id, Object.freeze({ ...item, evidence: [...item.evidence] })); }

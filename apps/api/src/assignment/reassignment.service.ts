@@ -9,6 +9,7 @@ import { PersistentAssignmentService } from "./persistent-assignment.service.js"
 import { appendReassignmentEffect, assertReassignmentIntent, boundedReassignmentResults, decisionFingerprint, reassignmentCampusKeys, reassignmentQueueScanLimit, reassignmentRecord, transferScheduledFollowUps } from "./reassignment-persistence.js";
 import { strictBody } from "../references/reference.contract.js";
 import { assignmentNotification } from "./assignment-notifications.js";
+import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 
 export type ReassignmentStatus = "PENDING" | "APPROVED" | "REJECTED";
 export interface ReassignmentRequest {
@@ -214,6 +215,7 @@ export class ReassignmentService implements OnModuleInit {
       .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt) || left.id.localeCompare(right.id)).map((item) => this.copy(item));
   }
   reportingSnapshot(principal: Principal): ReassignmentRequest[] {
+    if (hasPilotageReportingScope(principal)) return [...this.requests.values()].filter((item) => principal.permissionLeadIds!.has(item.leadId)).map((item) => this.copy(item));
     const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     if (!manager && !principal.roles.includes("ADMISSIONS")) throw new ForbiddenException({ code: "reporting_role_required" });
     return [...this.requests.values()].filter((item) => manager || item.requestedBy === principal.userId)

@@ -12,6 +12,8 @@ import { LeadService } from "../src/leads/lead.service.js";
 import { NotificationService } from "../src/notifications/notification.service.js";
 import { OperationalRiskController } from "../src/reporting/operational-risk.controller.js";
 import { OperationalRiskService } from "../src/reporting/operational-risk.service.js";
+import { withPilotageReportingScope } from "../src/reporting/reporting-authority.js";
+import { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviser: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-adviser" };
@@ -77,6 +79,47 @@ test("PostgreSQL source quality cannot be inferred from instance-local ingestion
 test("controller refuses a missing principal", () => {
   const { service } = setup(); const controller = new OperationalRiskController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
+});
+
+test("CRMY-178 configured Commercial pilotage uses the same bounded KPI projections as Manager without decision powers", async () => {
+  const { audit, leads, assignments, reassignments, followUps, closures, service } = setup();
+  const dueAt = new Date(Date.now() + 60_000).toISOString();
+  const reportingAt = new Date(Date.now() + 2 * 86_400_000);
+  assignments.configure([{ id: "synthetic-rule", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true,
+    candidates: ["other-owner-a", "other-owner-b", "synthetic-target"].map((userId) => ({ userId, active: true, capacity: 10, activeLeadCount: 0 })) }], manager, "synthetic-config");
+  const ids = ["authorized-a", "authorized-b", "foreign-lead"];
+  for (const [index, id] of ids.entries()) {
+    const owner: Principal = { ...adviser, userId: index === 1 ? "other-owner-b" : "other-owner-a" };
+    leads.registerLocalLead({ id, leadCode: `LD-${id}`, firstName: "Synthetic", lastName: "Fixture", campus: index === 2 ? "foreign-campus" : "authorized-campus",
+      campaign: "Synthetic", educationLevel: "BAC", program: "Synthetic", source: "WEB_FORM", status: "CONTACTED", assignedToId: owner.userId });
+    followUps.schedule(id, { dueAt, reason: "Synthetic" }, owner, `synthetic-follow-${id}`);
+    closures.request(id, { target: "CLOSED_LOST", reason: "NOT_INTERESTED", comment: "Synthetic", evidence: ["SYNTHETIC"] }, owner, `synthetic-close-${id}`);
+    reassignments.request(id, { targetUserId: "synthetic-target", reason: "Synthetic fixture", moveOpenTasks: false, idempotencyKey: `synthetic-reassign-${id}` }, owner, `synthetic-reassign-${id}`);
+  }
+  const authorized = new Set(ids.slice(0, 2));
+  // Match production's persisted-report mode: source-quality occurrences are
+  // explicitly unavailable, not reconstructed from an ingestion-memory store.
+  leads.persistenceEnabled = (): boolean => true;
+  const scopedManager: Principal = { ...manager, permissionLeadIds: authorized };
+  const scopedCommercial: Principal = { ...adviser, permissionLeadIds: authorized };
+  const performance = new CommercialPerformanceService(leads, followUps, reassignments, audit);
+  const expectedRisks = service.read({}, scopedManager, "synthetic-manager", reportingAt);
+  const expectedPerformance = performance.read({}, scopedManager, "synthetic-manager", reportingAt);
+  assert.equal(followUps.reportingSnapshot(scopedCommercial).length, 0);
+  await withPilotageReportingScope(scopedCommercial, () => {
+    assert.deepEqual(service.read({}, scopedCommercial, "synthetic-commercial", reportingAt).queues, expectedRisks.queues);
+    assert.deepEqual(performance.read({}, scopedCommercial, "synthetic-commercial", reportingAt).advisers, expectedPerformance.advisers);
+    assert.deepEqual(followUps.reportingSnapshot(scopedCommercial).map((row) => row.leadId).sort(), [...authorized]);
+    assert.deepEqual(reassignments.reportingSnapshot(scopedCommercial).map((row) => row.leadId).sort(), [...authorized]);
+    assert.deepEqual(closures.reportingSnapshot(scopedCommercial).map((row) => row.leadId).sort(), [...authorized]);
+    assert.deepEqual(expectedRisks.queues, { unassigned: 0, withoutFirstInteraction: 2, overdueFollowUps: 2, pendingClosures: 2, pendingReassignments: 2 });
+    // The business queue and its decisions never adopt the reporting proof.
+    assert.equal(closures.list(scopedCommercial).length, 0);
+    assert.throws(() => reassignments.pendingForManager(scopedCommercial), hasCode("reassignment_approval_role_required"));
+  });
+  assert.equal(followUps.reportingSnapshot(scopedCommercial).length, 0);
+  assert.equal(reassignments.reportingSnapshot(scopedCommercial).length, 0);
+  assert.equal(closures.reportingSnapshot(scopedCommercial).length, 0);
 });
 
 test("applies the consolidated period and campus scope and rejects invalid boundaries", () => {

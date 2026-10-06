@@ -10,6 +10,7 @@ const readRoles: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUD
 const managers: Role[] = ["SUPER_ADMIN", "ADMIN", "MANAGER"];
 const defaultRoles: Record<string, readonly Role[]> = {
   "audit.view": auditRoles,
+  "reporting.pilotage.view": managers,
   "lead.create": ["SUPER_ADMIN", "ADMIN", "ADMISSIONS"], "lead.edit": [...managers, "ADMISSIONS"], "lead.assign": managers,
   "lead.reassign.request": [...managers, "ADMISSIONS"], "lead.reassign.approve": managers,
   "lead.close.request": [...managers, "ADMISSIONS"], "lead.close.approve": managers,

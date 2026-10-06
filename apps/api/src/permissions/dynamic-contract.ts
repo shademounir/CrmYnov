@@ -3,14 +3,14 @@ import { isRole, type Role } from "../auth/auth.types.js";
 import { viewGrantKeys } from "./view-grants.js";
 
 export const scopes = ["NONE", "OWN", "TEAM", "CAMPUS", "GLOBAL"] as const;
-export const permissionCatalogueVersion = 3;
+export const permissionCatalogueVersion = 4;
 export type PermissionScope = typeof scopes[number];
 export type ConfigurationKind = "CEILING" | "ROLE";
 export interface PermissionDefinition { key: string; module: string; mutation: boolean; sensitive: boolean; scopes: readonly PermissionScope[]; reserved: boolean; available: boolean }
 const keys = [
   "lead.view", "lead.create", "lead.edit", "lead.qualification.update", "lead.assign", "lead.reassign.request", "lead.reassign.approve", "lead.close.request", "lead.close.approve", "lead.tags.assign", "lead.collaborators.manage",
   "lead.tags.manage", "lead.references.view", "lead.references.manage", "lead.references.archive", "interaction.create", "interaction.view", "reminder.manage", "appointment.manage",
-  "import.view", "import.execute", "import.confirm", "import.review.resolve", "import.report.export", "reporting.view", "reporting.export", "reporting.global.view",
+  "import.view", "import.execute", "import.confirm", "import.review.resolve", "import.report.export", "reporting.view", "reporting.pilotage.view", "reporting.export", "reporting.global.view",
   "users.view", "users.create", "users.edit", "users.disable", "users.roles.assign", "roles.permissions.view", "roles.permissions.manage", "settings.campus.manage", "settings.global.manage",
   "audit.view", "audit.export", "chat.use", "chat.broadcast", "notification.manage", "telephony.free-call.create",
   ...viewGrantKeys,
@@ -22,7 +22,7 @@ const unavailable = new Set(["users.edit", "audit.export"]);
 export const permissionCatalogue: readonly PermissionDefinition[] = keys.map((key) => ({
   key, module: key.split(".")[0]!, mutation: !readOnly.has(key), available: !unavailable.has(key),
   sensitive: !readOnly.has(key) || key.startsWith("audit."), reserved: globalOnly.has(key),
-  scopes: unavailable.has(key) ? ["NONE"] : globalOnly.has(key) ? ["NONE", "GLOBAL"] : key.startsWith("lead.") || key.startsWith("interaction.") ? scopes : ["NONE", "CAMPUS", "GLOBAL"],
+  scopes: unavailable.has(key) ? ["NONE"] : globalOnly.has(key) ? ["NONE", "GLOBAL"] : key.startsWith("lead.") || key.startsWith("interaction.") || ["reporting.view", "reporting.pilotage.view", "reporting.export"].includes(key) ? scopes : ["NONE", "CAMPUS", "GLOBAL"],
 }));
 export type Grants = Record<string, PermissionScope>;
 
@@ -30,27 +30,31 @@ export type Grants = Record<string, PermissionScope>;
  * Only a complete old catalogue is upgradeable; malformed/partial grants fail closed.
  */
 export function historicalGrants(value: Record<string, string>, target: ConfigurationTarget): Grants {
+  const pilotageKey = "reporting.pilotage.view";
+  // Preserve only access already provided by the old Manager/Admin role gate.
+  // A complete old catalogue is required; partial/corrupt rows still fail closed.
   const qualificationKey = "lead.qualification.update";
   const freeCallKey = "telephony.free-call.create";
-  const version2Keys = keys.filter((key) => key !== freeCallKey);
-  const currentBeforeQualificationKeys = keys.filter((key) => key !== qualificationKey);
-  const beforeQualificationKeys = version2Keys.filter((key) => key !== qualificationKey);
-  const beforeViewsKeys = version2Keys.filter((key) => !(viewGrantKeys as readonly string[]).includes(key));
-  const beforeViewsAndQualificationKeys = beforeViewsKeys.filter((key) => key !== qualificationKey);
   const names = Object.keys(value);
   const isExactCatalogue = (catalogue: readonly string[]): boolean => names.length === catalogue.length && catalogue.every((key) => Object.hasOwn(value, key));
-  const version2 = isExactCatalogue(version2Keys);
-  const currentBeforeQualification = isExactCatalogue(currentBeforeQualificationKeys);
-  const beforeViews = isExactCatalogue(beforeViewsKeys);
-  const beforeViewsAndQualification = isExactCatalogue(beforeViewsAndQualificationKeys);
-  const beforeQualification = isExactCatalogue(beforeQualificationKeys);
-  const expanded = version2 ? { [freeCallKey]: "NONE", ...value }
-    : currentBeforeQualification ? { [qualificationKey]: "NONE", ...value }
-    : beforeViews || beforeViewsAndQualification
-      ? { ...Object.fromEntries(viewGrantKeys.map((key) => [key, "NONE"])), ...(beforeViewsAndQualification ? { [qualificationKey]: "NONE" } : {}), [freeCallKey]: "NONE", ...value }
-      : beforeQualification ? { [qualificationKey]: "NONE", [freeCallKey]: "NONE", ...value } : value;
-  validateGrants(expanded, target);
-  return expanded;
+  const catalogues = [keys, keys.filter((key) => key !== pilotageKey)].flatMap((base) => {
+    const version2 = base.filter((key) => key !== freeCallKey);
+    const beforeViews = version2.filter((key) => !(viewGrantKeys as readonly string[]).includes(key));
+    return [base, base.filter((key) => key !== qualificationKey), version2, version2.filter((key) => key !== qualificationKey), beforeViews, beforeViews.filter((key) => key !== qualificationKey)];
+  });
+  if (!catalogues.some(isExactCatalogue)) invalidConfiguration();
+  const current = { ...Object.fromEntries(keys.map((key) => [key, "NONE"])), ...value };
+  if (!Object.hasOwn(value, pilotageKey)) current[pilotageKey] = historicalPilotageScope(value, target);
+  validateGrants(current, target);
+  return current;
+}
+/** Compatibility with the old aggregate route gate, not a new ordinary-role grant. */
+export function historicalPilotageScope(grants: Record<string, string>, target: ConfigurationTarget): PermissionScope {
+  const scope = grants["reporting.view"];
+  if (scope !== "CAMPUS" && scope !== "GLOBAL") return "NONE";
+  if (target.kind === "CEILING" || target.role === "SUPER_ADMIN") return scope;
+  if (target.role === "MANAGER" || target.role === "ADMIN") return scope === "GLOBAL" ? "CAMPUS" : scope;
+  return "NONE";
 }
 export interface ConfigurationTarget { kind: ConfigurationKind; role: Role | "*"; campus: string }
 export interface ConfigurationInput extends ConfigurationTarget { expectedVersion: number; grants: Grants; reason: string; confirmed: boolean }

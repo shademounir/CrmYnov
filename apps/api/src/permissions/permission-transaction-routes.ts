@@ -21,6 +21,7 @@ const readers: Readonly<Record<string, readonly string[]>> = {
   ViewSharingController: ["audiences", "received", "history", "read"],
   NotificationController: ["list"],
   ManagerDashboardController: ["read", "export"],
+  DashboardCapabilitiesController: ["read"],
   PersonalDashboardController: ["read"],
   AssignmentDashboardController: ["read"],
   CommercialFunnelController: ["read"],

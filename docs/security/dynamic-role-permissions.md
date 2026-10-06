@@ -137,3 +137,73 @@ accès concernés et corriger en avant, en conservant tables, versions et audits
 Ne pas supprimer de volume, ne pas utiliser de données réelles ni activer cloud.
 
 Référence technique : [isolation PostgreSQL](https://www.postgresql.org/docs/current/transaction-iso.html).
+
+## CRMY-178 — catalogue v4 : pilotage distinct de l'administration
+
+`reporting.pilotage.view` contrôle le tableau de bord complet déjà développé et
+ses rapports de pilotage. Il exige aussi `reporting.view` et `lead.view` dans le
+même contexte de ressource. `OWN`, `TEAM`, `CAMPUS` et `GLOBAL` restent bornés par
+les campus du compte, les plafonds et les relations actives relues côté serveur.
+`reporting.view` et `reporting.export` acceptent désormais également `OWN` et
+`TEAM`, sans changement automatique de leurs grants. L'export ajoute son propre
+grant et filtre la même cohorte autorisée ; `reporting.global.view` reste réservé.
+
+Une configuration absente conserve le pilotage Manager/Admin en `CAMPUS` et
+Super Admin en `GLOBAL`. Commercial (`ADMISSIONS`) et Lecteur restent à `NONE`
+pour le nouveau droit jusqu'à une délégation explicite. Une configuration
+historique **complète** est convertie sans réécrire sa version : seuls les accès
+déjà possibles avec l'ancien contrôle de rôle Manager/Admin/Super Admin sont
+conservés, bornés par son ancien `reporting.view`; les plafonds reprennent leur
+ancienne borne de reporting. Commercial et Lecteur ne reçoivent aucun grant
+nouveau. L'adoption persistée ajoute une version et un audit `CATALOGUE_UPGRADE`.
+Un `NONE` explicite v4 n'est jamais remplacé par l'adoption ou un redémarrage.
+Une restauration volontaire, revalidée et confirmée peut changer les droits :
+restaurer une version v3 rétablit sa borne historique de pilotage Manager/Admin;
+restaurer une version v4 portant `NONE` conserve ce refus. Une version partielle,
+inconnue ou invalide échoue sans fallback.
+
+Le contexte autorisé est une preuve privée limitée à la lecture serveur sous le
+verrou partagé. Aucun rôle, grant, propriétaire, responsabilité ni identité
+fourni par le navigateur ne crée cette preuve. Elle est retirée à la sortie,
+y compris sur erreur. Les révocations sont relues sur chaque requête. Un droit
+de pilotage n'accorde ni administration des utilisateurs, des référentiels ou
+des permissions, ni validation des réaffectations ou clôtures réservées.
+
+`GET /reports/dashboard/capabilities` accepte uniquement le filtre facultatif
+`campus` et rend seulement des booléens de navigation
+effectifs, sans identité ni mutation : création de lead, reporting personnel,
+pilotage, lecture des leads récents et export. La création est évaluée
+indépendamment du reporting. Une panne refuse l'affichage des actions concernées;
+le navigateur n'infère aucun droit de sa propre liste de rôles.
+
+La table `AdmissionsResponsibility` représente une désignation pour l'agenda et
+les réservations, pas une direction de centre ou une responsabilité d'équipe.
+Elle n'accorde donc aucun pilotage campus implicite. Les KPI personnels et
+l'agenda conservent leur contrat; un pilotage de centre nécessite une
+configuration explicite autorisée. Aucun rôle fictif de directeur n'est créé.
+
+### Preuves PostgreSQL CRMY-178
+
+Le scénario `pilotage-http-postgres.test.ts` démarre deux API réellement
+compilées par TypeScript (metadata de constructeur vérifiée). Il exige une base
+neuve dédiée `crmy178_test_<UUID avec tirets>`, le marqueur indépendant
+`crmy178_test_identity.marker` portant le même nonce et des tables publiques
+métier/auth/configuration vides avant sa première écriture. Le test ne crée pas
+sa propre preuve d'identité, ne vide aucune base et refuse les bases conservées
+ou de preview. Les mots de passe synthétiques et de connexion restent privés.
+
+Ce scénario local est ignoré par défaut : seule l'activation explicite
+`CRMY178_EPHEMERAL_TEST=true`, avec `CRMY178_DATABASE_URL` et
+`CRMY178_DATABASE_NONCE` dédiés, et l'adresse/port SQL du reçu indépendant dans
+`CRMY178_DATABASE_SERVER_ADDRESS` / `CRMY178_DATABASE_SERVER_PORT`,
+`DATABASE_URL` absent au lancement, connecteurs
+Sheets désactivés et workers externes autorise son exécution. Il n'est pas
+annoncé comme automatiquement exécuté en CI. Les gardes sont aussi testées sans
+connexion PostgreSQL. Le runner CI reporting existant et sa garde CRMY-162 sont
+inchangés ; ses cas pilotage synthétiques restent une preuve distincte.
+
+Les assertions couvrent l'adoption v3/v4 append-only sur double démarrage,
+restauration intentionnelle confirmée, révocation entre instances et sessions
+déjà ouvertes, scopes OWN/collaboration et TEAM/responsabilité, séparation
+personnel/pilotage pour une vue omise, Lecteur configuré, exclusion hors campus,
+parité KPI, export séparé et refus des décisions/administrations non accordées.

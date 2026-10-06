@@ -14,6 +14,7 @@ import { sheetImportPaths } from "./sheet-import/sheet-import.openapi.js";
 import { leadQualificationPaths } from "./qualification/lead-qualification.openapi.js";
 import { admissionsPaths } from "./admissions/admissions.openapi.js";
 import { ownTelephonyPaths } from "./telephony/telephony-own.openapi.js";
+import { dashboardCapabilityPaths } from "./reporting/dashboard-capabilities.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -30,6 +31,7 @@ export function configureApplication(app: INestApplication): void {
   const openApi = {
     openapi: "3.0.3",
     info: { title: "CRM Admissions API", version: "0.1.0" },
+    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } } },
     paths: {
       ...sheetImportPaths,
       ...referencePaths,
@@ -39,6 +41,7 @@ export function configureApplication(app: INestApplication): void {
       ...leadQualificationPaths,
       ...admissionsPaths,
       ...ownTelephonyPaths,
+      ...dashboardCapabilityPaths,
       "/health": {
         get: {
           summary: "API operational health",
@@ -161,7 +164,7 @@ export function configureApplication(app: INestApplication): void {
         get: { summary: "Read one authorized lead", responses: { "200": { description: "Lead detail with role-based masking" }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } },
         patch: { summary: "Correct allowlisted current Lead fields without rewriting provenance or history", description: "Partial update with explicit empty contact clearing, server normalization, optimistic version and idempotency. Contact collisions are refused without identifying or merging the other Lead. The same contract serves the contextual drawer and direct page.", responses: { "200": { description: "Confirmed current Lead values" }, "400": { description: "Field, reference, email or phone invalid" }, "403": { description: "Effective lead.edit permission or campus scope refused" }, "409": { description: "Version, idempotency or contact collision" }, "404": { description: "Lead not found in the authorized scope" } } },
       },
-      "/reports/manager-dashboard": { get: { summary: "Read the interactive aggregate dashboard with strictly normalized filters", responses: { "200": { description: "Versioned KPI, chart, navigation and drill-down aggregates" }, "400": { description: "Unknown or invalid filter" }, "403": { description: "Role or campus scope refused" } } } },
+      "/reports/manager-dashboard": { get: { summary: "Read the full pilotage dashboard with effective reporting.view, reporting.pilotage.view and lead.view", responses: { "200": { description: "Versioned KPI, chart, navigation and drill-down aggregates for the server-authorized OWN/TEAM/CAMPUS/GLOBAL cohort" }, "400": { description: "Unknown or invalid filter" }, "403": { description: "Grant, ceiling, campus or reserved global scope refused" } } } },
       "/reports/manager-dashboard/export": { get: { summary: "Export the same dashboard cohort as formula-safe aggregate CSV", responses: { "200": { description: "Versioned aggregate-only CSV without lead or collaborator identity" }, "400": { description: "Unknown or invalid filter" }, "403": { description: "Role or campus scope refused" } } } },
       "/reports/personal-dashboard": { get: { summary: "Read the authenticated adviser's own performance and authorized contributions", responses: { "200": { description: "Personal aggregate metrics without lead identity" }, "400": { description: "Unknown or invalid filter" }, "403": { description: "Another adviser or global view refused" } } } },
       "/leads/quick-entry/matches": { post: { summary: "Preview reliable email and phone matches before a call or visit entry", responses: { "201": { description: "Minimal candidate identifiers" }, "400": { description: "Identity required" }, "403": { description: "Role refused" } } } },

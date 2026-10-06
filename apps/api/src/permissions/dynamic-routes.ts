@@ -22,7 +22,8 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   ImportReportController: { create: ["import.execute"], get: ["import.view"], export: ["import.report.export"] },
   SavedLeadViewController: { list: ["lead.view"], create: ["lead.edit"], update: ["lead.edit"], remove: ["lead.edit"] },
   NotificationController: { list: ["lead.view"], markAll: ["notification.manage"], markRead: ["notification.manage"] },
-  ManagerDashboardController: { read: ["reporting.view"], export: ["reporting.export"] },
+  ManagerDashboardController: { read: ["reporting.view", "reporting.pilotage.view"], export: ["reporting.view", "reporting.pilotage.view", "reporting.export"] },
+  DashboardCapabilitiesController: { read: [] },
   // The read adapter applies lead.view per resource, not an aggregate grant to raw identities.
   DashboardRecentLeadsController: { read: ["reporting.view"] },
   TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], freeCall: ["telephony.free-call.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
@@ -53,6 +54,14 @@ export function routePermissions(controller: string, handler: string): readonly 
   if (delegated.has(controller)) return [];
   if (grouped[controller]) return (groupedHandlers[controller] ?? ["read"]).includes(handler) ? [grouped[controller]] : null;
   return bindings[controller]?.[handler] ?? null;
+}
+
+/** Reviewed adapters authorize every lead and the empty-cohort capability in
+ * ReportingPersistenceService inside this same fence. Aggregate contexts cannot
+ * manufacture OWN/TEAM membership. Reserved GLOBAL remains in the interceptor. */
+export function usesScopedReportingAuthorization(controller: string, handler: string): boolean {
+  return handler === "read" && ["ManagerDashboardController", "PersonalDashboardController", "DashboardRecentLeadsController", "CommercialFunnelController", "CommercialPerformanceController", "SourceEffectivenessController", "SharedContributionController", "OperationalRiskController"].includes(controller)
+    || controller === "ManagerDashboardController" && handler === "export";
 }
 
 /** Extra gates are derived from the actual operation, not from a requested permission name. */

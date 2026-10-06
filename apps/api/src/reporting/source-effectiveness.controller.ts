@@ -7,7 +7,7 @@ import { ReportingPersistenceService } from "./reporting-persistence.service.js"
 
 @Controller("reports/source-effectiveness")
 @UseGuards(RbacGuard, ReportingPersistenceGuard)
-@RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
+@RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
 export class SourceEffectivenessController {
   constructor(@Inject(SourceEffectivenessService) private readonly sourceEffectiveness: SourceEffectivenessService,
     @Optional() @Inject(ReportingPersistenceService) private readonly persistence?: ReportingPersistenceService) {}
@@ -15,6 +15,6 @@ export class SourceEffectivenessController {
   read(@Query() query: SourceEffectivenessQuery, @Req() request: AuthenticatedRequest): SourceEffectivenessReport | Promise<SourceEffectivenessReport> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     const read = (principal: NonNullable<AuthenticatedRequest["principal"]>): SourceEffectivenessReport => this.sourceEffectiveness.read(query, principal, request.header("x-correlation-id") ?? "missing-correlation");
-    return this.persistence ? this.persistence.withReportingScope(request.principal, async (principal) => this.sourceEffectiveness.read(await this.persistence!.normalizeCampusQuery(principal, query), principal, request.header("x-correlation-id") ?? "missing-correlation")) : read(request.principal);
+    return this.persistence ? this.persistence.withReportingScope(request.principal, async (principal) => this.sourceEffectiveness.read(await this.persistence!.normalizeCampusQuery(principal, query), principal, request.header("x-correlation-id") ?? "missing-correlation"), ["reporting.pilotage.view"]) : read(request.principal);
   }
 }
