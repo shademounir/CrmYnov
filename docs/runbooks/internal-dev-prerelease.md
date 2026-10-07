@@ -72,8 +72,13 @@ le sous-domaine vers l'IP statique. Les valeurs exactes ne doivent jamais être
 inventées avant le plan. Conserver `run.app` pendant la transition et comme retour
 arrière.
 
-Le Web utilise des cookies host-only `Secure`, `HttpOnly`, `SameSite=Strict` et
-une origine CSRF explicitement autorisée. Le changement d'origine impose une
+Le Web utilise des cookies host-only `Secure`, `HttpOnly`, `SameSite=Strict`.
+Le garde explicite des mutations BFF est décrit dans
+`docs/security/browser-origin.md` ; sa présence dans le code ne prouve pas son
+déploiement. La variable `CRM_PUBLIC_ORIGIN` doit être configurée aussi au Web,
+puis les entrées de trafic réellement utilisées vérifiées sur le SHA déployé.
+L'ancienne affirmation d'une origine CSRF déjà autorisée n'était pas étayée par
+les Route Handlers avant ce correctif. Le changement d'origine impose une
 nouvelle association contrôlée de l'agent ; aucun jeton ou secret SIP n'est copié
 automatiquement entre profils.
 
