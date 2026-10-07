@@ -186,6 +186,31 @@ test("Lead follow-ups persist atomically, replay exactly and remain safe across 
   assert.equal(await client.internalNotification.count({ where: { deduplicationKey: legacyKey } }), 1);
   assert.deepEqual(await firstRepository.markDue(dueNow), { due: 0, notifications: 0 });
 
+  const legacyDelivered = await client.internalNotification.findUniqueOrThrow({ where: { deduplicationKey: legacyKey } });
+  await client.leadFollowUp.update({ where: { id: legacyFixture.item.id }, data: { ownerId: randomUUID(), updatedAt: legacyBefore.updatedAt } });
+  const legacyChangedOwner = await client.leadFollowUp.findUniqueOrThrow({ where: { id: legacyFixture.item.id } });
+  await assert.rejects(() => firstRepository.markDue(dueNow), /Conflict/u);
+  assert.deepEqual(await client.leadFollowUp.findUniqueOrThrow({ where: { id: legacyFixture.item.id } }), legacyChangedOwner);
+  assert.deepEqual(await client.internalNotification.findUniqueOrThrow({ where: { deduplicationKey: legacyKey } }), legacyDelivered);
+  assert.deepEqual(await client.auditEvent.findUniqueOrThrow({ where: { idempotencyKey: legacyKey } }), legacyAudit);
+  await client.leadFollowUp.update({ where: { id: legacyFixture.item.id }, data: { ownerId: legacyBefore.ownerId, updatedAt: legacyBefore.updatedAt } });
+  assert.deepEqual(await firstRepository.markDue(dueNow), { due: 0, notifications: 0 });
+
+  // A future DUE row is not an elapsed delivery obligation. When the synthetic
+  // clock later reaches it, missing audit evidence must still fail closed.
+  const futureFixture = await createReminder("FUTURE-DUE");
+  await client.leadFollowUp.update({ where: { id: futureFixture.item.id }, data: { state: "DUE", version: 2, dueAt: new Date("2098-01-01T11:00:00.000Z") } });
+  const futureBefore = await client.leadFollowUp.findUniqueOrThrow({ where: { id: futureFixture.item.id } });
+  const futureReceipts = await client.leadFollowUpMutationReceipt.findMany({ where: { followUpId: futureFixture.item.id } });
+  assert.deepEqual(await firstRepository.markDue(dueNow), { due: 0, notifications: 0 });
+  assert.deepEqual(await client.leadFollowUp.findUniqueOrThrow({ where: { id: futureFixture.item.id } }), futureBefore);
+  await assert.rejects(() => firstRepository.markDue(new Date("2098-01-01T11:01:00.000Z")), /follow_up_due_audit_inconsistent/u);
+  assert.deepEqual(await client.leadFollowUp.findUniqueOrThrow({ where: { id: futureFixture.item.id } }), futureBefore);
+  assert.deepEqual(await client.leadFollowUpMutationReceipt.findMany({ where: { followUpId: futureFixture.item.id } }), futureReceipts);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: futureFixture.lead.id, eventType: "FOLLOW_UP_DUE" } }), 0);
+  assert.equal(await client.internalNotification.count({ where: { resourceId: futureFixture.lead.id } }), 0);
+  const cancelFuture = await decide(firstPort, futureFixture.item.id, { action: "CANCEL", reason: "Annulation synthétique après diagnostic futur", expectedVersion: 2, idempotencyKey: "follow-up-durable-future-cancel" }, "follow-up-durable-future-cancel"); assert.equal(cancelFuture.status, 200);
+
   // A second occurrence has a new identity/recipient; the old read marker,
   // payload and audit remain immutable. Decision replay retains its receipt.
   await client.internalNotification.update({ where: { id: committedNotification.id }, data: { readAt: dueNow } });
@@ -203,6 +228,13 @@ test("Lead follow-ups persist atomically, replay exactly and remain safe across 
   assert.equal(await client.leadFollowUpMutationReceipt.count({ where: { followUpId: crashFixture.item.id } }), 2);
   assert.equal(await client.leadActivity.count({ where: { leadId: crashFixture.lead.id } }), 2);
   assert.deepEqual(await secondRepository.markDue(nextClock), { due: 0, notifications: 0 });
+  const canonicalBefore = await client.leadFollowUp.findUniqueOrThrow({ where: { id: crashFixture.item.id } });
+  await client.leadFollowUp.update({ where: { id: crashFixture.item.id }, data: { ownerId: randomUUID(), updatedAt: canonicalBefore.updatedAt } });
+  await assert.rejects(() => firstRepository.markDue(nextClock), /follow_up_due_audit_inconsistent/u);
+  assert.deepEqual(await client.internalNotification.findUniqueOrThrow({ where: { id: nextNotification.id } }), nextNotification);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: crashFixture.lead.id, eventType: "FOLLOW_UP_DUE" } }), 2);
+  await client.leadFollowUp.update({ where: { id: crashFixture.item.id }, data: { ownerId: canonicalBefore.ownerId, updatedAt: canonicalBefore.updatedAt } });
+  assert.deepEqual(await firstRepository.markDue(nextClock), { due: 0, notifications: 0 });
 
   // A matching key/version alone is not a delivery receipt: both the immutable
   // audit and the persisted payload/fingerprint must prove the occurrence.

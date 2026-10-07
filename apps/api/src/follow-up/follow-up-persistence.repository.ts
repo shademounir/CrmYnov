@@ -54,7 +54,7 @@ export class FollowUpPersistenceRepository {
       const candidates = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT f.id FROM lead_follow_ups f
         WHERE (f.state = 'SCHEDULED' AND f.due_at <= ${now})
-          OR (f.state = 'DUE' AND NOT EXISTS (
+          OR (f.state = 'DUE' AND f.due_at <= ${now} AND NOT EXISTS (
             SELECT 1 FROM internal_notifications n
             WHERE n.deduplication_key IN ('follow-up-due:' || f.id::text || ':v' || f.version::text, 'follow-up-due:' || f.id::text)
               AND n.recipient_id = f.owner_id::text AND n.type = 'FOLLOW_UP_DUE' AND n.priority = 'HIGH'

@@ -22,8 +22,8 @@ function fixture(state = "SCHEDULED", version = 1): Fixture {
       assert.deepEqual(options, { isolationLevel: "ReadCommitted" });
       const draft = structuredClone(stored);
       const tx = {
-        $queryRaw: (sql: TemplateStringsArray, date: Date, limit: number): Promise<Array<{ id: string }>> => {
-          assert.match(sql.join("?"), /FOR UPDATE OF f SKIP LOCKED/u); assert.ok(limit <= 50);
+        $queryRaw: (sql: TemplateStringsArray, date: Date, repairDate: Date, limit: number): Promise<Array<{ id: string }>> => {
+          assert.match(sql.join("?"), /FOR UPDATE OF f SKIP LOCKED/u); assert.deepEqual(date, repairDate); assert.ok(limit <= 50);
           const legacyKey = `follow-up-due:${draft.item.id}`;
           const input = { recipientId: draft.item.ownerId, type: "FOLLOW_UP_DUE", priority: "HIGH", resourceType: "LEAD", resourceId: draft.item.leadId, href: `/leads/${draft.item.leadId}/follow-ups` };
           const expectedFingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -35,7 +35,7 @@ function fixture(state = "SCHEDULED", version = 1): Fixture {
               && audit.after.followUpId === draft.item.id && audit.after.state === "DUE" && audit.after.version === draft.item.version && audit.after.dueAt === draft.item.dueAt.toISOString()
               && (notification.deduplicationKey === legacyKey || audit.after.ownerId === draft.item.ownerId);
           });
-          return Promise.resolve((draft.item.state === "SCHEDULED" && draft.item.dueAt <= date) || (draft.item.state === "DUE" && !delivered) ? [{ id: draft.item.id }] : []);
+          return Promise.resolve((draft.item.state === "SCHEDULED" && draft.item.dueAt <= date) || (draft.item.state === "DUE" && draft.item.dueAt <= repairDate && !delivered) ? [{ id: draft.item.id }] : []);
         },
         leadFollowUp: {
           findUniqueOrThrow: (): Promise<Row> => Promise.resolve(structuredClone(draft.item)),
@@ -91,6 +91,26 @@ test("unproven DUE rows and inconsistent legacy notifications fail closed", asyn
   f.state().notifications.push({ id: randomUUID(), deduplicationKey: `follow-up-due:${f.state().item.id}` } as NotificationRow);
   await assert.rejects(() => f.repository().markDue(now), /follow_up_due_legacy_inconsistent/u); assert.equal(f.state().notifications.length, 1);
   await assert.rejects(() => f.repository().markDue(now, 51), /follow_up_due_limit_invalid/u);
+});
+
+test("a future unproven DUE row is untouched, but fails closed once its deadline elapses", async () => {
+  const f = fixture("DUE", 1); f.state().item.dueAt = new Date("2099-01-01T11:00:00.000Z");
+  const original = structuredClone(f.state());
+  assert.deepEqual(await f.repository().markDue(now), { due: 0, notifications: 0 }); assert.deepEqual(f.state(), original);
+  await assert.rejects(() => f.repository().markDue(new Date("2099-01-01T11:01:00.000Z")), /follow_up_due_audit_inconsistent/u);
+  assert.deepEqual(f.state(), original);
+});
+
+test("a delivered canonical occurrence replays without effects; unsupported same-occurrence owner changes fail closed", async () => {
+  const canonical = fixture(); await canonical.repository().markDue(now); const delivered = structuredClone(canonical.state());
+  assert.deepEqual(await canonical.repository().markDue(now), { due: 0, notifications: 0 }); assert.deepEqual(canonical.state(), delivered);
+  canonical.state().item.ownerId = randomUUID(); const changedCanonical = structuredClone(canonical.state());
+  await assert.rejects(() => canonical.repository().markDue(now), /follow_up_due_audit_inconsistent/u); assert.deepEqual(canonical.state(), changedCanonical);
+  const legacy = fixture("DUE", 2); const key = `follow-up-due:${legacy.state().item.id}`;
+  legacy.state().audits.push({ idempotencyKey: key, eventType: "FOLLOW_UP_DUE", resourceType: "LEAD", resourceId: legacy.state().item.leadId, result: "SUCCESS", after: { followUpId: legacy.state().item.id, state: "DUE", dueAt: legacy.state().item.dueAt.toISOString(), version: 2 } });
+  await legacy.repository().markDue(now); legacy.state().item.ownerId = randomUUID(); const changedLegacy = structuredClone(legacy.state());
+  await assert.rejects(() => legacy.repository().markDue(now), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("notification_idempotency_conflict"));
+  assert.deepEqual(legacy.state(), changedLegacy);
 });
 
 test("the delivered fast path cannot hide invalid exact-version legacy proof or conflicting payload", async () => {
