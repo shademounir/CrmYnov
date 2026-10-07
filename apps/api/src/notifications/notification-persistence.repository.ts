@@ -38,6 +38,7 @@ function mapNotification(row: InternalNotification): NotificationRecord {
     createdAt: row.createdAt.toISOString(), ...(row.readAt ? { readAt: row.readAt.toISOString() } : {}),
   };
 }
+
 @Injectable()
 export class NotificationPersistenceRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}

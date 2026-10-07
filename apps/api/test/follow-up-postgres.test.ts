@@ -281,6 +281,7 @@ test("Lead follow-ups persist atomically, replay exactly and remain safe across 
   }
   assert.equal((await client.leadFollowUp.findUniqueOrThrow({ where: { id: racingFixture.item.id } })).state, "CANCELLED");
   assert.deepEqual(await secondRepository.markDue(nextClock), { due: 0, notifications: 0 });
+
   await client.$executeRawUnsafe("CREATE FUNCTION fail_follow_up_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.correlation_id = 'follow-up-rollback' THEN RAISE EXCEPTION 'synthetic_audit_failure'; END IF; RETURN NEW; END $$");
   await client.$executeRawUnsafe("CREATE TRIGGER follow_up_audit_failure BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_follow_up_audit()");
   const beforeRollback = await client.lead.findUniqueOrThrow({ where: { id: rollbackLead.id } });
