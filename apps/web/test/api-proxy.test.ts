@@ -8,12 +8,13 @@ function context(...path: string[]): { params: Promise<{ path: string[] }> } {
 }
 
 function jsonRequest(path: string, method = "GET", body?: string): Request {
-  return new Request(`http://web.local/api/crm/${path}?page=2`, { method, ...(body === undefined ? {} : { body }) });
+  return new Request(`http://web.local/api/crm/${path}?page=2`, { method, headers: { origin: "https://web.example.test", "content-type": "application/json" }, ...(body === undefined ? {} : { body }) });
 }
 
 function proxyWith(overrides: Partial<Parameters<typeof createProxy>[0]> = {}): ReturnType<typeof createProxy> {
   return createProxy({
     apiOrigin: () => "http://api:3001",
+    publicOrigin: () => "https://web.example.test",
     fetch: () => Promise.resolve(Response.json({ ok: true })),
     getSession: () => Promise.resolve("synthetic-session"),
     production: false,

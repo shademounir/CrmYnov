@@ -5,6 +5,40 @@ import type { Principal } from "../auth/auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import type { NotificationPage, NotificationRecord } from "./notification.service.js";
 
+/** Shares the same payload fence with domain writes that already own a transaction. */
+export async function createNotificationInTransaction(
+  tx: Prisma.TransactionClient,
+  record: NotificationRecord,
+  deduplicationKey: string,
+): Promise<{ record: NotificationRecord; created: boolean }> {
+  const fingerprint = notificationFingerprint(record);
+  const existing = await tx.internalNotification.findUnique({ where: { deduplicationKey } });
+  if (existing) return { record: replayNotification(existing, fingerprint), created: false };
+  const stored = await tx.internalNotification.create({ data: {
+    id: record.id, recipientId: record.recipientId, type: record.type, priority: record.priority,
+    resourceType: record.resourceType, resourceId: record.resourceId, href: record.href,
+    deduplicationKey, fingerprint, createdAt: new Date(record.createdAt), readAt: record.readAt ? new Date(record.readAt) : null,
+  } });
+  return { record: mapNotification(stored), created: true };
+}
+
+function notificationFingerprint(record: NotificationRecord): string {
+  return createHash("sha256").update(JSON.stringify({ recipientId: record.recipientId, type: record.type, priority: record.priority, resourceType: record.resourceType, resourceId: record.resourceId, href: record.href })).digest("hex");
+}
+
+function replayNotification(existing: InternalNotification, fingerprint: string): NotificationRecord {
+  if (existing.fingerprint !== fingerprint || notificationFingerprint(mapNotification(existing)) !== fingerprint) throw new ConflictException({ code: "notification_idempotency_conflict" });
+  return mapNotification(existing);
+}
+
+function mapNotification(row: InternalNotification): NotificationRecord {
+  return {
+    id: row.id, recipientId: row.recipientId, type: row.type as NotificationRecord["type"], priority: row.priority as NotificationRecord["priority"],
+    resourceType: row.resourceType as NotificationRecord["resourceType"], resourceId: row.resourceId, href: row.href,
+    createdAt: row.createdAt.toISOString(), ...(row.readAt ? { readAt: row.readAt.toISOString() } : {}),
+  };
+}
+
 @Injectable()
 export class NotificationPersistenceRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
@@ -24,17 +58,9 @@ export class NotificationPersistenceRepository {
 
   async create(record: NotificationRecord, deduplicationKey: string): Promise<NotificationRecord> {
     const client = this.requiredClient();
-    const fingerprint = this.fingerprint({ recipientId: record.recipientId, type: record.type, priority: record.priority, resourceType: record.resourceType, resourceId: record.resourceId, href: record.href });
+    const fingerprint = notificationFingerprint(record);
     try {
-      return await client.$transaction(async (tx) => {
-        const existing = await tx.internalNotification.findUnique({ where: { deduplicationKey } });
-        if (existing) return this.replay(existing, fingerprint);
-        return this.map(await tx.internalNotification.create({ data: {
-          id: record.id, recipientId: record.recipientId, type: record.type, priority: record.priority,
-          resourceType: record.resourceType, resourceId: record.resourceId, href: record.href,
-          deduplicationKey, fingerprint, createdAt: new Date(record.createdAt), readAt: record.readAt ? new Date(record.readAt) : null,
-        } }));
-      }, { isolationLevel: "Serializable" });
+      return await client.$transaction(async (tx) => (await createNotificationInTransaction(tx, record, deduplicationKey)).record, { isolationLevel: "Serializable" });
     } catch (error) {
       if (this.prismaCode(error) === "P2002") {
         const existing = await client.internalNotification.findUnique({ where: { deduplicationKey } });
@@ -87,16 +113,11 @@ export class NotificationPersistenceRepository {
   }
 
   private replay(existing: InternalNotification, fingerprint: string): NotificationRecord {
-    if (existing.fingerprint !== fingerprint) throw new ConflictException({ code: "notification_idempotency_conflict" });
-    return this.map(existing);
+    return replayNotification(existing, fingerprint);
   }
 
   private map(row: InternalNotification): NotificationRecord {
-    return {
-      id: row.id, recipientId: row.recipientId, type: row.type as NotificationRecord["type"], priority: row.priority as NotificationRecord["priority"],
-      resourceType: row.resourceType as NotificationRecord["resourceType"], resourceId: row.resourceId, href: row.href,
-      createdAt: row.createdAt.toISOString(), ...(row.readAt ? { readAt: row.readAt.toISOString() } : {}),
-    };
+    return mapNotification(row);
   }
 
   private async audit(tx: Prisma.TransactionClient, principal: Principal, correlationId: string, eventType: string, resourceId: string, after: Prisma.InputJsonObject): Promise<void> {

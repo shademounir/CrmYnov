@@ -51,18 +51,14 @@ export class FollowUpService implements OnModuleInit {
     const replay = await this.persistence.findReplay(idempotencyKey, fingerprint);
     if (replay) return replay;
     const record = this.buildSchedule(leadId, { dueAt: due.toISOString(), reason, ownerId }, lead.assignedToId, principal);
-    try {
-      const stored = await this.persistence.schedule(record, {
-        idempotencyKey, fingerprint, principal, correlationId, expectedLeadVersion: lead.version ?? 1,
-      });
-      await this.leads.refreshReportingForApi();
-      await this.refreshPersistentState();
-      return stored;
-    } catch (error) {
-      await this.leads.refreshReportingForApi();
-      await this.refreshPersistentState();
-      throw error;
-    }
+    const stored = await this.persistence.schedule(record, {
+      idempotencyKey, fingerprint, principal, correlationId, expectedLeadVersion: lead.version ?? 1,
+    });
+    // On failure, an ambient permission transaction may already be aborted.
+    // Do not mask its conflict by querying it again; the next API call reloads.
+    await this.leads.refreshReportingForApi();
+    await this.refreshPersistentState();
+    return stored;
   }
 
   schedule(leadId: string, input: { dueAt?: string; reason?: string; ownerId?: string }, principal: Principal, correlationId: string): FollowUpRecord {
@@ -94,20 +90,16 @@ export class FollowUpService implements OnModuleInit {
     let due = 0; let notifications = 0;
     for (const item of this.items.values()) if (item.state === "SCHEDULED" && item.dueAt <= now.toISOString()) {
       const updated: Readonly<FollowUpRecord> = Object.freeze({ ...item, state: "DUE", version: item.version + 1, updatedAt: now.toISOString() }); this.items.set(item.id, updated); due += 1;
-      this.notifications.create({ recipientId: item.ownerId, type: "FOLLOW_UP_DUE", priority: "HIGH", resourceType: "LEAD", resourceId: item.leadId, href: `/leads/${item.leadId}/follow-ups` }, `follow-up-due:${item.id}`); notifications += 1;
+      this.notifications.create({ recipientId: item.ownerId, type: "FOLLOW_UP_DUE", priority: "HIGH", resourceType: "LEAD", resourceId: item.leadId, href: `/leads/${item.leadId}/follow-ups` }, `follow-up-due:${item.id}:v${updated.version}`); notifications += 1;
     }
     return { due, notifications };
   }
 
   async notifyDueForApi(now = new Date()): Promise<{ due: number; notifications: number }> {
     if (!this.persistence?.enabled) return this.notifyDue(now);
-    const dueItems = await this.persistence.markDue(now);
-    for (const item of dueItems) {
-      this.notifications.create({ recipientId: item.ownerId, type: "FOLLOW_UP_DUE", priority: "HIGH", resourceType: "LEAD", resourceId: item.leadId, href: `/leads/${item.leadId}/follow-ups` }, `follow-up-due:${item.id}`);
-    }
-    await this.notifications.flush();
-    if (dueItems.length) await this.refreshPersistentState();
-    return { due: dueItems.length, notifications: dueItems.length };
+    const result = await this.persistence.markDue(now);
+    if (result.due || result.notifications) await this.refreshPersistentState();
+    return result;
   }
 
   decide(id: string, input: { action?: "POSTPONE" | "COMPLETE" | "CANCEL"; dueAt?: string; reason?: string; expectedVersion?: number }, principal: Principal, correlationId: string): FollowUpRecord {
@@ -144,18 +136,12 @@ export class FollowUpService implements OnModuleInit {
     this.assertDecisionVersion(current, input.expectedVersion);
     const updatedAt = new Date().toISOString();
     const next: FollowUpRecord = { ...current, state: followUpDecisionStates[action], ...(due ? { dueAt: due.toISOString() } : {}), reason, version: current.version + 1, updatedAt };
-    try {
-      const stored = await this.persistence.decide(current, next, `FOLLOW_UP_${action}`, {
-        idempotencyKey, fingerprint, principal, correlationId, expectedLeadVersion: lead.version ?? 1,
-      });
-      await this.leads.refreshReportingForApi();
-      await this.refreshPersistentState();
-      return stored;
-    } catch (error) {
-      await this.leads.refreshReportingForApi();
-      await this.refreshPersistentState();
-      throw error;
-    }
+    const stored = await this.persistence.decide(current, next, `FOLLOW_UP_${action}`, {
+      idempotencyKey, fingerprint, principal, correlationId, expectedLeadVersion: lead.version ?? 1,
+    });
+    await this.leads.refreshReportingForApi();
+    await this.refreshPersistentState();
+    return stored;
   }
 
   private validateDecision(input: FollowUpDecisionInput): ValidatedFollowUpDecision {

@@ -3,7 +3,7 @@ import test from "node:test";
 import { createProxy } from "../app/api/crm/proxy.js";
 
 function relay(upstream: () => Response): ReturnType<typeof createProxy> {
-  return createProxy({ apiOrigin: () => "http://api:3001", getSession: () => Promise.resolve("synthetic-session"), fetch: () => Promise.resolve(upstream()), randomId: () => "synthetic-correlation", production: true });
+  return createProxy({ apiOrigin: () => "http://api:3001", publicOrigin: () => "https://web.example.test", getSession: () => Promise.resolve("synthetic-session"), fetch: () => Promise.resolve(upstream()), randomId: () => "synthetic-correlation", production: true });
 }
 
 async function read(proxy: ReturnType<typeof createProxy>, path = "lead-views"): Promise<Response> {

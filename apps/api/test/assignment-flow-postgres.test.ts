@@ -308,7 +308,20 @@ test("CRMY-94 optional transfer changes only scheduled reminder ownership/versio
     await f.configure("CONTROLLED_RANDOM", [candidate(f.commercial.id), candidate(f.target.id)]);
     const lead = await f.ownedLead("transfer");
     const dueAt = new Date(Date.now() + 3_600_000);
-    const reminders = await Promise.all((["SCHEDULED", "DUE", "COMPLETED", "CANCELLED"] as const).map((state) => f.db.leadFollowUp.create({ data: { leadId: lead.id, ownerId: f.commercial.id, dueAt, state, reason: `Synthetic ${state}`, idempotencyKey: f.key(state), fingerprint: "a".repeat(64) } })));
+    const elapsedAt = new Date(Date.now() - 60_000);
+    const reminders = await Promise.all((["SCHEDULED", "DUE", "COMPLETED", "CANCELLED"] as const).map((state) => f.db.leadFollowUp.create({ data: { leadId: lead.id, ownerId: f.commercial.id,
+      dueAt: state === "DUE" ? elapsedAt : dueAt, state, version: state === "DUE" ? 2 : 1,
+      ...(state === "DUE" ? { createdAt: new Date(elapsedAt.valueOf() - 60_000), updatedAt: elapsedAt } : {}),
+      reason: `Synthetic ${state}`, idempotencyKey: f.key(state), fingerprint: "a".repeat(64) } })));
+    // The retained DUE fixture represents a real historical transition with a
+    // committed immutable legacy audit, not an unaudited future state. Later
+    // global scheduler proofs may safely recover its missing notification.
+    const dueReminder = reminders[1]!;
+    const dueAudit = await f.db.auditEvent.create({ data: {
+      eventType: "FOLLOW_UP_DUE", resourceType: "LEAD", resourceId: lead.id, actorId: "system:follow-up-scheduler", actorRoles: [],
+      correlationId: `follow-up-due:${dueReminder.id}`, idempotencyKey: `follow-up-due:${dueReminder.id}`, result: "SUCCESS", occurredAt: elapsedAt,
+      after: { followUpId: dueReminder.id, state: "DUE", dueAt: elapsedAt.toISOString(), version: 2 },
+    } });
     const foreign = await f.db.leadFollowUp.create({ data: { leadId: lead.id, ownerId: f.manager.id, dueAt, state: "SCHEDULED", reason: "Synthetic another owner", idempotencyKey: f.key("foreign-reminder"), fingerprint: "b".repeat(64) } });
     const historical = await f.db.leadActivity.create({ data: { leadId: lead.id, type: "COMMENT", result: "SYNTHETIC_HISTORICAL_AUTHOR", authorId: f.commercial.id, correlationId: f.key("history"), idempotencyKey: f.key("history") } });
     const protectedCounts = await Promise.all([f.db.admissionsBooking.count(), f.db.appointment.count(), f.db.telephonyCall.count(), f.db.telephonyAgentCommand.count()]);
@@ -323,6 +336,7 @@ test("CRMY-94 optional transfer changes only scheduled reminder ownership/versio
     assert.equal(scheduled.ownerId, f.target.id); assert.equal(scheduled.version, 2); assert.equal(scheduled.state, "SCHEDULED");
     assert.equal(scheduled.reason, reminders[0]!.reason); assert.deepEqual(scheduled.dueAt, reminders[0]!.dueAt); assert.deepEqual(scheduled.createdAt, reminders[0]!.createdAt);
     for (const untouched of [...reminders.slice(1), foreign]) assert.deepEqual(await f.db.leadFollowUp.findUniqueOrThrow({ where: { id: untouched.id } }), untouched);
+    assert.deepEqual(await f.db.auditEvent.findUniqueOrThrow({ where: { id: dueAudit.id } }), dueAudit, "Reassignment preserves the original due transition proof");
     assert.deepEqual(await f.db.leadActivity.findUniqueOrThrow({ where: { id: historical.id } }), historical, "Transfer never rewrites the historical author");
     assert.deepEqual(await Promise.all([f.db.admissionsBooking.count(), f.db.appointment.count(), f.db.telephonyCall.count(), f.db.telephonyAgentCommand.count()]), protectedCounts);
     assert.equal(await f.db.internalNotification.count({ where: { resourceId: lead.id, type: "FOLLOW_UP_DUE" } }), 0, "A transfer itself does not fabricate an elapsed reminder notification");
@@ -363,6 +377,9 @@ test("CRMY-94 real reminder due/complete races never transfer terminal rows or d
         const notifications = await f.db.internalNotification.findMany({ where: { resourceId: lead.id, type: "FOLLOW_UP_DUE" } });
         assert.equal(notifications.length, 1); assert.equal(notifications[0]!.recipientId, current.ownerId);
         assert.equal(await f.db.auditEvent.count({ where: { resourceId: lead.id, eventType: "FOLLOW_UP_DUE" } }), 1);
+        const delivered = await effects(f, lead.id);
+        assert.deepEqual(await f.apps[1]!.get(FollowUpService).notifyDueForApi(new Date(Date.now() + 120_000)), { due: 0, notifications: 0 });
+        assert.deepEqual(await effects(f, lead.id), delivered, "A canonical delivered occurrence remains a no-op after legitimate Lead reassignment retains DUE ownership");
       } else {
         assert.equal(results[1]?.status, "fulfilled");
         const current = await f.db.leadFollowUp.findUniqueOrThrow({ where: { id: item.id } });

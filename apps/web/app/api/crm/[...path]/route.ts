@@ -3,9 +3,11 @@ import { cookies } from "next/headers";
 import { apiOrigin } from "../proxy-policy";
 import { createProxy } from "../proxy";
 import { serviceAuthorization } from "../service-identity";
+import { publicOrigin } from "../../browser-origin";
 
 const proxy = createProxy({
   apiOrigin,
+  publicOrigin,
   fetch: globalThis.fetch,
   getSession: async () => (await cookies()).get("crm_session")?.value,
   getServiceAuthorization: serviceAuthorization,

@@ -487,6 +487,10 @@ resource "google_cloud_run_v2_service" "web" {
         name  = "CRM_API_USE_IAM"
         value = "true"
       }
+      env {
+        name  = "CRM_PUBLIC_ORIGIN"
+        value = var.crm_public_origin
+      }
       startup_probe {
         initial_delay_seconds = 1
         timeout_seconds       = 2
