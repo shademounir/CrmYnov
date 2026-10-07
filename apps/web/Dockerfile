@@ -10,6 +10,11 @@ FROM dependencies AS build
 COPY tsconfig.base.json ./
 COPY apps/web apps/web
 COPY packages/shared packages/shared
+# Next checks the connected browser test as well as the app. Keep its canonical
+# synthetic fixture and contract available only in this build stage; no API app,
+# private fixture or test database is copied into the production runtime.
+COPY apps/api/test/fixtures/import/historical-workbook.synthetic.ts apps/api/test/fixtures/import/historical-workbook.synthetic.ts
+COPY apps/api/src/bootstrap-import/bootstrap-import.contract.ts apps/api/src/bootstrap-import/bootstrap-import.contract.ts
 RUN npm run build --workspace=@crm/shared && npm run build --workspace=@crm/web
 
 FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a AS patched-openssl

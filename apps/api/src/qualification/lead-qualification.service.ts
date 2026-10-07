@@ -22,6 +22,8 @@ export interface LeadQualificationRecord {
   authorId?: string;
   version: number;
   createdAt?: string;
+  /** A historical value is not a qualification authored at import time. */
+  temperatureSource?: "HISTORICAL_BASELINE";
 }
 
 export interface LeadQualificationInput {
@@ -76,7 +78,9 @@ export class LeadQualificationService {
     const client = this.requiredClient();
     const rows = await client.leadCommercialQualification.findMany({ where: { leadId }, orderBy: [{ version: "desc" }, { id: "desc" }], take: 100 });
     const history = rows.map((row) => this.map(row));
-    return { current: history[0] ?? this.unevaluated(leadId), history };
+    if (history[0]) return { current: history[0], history };
+    const lead = await client.lead.findUnique({ where: { id: leadId }, select: { acquisitionKind: true, baselineTemperature: true } });
+    return { current: this.baselineOrUnevaluated(leadId, lead), history };
   }
 
   async update(leadId: string, raw: LeadQualificationInput, principal: Principal, correlationId: string): Promise<LeadQualificationRecord> {
@@ -88,7 +92,7 @@ export class LeadQualificationService {
       return await client.$transaction(async (tx) => {
         const replay = await tx.leadCommercialQualification.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
         if (replay) return this.replay(replay, leadId, fingerprint);
-        const lead = await tx.lead.findUnique({ where: { id: leadId }, select: { campus: true } });
+        const lead = await tx.lead.findUnique({ where: { id: leadId }, select: { campus: true, acquisitionKind: true, baselineTemperature: true } });
         if (!lead) throw new ConflictException({ code: "lead_qualification_unavailable" });
         const latest = await tx.leadCommercialQualification.findFirst({ where: { leadId }, orderBy: [{ version: "desc" }, { id: "desc" }] });
         const currentVersion = latest?.version ?? 0;
@@ -101,7 +105,10 @@ export class LeadQualificationService {
           campusId: lead.campus, resourceType: "LEAD", resourceId: leadId, eventType: "LEAD_QUALIFICATION_UPDATED",
           actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
           correlationId, result: "SUCCESS", idempotencyKey: `qualification-audit:${input.idempotencyKey}`,
-          before: latest ? { temperature: latest.temperature, version: latest.version } : { temperature: "UNEVALUATED", version: 0 },
+          before: latest ? { temperature: latest.temperature, version: latest.version } : {
+            temperature: this.baselineOrUnevaluated(leadId, lead).temperature, version: 0,
+            ...(lead.acquisitionKind === "BASELINE" && lead.baselineTemperature ? { temperatureSource: "HISTORICAL_BASELINE" } : {}),
+          },
           after: { temperature: next.temperature, version: next.version },
         } });
         return this.map(next);
@@ -125,6 +132,12 @@ export class LeadQualificationService {
 
   private unevaluated(leadId: string): LeadQualificationRecord {
     return { leadId, temperature: "UNEVALUATED", temperatureLabel: leadTemperatureLabels.UNEVALUATED, version: 0 };
+  }
+
+  private baselineOrUnevaluated(leadId: string, lead: { acquisitionKind: string; baselineTemperature: string | null } | null): LeadQualificationRecord {
+    if (lead?.acquisitionKind !== "BASELINE" || !lead.baselineTemperature || !(leadTemperatures as readonly string[]).includes(lead.baselineTemperature)) return this.unevaluated(leadId);
+    const temperature = lead.baselineTemperature as LeadTemperature;
+    return { leadId, temperature, temperatureLabel: leadTemperatureLabels[temperature], version: 0, temperatureSource: "HISTORICAL_BASELINE" };
   }
 
   private map(row: { id: string; leadId: string; temperature: string; reason: string; comment: string | null; authorId: string; version: number; createdAt: Date }): LeadQualificationRecord {

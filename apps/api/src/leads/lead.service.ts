@@ -23,6 +23,8 @@ export interface InteractionCorrectionInput {
   replacement?: { type: string; result: string; nextActionAt?: string };
 }
 export type LeadStatus = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
+export type LeadAcquisitionKind = "NEW" | "BASELINE";
+export type LeadTemperatureSource = "HUMAN_QUALIFICATION" | "HISTORICAL_BASELINE" | "UNEVALUATED";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
 const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = {
   PROSPECT: ["CONTACTED"],
@@ -36,9 +38,11 @@ export interface LeadRecord {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
+  acquisitionKind?: LeadAcquisitionKind;
   assignedToLabel?: string;
   nextActionAt?: string; lastActivityAt?: string; createdAt: string; version?: number;
   temperature?: LeadTemperature; temperatureLabel?: string; qualificationVersion?: number;
+  temperatureSource?: LeadTemperatureSource;
   qualificationReason?: string; qualificationComment?: string; qualifiedAt?: string; qualifiedBy?: string;
   initialAssignment?: { outcome: "ASSIGNED" | "UNASSIGNED"; reason: string; configurationVersion: number; ruleId: string | null };
 }
@@ -48,7 +52,7 @@ export interface LeadActivityRecord {
   nextActionAt?: string; correlationId: string; occurredAt: string; correction?: ActivityCorrection;
 }
 
-export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status"> & { idempotencyKey?: string };
+export type CreateLeadInput = Omit<LeadRecord, "id" | "leadCode" | "createdAt" | "status" | "acquisitionKind" | "temperatureSource"> & { idempotencyKey?: string };
 export interface CreateLeadResult { lead: LeadRecord; duplicateCandidates: string[]; assignment?: LeadRecord["initialAssignment"] }
 export type UpdateLeadInput = Partial<Pick<LeadRecord, "firstName" | "lastName" | "email" | "phone" | "campus" | "campaign" | "educationLevel" | "program" | "source">> & { expectedVersion?: number; idempotencyKey: string };
 export interface LeadPage { items: LeadRecord[]; page: number; pageSize: number; total: number }
@@ -59,8 +63,10 @@ export interface LeadAssignmentSnapshot {
 export interface LeadReportingRow {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
   assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
+  acquisitionKind?: LeadAcquisitionKind;
   activities: Array<{ type: ActivityType; result: string; authorId: string; occurredAt: string }>;
   temperature: LeadTemperature;
+  temperatureSource?: LeadTemperatureSource;
 }
 export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
 export interface LeadListQuery {
@@ -375,7 +381,7 @@ export class LeadService implements OnModuleInit {
       Boolean((email && lead.email === email) || (phone && lead.phone === phone)),
     ).map((lead) => lead.leadCode).sort((left, right) => left.localeCompare(right));
     const leadCode = `LD-${new Date().getUTCFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
-    const lead = this.registerLocalLead({ ...input, leadCode, firstName: input.firstName.trim(), lastName: input.lastName.trim(),
+    const lead = this.registerLocalLead({ ...input, acquisitionKind: "NEW", leadCode, firstName: input.firstName.trim(), lastName: input.lastName.trim(),
       campus: input.campus.trim(), campaign: input.campaign.trim(), educationLevel: input.educationLevel.trim(),
       program: input.program.trim(), source: input.source.trim(), ...(email ? { email } : {}), ...(phone ? { phone } : {}) });
     const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId: lead.id, type: "LEAD_CREATED",
@@ -495,6 +501,8 @@ export class LeadService implements OnModuleInit {
     if (savedView === "INCOMPLETE") return [lead.campus, lead.campaign, lead.educationLevel, lead.program]
       .some((value) => value.toLocaleLowerCase("fr").includes("compléter"));
     if (savedView === "UNCLASSIFIED_SOURCES") return lead.source.trim().length === 0 || lead.source === "UNKNOWN";
+    if (savedView === "PHONE_CALLS") return lead.source === "PHONE" || lead.source === "PHONE_CALL";
+    if (savedView === "PHYSICAL_VISITS") return lead.source === "IN_PERSON" || lead.source === "PHYSICAL_VISIT";
     const sources: Readonly<Record<Exclude<LeadSavedView, "IMPORT_ERRORS" | "INCOMPLETE" | "UNCLASSIFIED_SOURCES">, string>> = {
       FORMINATOR_ZAPIER: "FORMINATOR_ZAPIER", YNOV_MA_LEGACY: "LEGACY_IMPORT", YNOV_COM: "YNOV_COM",
       PHONE_CALLS: "PHONE_CALL", PHYSICAL_VISITS: "PHYSICAL_VISIT", JOBINTECH: "JOBINTECH", LEGACY_RELAUNCH: "LEGACY_RELAUNCH",
@@ -503,9 +511,9 @@ export class LeadService implements OnModuleInit {
   }
 
   private sourceChannel(source: string): string {
-    if (source === "PHONE_CALL") return "PHONE";
-    if (source === "PHYSICAL_VISIT" || source === "EVENT") return "IN_PERSON";
-    if (["WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL";
+    if (source === "PHONE" || source === "PHONE_CALL") return "PHONE";
+    if (["IN_PERSON", "PHYSICAL_VISIT", "EVENT"].includes(source)) return "IN_PERSON";
+    if (["DIGITAL", "SOCIAL_MEDIA", "WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL";
     if (source === "PARTNER" || source === "JOBINTECH") return "PARTNER";
     return "OTHER";
   }
@@ -596,9 +604,11 @@ export class LeadService implements OnModuleInit {
     return [...this.leads.values()]
       .filter((lead) => (principal.permissionLeadIds ? principal.permissionLeadIds.has(lead.id) : global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, temperature }) => ({
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, acquisitionKind, temperature, temperatureSource }) => ({
         id, status, campus, campaign, program, source, createdAt,
+        acquisitionKind: acquisitionKind ?? "NEW",
         temperature: temperature ?? "UNEVALUATED",
+        ...(temperatureSource ? { temperatureSource } : {}),
         ...(assignedToId ? { assignedToId } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
         ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
         ...(importBatchId ? { importBatchId } : {}),

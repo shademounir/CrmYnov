@@ -1,5 +1,11 @@
 # Matrice de mapping des entrées de leads
 
+> Référence historique du profil générique. Pour la reprise autorisée le
+> 7 octobre 2026, les quatre feuilles et le parcours durable dédiés sont décrits
+> dans [Reprise historique Excel](../runbooks/historical-excel-bootstrap.md).
+> Ce nouveau périmètre ne modifie pas silencieusement les refus ou règles du
+> profiler générique ci-dessous ; ses preuves antérieures restent conservées.
+
 Cette matrice est issue d'une analyse locale en lecture seule des deux canevas anonymisés du 23 août 2026. Les fichiers originaux restent hors Git. Aucune valeur de cellule n'est reproduite ici et seules des fixtures synthétiques peuvent être versionnées.
 
 ## Périmètre et précédence

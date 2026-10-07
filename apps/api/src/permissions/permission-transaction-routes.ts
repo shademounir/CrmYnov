@@ -2,6 +2,8 @@ import type { PermissionTransactionMode } from "./permission-fence.js";
 
 /** Reviewed server handlers only. An unknown/new handler never receives a shared lock. */
 const readers: Readonly<Record<string, readonly string[]>> = {
+  BootstrapImportController: ["context", "get", "rows", "report"],
+  BootstrapHistoricalNotesController: ["notes"],
   LeadController: ["list", "detail"],
   LeadTimelineController: ["list"],
   LeadQualificationController: ["read"],

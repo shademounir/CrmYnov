@@ -128,9 +128,24 @@ function defaultLiteral(input) {
 
 function boundedCheck(input, column) {
   if (!input.symbol("(") || input.id() !== column) return false;
+  // A finite, literal string domain on the column being added is additive.
+  // No expression, function, other column, numeric list or NOT/OR clause is
+  // recognized here; those remain fail-closed like the existing grammar.
+  if (input.word("IN")) return boundedStringDomain(input) && input.symbol(")");
   if (input.word("BETWEEN")) return numericLiteral(input) && input.word("AND") && numericLiteral(input) && input.symbol(")");
   if (!input.peek() || ![">=", "<=", ">", "<", "=", "<>", "!="].some(value => input.symbol(value))) return false;
   return numericLiteral(input) && input.symbol(")");
+}
+
+function boundedStringDomain(input) {
+  if (!input.symbol("(")) return false;
+  const seen = new Set();
+  do {
+    const token = input.take();
+    if (token?.kind !== "string" || !token.value || token.value.length > 64 || seen.has(token.value) || seen.size >= 16) return false;
+    seen.add(token.value);
+  } while (input.symbol(","));
+  return input.symbol(")");
 }
 
 function columnType(input) {
