@@ -65,6 +65,21 @@ test("separates a bounded DEFAULT from its same-column numeric CHECK", () => {
   ]) assert.equal(assess(sql).approved, true, sql);
 });
 
+test("recognizes only a finite literal same-column string domain on an added column", () => {
+  for (const sql of [
+    "ALTER TABLE leads ADD COLUMN acquisition_kind VARCHAR(16) NOT NULL DEFAULT 'NEW' CHECK (acquisition_kind IN ('NEW','BASELINE'));",
+    'ALTER TABLE leads ADD COLUMN "baseline_temperature" VARCHAR(16) CHECK ("baseline_temperature" IN (\'UNEVALUATED\',\'COLD\',\'WARM\',\'HOT\'));',
+  ]) assert.equal(assess(sql).approved, true, sql);
+  for (const domain of [
+    "IN ()", "IN (NULL)", "IN ('NEW',1)", "IN ('NEW','NEW')", "IN ('')", "NOT IN ('NEW')",
+    "IN (arbitrary())", "IN (SELECT state FROM states)", "IN ('NEW') OR true", "IN ('NEW') AND other='NEW'",
+    `IN ('${'x'.repeat(65)}')`, `IN (${Array.from({ length: 17 }, (_, index) => `'S${index}'`).join(',')})`,
+  ]) assert.equal(assess(`ALTER TABLE leads ADD COLUMN state VARCHAR(16) CHECK (state ${domain});`).approved, false, domain);
+  assert.equal(assess("ALTER TABLE leads ADD COLUMN state VARCHAR(16) CHECK (other IN ('NEW')); ").approved, false);
+  assert.equal(assess("ALTER TABLE leads ADD CONSTRAINT state_check CHECK (state IN ('NEW')); ").approved, false);
+  assert.equal(assess("ALTER TABLE leads ADD COLUMN state VARCHAR(16) CHECK (state IN ('NEW')) NOT VALID;").approved, false);
+});
+
 for (const definition of [
   'INTEGER NOT NULL', 'INTEGER DEFAULT', 'INTEGER DEFAULT 0 + 1', 'INTEGER DEFAULT arbitrary()',
   'INTEGER DEFAULT (SELECT 1)', 'INTEGER DEFAULT 0 CHECK ()', 'INTEGER DEFAULT 0 CHECK (other >= 0)',

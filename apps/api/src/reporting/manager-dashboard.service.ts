@@ -10,6 +10,7 @@ import { SharedContributionService, type SharedContributionReport } from "./shar
 import { SourceEffectivenessService, type SourceEffectivenessReport } from "./source-effectiveness.service.js";
 import { ReportingPersistenceService, type DashboardCapabilities, type PersistentReportingEvidence } from "./reporting-persistence.service.js";
 import { matchesInteractiveFilters, normalizeReportingQuery, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { acquisitionPartition, isBaseline, observedEnrollment, type AcquisitionPartition } from "./acquisition-cohort.js";
 
 export const MANAGER_DASHBOARD_VERSION = "manager-dashboard-v1";
 export type ManagerDashboardQuery = InteractiveReportingQuery;
@@ -21,6 +22,7 @@ export interface ManagerDashboardReport {
     operationalRisks: OperationalRiskReport; sharedContributions: SharedContributionReport;
   };
   cards: { uniqueLeads: number; enrolled: number; unassigned: number; overdueFollowUps: number; activeAlerts: number };
+  acquisition: AcquisitionPartition;
   trends: Array<{ date: string; leadsCreated: number; leadsEnrolled: number }>;
   distributions: { source: Array<{ value: string; count: number }>; campaign: Array<{ value: string; count: number }>; program: Array<{ value: string; count: number }>; campus: Array<{ value: string; count: number }> };
   navigation: Array<{ key: string; href: string; definitionVersion: string }>;
@@ -90,7 +92,7 @@ export class ManagerDashboardService {
     const cards = { uniqueLeads: panels.funnel.cohort.totalUniqueLeads, enrolled: panels.funnel.attainment.enrolled,
       unassigned: panels.operationalRisks.queues.unassigned, overdueFollowUps: panels.operationalRisks.queues.overdueFollowUps,
       activeAlerts: panels.operationalRisks.alerts.length };
-    const trends = this.trends(rows);
+    const trends = this.trends(rows, query);
     const distributions = { source: panels.funnel.breakdowns.source, campaign: panels.funnel.breakdowns.campaign,
       program: panels.funnel.breakdowns.program, campus: panels.funnel.breakdowns.campus };
     const suffix = reportingSearchParams(query).toString();
@@ -109,7 +111,7 @@ export class ManagerDashboardService {
     ];
     const exportHref = `/reports/manager-dashboard/export?${suffix}`;
     const report: ManagerDashboardReport = { definitionVersion: MANAGER_DASHBOARD_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
-      filters: common, panels, cards, trends, distributions, navigation,
+      filters: common, panels, cards, acquisition: acquisitionPartition(rows), trends, distributions, navigation,
       drillDowns, export: { href: exportHref, schemaVersion: "manager-dashboard-export-v1", aggregatedOnly: true },
       safeguards: { singlePrimaryConversionAttribution: true, financialDecision: false, disciplinaryScore: false } };
     this.audit.record({ eventType: "MANAGER_DASHBOARD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
@@ -138,6 +140,12 @@ export class ManagerDashboardService {
   private serializeAggregated(report: ManagerDashboardReport): string {
     const lines = ["schemaVersion,timezone,period,from,to", ["manager-dashboard-export-v1", report.timezone, report.filters.period ?? "", report.filters.from ?? "", report.filters.to ?? ""].map((value) => this.csv(value)).join(","), "section,dimension,value,count"];
     for (const [key, value] of Object.entries(report.cards).sort(([left], [right]) => left.localeCompare(right, "en"))) lines.push(`kpi,${key},,${value}`);
+    lines.push(`acquisition,newAcquisitionCount,,${report.acquisition.newAcquisitionCount}`);
+    lines.push(`portfolio,baselinePortfolioCount,,${report.acquisition.baselinePortfolioCount}`);
+    lines.push(`definition,acquisitionPeriodDateBasis,${this.csv(report.acquisition.periodDateBasis)},`);
+    lines.push(`definition,portfolioStatusRates,${this.csv("Current portfolio stock includes reconciled BASELINE; not contemporary acquisitions or approvals")},`);
+    lines.push(`definition,trendsLeadsCreated,${this.csv("NEW only; excludes BASELINE stored on import day")},`);
+    lines.push(`definition,trendsLeadsEnrolled,${this.csv("Real STATUS_CHANGED to ENROLLED in period; later work on BASELINE included, imported status alone excluded")},`);
     lines.push(`kpi,qualifiedCurrentStatus,,${report.panels.funnel.currentState.QUALIFIED}`);
     const enrolledRate = report.panels.funnel.rates.enrolled;
     // Ratios belong to value, not count. An empty cohort has no conversion rate.
@@ -150,10 +158,13 @@ export class ManagerDashboardService {
   }
 
   private filteredRows(query: ManagerDashboardQuery, principal: Principal): LeadReportingRow[] { return this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, query)); }
-  private trends(rows: LeadReportingRow[]): Array<{ date: string; leadsCreated: number; leadsEnrolled: number }> {
+  private trends(rows: LeadReportingRow[], query: ManagerDashboardQuery): Array<{ date: string; leadsCreated: number; leadsEnrolled: number }> {
     const values = new Map<string, { leadsCreated: Set<string>; leadsEnrolled: Set<string> }>();
     const bucket = (date: string): { leadsCreated: Set<string>; leadsEnrolled: Set<string> } => { const key = this.localDate(date); const current = values.get(key) ?? { leadsCreated: new Set<string>(), leadsEnrolled: new Set<string>() }; values.set(key, current); return current; };
-    for (const row of rows) { bucket(row.createdAt).leadsCreated.add(row.id); for (const activity of row.activities.filter((item) => item.type === "STATUS_CHANGED" && item.result.split("->")[1] === "ENROLLED")) bucket(activity.occurredAt).leadsEnrolled.add(row.id); }
+    for (const row of rows) {
+      if (!isBaseline(row)) bucket(row.createdAt).leadsCreated.add(row.id);
+      for (const activity of row.activities.filter((item) => observedEnrollment(row, item, query.from, query.to))) bucket(activity.occurredAt).leadsEnrolled.add(row.id);
+    }
     return [...values].sort(([left], [right]) => left.localeCompare(right, "en")).map(([date, counts]) => ({ date, leadsCreated: counts.leadsCreated.size, leadsEnrolled: counts.leadsEnrolled.size }));
   }
   private localDate(value: string): string { const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(value)); const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find((item) => item.type === type)?.value ?? ""; return `${part("year")}-${part("month")}-${part("day")}`; }

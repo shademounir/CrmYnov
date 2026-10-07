@@ -7,5 +7,5 @@ export default function ImportWizardPage(): React.JSX.Element {
       <label>Fichier synthétique<input type="file" name="file" accept=".csv,.xlsx"/></label>
       <label><input type="checkbox" name="confirm"/>Je confirme les compteurs, collisions, affectations et le dry-run sans mutation.</label>
       <button type="submit">Confirmer et produire le rapport</button></form>
-    <p>La confirmation reste verrouillée tant que toutes les preuves ne sont pas réconciliées.</p></main>;
+    <p>La confirmation reste verrouillée tant que toutes les preuves ne sont pas réconciliées.</p><section><h2>Reprise Excel historique durable</h2><p>Pour un portefeuille historique : fichier scellé, quatre feuilles ligne 6, décisions par occurrence et reçus persistants. Ce parcours est distinct du profilage générique.</p><a className="secondary-button" href="/imports/bootstrap">Ouvrir l’amorçage Excel contrôlé</a></section></main>;
 }

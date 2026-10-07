@@ -6,6 +6,7 @@ import { LeadService, leadStatuses, type LeadReportingRow, type LeadStatus } fro
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
+import { acquisitionPartition, isBaseline, type AcquisitionPartition } from "./acquisition-cohort.js";
 
 export const FUNNEL_DEFINITION_VERSION = "commercial-funnel-v1";
 export const FUNNEL_TIMEZONE = "Africa/Casablanca";
@@ -17,6 +18,7 @@ export interface CommercialFunnel {
   temperatureDistribution: Record<LeadTemperature, number>;
   attainment: { contactedOrBeyond: number; qualifiedOrBeyond: number; enrolled: number };
   rates: { contactedOrBeyond: number | null; qualifiedOrBeyond: number | null; enrolled: number | null };
+  acquisition: AcquisitionPartition & { currentNewEnrolledCount: number; currentNewEnrollmentRate: number | null };
   breakdowns: Record<"campus" | "campaign" | "program" | "source", Array<{ value: string; count: number }>>;
   definitions: Array<{ key: string; formula: string; denominator: string; exclusions: string[] }>;
 }
@@ -40,6 +42,8 @@ export class CommercialFunnelService {
     const currentState = Object.fromEntries(leadStatuses.map((status) => [status, rows.filter((lead) => lead.status === status).length])) as Record<LeadStatus, number>;
     const temperatureDistribution = Object.fromEntries(leadTemperatures.map((temperature) => [temperature, rows.filter((lead) => lead.temperature === temperature).length])) as Record<LeadTemperature, number>;
     const total = rows.length;
+    const partition = acquisitionPartition(rows);
+    const currentNewEnrolledCount = rows.filter((lead) => !isBaseline(lead) && lead.status === "ENROLLED").length;
     const attainment = {
       contactedOrBeyond: currentState.CONTACTED + currentState.QUALIFIED + currentState.ENROLLED,
       qualifiedOrBeyond: currentState.QUALIFIED + currentState.ENROLLED,
@@ -50,13 +54,16 @@ export class CommercialFunnelService {
       definitionVersion: FUNNEL_DEFINITION_VERSION, timezone: FUNNEL_TIMEZONE, generatedAt: new Date().toISOString(),
       cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), totalUniqueLeads: total }, currentState, temperatureDistribution, attainment,
       rates: { contactedOrBeyond: rate(attainment.contactedOrBeyond), qualifiedOrBeyond: rate(attainment.qualifiedOrBeyond), enrolled: rate(attainment.enrolled) },
+      acquisition: { ...partition, currentNewEnrolledCount, currentNewEnrollmentRate: partition.newAcquisitionCount
+        ? Number((currentNewEnrolledCount / partition.newAcquisitionCount).toFixed(4)) : null },
       breakdowns: { campus: this.breakdown(rows, "campus"), campaign: this.breakdown(rows, "campaign"), program: this.breakdown(rows, "program"), source: this.breakdown(rows, "source") },
       definitions: [
-        { key: "currentState", formula: "count(distinct lead.id) grouped by current status", denominator: "selected cohort", exclusions: ["historical statuses", "deleted records"] },
-        { key: "temperatureDistribution", formula: "latest human qualification per lead, or UNEVALUATED when absent", denominator: "selected cohort", exclusions: ["automatic inference", "historical spreadsheet values"] },
+        { key: "currentState", formula: "count(distinct lead.id) grouped by current portfolio status, including reconciled BASELINE dossiers", denominator: "selected authorized portfolio cohort by stored createdAt", exclusions: ["source rows not reconciled to a dossier", "deleted records"] },
+        { key: "temperatureDistribution", formula: "latest human qualification per lead; otherwise explicit historical baseline temperature; otherwise UNEVALUATED", denominator: "selected portfolio cohort", exclusions: ["automatic inference", "formula-derived spreadsheet values", "invented qualification author/date"] },
         { key: "contactedOrBeyond", formula: "CONTACTED + QUALIFIED + ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST", "PROSPECT"] },
         { key: "qualifiedOrBeyond", formula: "QUALIFIED + ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST", "CONTACTED", "PROSPECT"] },
         { key: "enrolled", formula: "ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST"] },
+        { key: "acquisition", formula: "NEW dossiers only; BASELINE remains portfolio stock, never a new acquisition on import day", denominator: "newAcquisitionCount", exclusions: ["BASELINE", "historical reception dates inferred from importAt"] },
       ],
     };
     this.audit.record({ eventType: "COMMERCIAL_FUNNEL_VIEWED", actorId: principal.userId, actorRoles: principal.roles,

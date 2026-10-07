@@ -7,6 +7,7 @@ import { FollowUpService } from "../follow-up/follow-up.service.js";
 import { LeadService, type LeadReportingRow } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
+import { acquisitionPartition, isBaseline, type AcquisitionPartition } from "./acquisition-cohort.js";
 
 export const COMMERCIAL_PERFORMANCE_VERSION = "commercial-performance-v1";
 export const COMMERCIAL_PERFORMANCE_TIMEZONE = "Africa/Casablanca";
@@ -17,6 +18,7 @@ export interface AdviserPerformance {
   adviserId: string;
   primaryLeadCount: number;
   secondaryLeadCount: number;
+  acquisition: AcquisitionPartition;
   statusVolumes: { contacted: number; qualified: number; enrolled: number; closedLost: number };
   rates: { contact: number | null; qualification: number | null; enrollment: number | null; loss: number | null };
   medianMinutes: { firstHandling: number | null; contactToQualification: number | null; qualificationToEnrollment: number | null };
@@ -31,6 +33,7 @@ export interface CommercialPerformanceReport {
   definitionVersion: string; timezone: string; generatedAt: string;
   cohort: { from?: string; to?: string; inactivityHours: number; uniqueLeadCount: number };
   advisers: AdviserPerformance[];
+  acquisition: AcquisitionPartition;
   definitions: Array<{ key: string; numerator: string; denominator: string; inclusions: string[]; exclusions: string[] }>;
 }
 
@@ -79,7 +82,7 @@ export class CommercialPerformanceService {
       const adviserReassignments = reassignments.filter((item) => item.requestedBy === adviserId && unique.has(item.leadId));
       const rate = (value: number): number | null => primary.length === 0 ? null : Number((value / primary.length).toFixed(4));
       return {
-        adviserId, primaryLeadCount: primary.length, secondaryLeadCount: secondary.length,
+        adviserId, primaryLeadCount: primary.length, secondaryLeadCount: secondary.length, acquisition: acquisitionPartition(primary),
         statusVolumes: { contacted, qualified, enrolled, closedLost },
         rates: { contact: rate(contacted), qualification: rate(qualified), enrollment: rate(enrolled), loss: rate(closedLost) },
         medianMinutes: {
@@ -109,13 +112,15 @@ export class CommercialPerformanceService {
     });
     const report: CommercialPerformanceReport = {
       definitionVersion: COMMERCIAL_PERFORMANCE_VERSION, timezone: COMMERCIAL_PERFORMANCE_TIMEZONE,
-      generatedAt: now.toISOString(), cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), inactivityHours, uniqueLeadCount: cohort.length }, advisers,
+      generatedAt: now.toISOString(), cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), inactivityHours, uniqueLeadCount: cohort.length }, advisers, acquisition: acquisitionPartition(cohort),
       definitions: [
         { key: "contactRate", numerator: "distinct primary leads that reached CONTACTED or beyond", denominator: "distinct primary leads", inclusions: ["CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST after contact"], exclusions: ["secondary contributions", "unassigned leads"] },
         { key: "qualificationRate", numerator: "distinct primary leads that reached QUALIFIED or ENROLLED", denominator: "distinct primary leads", inclusions: ["QUALIFIED", "ENROLLED"], exclusions: ["secondary contributions"] },
         { key: "enrollmentRate", numerator: "distinct primary leads that reached ENROLLED", denominator: "distinct primary leads", inclusions: ["ENROLLED"], exclusions: ["secondary contributions"] },
         { key: "lossRate", numerator: "distinct primary leads currently CLOSED_LOST", denominator: "distinct primary leads", inclusions: ["CLOSED_LOST"], exclusions: ["secondary contributions"] },
         { key: "activeLoad", numerator: "distinct primary leads in a non-terminal current state", denominator: "not applicable", inclusions: ["PROSPECT", "CONTACTED", "QUALIFIED"], exclusions: ["ENROLLED", "CLOSED_LOST"] },
+        { key: "portfolioStatusVolumes", numerator: "current status of assigned portfolio including reconciled BASELINE", denominator: "distinct primary portfolio leads", inclusions: ["NEW", "BASELINE", "real later operations on BASELINE"], exclusions: ["attribution of imported status to contemporary commercial work"] },
+        { key: "firstHandling", numerator: "observed handling time minus new acquisition creation time", denominator: "NEW dossiers with an observed interaction", inclusions: ["NEW"], exclusions: ["BASELINE import date is not historical reception time"] },
       ],
     };
     this.audit.record({ eventType: "COMMERCIAL_PERFORMANCE_VIEWED", actorId: principal.userId, actorRoles: principal.roles,
@@ -135,13 +140,14 @@ export class CommercialPerformanceService {
   }
 
   private firstHandlingDelay(lead: LeadReportingRow): number | undefined {
+    if (isBaseline(lead)) return undefined;
     const first = lead.activities.filter((activity) => handlingTypes.has(activity.type))
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.authorId.localeCompare(right.authorId))[0];
     return first ? Math.max(0, (new Date(first.occurredAt).valueOf() - new Date(lead.createdAt).valueOf()) / 60_000) : undefined;
   }
 
   private stageDelay(lead: LeadReportingRow, from: string, to: string): number | undefined {
-    const stages = lead.activities.filter((activity) => activity.type === "STATUS_CHANGED")
+    const stages = lead.activities.filter((activity) => activity.type === "STATUS_CHANGED" && (!isBaseline(lead) || activity.occurredAt >= lead.createdAt))
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt));
     const fromAt = stages.find((activity) => activity.result.split("->")[1] === from)?.occurredAt;
     const toAt = stages.find((activity) => activity.result.split("->")[1] === to)?.occurredAt;

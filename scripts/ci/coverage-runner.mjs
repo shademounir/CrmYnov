@@ -88,4 +88,5 @@ run(process.execPath, ["scripts/ci/assignment-flow-postgres.mjs"]);
 // runtimes inherit NODE_V8_COVERAGE; its source maps are remapped by c8.
 run(process.execPath, ["scripts/ci/reporting-freshness-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/access-recovery-postgres.mjs"]);
+run(process.execPath, ["scripts/ci/bootstrap-import-postgres.mjs"]);
 leadWorkflowPostgresProofs();

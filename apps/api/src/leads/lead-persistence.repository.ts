@@ -220,7 +220,10 @@ export class LeadPersistenceRepository {
 
   private mapStoredLead(row: SnapshotLeadRow): StoredLead {
     const qualification = row.commercialQualifications?.[0];
-    const temperature = (qualification?.temperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>;
+    const acquisitionKind = row.acquisitionKind === "BASELINE" ? "BASELINE" : "NEW";
+    const historicalTemperature = acquisitionKind === "BASELINE" && ["COLD", "WARM", "HOT"].includes(row.baselineTemperature ?? "")
+      ? row.baselineTemperature : undefined;
+    const temperature = (qualification?.temperature ?? historicalTemperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>;
     return {
       id: row.id,
       leadCode: row.leadCode,
@@ -234,6 +237,7 @@ export class LeadPersistenceRepository {
       program: row.program,
       source: row.source,
       status: row.status as LeadRecord["status"],
+      acquisitionKind,
       ...(row.assignedToId ? { assignedToId: row.assignedToId } : {}),
       collaboratorIds: row.collaborators.map((item) => item.userId),
       ...(row.assignmentMode ? { assignmentMode: row.assignmentMode } : {}),
@@ -243,6 +247,7 @@ export class LeadPersistenceRepository {
       createdAt: row.createdAt.toISOString(),
       version: row.version,
       temperature,
+      temperatureSource: qualification ? "HUMAN_QUALIFICATION" : historicalTemperature ? "HISTORICAL_BASELINE" : "UNEVALUATED",
       temperatureLabel: temperatureLabels[temperature] ?? "Non évalué",
       qualificationVersion: qualification?.version ?? 0,
       ...(qualification?.reason ? { qualificationReason: qualification.reason } : {}),
