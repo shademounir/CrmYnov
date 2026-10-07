@@ -26,6 +26,7 @@ import { LeadCallDrawer } from "./lead-call-drawer";
 import { LeadQualificationDrawer } from "./lead-qualification-drawer";
 import { LeadStatusDrawer } from "./lead-status-drawer";
 import { LeadEditDrawer } from "./lead-edit-workflow";
+import { HistoricalNotesDisclosure } from "../../imports/bootstrap/historical-notes";
 
 export interface LeadProfileRecord {
   id: string;
@@ -48,6 +49,8 @@ export interface LeadProfileRecord {
   temperature: "UNEVALUATED" | "COLD" | "WARM" | "HOT";
   temperatureLabel: string;
   qualificationVersion: number;
+  temperatureSource?: string;
+  acquisitionKind?: "NEW" | "BASELINE";
   version?: number;
 }
 
@@ -146,6 +149,8 @@ function parseLead(value: unknown): LeadProfileRecord | undefined {
     temperature: ["COLD", "WARM", "HOT"].includes(requiredString(value, "temperature")) ? requiredString(value, "temperature") as "COLD" | "WARM" | "HOT" : "UNEVALUATED",
     temperatureLabel: optionalString(value, "temperatureLabel") ?? "Non évalué",
     qualificationVersion: typeof value.qualificationVersion === "number" ? value.qualificationVersion : 0,
+    ...(typeof value.temperatureSource === "string" ? { temperatureSource: value.temperatureSource } : {}),
+    ...(value.acquisitionKind === "NEW" || value.acquisitionKind === "BASELINE" ? { acquisitionKind: value.acquisitionKind } : {}),
     version: typeof value.version === "number" ? value.version : 1,
   };
   const email = optionalString(value, "email");
@@ -329,7 +334,7 @@ function CommercialPanel({ lead, lastContact }: Readonly<{ lead: LeadProfileReco
     <ProfileFact icon={<MapPin size={20} />} label="Étape" value={leadStatusLabel(lead.status)} emphasized />
     <ProfileFact icon={<PhoneCall size={20} />} label="Dernier résultat" value={lastContact} emphasized={lastContact.startsWith("Injoignable")} />
     <ProfileFact icon={<UserCircle size={20} />} label="Conseiller principal" value={lead.assignedToId ? lead.assignedToLabel ?? "Conseiller attribué" : "Non affecté"} />
-    <ProfileFact icon={<ThermometerSimple size={20} />} label="Température" value={lead.temperatureLabel} emphasized={lead.temperature === "HOT"} />
+    <ProfileFact icon={<ThermometerSimple size={20} />} label="Température" value={lead.temperatureSource === "HISTORICAL_BASELINE" ? `${lead.temperatureLabel} · reprise historique` : lead.temperatureLabel} emphasized={lead.temperature === "HOT"} />
     <ProfileFact icon={<CalendarBlank size={20} />} label="Prochaine action" value={formatDate(lead.nextActionAt)} />
   </dl></section>;
 }
@@ -395,6 +400,7 @@ function TimelinePanel({ leadId, events }: Readonly<{ leadId: string; events: re
       <h3>{timelineEventLabel(event.type)}</h3>
       <ResultSummary result={event.result} />
     </li>)}</ol> : <div className="lead-profile__empty"><Clock size={22} aria-hidden="true" /><p>Aucun événement visible pour ce lead.</p></div>}
+    <HistoricalNotesDisclosure leadId={leadId} />
   </section>;
 }
 
@@ -424,6 +430,7 @@ export function LeadProfileView({ lead, events, actionMessage, onLeadChanged, on
         <InformationRow label="Source" value={leadSourceLabel(lead.source)} />
         <InformationRow label="Campagne" value={lead.campaign} />
         <InformationRow label="Créé le" value={formatDate(lead.createdAt, false)} />
+        {lead.acquisitionKind === "BASELINE" ? <><InformationRow label="Portefeuille" value="Reprise historique · hors acquisitions nouvelles" /><InformationRow label="Cycle de reprise" value="Voir la provenance historique" /></> : null}
       </dl>
     </details>
   </main>;

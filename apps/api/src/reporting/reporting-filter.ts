@@ -65,9 +65,9 @@ export function matchesInteractiveFilters(row: LeadReportingRow, query: Interact
 }
 
 export function sourceChannel(source: string): (typeof reportingChannels)[number] {
-  if (source === "PHONE_CALL") return "PHONE";
-  if (source === "PHYSICAL_VISIT" || source === "EVENT") return "IN_PERSON";
-  if (["WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL";
+  if (source === "PHONE" || source === "PHONE_CALL") return "PHONE";
+  if (["IN_PERSON", "PHYSICAL_VISIT", "EVENT"].includes(source)) return "IN_PERSON";
+  if (["DIGITAL", "SOCIAL_MEDIA", "WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL";
   if (source === "PARTNER" || source === "JOBINTECH") return "PARTNER";
   return "OTHER";
 }

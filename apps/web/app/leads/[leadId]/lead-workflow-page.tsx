@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { ArrowLeft, CalendarBlank, Clock, NotePencil, UserSwitch } from "@phosphor-icons/react";
 import { ConnectedResource } from "../../_components/connected-resource";
 import { ReassignmentHistory } from "../../_components/reassignment-history";
+import { HistoricalNotes } from "../../imports/bootstrap/historical-notes";
 import { AssignmentWorkflowForm, ClosureHistory, ClosureWorkflowForm, FollowUpHistory, FollowUpWorkflowForm, InteractionWorkflowForm, StatusWorkflowForm } from "./lead-workflow-forms";
 
 type Surface = "assignment" | "interaction" | "status" | "follow-up" | "closure";
@@ -33,7 +34,7 @@ function parseLeadContext(value: unknown): LeadContext | undefined {
 }
 
 function ResourceForSurface({ leadId, surface, refreshKey }: Readonly<{ leadId: string; surface: Surface; refreshKey: number }>): React.JSX.Element | null {
-  if (surface === "interaction") return <ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} />;
+  if (surface === "interaction") return <><ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} /><HistoricalNotes leadId={leadId} /></>;
   if (surface === "follow-up") return <FollowUpHistory key={`${leadId}:${refreshKey}`} leadId={leadId} />;
   return null;
 }

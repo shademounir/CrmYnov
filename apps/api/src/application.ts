@@ -15,6 +15,7 @@ import { leadQualificationPaths } from "./qualification/lead-qualification.opena
 import { admissionsPaths } from "./admissions/admissions.openapi.js";
 import { ownTelephonyPaths } from "./telephony/telephony-own.openapi.js";
 import { dashboardCapabilityPaths } from "./reporting/dashboard-capabilities.openapi.js";
+import { bootstrapImportPaths, bootstrapImportSchemas } from "./bootstrap-import/bootstrap-import.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -31,7 +32,7 @@ export function configureApplication(app: INestApplication): void {
   const openApi = {
     openapi: "3.0.3",
     info: { title: "CRM Admissions API", version: "0.1.0" },
-    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } } },
+    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } }, schemas: bootstrapImportSchemas },
     paths: {
       ...sheetImportPaths,
       ...referencePaths,
@@ -42,6 +43,7 @@ export function configureApplication(app: INestApplication): void {
       ...admissionsPaths,
       ...ownTelephonyPaths,
       ...dashboardCapabilityPaths,
+      ...bootstrapImportPaths,
       "/health": {
         get: {
           summary: "API operational health",

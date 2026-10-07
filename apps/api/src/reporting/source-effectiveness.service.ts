@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { IngestionService, type IngestionReportingOccurrence } from "../ingestion/ingestion.service.js";
 import { LeadService, type LeadReportingRow } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { acquisitionPartition, isBaseline, type AcquisitionPartition } from "./acquisition-cohort.js";
 
 export const SOURCE_EFFECTIVENESS_VERSION = "source-effectiveness-v1";
 export const SOURCE_EFFECTIVENESS_TIMEZONE = "Africa/Casablanca";
@@ -14,10 +15,12 @@ export interface EffectivenessGroup {
   value: string; evidence: "ingestion-occurrences" | "lead-cohort"; volumeReceived: number; uniqueLeadCount: number;
   rates: { duplicate: number | null; incomplete: number | null; contact: number | null; qualification: number | null; enrollment: number | null; closedLost: number | null };
   medianProcessingMinutes: number | null; unassigned: number; toVerify: number | null; drillDown: string;
+  acquisition: AcquisitionPartition;
 }
 export interface SourceEffectivenessReport {
   definitionVersion: string; timezone: string; generatedAt: string; cohort: { from?: string; to?: string; uniqueLeadCount: number };
   breakdowns: Record<Dimension, EffectivenessGroup[]>;
+  acquisition: AcquisitionPartition;
   definitions: Array<{ key: string; numerator: string; denominator: string; unavailableWhen: string }>;
   financialMetrics: { calculated: false; reason: string };
   sourceQualityAvailability: "LOCAL_SYNTHETIC_OCCURRENCES" | "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED";
@@ -38,15 +41,17 @@ export class SourceEffectivenessService {
     const leads = [...new Map(this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized))
       .map((lead) => [lead.id, lead])).values()];
     const leadIds = new Set(leads.map((lead) => lead.id));
+    const baselineIds = new Set(leads.filter(isBaseline).map((lead) => lead.id));
     const persistent = this.leads.persistenceEnabled();
-    const occurrences = (persistent ? [] : this.ingestion.reportingSnapshot(principal)).filter((item) => (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
+    const occurrences = (persistent ? [] : this.ingestion.reportingSnapshot(principal)).filter((item) => item.profile !== "LEGACY_CRM" && (!item.leadId || !baselineIds.has(item.leadId))
+      && (!from || item.receivedAt >= from) && (!to || item.receivedAt < to)
       && exact(item.source, query.source) && (!query.channel || sourceChannel(item.source) === query.channel) && exact(item.campaign ?? "UNSPECIFIED", query.campaign)
       && exact(item.program ?? "UNSPECIFIED", query.program) && exact(item.campus ?? "UNSPECIFIED", query.campus)
       && (!item.leadId ? !query.adviserId && !query.status : leadIds.has(item.leadId)));
     const breakdowns = Object.fromEntries(dimensions.map((dimension) => [dimension, this.groups(dimension, leads, occurrences)])) as Record<Dimension, EffectivenessGroup[]>;
     const report: SourceEffectivenessReport = {
       definitionVersion: SOURCE_EFFECTIVENESS_VERSION, timezone: SOURCE_EFFECTIVENESS_TIMEZONE, generatedAt: now.toISOString(),
-      cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), uniqueLeadCount: leads.length }, breakdowns,
+      cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), uniqueLeadCount: leads.length }, breakdowns, acquisition: acquisitionPartition(leads),
       definitions: [
         { key: "duplicateRate", numerator: "structured ingestion occurrences attached to an existing lead", denominator: "structured ingestion occurrences", unavailableWhen: "no structured ingestion occurrence exists" },
         { key: "incompleteRate", numerator: "structured ingestion occurrences rejected for a required field or mapping", denominator: "structured ingestion occurrences", unavailableWhen: "no structured ingestion occurrence exists" },
@@ -54,6 +59,8 @@ export class SourceEffectivenessService {
         { key: "qualificationRate", numerator: "distinct leads that reached QUALIFIED or ENROLLED", denominator: "distinct leads in the group", unavailableWhen: "the group contains no lead" },
         { key: "enrollmentRate", numerator: "distinct leads currently ENROLLED", denominator: "distinct leads in the group", unavailableWhen: "the group contains no lead" },
         { key: "closedLostRate", numerator: "distinct leads currently CLOSED_LOST", denominator: "distinct leads in the group", unavailableWhen: "the group contains no lead" },
+        { key: "volumeReceived", numerator: "new acquisition ingestion occurrences, or NEW dossier cohort fallback; never historical BASELINE imported today", denominator: "not a portfolio stock", unavailableWhen: "source-quality ratios remain unavailable without durable occurrence evidence" },
+        { key: "portfolioStatusRates", numerator: "current states of authorized portfolio, including reconciled BASELINE", denominator: "distinct portfolio dossiers", unavailableWhen: "no portfolio dossier; these rates do not prove contemporary conversions" },
       ],
       financialMetrics: { calculated: false, reason: "validated financial inputs are not available" },
       sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",
@@ -70,12 +77,13 @@ export class SourceEffectivenessService {
     return [...values].sort((a, b) => a.localeCompare(b, "fr")).map((value) => {
       const groupLeads = leads.filter((lead) => this.leadDimension(lead, dimension) === value);
       const groupOccurrences = occurrences.filter((item) => this.occurrenceDimension(item, dimension) === value);
-      const volumeReceived = groupOccurrences.length || groupLeads.length;
+      const partition = acquisitionPartition(groupLeads);
+      const volumeReceived = groupOccurrences.length || partition.newAcquisitionCount;
       const occurrenceRate = (count: number): number | null => groupOccurrences.length === 0 ? null : Number((count / groupOccurrences.length).toFixed(4));
       const leadRate = (count: number): number | null => groupLeads.length === 0 ? null : Number((count / groupLeads.length).toFixed(4));
       const processing = groupLeads.map((lead) => this.processingDelay(lead)).filter((item): item is number => item !== undefined);
       const params = new URLSearchParams({ [dimension === "provenanceMode" || dimension === "channel" ? "source" : dimension]: value });
-      return { value, evidence: groupOccurrences.length ? "ingestion-occurrences" : "lead-cohort", volumeReceived, uniqueLeadCount: groupLeads.length,
+      return { value, evidence: groupOccurrences.length ? "ingestion-occurrences" : "lead-cohort", volumeReceived, uniqueLeadCount: groupLeads.length, acquisition: partition,
         rates: { duplicate: occurrenceRate(groupOccurrences.filter((item) => item.outcome === "PROVENANCE_ATTACHED").length),
           incomplete: occurrenceRate(groupOccurrences.filter((item) => this.incomplete(item.reason)).length),
           contact: leadRate(groupLeads.filter((lead) => this.reached(lead, "CONTACTED")).length),
@@ -89,7 +97,7 @@ export class SourceEffectivenessService {
 
   private leadDimension(lead: LeadReportingRow, dimension: Dimension): string {
     if (dimension === "channel") return this.channel(lead.source);
-    if (dimension === "provenanceMode") return this.provenanceMode(lead.source, Boolean(lead.importBatchId));
+    if (dimension === "provenanceMode") return isBaseline(lead) ? "IMPORTED" : this.provenanceMode(lead.source, Boolean(lead.importBatchId));
     if (dimension === "program") return lead.program || "UNSPECIFIED";
     return lead[dimension] || "UNSPECIFIED";
   }
@@ -100,11 +108,11 @@ export class SourceEffectivenessService {
     if (dimension === "source") return item.source;
     return item[dimension] || "UNSPECIFIED";
   }
-  private channel(source: string): string { if (source === "PHONE_CALL") return "PHONE"; if (source === "PHYSICAL_VISIT" || source === "EVENT") return "IN_PERSON"; if (["WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL"; if (source === "PARTNER" || source === "JOBINTECH") return "PARTNER"; return "OTHER"; }
+  private channel(source: string): string { if (source === "PHONE" || source === "PHONE_CALL") return "PHONE"; if (["IN_PERSON", "PHYSICAL_VISIT", "EVENT"].includes(source)) return "IN_PERSON"; if (["DIGITAL", "SOCIAL_MEDIA", "WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "DIGITAL"; if (source === "PARTNER" || source === "JOBINTECH") return "PARTNER"; return "OTHER"; }
   private provenanceMode(source: string, imported: boolean): string { if (source === "LEGACY_IMPORT") return "IMPORTED"; if (["WEB_FORM", "WEBSITE", "FORMINATOR_ZAPIER", "YNOV_COM"].includes(source)) return "AUTOMATIC"; return imported ? "IMPORTED" : "MANUAL"; }
   private incomplete(reason?: string): boolean { return ["required_mapping_missing", "identity_required", "stable_identity_missing"].includes(reason ?? ""); }
   private reached(lead: LeadReportingRow, stage: "CONTACTED" | "QUALIFIED"): boolean { const order = { PROSPECT: 0, CONTACTED: 1, QUALIFIED: 2, ENROLLED: 3, CLOSED_LOST: 0 } as const; const level = stage === "CONTACTED" ? 1 : 2; return order[lead.status] >= level || lead.activities.some((activity) => activity.type === "STATUS_CHANGED" && activity.result.split("->")[1] === stage) || (stage === "CONTACTED" && lead.status === "CLOSED_LOST"); }
-  private processingDelay(lead: LeadReportingRow): number | undefined { const first = lead.activities.filter((activity) => handlingTypes.has(activity.type)).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))[0]; return first ? Math.max(0, (new Date(first.occurredAt).valueOf() - new Date(lead.createdAt).valueOf()) / 60_000) : undefined; }
+  private processingDelay(lead: LeadReportingRow): number | undefined { if (isBaseline(lead)) return undefined; const first = lead.activities.filter((activity) => handlingTypes.has(activity.type)).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))[0]; return first ? Math.max(0, (new Date(first.occurredAt).valueOf() - new Date(lead.createdAt).valueOf()) / 60_000) : undefined; }
   private median(values: number[]): number | null { if (!values.length) return null; const ordered = [...values].sort((a, b) => a - b); const middle = Math.floor(ordered.length / 2); return Number((ordered.length % 2 ? ordered[middle]! : (ordered[middle - 1]! + ordered[middle]!) / 2).toFixed(2)); }
   private boundary(value: string | undefined, code: string): string | undefined { if (!value) return undefined; const parsed = new Date(value); if (Number.isNaN(parsed.valueOf())) throw new BadRequestException({ code }); return parsed.toISOString(); }
 }

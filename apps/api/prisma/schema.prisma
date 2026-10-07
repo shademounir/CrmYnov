@@ -431,6 +431,10 @@ model ChatReadReceipt {
 }
 
 model Lead {
+  baselineTemperature    String?                          @map("baseline_temperature") @db.VarChar(16)
+  acquisitionKind        String                           @default("NEW") @map("acquisition_kind") @db.VarChar(16)
+  bootstrapRows          BootstrapImportRow[]
+  historicalNotes        ImportedHistoricalNote[]
   governedTags CrmLeadTag[]
   id                     String                           @id @default(uuid()) @db.Uuid
   leadCode               String                           @unique @map("lead_code") @db.VarChar(32)
@@ -957,6 +961,7 @@ model CandidateDocumentEvent {
 }
 
 model IngestionBatch {
+  bootstrapPackage BootstrapImportPackage?
   id             String                @id @default(uuid()) @db.Uuid
   idempotencyKey String                @unique @map("idempotency_key") @db.VarChar(128)
   profile        String                @db.VarChar(40)
@@ -975,6 +980,117 @@ model IngestionBatch {
 
   @@index([importedAt(sort: Desc)])
   @@map("ingestion_batches")
+}
+
+model BootstrapImportPackage {
+  id String @id @default(uuid()) @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  campusId String @map("campus_id") @db.Uuid
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  fileName String @map("file_name") @db.VarChar(180)
+  sizeBytes Int @map("size_bytes")
+  sha256 String @unique @db.VarChar(64)
+  state String @default("UPLOADING") @db.VarChar(24)
+  version Int @default(1)
+  snapshot Json?
+  batchId String? @unique @map("batch_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  sealedAt DateTime? @map("sealed_at") @db.Timestamptz(6)
+  chunks BootstrapImportChunk[]
+  plans BootstrapImportPlan[]
+  rows BootstrapImportRow[]
+  receipts BootstrapImportReceipt[]
+  batch IngestionBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  @@unique([actorId, key])
+  @@index([campusId, createdAt])
+  @@map("bootstrap_import_packages")
+}
+
+model BootstrapImportChunk {
+  packageId String @map("package_id") @db.Uuid
+  index Int
+  sha256 String @db.VarChar(64)
+  bytes Bytes
+  package BootstrapImportPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  @@id([packageId, index])
+  @@map("bootstrap_import_chunks")
+}
+
+model BootstrapImportPlan {
+  id String @id @default(uuid()) @db.Uuid
+  packageId String @map("package_id") @db.Uuid
+  version Int
+  mappingVersion String @map("mapping_version") @db.VarChar(64)
+  fingerprint String @db.VarChar(64)
+  configuration Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  package BootstrapImportPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  rows BootstrapImportRow[]
+  @@unique([packageId, version])
+  @@map("bootstrap_import_plans")
+}
+
+model BootstrapImportRow {
+  id String @id @default(uuid()) @db.Uuid
+  packageId String @map("package_id") @db.Uuid
+  planId String @map("plan_id") @db.Uuid
+  sheet String @db.VarChar(80)
+  relationId String @map("relation_id") @db.VarChar(80)
+  rowNumber Int @map("row_number")
+  sourceKey String @unique @map("source_key") @db.VarChar(64)
+  fingerprint String @db.VarChar(64)
+  payload Json
+  mapped Json
+  reasons String[]
+  state String @default("REVIEW") @db.VarChar(24)
+  version Int @default(1)
+  decision Json?
+  decisionKey String? @map("decision_key") @db.VarChar(128)
+  decisionFingerprint String? @map("decision_fingerprint") @db.VarChar(64)
+  leadId String? @map("lead_id") @db.Uuid
+  package BootstrapImportPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  plan BootstrapImportPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  notes ImportedHistoricalNote[]
+  @@unique([packageId, relationId, rowNumber])
+  @@unique([packageId, decisionKey])
+  @@index([packageId, state, sheet, rowNumber])
+  @@map("bootstrap_import_rows")
+}
+
+model BootstrapImportReceipt {
+  id String @id @default(uuid()) @db.Uuid
+  packageId String @map("package_id") @db.Uuid
+  operation String @db.VarChar(24)
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  response Json
+  actorId String @map("actor_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  package BootstrapImportPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  @@unique([packageId, operation, key])
+  @@map("bootstrap_import_receipts")
+}
+
+model ImportedHistoricalNote {
+  id String @id @default(uuid()) @db.Uuid
+  rowId String @map("row_id") @db.Uuid
+  leadId String @map("lead_id") @db.Uuid
+  cellKey String @unique @map("cell_key") @db.VarChar(64)
+  fingerprint String @db.VarChar(64)
+  sourceSheet String @map("source_sheet") @db.VarChar(80)
+  sourceRow Int @map("source_row")
+  sourceColumn String @map("source_column") @db.VarChar(4)
+  text String @db.Text
+  sourceValue Json @map("source_value")
+  author String? @db.VarChar(120)
+  occurredAt DateTime? @map("occurred_at") @db.Timestamptz(6)
+  importedAt DateTime @default(now()) @map("imported_at") @db.Timestamptz(6)
+  row BootstrapImportRow @relation(fields: [rowId], references: [id], onDelete: Restrict)
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  @@index([leadId, sourceSheet, sourceRow])
+  @@map("imported_historical_notes")
 }
 
 model ImportReport {

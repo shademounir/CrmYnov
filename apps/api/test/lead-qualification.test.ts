@@ -9,13 +9,13 @@ const leadId = "00000000-0000-4000-8000-000000000171";
 const principal = { userId: "synthetic-adviser", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "SYNTHETIC" }], sessionId: "00000000-0000-4000-8000-000000000172" } as const;
 type Row = { id: string; leadId: string; temperature: string; reason: string; comment: string | null; authorId: string; version: number; idempotencyKey: string; fingerprint: string; createdAt: Date };
 
-function database(): { service: LeadQualificationService; rows: Row[]; audits: unknown[]; failAudit: () => void } {
+function database(baseline?: { acquisitionKind: string; baselineTemperature: string | null }): { service: LeadQualificationService; rows: Row[]; audits: unknown[]; failAudit: () => void } {
   const rows: Row[] = [];
   const audits: unknown[] = [];
   let auditFailure = false;
   let sequence = 0;
   const createTx = (workingRows: Row[], workingAudits: unknown[]) => ({
-    lead: { findUnique: async ({ where }: { where: { id: string } }) => where.id === leadId ? { campus: "SYNTHETIC" } : null },
+    lead: { findUnique: async ({ where }: { where: { id: string } }) => where.id === leadId ? { campus: "SYNTHETIC", acquisitionKind: "NEW", baselineTemperature: null, ...baseline } : null },
     leadCommercialQualification: {
       findUnique: async ({ where }: { where: { idempotencyKey: string } }) => workingRows.find((row) => row.idempotencyKey === where.idempotencyKey) ?? null,
       findFirst: async ({ where }: { where: { leadId: string } }) => [...workingRows].filter((row) => row.leadId === where.leadId).sort((a, b) => b.version - a.version)[0] ?? null,
@@ -29,6 +29,7 @@ function database(): { service: LeadQualificationService; rows: Row[]; audits: u
     auditEvent: { create: async ({ data }: { data: unknown }) => { if (auditFailure) throw new Error("audit_failure"); workingAudits.push(data); return data; } },
   });
   const client = {
+    lead: { findUnique: async ({ where }: { where: { id: string } }) => where.id === leadId ? { acquisitionKind: "NEW", baselineTemperature: null, ...baseline } : null },
     leadCommercialQualification: {
       findMany: async ({ where }: { where: { leadId: string } }) => [...rows].filter((row) => row.leadId === where.leadId).sort((a, b) => b.version - a.version),
       findUnique: async ({ where }: { where: { idempotencyKey: string } }) => rows.find((row) => row.idempotencyKey === where.idempotencyKey) ?? null,
@@ -74,4 +75,26 @@ test("audit failure rolls back the qualification", async () => {
   const db = database(); db.failAudit();
   await assert.rejects(() => db.service.update(leadId, { temperature: "COLD", reason: "Projet sans échéance", expectedVersion: 0, idempotencyKey: "qualification:rollback" }, principal as never, "corr-rollback"), /audit_failure/);
   assert.equal(db.rows.length, 0); assert.equal(db.audits.length, 0);
+});
+
+test("historical temperature remains source-labelled and unauthored until a real qualification", async () => {
+  const db = database({ acquisitionKind: "BASELINE", baselineTemperature: "HOT" });
+  assert.deepEqual(await db.service.read(leadId), { current: { leadId, temperature: "HOT", temperatureLabel: "Chaud", version: 0, temperatureSource: "HISTORICAL_BASELINE" }, history: [] });
+  assert.equal(db.rows.length, 0); assert.equal(db.audits.length, 0);
+  const input = { temperature: "COLD", reason: "Requalification explicite après reprise", expectedVersion: 0, idempotencyKey: "qualification:baseline" };
+  const first = await db.service.update(leadId, input, principal as never, "corr-baseline");
+  assert.equal(first.version, 1); assert.equal(first.authorId, principal.userId);
+  assert.equal((await db.service.read(leadId)).current.temperature, "COLD");
+  const before = (db.audits[0] as { before: unknown }).before;
+  assert.deepEqual(before, { temperature: "HOT", version: 0, temperatureSource: "HISTORICAL_BASELINE" });
+  await db.service.update(leadId, input, principal as never, "corr-baseline-replay");
+  assert.equal(db.rows.length, 1); assert.equal(db.audits.length, 1);
+});
+
+test("baseline fallback neither evaluates unknown values nor applies to a new acquisition", async () => {
+  for (const baseline of [{ acquisitionKind: "BASELINE", baselineTemperature: "INVALID" }, { acquisitionKind: "NEW", baselineTemperature: "HOT" }]) {
+    const db = database(baseline);
+    assert.deepEqual(await db.service.read(leadId), { current: { leadId, temperature: "UNEVALUATED", temperatureLabel: "Non évalué", version: 0 }, history: [] });
+    assert.equal(db.rows.length, 0); assert.equal(db.audits.length, 0);
+  }
 });

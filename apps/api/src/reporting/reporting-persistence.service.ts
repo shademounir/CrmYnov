@@ -3,7 +3,7 @@ import type { Principal } from "../auth/auth.types.js";
 import { ReassignmentService } from "../assignment/reassignment.service.js";
 import { ClosureService } from "../closure/closure.service.js";
 import { FollowUpService } from "../follow-up/follow-up.service.js";
-import { LeadService, type LeadStatus } from "../leads/lead.service.js";
+import { LeadService, type LeadAcquisitionKind, type LeadStatus } from "../leads/lead.service.js";
 import { campusContext, currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
 import { evaluatePermission, type EvaluationContext } from "../permissions/dynamic-evaluator.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "../permissions/dynamic-repository.js";
@@ -20,7 +20,7 @@ export interface DashboardCapabilities {
 export interface RecentDashboardLeads {
   generatedAt: string; timezone: "Africa/Casablanca"; filters: InteractiveReportingQuery; limit: number;
   availability: "OBSERVED" | "UNAVAILABLE"; reason: string | null;
-  leads: Array<{ id: string; leadCode: string; name: string; status: LeadStatus; createdAt: string; assignedToLabel?: string }>;
+  leads: Array<{ id: string; leadCode: string; name: string; status: LeadStatus; createdAt: string; acquisitionKind: LeadAcquisitionKind; assignedToLabel?: string }>;
   capabilities: DashboardCapabilities;
 }
 
@@ -196,14 +196,15 @@ export class ReportingPersistenceService {
       if (!capabilities.canReadRecentLeads) permissionDenied();
       const ids = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, query))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id)).slice(0, limit).map((lead) => lead.id);
-      const rows = await authorized.tx.lead.findMany({ where: { id: { in: ids } }, select: { id: true, leadCode: true, firstName: true, lastName: true, status: true, createdAt: true, assignedToId: true } });
+      const rows = await authorized.tx.lead.findMany({ where: { id: { in: ids } }, select: { id: true, leadCode: true, firstName: true, lastName: true, status: true, createdAt: true, assignedToId: true, acquisitionKind: true } });
       const owners = await authorized.tx.collaborator.findMany({ where: { id: { in: rows.flatMap((row) => row.assignedToId ? [row.assignedToId] : []) } }, select: { id: true, professionalDisplayName: true } });
       const labels = new Map(owners.flatMap((owner) => owner.professionalDisplayName?.trim() ? [[owner.id, owner.professionalDisplayName.trim()] as const] : []));
       const byId = new Map(rows.map((row) => [row.id, row]));
       const leads = ids.flatMap((id) => {
         const row = byId.get(id); if (!row) return [];
         const label = row.assignedToId ? labels.get(row.assignedToId) : undefined;
-        return [{ id: row.id, leadCode: row.leadCode, name: `${row.firstName} ${row.lastName}`.trim(), status: row.status as LeadStatus, createdAt: row.createdAt.toISOString(), ...(label ? { assignedToLabel: label } : {}) }];
+        const acquisitionKind: LeadAcquisitionKind = row.acquisitionKind === "BASELINE" ? "BASELINE" : "NEW";
+        return [{ id: row.id, leadCode: row.leadCode, name: `${row.firstName} ${row.lastName}`.trim(), status: row.status as LeadStatus, createdAt: row.createdAt.toISOString(), acquisitionKind, ...(label ? { assignedToLabel: label } : {}) }];
       });
       return { generatedAt: now.toISOString(), timezone: "Africa/Casablanca", filters: query, limit, leads, capabilities, availability: "OBSERVED", reason: null };
     }, (current) => reportingScopeRequirements(raw, current));
