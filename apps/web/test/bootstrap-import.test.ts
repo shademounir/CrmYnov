@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -13,6 +14,12 @@ const campusId = "00000000-0000-4000-8000-000000000061";
 const source: BootstrapPackage = { id: "00000000-0000-4000-8000-000000000062", fileName: "synthetic.xlsx", sizeBytes: 100, sha256: "a".repeat(64), campusId, state: "MAPPED", version: 3, receivedChunks: 1, expectedChunks: 1,
   sheets: [{ name: "VISITES ET APPELS", relationId: "rId1", rowCount: 2, columns: [{ letter: "A", name: "Nom" }] }], counts: { total: 2, accepted: 0, review: 1, invalid: 0, ignored: 0, pending: 1 } };
 const context: BootstrapContext = { campuses: [{ id: campusId, label: "Campus synthétique", code: "SYNTHETIC", canUpload: true, canMap: true, canDecide: true, canConfirm: true }], owners: [], programs: [], campaigns: [], educationLevels: ["B1"], sources: ["OTHER"], statuses: ["PROSPECT", "ENROLLED"], canUpload: true, canMap: true, canDecide: true, canConfirm: true };
+
+test("bootstrap narrow header gives the readable secondary action its own full-width row without hiding overflow", () => {
+  const css = readFileSync(new URL("../app/imports/bootstrap/bootstrap.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 768px\) \{\s*\.bootstrap-page \.ui-page-header \{ grid-template-columns: minmax\(0, 1fr\); align-items: stretch; \}\s*\.bootstrap-page \.ui-page-header__actions \{ width: 100%; min-width: 0; \}\s*\.bootstrap-page \.ui-page-header__actions \.secondary-button \{ width: 100%; min-width: 0; \}/u);
+  assert.doesNotMatch(css, /overflow(?:-x)?:\s*hidden/u);
+});
 
 test("bootstrap hashes exact bytes and keeps decoded chunks inside both API/BFF bounds", async () => {
   const bytes = new Uint8Array(bootstrapChunkBytes).fill(65);

@@ -57,4 +57,9 @@
 @media (max-width: 1280px) { .bootstrap-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } .bootstrap-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1024px) { .bootstrap-metadata, .bootstrap-valueGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bootstrap-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 768px) { .bootstrap-card { padding: 16px; } .bootstrap-alias { grid-template-columns: minmax(0, 1fr); } .bootstrap-alias button { width: 100%; } .bootstrap-fields { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 768px) {
+  .bootstrap-page .ui-page-header { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .bootstrap-page .ui-page-header__actions { width: 100%; min-width: 0; }
+  .bootstrap-page .ui-page-header__actions .secondary-button { width: 100%; min-width: 0; }
+}
 @media (max-width: 480px) { .bootstrap-page { gap: 14px; } .bootstrap-columns, .bootstrap-metadata, .bootstrap-valueGrid { grid-template-columns: minmax(0, 1fr); } .bootstrap-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bootstrap-steps li { padding: 9px; font-size: 10px; } .bootstrap-actions { align-items: stretch; flex-direction: column; } .bootstrap-actions > * { width: 100%; box-sizing: border-box; } .bootstrap-mapping, .bootstrap-row { padding: 12px; } }
