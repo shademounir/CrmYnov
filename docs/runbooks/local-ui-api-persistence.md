@@ -4,6 +4,13 @@
 
 L’interface Next.js appelle exclusivement `/api/crm/*` sur sa propre origine. Le route handler transmet les requêtes à NestJS via la variable obligatoire `CRM_API_INTERNAL_URL`. L’image Web la fixe au service Compose interne `http://api:3001`. Pour un lancement Next.js hors Docker, la fournir explicitement avec l’adresse locale de NestJS. Une valeur absente ou invalide provoque un refus fermé.
 
+Le Web exige aussi `CRM_PUBLIC_ORIGIN` pour les mutations, par exemple
+`http://localhost:3000` dans Compose. Pour une preview sur `127.0.0.1:3040`,
+déclarer `CRM_PUBLIC_ORIGIN=http://127.0.0.1:3040` dans le même processus Web,
+avant son lancement. Un ancien lanceur ne déclarant que l'URL API doit être
+actualisé : aucune origine n'est déduite implicitement des en-têtes reçus.
+Le contrat et les refus contrôlés sont décrits dans `docs/security/browser-origin.md`.
+
 La connexion échange l’identifiant et le mot de passe avec `POST /api/crm/sessions`. Le jeton renvoyé par NestJS n’est pas exposé au JavaScript navigateur : Next.js le conserve dans un cookie `HttpOnly`, `SameSite=Strict`, limité à la racine. Les requêtes suivantes sont transformées côté serveur en en-tête Bearer. Les réponses sont expurgées de toute propriété `token`.
 
 ## Parcours connectés
