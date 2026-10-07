@@ -10,5 +10,5 @@ export default defineConfig({
   retries: 0,
   reporter: "line",
   use: { baseURL: process.env.CRM_LOCAL_WEB_URL ?? "http://localhost:3000", trace: "retain-on-failure", ...devices["Desktop Chrome"] },
-  ...(localPersistentStack ? {} : { webServer: { command: "npm run dev --workspace=@crm/web", url: "http://localhost:3000/manager/reports/dashboard", timeout: 120_000, reuseExistingServer: false, cwd: "../..", env: { CRM_PUBLIC_ORIGIN: "http://localhost:3000", CRM_API_INTERNAL_URL: "http://127.0.0.1:1" } } }),
+  ...(localPersistentStack ? {} : { webServer: { command: "npm run build --workspace=@crm/shared && npm run dev --workspace=@crm/web", url: "http://localhost:3000/manager/reports/dashboard", timeout: 120_000, reuseExistingServer: false, cwd: "../..", env: { CRM_PUBLIC_ORIGIN: "http://localhost:3000", CRM_API_INTERNAL_URL: "http://127.0.0.1:1" } } }),
 });

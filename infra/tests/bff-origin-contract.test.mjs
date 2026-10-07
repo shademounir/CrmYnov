@@ -24,3 +24,11 @@ test("isolated Playwright Web explicitly configures its browser origin", () => {
   const config = read("apps/web/playwright.config.ts");
   assert.match(config, /env:\s*\{\s*CRM_PUBLIC_ORIGIN:\s*"http:\/\/localhost:3000",\s*CRM_API_INTERNAL_URL:\s*"http:\/\/127\.0\.0\.1:1"\s*\}/u);
 });
+
+test("isolated browser server builds its shared route dependency before starting Next", () => {
+  const config = read("apps/web/playwright.config.ts");
+  assert.match(config, /command:\s*"npm run build --workspace=@crm\/shared && npm run dev --workspace=@crm\/web"/u);
+  assert.match(read("packages/shared/package.json"), /"main":\s*"\.\/dist\/index\.js"/u);
+  assert.match(read("apps/web/app/api/health/route.ts"), /from\s*"@crm\/shared"/u);
+  assert.match(config, /reuseExistingServer:\s*false/u);
+});
