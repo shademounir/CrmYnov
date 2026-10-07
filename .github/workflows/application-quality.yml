@@ -130,6 +130,8 @@ jobs:
         run: node scripts/ci/personal-telephony-postgres.mjs
       - name: Prove new Lead assignment and distinct reassignment decisions on isolated PostgreSQL
         run: node scripts/ci/assignment-flow-postgres.mjs
+      - name: Prove atomic reminder delivery, crash restart and concurrent replay on isolated PostgreSQL
+        run: node scripts/ci/follow-up-due-postgres.mjs
       - name: Prove dashboard freshness and current authorization across two API instances on isolated PostgreSQL
         run: node scripts/ci/reporting-freshness-postgres.mjs
       - name: Prove access recovery and session revocation across two isolated PostgreSQL API instances
