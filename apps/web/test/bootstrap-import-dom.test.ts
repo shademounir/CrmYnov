@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { JSDOM } from "jsdom";
-import { bootstrapChunkBytes, bootstrapHash, type BootstrapContext, type BootstrapPackage, type BootstrapRow } from "../app/imports/bootstrap/bootstrap-client.js";
+import { bootstrapChunkBytes, bootstrapHash, type BootstrapContext, type BootstrapPackage, type BootstrapRow, type BootstrapSheetMapping } from "../app/imports/bootstrap/bootstrap-client.js";
 import type { BootstrapRowDecision } from "../app/imports/bootstrap/bootstrap-row-review.js";
 
 const id = "00000000-0000-4000-8000-000000000061", campusId = "00000000-0000-4000-8000-000000000062";
@@ -9,18 +9,25 @@ const context: BootstrapContext = { campuses: [{ id: campusId, code: "SYNTHETIC"
 const source: BootstrapPackage = { id, campusId, fileName: "synthetic.xlsx", sizeBytes: 100, sha256: "a".repeat(64), state: "MAPPED", version: 3, receivedChunks: 1, expectedChunks: 1, sheets: [], counts: { total: 1, accepted: 0, review: 0, invalid: 0, ignored: 0, pending: 1 } };
 const row: BootstrapRow = { id: "row1", sheet: "VISITES ET APPELS", rowNumber: 7, fingerprint: "b".repeat(64), version: 2, state: "READY", reasons: [], values: { firstName: "Inventé", lastName: "Synthétique" }, comments: [], sourceOwner: null, replacementOwner: null, decision: { action: "CREATE_DOSSIER", reason: "Décision synthétique dédiée" } };
 
-async function setup(t: TestContext): Promise<{ dom: JSDOM; render: (packageId?: string) => Promise<void>; renderRow: (value: BootstrapRow, onDecision: (value: BootstrapRow, decision: BootstrapRowDecision) => Promise<void>, sourceOverride?: BootstrapPackage) => Promise<void>; flush: () => Promise<void>; click: (button: HTMLElement) => Promise<void>; dispatch: (element: HTMLElement, event: string) => Promise<void>; edit: (element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) => Promise<void> }> {
+async function setup(t: TestContext): Promise<{ dom: JSDOM; render: (packageId?: string) => Promise<void>; renderRow: (value: BootstrapRow, onDecision: (value: BootstrapRow, decision: BootstrapRowDecision) => Promise<void>, sourceOverride?: BootstrapPackage, onReopen?: (value: BootstrapRow, input: { expectedVersion: number; idempotencyKey: string; reason: string }) => Promise<void>) => Promise<void>; renderMapping: (value: BootstrapPackage, mappings: BootstrapSheetMapping[], onChange: (value: BootstrapSheetMapping[]) => void) => Promise<void>; flush: () => Promise<void>; click: (button: HTMLElement) => Promise<void>; dispatch: (element: HTMLElement, event: string) => Promise<void>; edit: (element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) => Promise<void> }> {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/imports/bootstrap" });
   const prior = new Map<string, PropertyDescriptor | undefined>();
   for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) { prior.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, value }); }
-  const { act, createElement } = await import("react"), { createRoot } = await import("react-dom/client"), { BootstrapWizard } = await import("../app/imports/bootstrap/bootstrap-wizard.js"), { BootstrapRowReview } = await import("../app/imports/bootstrap/bootstrap-row-review.js");
+  const { act, createElement, useState } = await import("react"), { createRoot } = await import("react-dom/client"), { BootstrapWizard } = await import("../app/imports/bootstrap/bootstrap-wizard.js"), { BootstrapRowReview } = await import("../app/imports/bootstrap/bootstrap-row-review.js"), { BootstrapMapping } = await import("../app/imports/bootstrap/bootstrap-mapping.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
   t.after(() => { act(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
   async function flush(): Promise<void> { await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 10)); }); }
   return {
     dom, flush,
     render: async (packageId?: string): Promise<void> => { await act(async () => { root.render(createElement(BootstrapWizard, { ...(packageId ? { initialPackageId: packageId } : {}) })); await new Promise<void>((resolve) => setImmediate(resolve)); }); },
-    renderRow: async (value, onDecision, sourceOverride): Promise<void> => { await act(async () => { root.render(createElement(BootstrapRowReview, { row: value, source: sourceOverride ?? source, context, disabled: false, onDecision })); await new Promise<void>((resolve) => setImmediate(resolve)); }); },
+    renderRow: async (value, onDecision, sourceOverride, onReopen): Promise<void> => { await act(async () => { root.render(createElement(BootstrapRowReview, { row: value, source: sourceOverride ?? source, context, disabled: false, onDecision, ...(onReopen ? { onReopen } : {}) })); await new Promise<void>((resolve) => setImmediate(resolve)); }); },
+    renderMapping: async (value, mappings, onChange): Promise<void> => {
+      function MappingHarness(): ReturnType<typeof createElement> {
+        const [current, setCurrent] = useState(mappings);
+        return createElement(BootstrapMapping, { source: value, context, mappings: current, disabled: false, onSave: () => undefined, onChange: (next) => { setCurrent(next); onChange(next); } });
+      }
+      await act(async () => { root.render(createElement(MappingHarness)); await new Promise<void>((resolve) => setImmediate(resolve)); });
+    },
     click: async (button: HTMLElement): Promise<void> => { await act(async () => { button.click(); await new Promise<void>((resolve) => setImmediate(resolve)); }); },
     dispatch: async (element: HTMLElement, event: string): Promise<void> => { await act(async () => { element.dispatchEvent(new dom.window.Event(event, { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); }); },
     edit: async (element, value): Promise<void> => { await act(async () => {
@@ -251,4 +258,106 @@ test("contact exclusion is explicit, preserved as an empty override and cannot s
   await edit(control<HTMLInputElement>(dom, "Correction explicite du téléphone"), "+212600000000");
   await click(button(dom, "Enregistrer la décision"));
   const second = decisions[1]; assert.ok(second); assert.equal(second.overrides?.email, ""); assert.equal(second.overrides?.phone, "+212600000000");
+});
+
+test("unnamed physical columns have no automatic interpretation and stay available for reasoned exclusion or exact notes", async (t) => {
+  let changed: BootstrapSheetMapping[] = [];
+  const names = ["VISITES ET APPELS", "LEADS YNOV.COM", "LEADS YNOV.MA", "JOBINTECH REACT"];
+  const columns = [{ letter: "A", name: "NOM" }, { letter: "B", name: "PRÉNOM" }, { letter: "C", name: "EMAIL" }, { letter: "F", name: "SOURCE" }, { letter: "K", name: "" }, { letter: "R", name: "Conseiller initial" }, { letter: "S", name: "Conseiller nouveau" }];
+  const packageWithColumns: BootstrapPackage = { ...source, sheets: names.map((name, index) => ({ name, relationId: `rId${index + 1}`, rowCount: 1, columns })) };
+  const mappings: BootstrapSheetMapping[] = names.map((name) => ({ name, campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", source: "F", owner: "R", replacementOwner: "S" }, commentColumns: [], ownerAliases: {} }));
+  const { dom, renderMapping, click, edit } = await setup(t);
+  await renderMapping(packageWithColumns, mappings, (value) => { changed = value; });
+  const firstName = control<HTMLSelectElement>(dom, "Prénom");
+  assert.equal(firstName.value, "B");
+  assert.equal(firstName.querySelector('option[value="K"]')?.textContent, "K · Sans intitulé en ligne 6");
+  assert.equal(control<HTMLSelectElement>(dom, "Source / canal exact").value, "F");
+  assert.equal(control<HTMLSelectElement>(dom, "Responsable initial").value, "R");
+  assert.equal(control<HTMLSelectElement>(dom, "Nouveau responsable prioritaire").value, "S");
+  const exclusion = control<HTMLInputElement>(dom, "Exclure explicitement K");
+  assert.equal(exclusion.checked, false);
+  assert.equal(control<HTMLInputElement>(dom, "K · Sans intitulé").checked, false);
+  assert.equal(changed.length, 0);
+  await click(exclusion);
+  assert.deepEqual(changed[0]!.excludedColumns, [{ column: "K", reason: "" }]);
+  assert.equal(button(dom, "Enregistrer le mapping").disabled, true);
+  await edit(control<HTMLTextAreaElement>(dom, "Motif conservé pour la colonne K"), "Colonne administrative synthétique explicitement exclue");
+  assert.equal(button(dom, "Enregistrer le mapping").disabled, false);
+  await click(control<HTMLInputElement>(dom, "K · Sans intitulé"));
+  assert.deepEqual(changed[0]!.commentColumns, ["K"]);
+  assert.deepEqual(changed[0]!.excludedColumns, []);
+  assert.deepEqual(changed[0]!.fields, mappings[0]!.fields, "adding a note must not reinterpret source/ownership/identity fields");
+});
+
+for (const [reasonCode, sourceText] of [["STATUS_MISSING_REVIEW", ""], ["HISTORICAL_MILESTONE_STATUS_REVIEW", "RDV effectué"]]) test(`${reasonCode} cannot create a dossier until the operator chooses and motivates a status`, async (t) => {
+  const decisions: BootstrapRowDecision[] = [];
+  const { dom, renderRow, edit, click, dispatch } = await setup(t);
+  const reviewRow: BootstrapRow = { ...row, state: "REVIEW", values: { ...row.values, status: null }, reasons: [reasonCode!], sourceEvidence: [{ reference: "K7", column: "K", text: sourceText!, raw: sourceText!, type: "inlineStr", formula: false }] }; delete reviewRow.decision;
+  await renderRow(reviewRow, (_value, decision) => { decisions.push(decision); return Promise.resolve(); });
+  const status = control<HTMLSelectElement>(dom, "Statut source explicitement qualifié");
+  assert.equal(status.value, ""); assert.equal(status.required, true);
+  assert.match(status.selectedOptions[0]!.textContent ?? "", /aucun statut par défaut/u);
+  assert.match(dom.window.document.body.textContent ?? "", /aucun statut Prospect n’est choisi automatiquement/u);
+  await edit(control<HTMLTextAreaElement>(dom, "Justification conservée"), "Statut CRM explicitement établi après revue source");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, true);
+  await dispatch(status.closest("form")!, "submit"); assert.equal(decisions.length, 0);
+  await edit(status, "PROSPECT");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, false);
+  await click(button(dom, "Enregistrer la décision"));
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0]!.overrides?.status, "PROSPECT");
+  assert.equal(decisions[0]!.reason, "Statut CRM explicitement établi après revue source");
+  await edit(status, "");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, true);
+  await edit(control<HTMLSelectElement>(dom, "Décision explicite"), "IGNORE");
+  await click(button(dom, "Enregistrer la décision"));
+  assert.equal(decisions[1]!.action, "IGNORE"); assert.equal(decisions[1]!.overrides, undefined);
+});
+
+test("an owned uncommitted decision can reopen only with a motive and the same key after an unacknowledged response", async (t) => {
+  const calls: Array<{ expectedVersion: number; idempotencyKey: string; reason: string }> = [];
+  const { dom, renderRow, click, edit } = await setup(t);
+  const owned = { ...row, canReopen: true };
+  await renderRow(owned, () => Promise.resolve(), undefined, (_row, input) => { calls.push(input); return Promise.reject(new Error("unacknowledged-private-response")); });
+  const submit = button(dom, "Remettre ma décision en revue");
+  assert.equal(submit.disabled, true);
+  assert.match(dom.window.document.body.textContent ?? "", /décision précédente reste conservée/u);
+  await edit(control<HTMLTextAreaElement>(dom, "Motif de remise en revue"), "  Contact apparu après ma décision, rapprochement nécessaire  ");
+  await click(submit); await click(submit);
+  assert.equal(calls.length, 2); assert.equal(calls[0]!.expectedVersion, owned.version);
+  assert.equal(calls[0]!.reason, "Contact apparu après ma décision, rapprochement nécessaire");
+  assert.equal(calls[0]!.idempotencyKey, calls[1]!.idempotencyKey);
+  assert.equal(dom.window.document.body.textContent?.includes("unacknowledged-private-response"), false);
+});
+
+test("foreign, committed and old-API rows cannot display a reopen operation", async (t) => {
+  const { dom, renderRow } = await setup(t);
+  for (const value of [{ ...row, canReopen: false }, { ...row, state: "ACCEPTED" as const, canReopen: true }, row]) {
+    await renderRow(value, () => Promise.resolve(), undefined, () => Promise.reject(new Error("forbidden-ui-call")));
+    assert.equal([...dom.window.document.querySelectorAll("button")].some(item => item.textContent?.includes("Remettre ma décision")), false);
+  }
+});
+
+test("BASELINE missing-information warnings keep values unknown and require an explicit unassigned-owner decision", async (t) => {
+  const decisions: BootstrapRowDecision[] = [];
+  const { dom, renderRow, edit, click, dispatch } = await setup(t);
+  const warnings = ["BASELINE_INFORMATION_UNKNOWN:program", "BASELINE_INFORMATION_UNKNOWN:educationLevel", "OWNER_MISSING"];
+  const reviewRow: BootstrapRow = { ...row, state: "REVIEW", reasons: warnings, warnings, blockingReasons: [], values: { firstName: "Synthetic", lastName: "Baseline", email: "baseline@example.invalid", program: "", educationLevel: "", ownerId: null } }; delete reviewRow.decision;
+  await renderRow(reviewRow, (_value, decision) => { decisions.push(decision); return Promise.resolve(); });
+  assert.match(dom.window.document.body.textContent ?? "", /avertissements serveur/u);
+  assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Décisions à résoudre pour cette occurrence/u);
+  assert.equal(control<HTMLSelectElement>(dom, "Formation validée").value, "");
+  assert.equal(control<HTMLSelectElement>(dom, "Niveau validé").value, "");
+  await edit(control<HTMLTextAreaElement>(dom, "Justification conservée"), "Source historique réellement absente, aucune valeur inventée");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, true);
+  await dispatch(control<HTMLSelectElement>(dom, "Responsable actif validé").closest("form")!, "submit");
+  assert.equal(decisions.length, 0);
+  await edit(control<HTMLSelectElement>(dom, "Responsable actif validé"), "__UNASSIGNED");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, false);
+  await click(button(dom, "Enregistrer la décision"));
+  assert.equal(decisions.length, 1);
+  assert.deepEqual(decisions[0]!.overrides, { ownerId: "" });
+  assert.equal(decisions[0]!.cycle, undefined);
+  assert.equal(reviewRow.values.program, "");
+  assert.equal(reviewRow.values.educationLevel, "");
 });

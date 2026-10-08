@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query,
 import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { BootstrapImportService } from "./bootstrap-import.service.js";
-import type { BootstrapChunkInput, BootstrapConfirmInput, CreateBootstrapInput, HistoricalDecisionInput, HistoricalMappingInput } from "./bootstrap-import.contract.js";
+import type { BootstrapChunkInput, BootstrapConfirmInput, BootstrapReopenInput, CreateBootstrapInput, HistoricalDecisionInput, HistoricalMappingInput } from "./bootstrap-import.contract.js";
 
 @Controller("lead-import/bootstrap")
 @UseGuards(RbacGuard)
@@ -17,6 +17,7 @@ export class BootstrapImportController {
   @Post("packages/:id/mappings") mapping(@Param("id") id: string, @Body() input: HistoricalMappingInput, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.imports.mapping(id, input, this.actor(request)); }
   @Get("packages/:id/rows") rows(@Param("id") id: string, @Query("after") after: string | undefined, @Query("limit") limit: string | undefined, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.imports.rows(id, after, Number(limit ?? 25), this.actor(request)); }
   @Post("packages/:id/rows/:rowId/decision") decide(@Param("id") id: string, @Param("rowId") rowId: string, @Body() input: HistoricalDecisionInput, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.imports.decide(id, rowId, input, this.actor(request)); }
+  @Post("packages/:id/rows/:rowId/reopen") reopen(@Param("id") id: string, @Param("rowId") rowId: string, @Body() input: BootstrapReopenInput, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.imports.reopen(id, rowId, input, this.actor(request)); }
   @Post("packages/:id/confirm") confirm(@Param("id") id: string, @Body() input: BootstrapConfirmInput, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.imports.confirm(id, input, this.actor(request)); }
   @Get("packages/:id/report") report(@Param("id") id: string, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.imports.report(id, this.actor(request)); }
   private actor(request: AuthenticatedRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }

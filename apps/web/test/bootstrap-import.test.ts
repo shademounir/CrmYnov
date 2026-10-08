@@ -8,7 +8,7 @@ import { BootstrapMapping } from "../app/imports/bootstrap/bootstrap-mapping.js"
 import { BootstrapRowReview } from "../app/imports/bootstrap/bootstrap-row-review.js";
 import { HistoricalNotesList } from "../app/imports/bootstrap/historical-notes.js";
 import { LeadProfileView, type LeadProfileRecord } from "../app/leads/[leadId]/lead-profile.js";
-import { BootstrapApiError, bootstrapCapabilities, bootstrapChunkBytes, bootstrapFailure, bootstrapHash, bootstrapRequest, bytesToBase64, mappingForSheets, packageKey, stableBootstrapAttempt, type BootstrapContext, type BootstrapPackage, type BootstrapRow } from "../app/imports/bootstrap/bootstrap-client.js";
+import { BootstrapApiError, bootstrapCapabilities, bootstrapChunkBytes, bootstrapFailure, bootstrapHash, bootstrapRequest, bootstrapRowMotifs, bytesToBase64, mappingForSheets, packageKey, stableBootstrapAttempt, type BootstrapContext, type BootstrapPackage, type BootstrapRow } from "../app/imports/bootstrap/bootstrap-client.js";
 
 const campusId = "00000000-0000-4000-8000-000000000061";
 const source: BootstrapPackage = { id: "00000000-0000-4000-8000-000000000062", fileName: "synthetic.xlsx", sizeBytes: 100, sha256: "a".repeat(64), campusId, state: "MAPPED", version: 3, receivedChunks: 1, expectedChunks: 1,
@@ -66,6 +66,37 @@ test("native author metadata remains a declared source author, never an authenti
   const html = renderToStaticMarkup(createElement(HistoricalNotesList, { notes: [{ id: "native1", text: "Texte historique exact", sourceSheet: "VISITES ET APPELS", sourceRow: 7, sourceColumn: "I", author: "Auteur déclaré dans Excel", occurredAt: null, importedAt: "2026-10-07T15:00:00Z" }] }));
   assert.match(html, /date source inconnue/u); assert.match(html, /Auteur source déclaré : Auteur déclaré dans Excel/u); assert.match(html, /pas une identité CRM authentifiée/u);
   assert.doesNotMatch(html, /date et auteur source inconnus/u);
+});
+
+test("legacy blank source notes remain a retained trace, never a displayed interaction; meaningful spacing stays exact", () => {
+  const note = { id: "blank", text: " \n\t ", sourceSheet: "LEADS YNOV.MA", sourceRow: 7, sourceColumn: "M", author: null, occurredAt: null, importedAt: "2026-10-07T15:00:00Z" };
+  const meaningful = { ...note, id: "meaningful", sourceColumn: "O", text: "  Texte historique exact\n  " };
+  const html = renderToStaticMarkup(createElement(HistoricalNotesList, { notes: [note, meaningful], preservedNonInteractionBlankRecords: 1 }));
+  assert.equal((html.match(/<article/g) ?? []).length, 1);
+  assert.ok(html.includes(meaningful.text));
+  assert.match(html, /1 trace\(s\) vide\(s\)/u);
+  assert.match(html, /sans modification des reçus/u);
+  assert.doesNotMatch(html, /cellule M7/u);
+  assert.equal(note.text, " \n\t ");
+  const serverFiltered = renderToStaticMarkup(createElement(HistoricalNotesList, { notes: [], preservedNonInteractionBlankRecords: 18 }));
+  assert.match(serverFiltered, /18 trace\(s\)/u);
+  assert.equal(serverFiltered.includes("<article"), false);
+});
+
+test("server warnings distinguish genuine BASELINE unknowns while old, partial and conflicting classifications remain fail closed", () => {
+  const row: BootstrapRow = { id: "row1", sheet: "VISITES ET APPELS", rowNumber: 7, version: 1, fingerprint: "b".repeat(64), state: "REVIEW", reasons: ["BASELINE_INFORMATION_UNKNOWN:program", "OWNER_UNKNOWN"], values: {}, comments: [], sourceOwner: null, replacementOwner: null };
+  assert.deepEqual(bootstrapRowMotifs(row), { warnings: [], blockingReasons: row.reasons, classified: false });
+  assert.equal(bootstrapRowMotifs({ ...row, warnings: ["BASELINE_INFORMATION_UNKNOWN:program"] }).classified, false);
+  const classified = { ...row, warnings: ["BASELINE_INFORMATION_UNKNOWN:program"], blockingReasons: ["OWNER_UNKNOWN"] };
+  assert.deepEqual(bootstrapRowMotifs(classified), { warnings: ["BASELINE_INFORMATION_UNKNOWN:program"], blockingReasons: ["OWNER_UNKNOWN"], classified: true });
+  assert.deepEqual(bootstrapRowMotifs({ ...classified, blockingReasons: [] }).blockingReasons, ["OWNER_UNKNOWN"], "unclassified legacy reasons must not disappear");
+  assert.deepEqual(bootstrapRowMotifs({ ...classified, reasons: ["REQUIRED_MAPPING_MISSING:program", ...classified.reasons] }).blockingReasons, ["OWNER_UNKNOWN"], "a specifically classified genuine unknown must not regain its old missing-mapping blocker");
+  assert.deepEqual(bootstrapRowMotifs({ ...classified, blockingReasons: ["OWNER_UNKNOWN", "BASELINE_INFORMATION_UNKNOWN:program"] }).warnings, [], "a blocking declaration wins over a warning");
+  const html = renderToStaticMarkup(createElement(BootstrapRowReview, { row: classified, source, context, disabled: false, onDecision: (): Promise<void> => Promise.resolve() }));
+  assert.match(html, /reprise possible comme information inconnue/u);
+  assert.match(html, /Décisions à résoudre pour cette occurrence : OWNER_UNKNOWN/u);
+  assert.match(html, /ne constituent ni une décision automatique ni un reçu/u);
+  assert.match(html, /À préciser · aucune formation inventée/u);
 });
 
 test("historical provenance displays the server cycle, precise source and both source owners without making them today's assignment or closure", () => {

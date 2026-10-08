@@ -28,18 +28,27 @@ export interface BootstrapCellEvidence extends BootstrapSourceEvidence { raw: st
 export interface BootstrapRow {
   id: string; sheet: string; rowNumber: number; fingerprint: string; version: number;
   state: "REVIEW" | "READY" | "ACCEPTED" | "INVALID" | "IGNORED";
-  reasons: string[]; values: Record<string, string | null>; comments: Array<{ column: string; text: string }>;
+  reasons: string[]; warnings?: string[]; blockingReasons?: string[];
+  values: Record<string, string | null>; comments: Array<{ column: string; text: string }>;
   sourceOwner: string | null; replacementOwner: string | null;
   annotations?: BootstrapNativeAnnotation[];
   sourceEvidence?: BootstrapCellEvidence[]; sourceEvidenceTruncated?: boolean;
-  decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string;
+  decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string; canReopen?: boolean;
 }
 export interface BootstrapRows { items: BootstrapRow[]; nextAfter: string | null }
 export interface BootstrapReport {
   package: BootstrapPackage;
   bySheet: Array<{ name: string; total: number; accepted: number; review: number; invalid: number; ignored: number }>;
   cutoverBlocked: boolean;
+  reconciliation?: BootstrapReconciliation;
   sourceCoverage?: { complete: boolean; bySheet: Array<{ name: string; sourceCandidates: number; sourceRows: number; ledgerRows: number; literalCells: number; commentCells: number; formulaCells: number; nativeAnnotations: number; unmappedCells: number; excludedCells: number; quarantinedAnnotations: number }> };
+}
+export interface BootstrapReconciliation {
+  complete: boolean; truncated: boolean; totalOccurrences: number; unresolvedOccurrences: number;
+  effects: Record<string, number>;
+  contacts: { email: { groups: number; occurrences: number }; phone: { groups: number; occurrences: number }; overlappingGroupsNotUniquePeople: true };
+  currentDossierAxes: { visible: number; withheld: number };
+  axes: Record<string, Record<string, number>>; discrepancies: Array<{ code: string; count: number }>;
 }
 export type BootstrapField = "firstName" | "lastName" | "email" | "phone" | "program" | "educationLevel" | "source" | "status" | "temperature" | "owner" | "replacementOwner" | "receivedDate";
 export const bootstrapFields: ReadonlyArray<readonly [BootstrapField, string]> = [
@@ -113,6 +122,21 @@ export const bootstrapStateLabels: Readonly<Record<BootstrapState, string>> = {
 export const bootstrapRowLabels: Readonly<Record<BootstrapRow["state"], string>> = {
   REVIEW: "À vérifier", READY: "Décision en attente d’exécution", ACCEPTED: "Reçu d’import acquis", INVALID: "Invalide", IGNORED: "Écarté avec motif",
 };
+export function bootstrapRowMotifs(row: BootstrapRow): Readonly<{ warnings: string[]; blockingReasons: string[]; classified: boolean }> {
+  const classified = Array.isArray(row.warnings) && row.warnings.every((value) => typeof value === "string") && Array.isArray(row.blockingReasons) && row.blockingReasons.every((value) => typeof value === "string");
+  if (!classified) return { warnings: [], blockingReasons: [...new Set(row.reasons)], classified: false };
+  const declaredBlocking = row.blockingReasons ?? [];
+  const declaredWarnings = row.warnings ?? [];
+  const legacyUnknownWarning = (reason: string): boolean => ["program", "educationLevel"].some((field) => reason === `REQUIRED_MAPPING_MISSING:${field}` && declaredWarnings.includes(`BASELINE_INFORMATION_UNKNOWN:${field}`));
+  const blockingReasons = [...new Set([...declaredBlocking, ...row.reasons.filter((reason) => !declaredWarnings.includes(reason) && !legacyUnknownWarning(reason))])];
+  return { warnings: [...new Set(declaredWarnings.filter((reason) => !blockingReasons.includes(reason)))], blockingReasons, classified: true };
+}
+export function bootstrapWarningLabel(code: string): string {
+  if (code === "BASELINE_INFORMATION_UNKNOWN:program") return "Formation d’origine non renseignée : reprise possible comme information inconnue, à compléter ensuite par le parcours métier.";
+  if (code === "BASELINE_INFORMATION_UNKNOWN:educationLevel") return "Niveau d’origine non renseigné : reprise possible comme information inconnue, sans niveau inventé.";
+  if (code === "OWNER_MISSING" || code === "BASELINE_INFORMATION_UNKNOWN:owner") return "Responsable source absent : choisissez explicitement un responsable autorisé ou « Non affecté ». Aucune redistribution automatique.";
+  return code;
+}
 export function stableBootstrapAttempt(ref: { current: { payload: string; key: string } | undefined }, body: object): string {
   const payload = JSON.stringify(body);
   if (ref.current?.payload !== payload) ref.current = { payload, key: `bootstrap-${crypto.randomUUID()}` };

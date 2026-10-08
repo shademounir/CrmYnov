@@ -83,6 +83,16 @@ test("linear email validation preserves the existing syntax and normalization co
     assert.equal(audit.list().filter((event) => event.eventType === "LEAD_UPDATED").length, 0);
   }
 });
+test("a BASELINE can retain real educational unknowns and complete them later, never erase known facts", async () => {
+  const { leads } = fixture();
+  const baseline = leads.registerLocalLead({ leadCode: "LD-BASELINE-UNKNOWN", firstName: "Alex", lastName: "Reprise", email: "baseline-edit@example.invalid", campus: "Campus A", campaign: "Campaign", educationLevel: "", program: "", source: "TEST", acquisitionKind: "BASELINE", assignedToId: adviser.userId, version: 1 });
+  const retained = await leads.updateLeadForApi(baseline.id, { firstName: "Alexis", program: "", educationLevel: "", expectedVersion: 1, idempotencyKey: "baseline-keep-unknown" }, adviser, "baseline-keep");
+  assert.equal(retained.program, ""); assert.equal(retained.educationLevel, "");
+  const completed = await leads.updateLeadForApi(baseline.id, { program: "Program", educationLevel: "Bac", idempotencyKey: "baseline-complete-unknown" }, adviser, "baseline-complete");
+  assert.equal(completed.program, "Program"); assert.equal(completed.educationLevel, "Bac");
+  await assert.rejects(() => leads.updateLeadForApi(baseline.id, { program: "", idempotencyKey: "baseline-erase-known" }, adviser, "baseline-erase"), hasCode("lead_required_field_missing"));
+  const { leads: regular, leadId } = fixture(); await assert.rejects(() => regular.updateLeadForApi(leadId, { program: "", idempotencyKey: "new-erase-known" }, adviser, "new-erase"), hasCode("lead_required_field_missing"));
+});
 
 test("long synthetic email inputs finish without backtracking or success audit on rejection", { timeout: 5000 }, async () => {
   const { leads, leadId, audit } = fixture();

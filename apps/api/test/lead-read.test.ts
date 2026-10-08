@@ -40,3 +40,9 @@ test("filters deterministic saved provenance and incomplete views", () => {
   assert.equal(service.listLeads({ page: 1, pageSize: 25, savedView: "IMPORT_ERRORS" }, admissions, "corr-errors").total, 0);
   assert.throws(() => service.listLeads({ page: 1, pageSize: 25, savedView: "UNSAFE" }, admissions, "corr-invalid"), hasCode("lead_saved_view_invalid"));
 });
+test("INCOMPLETE exposes real BASELINE educational absence without a invented placeholder", () => {
+  const service = new LeadService(new AuditService());
+  service.registerLocalLead({ ...input, leadCode: "LD-READ-BASELINE", acquisitionKind: "BASELINE", educationLevel: "", program: "" });
+  const list = service.listLeads({ page: 1, pageSize: 25, savedView: "INCOMPLETE" }, admissions, "baseline-incomplete");
+  assert.equal(list.total, 1); assert.equal(list.items[0]?.program, "");
+});

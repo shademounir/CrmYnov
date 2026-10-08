@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { LeadEditWorkflowForm } from "../app/leads/[leadId]/lead-edit-workflow.js";
+import type { LeadProfileRecord } from "../app/leads/[leadId]/lead-profile.js";
 
 test("Lead correction shares the governed form, blocks double submit and preserves values on collision", async (t) => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost/leads/synthetic" });
@@ -33,4 +37,23 @@ test("Lead correction shares the governed form, blocks double submit and preserv
   await act(async () => { assert.ok(release); release(Response.json({ code: "lead_contact_collision" }, { status: 409 })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.equal(email.value, "collision@example.invalid"); assert.match(host.textContent ?? "", /déjà utilisées par un autre Lead/u); assert.doesNotMatch(host.textContent ?? "", /lead_contact_collision/u);
   assert.match(host.textContent ?? "", /Laisser vide efface explicitement/u); assert.match(host.textContent ?? "", /sans inventer de chiffre/u);
+});
+
+test("only genuinely absent BASELINE education/program can stay unknown; NEW and already-known fields cannot be cleared", () => {
+  const base: LeadProfileRecord = { id: "synthetic-baseline", leadCode: "LD-SYNTHETIC", firstName: "Alex", lastName: "Test", email: "alex@example.invalid", campus: "CAMPUS-A", campaign: "CAMPAIGN-A", educationLevel: "", program: "", source: "OTHER", status: "PROSPECT", collaboratorIds: [], temperature: "UNEVALUATED", temperatureLabel: "Non évalué", qualificationVersion: 0, acquisitionKind: "BASELINE", version: 1 };
+  const legacy = { ...base }; delete legacy.acquisitionKind;
+  const cases: Array<[LeadProfileRecord, boolean, boolean]> = [[base, false, false], [{ ...base, educationLevel: "BAC", program: "PROGRAM-A" }, true, true], [{ ...base, acquisitionKind: "NEW" }, true, true], [legacy, true, true], [{ ...base, educationLevel: "BAC" }, true, false]];
+  for (const [lead, educationRequired, programRequired] of cases) {
+    const html = renderToStaticMarkup(createElement(LeadEditWorkflowForm, { lead }));
+    const dom = new JSDOM(html);
+    assert.equal(dom.window.document.querySelector<HTMLInputElement>('input[name="educationLevel"]')?.required, educationRequired);
+    const program = dom.window.document.querySelector<HTMLSelectElement>('select[name="program"]');
+    assert.equal(program?.required, programRequired);
+    assert.equal(program?.querySelector<HTMLOptionElement>('option[value=""]')?.disabled, programRequired);
+    if (!programRequired) assert.match(program?.querySelector<HTMLOptionElement>('option[value=""]')?.textContent ?? "", /À préciser/u);
+    assert.equal(dom.window.document.querySelector<HTMLInputElement>('input[name="source"]')?.required, true);
+    assert.equal(dom.window.document.querySelector<HTMLSelectElement>('select[name="campus"]')?.required, true);
+    assert.equal(dom.window.document.querySelector<HTMLSelectElement>('select[name="campaign"]')?.required, true);
+    dom.window.close();
+  }
 });

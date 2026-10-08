@@ -11,18 +11,51 @@ test("historical profile keeps four sheets, physical row9, exact notes, raw date
   assert.equal(workbook.sheets[0]!.rows[0]!.rowNumber, 9); assert.equal(workbook.sheets[0]!.columns[0]!.name, "NOM");
   assert.equal(workbook.sheets[0]!.rows[0]!.cells.I!.value, "Note exacte\navec accents é & espaces  "); assert.equal(workbook.workbookProperties.date1904, true); assert.ok(workbook.stylesXml?.includes("numFmtId"));
 });
+test("physical populated columns without row6 headers remain visible, unnamed and in Excel order", () => {
+  const parts = syntheticHistoricalParts();
+  parts[2]![1] = parts[2]![1]
+    .replace('<c r="J6" t="inlineStr"><is><t>TEMPÉRATURE</t></is></c>', '<c r="J6" t="inlineStr"><is><t>   </t></is></c><c r="X6" t="inlineStr"><is><t>En-tête sans donnée</t></is></c><c r="N6"/>')
+    .replace('</sheetData>', '<row r="5"><c r="P5" t="inlineStr"><is><t>Hors données historiques</t></is></c></row><row r="10"><c r="AA10" t="inlineStr"><is><t>Note source exacte  </t></is></c><c r="Z10" t="str" s="4"><v>Source non interprétée</v></c><c r="M10" t="b"><v>0</v></c><c r="L10"><v>0</v></c><c r="K10"><f t="shared" si="7"/></c><c r="N10"/></row></sheetData>');
+  const sheet = parseHistoricalWorkbook(syntheticZip(parts)).sheets[0]!;
+  assert.deepEqual(sheet.columns.map((item) => item.letter), ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "X", "Z", "AA"]);
+  assert.equal(sheet.columns.find((item) => item.letter === "F")!.name, "SOURCE");
+  for (const letter of ["J", "K", "L", "M", "Z", "AA"]) assert.equal(sheet.columns.find((item) => item.letter === letter)!.name, "");
+  assert.equal(sheet.columns.find((item) => item.letter === "X")!.name, "En-tête sans donnée");
+  const physical = sheet.rows.find((item) => item.rowNumber === 10)!;
+  assert.equal(physical.cells.AA!.value, "Note source exacte  ");
+  assert.deepEqual(physical.cells.Z, { value: "Source non interprétée", raw: "Source non interprétée", type: "str", style: "4" });
+  assert.equal(physical.cells.L!.value, 0); assert.equal(physical.cells.M!.value, false);
+  assert.deepEqual(physical.cells.K!.formula, { text: "", attributes: { t: "shared", si: "7" } });
+  const mapping = { name: sheet.name, campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D", program: "E", source: "F", status: "G", owner: "H" }, commentColumns: ["I"], ownerAliases: {} };
+  const coverage = historicalSourceCoverage(sheet, mapping);
+  assert.equal(coverage.sourceCandidates, 1, "unnamed source data must not manufacture identity candidates");
+  assert.equal(coverage.unmappedCells, 6, "all unnamed literal/formula facts still require a disposition");
+  assert.equal(coverage.formulaCells, 1);
+  const excludedColumns = ["J", "K", "L", "M", "Z", "AA"].map((column) => ({ column, reason: "Source synthétique explicitement exclue" }));
+  assert.equal(historicalSourceCoverage(sheet, { ...mapping, excludedColumns }).unmappedCells, 0);
+});
 test("shared/array/missing formula caches preserved but never treated as certain business fields", () => {
   const workbook = parseHistoricalWorkbook(syntheticHistoricalWorkbook({ row: '<row r="9"><c r="A9" t="inlineStr"><is><t>Synthétique</t></is></c><c r="B9" t="inlineStr"><is><t>Exemple</t></is></c><c r="C9" t="str"><f t="shared" si="4"/><v>cache@example.invalid</v></c><c r="D9"><f t="array" ref="D9:D10">1+1</f></c><c r="I9" t="inlineStr"><is><t>   </t></is></c></row>' }));
   assert.equal(workbook.formulaCount, 8); const row = workbook.sheets[0]!.rows[0]!;
   assert.deepEqual(row.cells.C!.formula, { text: "", attributes: { t: "shared", si: "4" } }); assert.equal(row.cells.D!.value, null);
   const mapping = { name: HISTORICAL_SHEETS[0], campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D" }, commentColumns: ["I"], ownerAliases: {} };
-  const mapped = mapHistoricalRow(row, mapping); assert.ok(mapped.reasons.includes("FORMULA_REVIEW:email")); assert.equal(mapped.comments[0]!.text, "   "); assert.equal(mapped.values.educationLevel, null);
+  const mapped = mapHistoricalRow(row, mapping); assert.ok(mapped.reasons.includes("FORMULA_REVIEW:email")); assert.equal(mapped.comments.length, 0); assert.equal(row.cells.I!.value, "   "); assert.equal(mapped.values.educationLevel, null);
 });
 test("replacement owner is authoritative even unknown; no fallback to certain original owner", () => {
   const cell = (value: string): { value: string; raw: null; type: string } => ({ value, raw: null, type: "inlineStr" });
   const original = "00000000-0000-4000-8000-000000000061";
   const mapped = mapHistoricalRow({ rowNumber: 9, cells: { R: cell("Original"), S: cell("Unknown replacement") } }, { name: HISTORICAL_SHEETS[2], campaign: "SYNTHETIC", fields: { owner: "R", replacementOwner: "S" }, commentColumns: [], ownerAliases: { Original: original } });
   assert.equal(mapped.values.ownerId, null); assert.equal(mapped.sourceOwner, "Original"); assert.equal(mapped.replacementOwner, "Unknown replacement"); assert.ok(mapped.reasons.includes("OWNER_UNKNOWN"));
+});
+test("literal optional educational absence is a BASELINE warning and whitespace comments remain source only", () => {
+  const cell = (value: string): { value: string; raw: null; type: string } => ({ value, raw: null, type: "inlineStr" });
+  const source = { rowNumber: 9, cells: { A: cell("Synthétique"), B: cell("Exemple"), C: cell("synth@example.invalid"), E: cell("   "), I: cell(" \t\n ") } };
+  const mapping = { name: HISTORICAL_SHEETS[0], campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D", program: "E" }, commentColumns: ["I"], ownerAliases: {} };
+  const mapped = mapHistoricalRow(source, mapping);
+  assert.equal(mapped.values.program, ""); assert.equal(mapped.values.educationLevel, "");
+  assert.ok(mapped.reasons.includes("BASELINE_INFORMATION_UNKNOWN:program")); assert.ok(mapped.reasons.includes("BASELINE_INFORMATION_UNKNOWN:educationLevel"));
+  assert.ok(!mapped.reasons.includes("REQUIRED_MAPPING_MISSING:program")); assert.equal(mapped.comments.length, 0);
+  assert.equal(source.cells.I.value, " \t\n "); assert.equal(source.cells.E.value, "   ");
 });
 test("terminal historical status requires review, comments never synthesize status/owner/dates", () => {
   const source = parseHistoricalWorkbook(syntheticHistoricalWorkbook()).sheets[0]!.rows[0]!;

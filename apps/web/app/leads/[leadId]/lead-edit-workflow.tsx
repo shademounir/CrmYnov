@@ -36,6 +36,8 @@ export function LeadEditWorkflowForm({ lead, onCancel, onCompleted, onDirtyChang
   const [feedback, setFeedback] = useState<{ kind: "idle" | "success" | "error"; message?: string }>({ kind: "idle" });
   const requestKey = useRef(`ui-lead-edit:${crypto.randomUUID()}`);
   const submissionLock = useRef(false);
+  const historicalProgramUnknown = lead.acquisitionKind === "BASELINE" && !lead.program.trim();
+  const historicalEducationUnknown = lead.acquisitionKind === "BASELINE" && !lead.educationLevel.trim();
 
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -71,9 +73,10 @@ export function LeadEditWorkflowForm({ lead, onCancel, onCompleted, onDirtyChang
       <div className="lead-edit-form__grid"><label>Email<input name="email" type="email" maxLength={254} defaultValue={lead.email ?? ""} /></label><label>Téléphone<input name="phone" type="tel" maxLength={32} defaultValue={lead.phone ?? ""} /></label></div>
       <p className="lead-assignment-dialog__help">Laisser vide efface explicitement la coordonnée. Le numéro est normalisé sans inventer de chiffre ni de préfixe.</p>
     </fieldset>
-    <LeadReferenceSelectors initial={{ campus: lead.campus, program: lead.program, campaign: lead.campaign }} legend="Orientation du prospect" />
+    <LeadReferenceSelectors initial={{ campus: lead.campus, program: lead.program, campaign: lead.campaign }} legend="Orientation du prospect" allowUnknownProgram={historicalProgramUnknown} />
+    {historicalProgramUnknown || historicalEducationUnknown ? <p className="lead-assignment-dialog__help">Le niveau ou la formation d’origine non renseignés peuvent rester « À préciser » pour ce portefeuille historique. Complétez-les lorsqu’ils sont connus ; une valeur déjà renseignée ne peut pas être effacée. Le serveur vérifie cette règle, pas ce formulaire.</p> : null}
     <fieldset disabled={busy}><legend>Contexte d’origine</legend>
-      <div className="lead-edit-form__grid"><label>Niveau d’études<input name="educationLevel" required maxLength={80} defaultValue={lead.educationLevel} /></label><label>Source<input name="source" required maxLength={80} defaultValue={lead.source} /></label></div>
+      <div className="lead-edit-form__grid"><label>Niveau d’études<input name="educationLevel" required={!historicalEducationUnknown} maxLength={80} defaultValue={lead.educationLevel} placeholder={historicalEducationUnknown ? "À préciser · niveau historique inconnu" : undefined} /></label><label>Source<input name="source" required maxLength={80} defaultValue={lead.source} /></label></div>
       <p className="lead-assignment-dialog__help">La correction met à jour la fiche courante sans réécrire la provenance ni l’historique d’import.</p>
     </fieldset>
     {feedback.kind !== "idle" ? <p className={`lead-assignment-dialog__feedback lead-assignment-dialog__feedback--${feedback.kind}`} role={feedback.kind === "error" ? "alert" : "status"}>{feedback.message}</p> : null}

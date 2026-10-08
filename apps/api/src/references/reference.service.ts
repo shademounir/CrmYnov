@@ -21,7 +21,7 @@ export class ReferenceService {
       if (!changed) return;
       if (!campus) unknownReference("campus");
       await this.permissions.assertCan(principal, "lead.references.view", { scope: "CAMPUS", active: campus.state === "ACTIVE", campusKeys: await this.campusKeys(tx, campus) });
-      await validateLeadReferences(tx, merged, previous ?? undefined);
+      await validateLeadReferences(tx, merged, previous ?? undefined, { allowMissingBaselineProgram: previous?.acquisitionKind === "BASELINE" && !previous.program.trim() });
     });
   }
 
@@ -154,6 +154,7 @@ export class ReferenceService {
       const rows = await tx.lead.findMany({ select: { campus: true, program: true, campaign: true }, distinct: ["campus", "program", "campaign"] });
       let created = 0;
       for (const row of rows) for (const [field, kind] of [["campus", "CAMPUS"], ["program", "PROGRAM"], ["campaign", "CAMPAIGN"]] as const) {
+        if (!row[field].trim()) continue; // Unknown BASELINE information is not a legacy reference.
         const campus = await resolveReference(tx, "CAMPUS", row.campus);
         if (await resolveReference(tx, kind, row[field], campus?.id)) continue;
         const code = `LEGACY_${createHash("sha256").update(row[field]).digest("hex").slice(0, 40)}`;
