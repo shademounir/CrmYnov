@@ -29,6 +29,8 @@ function fakeRepository(): { repository: LeadPersistenceRepository; state: FakeS
     crmReferenceKey: { findMany: async ({ where }: { where: { kind: string; key: string } }) => where.key === "SYNTHETIC" ? [{ reference: { id: `${where.kind}-synthetic`, code: "SYNTHETIC", state: "ACTIVE" } }] : [] },
     crmProgramAvailability: { findUnique: async () => ({ active: true }) },
     lead: {
+      findUnique: async ({ where }: { where: { id: string } }) => state.leads.find((item) => item.id === where.id) ?? null,
+      findFirst: async () => null,
       findUniqueOrThrow: async ({ where }: { where: { id: string } }) => {
         const row = state.leads.find((item) => item.id === where.id);
         if (!row) throw new Error("synthetic_lead_missing");
@@ -169,4 +171,16 @@ test("CRMY-54 refuses an absent audit actor rather than fabricating SYSTEM", asy
   const { repository, state } = fakeRepository();
   await assert.rejects(() => repository.createLead(lead(), activity(), "actor-required", "fingerprint", { ...auditActor, userId: "" }, "synthetic"), hasCode("audit_actor_required"));
   assert.equal(state.leads.length, 0); assert.equal(state.audits.length, 0);
+});
+test("unknown BASELINE preservation uses the persisted acquisition/facts, not a forged caller snapshot", async () => {
+  const { repository, state } = fakeRepository(); const stored = lead();
+  await repository.createLead(stored, activity(), "unknown-boundary-create", repository.fingerprint("unknown-boundary-create"), auditActor, "unknown-boundary");
+  const forged = { ...stored, acquisitionKind: "BASELINE" as const, program: "", educationLevel: "" };
+  await assert.rejects(() => repository.persistMutation(forged, forged, [], "unknown-boundary-forged", "UPDATE_LEAD", repository.fingerprint("forged"), auditActor, "unknown-forged"), hasCode("lead_required_field_missing"));
+  assert.equal(state.leads[0]?.program, "SYNTHETIC"); assert.equal(state.leads[0]?.educationLevel, "BAC");
+  state.leads[0].acquisitionKind = "BASELINE"; // Owned synthetic representation of a persisted known BASELINE.
+  await assert.rejects(() => repository.persistMutation(forged, forged, [], "unknown-boundary-known-clear", "UPDATE_LEAD", repository.fingerprint("clear"), auditActor, "unknown-clear"), hasCode("lead_required_field_missing"));
+  state.leads[0].program = ""; state.leads[0].educationLevel = "";
+  const unknown = await repository.persistMutation(forged, { ...forged, firstName: "Conservé" }, [], "unknown-boundary-real", "UPDATE_LEAD", repository.fingerprint("retain"), auditActor, "unknown-retain");
+  assert.equal(unknown.program, ""); assert.equal(unknown.educationLevel, ""); assert.equal(state.leads[0]?.firstName, "Conservé");
 });

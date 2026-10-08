@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Optional, UnauthorizedException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { LeadActivity as PrismaLeadActivity, Prisma } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
@@ -15,6 +15,7 @@ import { applicableCampusRule } from "../assignment/campus-assignment-policy.js"
 import { readCampusRules } from "../assignment/campus-assignment.service.js";
 import { prepareSheetAssignment, commitSheetAssignment, type SheetAssignment } from "../assignment/campus-assignment-resolver.js";
 import { assignmentManagerRecipients, assignmentNotification } from "../assignment/assignment-notifications.js";
+import { BASELINE_OPTIONAL_INFORMATION, mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 
 type StoredLead = LeadRecord & { version: number };
 type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[] }>;
@@ -260,7 +261,16 @@ export class LeadPersistenceRepository {
   private async persistMutationInTransaction(tx: Prisma.TransactionClient, input: PersistMutationInput): Promise<StoredLead> {
     const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
     if (receipt) return this.replay(receipt.fingerprint, input.fingerprint, receipt.result);
-    const references = await validateLeadReferences(tx, input.after, input.before);
+    let allowMissingBaselineProgram = false;
+    if (BASELINE_OPTIONAL_INFORMATION.some((field) => !input.after[field].trim())) {
+      // The read, permission-fenced mutation and optimistic UPDATE share this
+      // transaction. A forged/stale before snapshot cannot grant the exception.
+      const current = await tx.lead.findUnique({ where: { id: input.before.id }, select: { acquisitionKind: true, program: true, educationLevel: true, version: true } });
+      if (!current || current.version !== input.before.version) throw new ConflictException({ code: "lead_concurrent_mutation" });
+      if (BASELINE_OPTIONAL_INFORMATION.some((field) => !input.after[field].trim() && !mayPreserveBaselineUnknown(current, field))) throw new BadRequestException({ code: "lead_required_field_missing" });
+      allowMissingBaselineProgram = mayPreserveBaselineUnknown(current, "program");
+    }
+    const references = await validateLeadReferences(tx, input.after, input.before, { allowMissingBaselineProgram });
     const after = { ...input.after, ...references };
     await this.assertNoContactCollision(tx, input.operation, after);
     await this.updateLeadVersion(tx, input.before, after);

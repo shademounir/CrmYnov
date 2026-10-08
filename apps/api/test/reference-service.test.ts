@@ -152,6 +152,18 @@ test("reference validation stays fail closed for missing, archived and unavailab
     rows.crmReference.find((item) => item.id === row.id)!.state = "ACTIVE";
   }
 });
+test("BASELINE unknown programme stays empty without a fictitious reference; NEW remains strict", async () => {
+  const { repository, rows, service } = await setup();
+  const values = { campus: "SYNTHETIC", program: "", campaign: "SYNTHETIC" };
+  await assert.rejects(() => repository.transaction((tx) => validateLeadReferences(tx, values)), hasCode("REFERENCE_VALUE_UNKNOWN"));
+  assert.deepEqual(await repository.transaction((tx) => validateLeadReferences(tx, values, undefined, { allowMissingBaselineProgram: true })), values);
+  const id = randomUUID(); rows.lead.push({ id, ...values, educationLevel: "", acquisitionKind: "BASELINE", version: 1 });
+  const beforeRefs = structuredClone(rows.crmReference);
+  assert.equal((await service.captureLegacy(superAdmin, "baseline-empty-inventory")).created, 0); assert.deepEqual(rows.crmReference, beforeRefs);
+  await service.validateForLead({ program: "B1" }, actor("ADMISSIONS"), id);
+  await assert.rejects(() => service.validateForLead({ program: "UNKNOWN" }, actor("ADMISSIONS"), id), hasCode("REFERENCE_VALUE_UNKNOWN"));
+  await assert.rejects(() => repository.transaction((tx) => validateLeadReferences(tx, { ...values, program: "UNKNOWN" }, undefined, { allowMissingBaselineProgram: true })), hasCode("REFERENCE_VALUE_UNKNOWN"));
+});
 
 test("changing campus revalidates unchanged program and campaign in the destination campus", async () => {
   const { repository, service, programId } = await setup();

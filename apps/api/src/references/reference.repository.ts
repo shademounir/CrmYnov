@@ -13,7 +13,7 @@ export async function resolveReference(tx: ReferenceTransaction, kind: Reference
   return rows[0]?.reference;
 }
 
-export async function validateLeadReferences(tx: ReferenceTransaction, values: LeadReferenceValues, previous?: LeadReferenceValues): Promise<LeadReferenceValues> {
+export async function validateLeadReferences(tx: ReferenceTransaction, values: LeadReferenceValues, previous?: LeadReferenceValues, options?: { allowMissingBaselineProgram: boolean }): Promise<LeadReferenceValues> {
   const changed = (Object.keys(referenceFields) as Array<keyof LeadReferenceValues>).filter((key) => values[key] !== previous?.[key]);
   if (!changed.length) return values;
   const campus = await resolveReference(tx, "CAMPUS", values.campus);
@@ -23,6 +23,10 @@ export async function validateLeadReferences(tx: ReferenceTransaction, values: L
   if (changed.includes("campus")) result.campus = campus.code;
   for (const field of ["program", "campaign"] as const) {
     if (!changed.includes(field) && !changed.includes("campus")) continue;
+    // This internal option is derived from BASELINE creation or the current
+    // persisted Lead. It is never accepted from a request body. No fake
+    // reference is created, and a present programme still requires validation.
+    if (field === "program" && options?.allowMissingBaselineProgram && !values.program.trim()) { result.program = ""; continue; }
     result[field] = await activeReferenceCode(tx, field, values[field], campus.id);
   }
   return result;
