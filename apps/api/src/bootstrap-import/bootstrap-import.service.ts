@@ -1,15 +1,17 @@
 import { ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { BootstrapImportPackage, BootstrapImportRow, Prisma } from "@prisma/client";
+import { Prisma, type BootstrapImportPackage, type BootstrapImportRow } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
 import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
 import { canonicalCampus, leadResource } from "../permissions/dynamic-resources.js";
-import { assignmentCandidateCapability, evaluatePermission } from "../permissions/dynamic-evaluator.js";
+import { assignmentCandidateCapability, evaluatePermission, type EvaluationContext } from "../permissions/dynamic-evaluator.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "../permissions/dynamic-repository.js";
 import { resolveReference, validateLeadReferences } from "../references/reference.repository.js";
 import { parseHistoricalWorkbook, type HistoricalAnnotation } from "./historical-workbook.js";
+import { historicalStatusResolutionReason, normalizeHistoricalEmail, normalizeHistoricalPhone, requireExplicitHistoricalStatus, requireNoHistoricalContactCollision } from "./bootstrap-create-guards.js";
+import { historicalReconciliation } from "./historical-reconciliation.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, hash, HISTORICAL_SHEETS, IMPORT_FIELDS, KEY, MAX_PACKAGE_BYTES, refuse, SHA, UUID,
-  record, COLUMN, type BootstrapChunkInput, type BootstrapConfirmInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
+  record, COLUMN, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
 
 type Cell = { value: string | number | boolean | null; raw: string | null; type: string; formula?: { text: string; attributes: Record<string, string> }; style?: string };
 type Annotation = HistoricalAnnotation;
@@ -27,7 +29,7 @@ const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringif
 const object = <T>(value: unknown): T => value as T;
 function text(cell: Cell | undefined): string | null { return cell?.value === undefined || cell.value === null ? null : String(cell.value); }
 function normalized(value: string): string { return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr"); }
-const statusMap: Record<string, string> = { "a contacter": "PROSPECT", "a qualifier": "PROSPECT", "injoignable": "PROSPECT", "injoignable / a relancer": "PROSPECT", "a relancer": "PROSPECT", "contacte": "CONTACTED", "rdv planifie": "CONTACTED", "rdv effectue": "QUALIFIED", "dossier ouvert": "QUALIFIED", "inscrit": "ENROLLED", "sans suite": "CLOSED_LOST" };
+const statusMap: Record<string, string> = { "a contacter": "PROSPECT", "injoignable": "PROSPECT", "injoignable / a relancer": "PROSPECT", "a relancer": "PROSPECT", "contacte": "CONTACTED", "inscrit": "ENROLLED", "sans suite": "CLOSED_LOST" };
 
 /** Historical cells are never evaluated. A cached formula is evidence, not an
  * established business fact. Ownership resolves S before R, without fallback. */
@@ -49,8 +51,10 @@ export function mapHistoricalRow(row: SourceRow, mapping: HistoricalSheetMapping
   if (selected?.trim() && !values.ownerId) reasons.push("OWNER_UNKNOWN");
   if (!selected?.trim()) reasons.push("OWNER_MISSING");
   const rawStatus = values.status ?? null;
-  values.status = values.status?.trim() ? statusMap[normalized(values.status)] ?? null : "PROSPECT";
-  if (!values.status) reasons.push("STATUS_UNKNOWN");
+  values.status = rawStatus?.trim() ? statusMap[normalized(rawStatus)] ?? null : null;
+  const statusResolution = historicalStatusResolutionReason(rawStatus);
+  if (statusResolution) reasons.push(statusResolution);
+  else if (!values.status) reasons.push("STATUS_UNKNOWN");
   if (rawStatus && normalized(rawStatus) === "doublon") reasons.push("HISTORICAL_DUPLICATE_STATUS_REVIEW");
   if (["ENROLLED", "CLOSED_LOST"].includes(values.status ?? "")) reasons.push("HISTORICAL_TERMINAL_STATUS_REVIEW");
   const rawTemperature = values.temperature?.trim() ? normalized(values.temperature) : "";
@@ -221,7 +225,7 @@ export class BootstrapImportService {
       await this.package(tx, id, actor, ["import.view"]);
       if (after && !await tx.bootstrapImportRow.findFirst({ where: { id: after, packageId: id } })) refuse("bootstrap_cursor_invalid");
       const items = await tx.bootstrapImportRow.findMany({ where: { packageId: id }, orderBy: { id: "asc" }, take: limit + 1, ...(after ? { cursor: { id: after }, skip: 1 } : {}) });
-      return { items: items.slice(0, limit).map((row) => this.rowView(row)), nextAfter: items.length > limit ? items[limit - 1]!.id : null };
+      return { items: items.slice(0, limit).map((row) => this.rowView(row, actor)), nextAfter: items.length > limit ? items[limit - 1]!.id : null };
     });
   }
 
@@ -234,6 +238,7 @@ export class BootstrapImportService {
     return this.permissions.transaction(async (tx) => {
       const packageRow = await this.package(tx, id, actor, ["import.review.resolve", "import.view"]);
       const row = await tx.bootstrapImportRow.findFirst({ where: { id: rowId, packageId: id } }); if (!row) this.notFound();
+      if (await tx.bootstrapImportReceipt.findFirst({ where: { packageId: id, operation: "REOPEN_ROW", response: { path: ["previousDecisionKey"], equals: input.idempotencyKey } } })) this.conflict("bootstrap_superseded_decision_key");
       this.validateCycle(input.cycle, object<SourceRow>(row.payload));
       this.validateAnnotations(input, object<SourceRow>(row.payload));
       const fingerprint = hash({ ...input, actorId: actor.userId, expectedVersion: undefined });
@@ -242,7 +247,7 @@ export class BootstrapImportService {
         const saved = object<HistoricalDecisionInput & { values: Values }>(row.decision);
         if (saved.action === "CREATE_DOSSIER") await this.validateCreate(tx, actor, packageRow, row, saved.values, saved);
         else if (saved.action === "LINK_EXISTING") await this.authorizeLinkedLead(tx, actor, packageRow, saved.targetLeadId!);
-        return { ...this.rowView(row), replayed: true };
+        return { ...this.rowView(row, actor), replayed: true };
       }
       if (row.state !== "REVIEW" || row.version !== input.expectedVersion || row.decision) this.conflict("bootstrap_decision_conflict");
       const mapped = object<MappedRow>(row.mapped); const values = { ...mapped.values, ...input.overrides };
@@ -254,8 +259,38 @@ export class BootstrapImportService {
       }
       const changed = await tx.bootstrapImportRow.update({ where: { id: rowId, version: row.version }, data: { decision: json({ ...input, actorId: actor.userId, values }), decisionKey: input.idempotencyKey,
         decisionFingerprint: fingerprint, version: { increment: 1 }, state: "READY" } });
-      await this.audit(tx, actor, packageRow, "BOOTSTRAP_ROW_DECIDED", `decision:${row.id}`, { rowId, action: input.action, fingerprint, sourceKey: row.sourceKey });
-      return this.rowView(changed);
+      await this.audit(tx, actor, packageRow, "BOOTSTRAP_ROW_DECIDED", `decision:${hash([row.id, input.idempotencyKey, fingerprint])}`, { rowId, action: input.action, fingerprint, sourceKey: row.sourceKey });
+      return this.rowView(changed, actor);
+    });
+  }
+
+  async reopen(id: string, rowId: string, input: BootstrapReopenInput, actor: Principal): Promise<unknown> {
+    if (!UUID.test(rowId) || !record(input) || Object.keys(input).some((key) => !["expectedVersion", "idempotencyKey", "reason"].includes(key))
+      || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 1 || typeof input.idempotencyKey !== "string" || !KEY.test(input.idempotencyKey)
+      || typeof input.reason !== "string" || input.reason.trim().length < 8 || input.reason.length > 1000) refuse("bootstrap_reopen_invalid");
+    return this.permissions.transaction(async (tx) => {
+      const packageRow = await this.package(tx, id, actor, ["import.review.resolve", "import.view"]);
+      const row = await tx.bootstrapImportRow.findFirst({ where: { id: rowId, packageId: id } }); if (!row) this.notFound();
+      if (row.fingerprint !== hash(row.payload)) this.conflict("bootstrap_source_integrity_conflict");
+      if (row.leadId || ["ACCEPTED", "IGNORED"].includes(row.state) || await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: id, operation: "COMMIT_ROW", key: rowId } } })) this.conflict("bootstrap_committed_row_cannot_reopen");
+      const fingerprint = hash({ ...input, rowId, actorId: actor.userId });
+      const receipt = await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: id, operation: "REOPEN_ROW", key: input.idempotencyKey } } });
+      const currentDecision = row.decision ? object<{ actorId: string }>(row.decision) : null;
+      if (receipt) {
+        const saved = object<{ rowId: string; previousDecision: { actorId: string }; reopenedVersion: number }>(receipt.response);
+        if (receipt.actorId !== actor.userId || saved.previousDecision?.actorId !== actor.userId || (currentDecision && currentDecision.actorId !== actor.userId)) permissionDenied();
+        if (receipt.fingerprint !== fingerprint || saved.rowId !== rowId) this.conflict("bootstrap_reopen_key_conflict");
+        return { ...this.rowView(row, actor), replayed: true, reopenedVersion: saved.reopenedVersion };
+      }
+      if (currentDecision?.actorId !== actor.userId) permissionDenied();
+      if (row.state !== "READY" || row.version !== input.expectedVersion || !row.decision || !row.decisionKey || !row.decisionFingerprint || input.idempotencyKey === row.decisionKey) this.conflict("bootstrap_reopen_conflict");
+      const previousDecision = row.decision;
+      if (row.decisionFingerprint !== hash({ ...object<Record<string, unknown>>(previousDecision), expectedVersion: undefined, values: undefined })) this.conflict("bootstrap_decision_integrity_conflict");
+      const changed = await tx.bootstrapImportRow.update({ where: { id: rowId, version: row.version }, data: { state: "REVIEW", version: { increment: 1 }, decision: Prisma.DbNull, decisionKey: null, decisionFingerprint: null } });
+      const response = { rowId, previousDecision, previousDecisionKey: row.decisionKey, previousDecisionFingerprint: row.decisionFingerprint, reopenedVersion: changed.version, reason: input.reason };
+      await tx.bootstrapImportReceipt.create({ data: { packageId: id, operation: "REOPEN_ROW", key: input.idempotencyKey, actorId: actor.userId, fingerprint, response: json(response) } });
+      await this.audit(tx, actor, packageRow, "BOOTSTRAP_ROW_REOPENED", `reopen:${hash([rowId, input.idempotencyKey])}`, response);
+      return this.rowView(changed, actor);
     });
   }
 
@@ -306,7 +341,40 @@ export class BootstrapImportService {
         remainingUnmappedCells: ledgers.filter((item) => item.sheet === sheet.name && item.state !== "IGNORED").reduce((total, item) => total + item.reasons.filter((reason) => reason.startsWith("UNMAPPED_SOURCE_CELL_REVIEW:")).length, 0),
         remainingQuarantinedAnnotations: ledgers.filter((item) => item.sheet === sheet.name && item.state !== "IGNORED" && item.reasons.includes("NATIVE_ANNOTATION_QUARANTINE") && !object<HistoricalDecisionInput | null>(item.decision)?.annotations?.length).length }));
       const complete = !!coverage && effectiveCoverage.every((sheet) => !sheet.remainingUnmappedCells && !sheet.remainingQuarantinedAnnotations) && coverage.reduce((total, sheet) => total + sheet.ledgerRows, 0) === bySheet.reduce((total, sheet) => total + sheet.total, 0);
-      return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage }, cutoverBlocked: !complete || bySheet.some((sheet) => sheet.review || sheet.invalid), historicalAcquisitionsExcluded: true };
+      const reconciliationRows = await tx.bootstrapImportRow.findMany({ where: { packageId: id }, take: 10001,
+        select: { id: true, sheet: true, relationId: true, rowNumber: true, sourceKey: true, fingerprint: true, payload: true, mapped: true, decision: true, decisionFingerprint: true, state: true, leadId: true } });
+      const notes = await tx.importedHistoricalNote.findMany({ where: { row: { packageId: id } }, take: 100001,
+        select: { rowId: true, leadId: true, cellKey: true, fingerprint: true, sourceSheet: true, sourceRow: true, sourceColumn: true, text: true, sourceValue: true, author: true, occurredAt: true } });
+      const receipts = await tx.bootstrapImportReceipt.findMany({ where: { packageId: id, operation: "COMMIT_ROW" }, take: 10001, select: { key: true, fingerprint: true, actorId: true, response: true } });
+      const provenance = row.batchId ? await tx.leadProvenance.findMany({ where: { batchId: row.batchId, sourceType: "LEGACY_CRM" }, take: 10001,
+        select: { leadId: true, externalId: true, submissionFingerprint: true, technicalSystem: true, sourceType: true } }) : [];
+      const targetIds = [...new Set(reconciliationRows.slice(0, 10000).flatMap((item) => item.leadId ? [item.leadId] : []))];
+      const leads = await tx.lead.findMany({ where: { id: { in: targetIds } }, take: 10001, select: { id: true, campus: true, status: true, assignedToId: true, acquisitionKind: true, baselineTemperature: true,
+        collaborators: { where: { active: true, userId: actor.userId }, select: { userId: true } } } });
+      const principal = await currentPrincipal(tx, actor); const snapshots = await this.permissions.snapshots(tx);
+      const visibleLeads = [];
+      const campuses = new Map<string, Awaited<ReturnType<typeof canonicalCampus>>>();
+      const contexts = new Map<string, EvaluationContext>();
+      for (const lead of leads) {
+        // Equivalent to leadResource: actual canonical campus, active resource,
+        // current owner and active membership. Cache only identical contexts
+        // in this SAME read transaction/principal/permission snapshot.
+        let campus = campuses.get(lead.campus);
+        if (!campus) { campus = await canonicalCampus(tx, lead.campus); campuses.set(lead.campus, campus); }
+        const collaborating = lead.collaborators.some((item) => item.userId === principal.userId);
+        const key = hash([campus.id, lead.assignedToId, collaborating]);
+        let context = contexts.get(key);
+        if (!context) {
+          context = await resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true,
+            ...(lead.assignedToId ? { ownerId: lead.assignedToId } : {}), collaboratorIds: collaborating ? [principal.userId] : [], readableResource: true });
+          contexts.set(key, context);
+        }
+        visibleLeads.push({ ...lead, visibleForCurrentAxes: evaluatePermission(principal, "lead.view", snapshots, context).allowed });
+      }
+      const reconciliation = historicalReconciliation({ sha256: row.sha256 ?? "", rows: reconciliationRows.slice(0, 10000), notes: notes.slice(0, 100000), receipts: receipts.slice(0, 10000), provenance: provenance.slice(0, 10000), leads: visibleLeads.slice(0, 10000),
+        truncated: reconciliationRows.length > 10000 || notes.length > 100000 || receipts.length > 10000 || provenance.length > 10000 || leads.length > 10000 });
+      return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage }, reconciliation,
+        cutoverBlocked: !complete || !reconciliation.complete || bySheet.some((sheet) => sheet.review || sheet.invalid), historicalAcquisitionsExcluded: true };
     });
   }
 
@@ -341,7 +409,7 @@ export class BootstrapImportService {
       const reference = await validateLeadReferences(tx, { campus: campus.keys[1]!, campaign: values.campaign!, program: values.program! });
       leadId = randomUUID();
       await tx.lead.create({ data: { id: leadId, leadCode: `LD-${new Date().getUTCFullYear()}-${leadId.slice(0, 8).toUpperCase()}`, acquisitionKind: "BASELINE", firstName: values.firstName!.trim(), lastName: values.lastName!.trim(),
-        email: values.email?.trim().toLowerCase() || null, phone: values.phone?.replace(/[^+\d]/g, "") || null, ...reference, educationLevel: values.educationLevel!.trim(), source: values.source!.trim(),
+        email: normalizeHistoricalEmail(values.email), phone: normalizeHistoricalPhone(values.phone), ...reference, educationLevel: values.educationLevel!.trim(), source: values.source!.trim(),
         status: values.status!, baselineTemperature: values.temperature || null, assignedToId: values.ownerId || null, assignmentMode: "HISTORICAL_EXPLICIT", importBatchId: packageRow.batchId } });
     } else if (decision.action === "LINK_EXISTING" && leadId) {
       this.validateSourceCoverage(mapped, decision, object<SourceRow>(row.payload));
@@ -381,13 +449,14 @@ export class BootstrapImportService {
 
   private async validateCreate(tx: PermissionTransaction, actor: Principal, packageRow: BootstrapImportPackage, row: BootstrapImportRow, values: Values, decision: HistoricalDecisionInput): Promise<void> {
     await this.authorize(tx, actor, packageRow.campusId, ["lead.create"]);
+    const mapped = object<MappedRow>(row.mapped);
+    if (row.state !== "ACCEPTED") requireExplicitHistoricalStatus(mapped.reasons, decision, mapped.rawStatus ?? null);
     for (const key of ["firstName", "lastName", "campaign", "program", "educationLevel", "source", "status"]) if (!values[key]?.trim()) throw new UnprocessableEntityException({ code: "bootstrap_required_value_missing", field: key });
     if (values.firstName!.length > 100 || values.lastName!.length > 100 || values.educationLevel!.length > 80 || values.source!.length > 80 || !statuses.includes(values.status!)) refuse("bootstrap_lead_values_invalid");
     if (!values.email?.trim() && !values.phone?.trim()) refuse("bootstrap_contact_required");
-    if (values.email && !/^[^\s@]{1,64}@[^\s@]+\.[^\s@]+$/.test(values.email)) refuse("bootstrap_email_invalid");
-    if (values.phone && (!/^\+?[\d ().-]+$/.test(values.phone.trim()) || !/^\+?\d{8,15}$/.test(values.phone.replace(/[ ().-]/g, "")))) throw new UnprocessableEntityException({ code: "bootstrap_phone_explicit_resolution_required" });
+    if (values.email?.trim() && !normalizeHistoricalEmail(values.email)) refuse("bootstrap_email_invalid");
+    if (values.phone?.trim() && !normalizeHistoricalPhone(values.phone)) throw new UnprocessableEntityException({ code: "bootstrap_phone_explicit_resolution_required" });
     if (!sources.includes(values.source!) || !educationLevels.includes(values.educationLevel!) || !["COLD", "WARM", "HOT", "UNEVALUATED"].includes(values.temperature ?? "")) refuse("bootstrap_lead_domain_invalid");
-    const mapped = object<MappedRow>(row.mapped);
     this.validateSourceCoverage(mapped, decision, object<SourceRow>(row.payload));
     if (mapped.reasons.includes("HISTORICAL_DUPLICATE_STATUS_REVIEW")) throw new UnprocessableEntityException({ code: "bootstrap_duplicate_requires_link_or_ignore" });
     if (mapped.reasons.some((reason) => reason.startsWith("FORMULA_REVIEW"))) {
@@ -409,6 +478,10 @@ export class BootstrapImportService {
       const context = await resourceEvaluationContext(tx, await currentPrincipal(tx, actor), { scope: "CAMPUS", campusKeys: campus.keys, active: true, ownerId: owner.id });
       if (!assignmentCandidateCapability(owner.roles as Principal["roles"], await this.permissions.snapshots(tx), context)) permissionDenied();
     }
+    // A committed receipt replay has no CREATE effect. Later legitimate
+    // dossiers sharing this contact cannot invalidate the historical receipt.
+    if (row.state !== "ACCEPTED") await requireNoHistoricalContactCollision(tx, { campusId: campus.id, campusKeys: campus.keys, rowId: row.id,
+      email: normalizeHistoricalEmail(values.email), phone: normalizeHistoricalPhone(values.phone) });
   }
 
   private async authorizeLinkedLead(tx: PermissionTransaction, actor: Principal, packageRow: BootstrapImportPackage, id: string): Promise<void> {
@@ -471,9 +544,11 @@ export class BootstrapImportService {
       receivedChunks: await tx.bootstrapImportChunk.count({ where: { packageId: row.id } }), expectedChunks: Math.ceil(row.sizeBytes / CHUNK_BYTES),
       sheets: snapshot?.sheets.map((sheet) => ({ name: sheet.name, relationId: sheet.relationId, rowCount: sheet.rows.length, columns: sheet.columns })) ?? [], counts: await this.counts(tx, row.id), ...(row.batchId ? { batchId: row.batchId } : {}) };
   }
-  private rowView(row: BootstrapImportRow): Record<string, unknown> {
-    const mapped = object<MappedRow>(row.mapped); const decision = row.decision ? object<HistoricalDecisionInput & { values: Values }>(row.decision) : undefined; const source = object<SourceRow>(row.payload);
-    return { id: row.id, sheet: row.sheet, rowNumber: row.rowNumber, fingerprint: row.fingerprint, version: row.version, state: row.state, reasons: row.reasons, values: mapped.values, comments: mapped.comments,
+  private rowView(row: BootstrapImportRow, actor?: Principal): Record<string, unknown> {
+    const mapped = object<MappedRow>(row.mapped); const decision = row.decision ? object<HistoricalDecisionInput & { values: Values; actorId: string }>(row.decision) : undefined; const source = object<SourceRow>(row.payload);
+    const statusResolution = ["REVIEW", "READY"].includes(row.state) ? historicalStatusResolutionReason(mapped.rawStatus ?? null) : null;
+    return { id: row.id, sheet: row.sheet, rowNumber: row.rowNumber, fingerprint: row.fingerprint, version: row.version, state: row.state, reasons: [...new Set([...row.reasons, ...(statusResolution ? [statusResolution] : [])])], values: mapped.values, comments: mapped.comments,
+      canReopen: row.state === "READY" && !row.leadId && !!actor && decision?.actorId === actor.userId,
       sourceOwner: mapped.sourceOwner, replacementOwner: mapped.replacementOwner, annotations: source.annotations ?? [], sourceEvidence: Object.entries(source.cells).map(([column, cell]) => ({ column, reference: `${column}${source.rowNumber}`, text: text(cell), raw: cell.raw, type: cell.type,
         formula: !!cell.formula, ...(cell.formula ? { formulaText: cell.formula.text } : {}), ...(cell.style ? { style: cell.style } : {}) })), sourceEvidenceTruncated: false,
       ...(decision ? { decision: { action: decision.action, reason: decision.reason, ...(decision.targetLeadId ? { targetLeadId: decision.targetLeadId } : {}),

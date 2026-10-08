@@ -32,14 +32,22 @@ export interface BootstrapRow {
   sourceOwner: string | null; replacementOwner: string | null;
   annotations?: BootstrapNativeAnnotation[];
   sourceEvidence?: BootstrapCellEvidence[]; sourceEvidenceTruncated?: boolean;
-  decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string;
+  decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string; canReopen?: boolean;
 }
 export interface BootstrapRows { items: BootstrapRow[]; nextAfter: string | null }
 export interface BootstrapReport {
   package: BootstrapPackage;
   bySheet: Array<{ name: string; total: number; accepted: number; review: number; invalid: number; ignored: number }>;
   cutoverBlocked: boolean;
+  reconciliation?: BootstrapReconciliation;
   sourceCoverage?: { complete: boolean; bySheet: Array<{ name: string; sourceCandidates: number; sourceRows: number; ledgerRows: number; literalCells: number; commentCells: number; formulaCells: number; nativeAnnotations: number; unmappedCells: number; excludedCells: number; quarantinedAnnotations: number }> };
+}
+export interface BootstrapReconciliation {
+  complete: boolean; truncated: boolean; totalOccurrences: number; unresolvedOccurrences: number;
+  effects: Record<string, number>;
+  contacts: { email: { groups: number; occurrences: number }; phone: { groups: number; occurrences: number }; overlappingGroupsNotUniquePeople: true };
+  currentDossierAxes: { visible: number; withheld: number };
+  axes: Record<string, Record<string, number>>; discrepancies: Array<{ code: string; count: number }>;
 }
 export type BootstrapField = "firstName" | "lastName" | "email" | "phone" | "program" | "educationLevel" | "source" | "status" | "temperature" | "owner" | "replacementOwner" | "receivedDate";
 export const bootstrapFields: ReadonlyArray<readonly [BootstrapField, string]> = [

@@ -156,7 +156,12 @@ export function parseHistoricalWorkbook(bytes: Buffer): HistoricalWorkbook {
       else if (rowNumber > 6 && Object.values(cells).some((cell) => cell.value !== null && cell.value !== "" || cell.formula)) rows.push(source);
     }
     if (!header || !Object.values(header.cells).some((cell) => typeof cell.value === "string" && cell.value.trim())) refuse("historical_header_row6_missing");
-    const columns = Object.entries(header.cells).filter(([, cell]) => cell.value !== null && String(cell.value).trim()).map(([letter, cell]) => ({ letter, name: String(cell.value).trim() }));
+    // A physical column can carry source facts even when row 6 has no label.
+    // Keep it selectable for mapping/reasoned exclusion, without inventing a
+    // header that could accidentally turn it into an identity column.
+    const columnLetters = new Set(Object.entries(header.cells).filter(([, cell]) => cell.value !== null && String(cell.value).trim()).map(([letter]) => letter));
+    for (const row of rows) for (const [letter, cell] of Object.entries(row.cells)) if (cell.value !== null && cell.value !== "" || cell.formula) columnLetters.add(letter);
+    const columns = [...columnLetters].sort((left, right) => left.length - right.length || (left < right ? -1 : left > right ? 1 : 0)).map((letter) => ({ letter, name: String(header.cells[letter]?.value ?? "").trim() }));
     const sheetRelsPath = `${posix.dirname(path)}/_rels/${posix.basename(path)}.rels`; const sheetRels = parts.get(sheetRelsPath);
     const linkTargets = new Map<string, Record<string, string>>(); const annotations: HistoricalAnnotation[] = [];
     if (sheetRels) for (const relation of children(document(xml(sheetRels), "Relationships"), "Relationship")) {

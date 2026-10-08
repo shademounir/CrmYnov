@@ -14,6 +14,7 @@ export interface HistoricalCycle { state: "UNSPECIFIED" | "CONFIRMED_TARGET" | "
 export interface HistoricalAnnotationDecision { annotationId: string; reference: string; relationshipId: string; action: "PRESERVE_NOTE" | "EXCLUDE"; reason: string }
 export interface HistoricalDecisionInput { expectedVersion: number; idempotencyKey: string; action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; targetLeadId?: string; reason: string; cycle?: HistoricalCycle; annotations?: HistoricalAnnotationDecision[]; overrides?: Partial<Record<"firstName" | "lastName" | "email" | "phone" | "program" | "educationLevel" | "source" | "status" | "temperature" | "ownerId" | "campaign", string>> }
 export interface BootstrapConfirmInput { expectedVersion: number; idempotencyKey: string; confirmed: true; limit?: number }
+export interface BootstrapReopenInput { expectedVersion: number; idempotencyKey: string; reason: string }
 export const SHA = /^[a-f0-9]{64}$/;
 export const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export const KEY = /^[a-zA-Z0-9][a-zA-Z0-9:_-]{2,127}$/;

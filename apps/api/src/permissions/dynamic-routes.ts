@@ -2,7 +2,7 @@
 const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
   // This closed surface derives campus/lead resources from persisted packages
   // and revalidates every grant/replay in BootstrapImportService's same fence.
-  BootstrapImportController: { context: [], create: [], chunk: [], seal: [], get: [], mapping: [], rows: [], decide: [], confirm: [], report: [] },
+  BootstrapImportController: { context: [], create: [], chunk: [], seal: [], get: [], mapping: [], rows: [], decide: [], reopen: [], confirm: [], report: [] },
   BootstrapHistoricalNotesController: { notes: [] },
   LeadController: { create: ["lead.create"], list: ["lead.view"], detail: ["lead.view"], update: ["lead.edit"] },
   LeadStatusController: { update: ["lead.edit"] },
