@@ -8,6 +8,7 @@ import { ReferenceService } from "../references/reference.service.js";
 import { strictBody } from "../references/reference.contract.js";
 import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
+import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -213,7 +214,8 @@ export class LeadService implements OnModuleInit {
 
   private normalizeLeadUpdate(current: LeadRecord, input: UpdateLeadInput): LeadRecord {
     const fields = ["firstName", "lastName", "campus", "campaign", "educationLevel", "program", "source"] as const;
-    if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
+    if (fields.some((key) => input[key] !== undefined && !String(input[key]).trim()
+      && !((key === "program" || key === "educationLevel") && mayPreserveBaselineUnknown(current, key)))) throw new BadRequestException({ code: "lead_required_field_missing" });
     const normalized: LeadRecord = { ...current };
     for (const field of fields) if (input[field] !== undefined) normalized[field] = input[field].trim();
     this.normalizeLeadContacts(normalized, input);
@@ -499,7 +501,7 @@ export class LeadService implements OnModuleInit {
     if (!savedView) return true;
     if (savedView === "IMPORT_ERRORS") return false;
     if (savedView === "INCOMPLETE") return [lead.campus, lead.campaign, lead.educationLevel, lead.program]
-      .some((value) => value.toLocaleLowerCase("fr").includes("compléter"));
+      .some((value) => !value.trim() || value.toLocaleLowerCase("fr").includes("compléter"));
     if (savedView === "UNCLASSIFIED_SOURCES") return lead.source.trim().length === 0 || lead.source === "UNKNOWN";
     if (savedView === "PHONE_CALLS") return lead.source === "PHONE" || lead.source === "PHONE_CALL";
     if (savedView === "PHYSICAL_VISITS") return lead.source === "IN_PERSON" || lead.source === "PHYSICAL_VISIT";

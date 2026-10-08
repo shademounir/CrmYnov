@@ -36,6 +36,15 @@ test("comments retain trailing spaces, declared unknown authors and exact source
   const missing = fixture(); missing.notes = []; assert.equal(historicalReconciliation(missing).complete, false);
   const duplicate = fixture(); duplicate.notes.push(duplicate.notes[0]!); assert.equal(historicalReconciliation(duplicate).complete, false);
 });
+test("whitespace source is not an interaction; old exact blank records remain technical traces without backfill", () => {
+  const input = fixture(), row = input.rows[0]!;
+  const source = row.payload as { cells: { I: { value: string; raw: null; type: string } } }; source.cells.I.value = " \t\n "; row.fingerprint = hash(row.payload);
+  (row.mapped as { comments: Array<{ column: string; text: string }> }).comments = [{ column: "I", text: source.cells.I.value }];
+  input.provenance[0]!.submissionFingerprint = row.fingerprint;
+  input.notes[0]!.text = source.cells.I.value; input.notes[0]!.sourceValue = source.cells.I; input.notes[0]!.fingerprint = hash(source.cells.I);
+  const old = historicalReconciliation(input); assert.equal(old.complete, true); assert.equal(old.effects.expectedNotes, 0); assert.equal(old.effects.persistedNotes, 0); assert.equal(old.effects.exactNotes, 0); assert.equal(old.effects.preservedNonInteractionBlankRecords, 1);
+  input.notes = []; const fresh = historicalReconciliation(input); assert.equal(fresh.complete, true); assert.equal(fresh.effects.expectedNotes, 0); assert.equal(fresh.effects.preservedNonInteractionBlankRecords, 0);
+});
 
 test("an unresolved, truncated, corrupt, missing-target or missing-receipt projection blocks cutover", () => {
   const cases: Array<(input: ReturnType<typeof fixture>) => void> = [

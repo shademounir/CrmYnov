@@ -337,3 +337,27 @@ test("foreign, committed and old-API rows cannot display a reopen operation", as
     assert.equal([...dom.window.document.querySelectorAll("button")].some(item => item.textContent?.includes("Remettre ma décision")), false);
   }
 });
+
+test("BASELINE missing-information warnings keep values unknown and require an explicit unassigned-owner decision", async (t) => {
+  const decisions: BootstrapRowDecision[] = [];
+  const { dom, renderRow, edit, click, dispatch } = await setup(t);
+  const warnings = ["BASELINE_INFORMATION_UNKNOWN:program", "BASELINE_INFORMATION_UNKNOWN:educationLevel", "OWNER_MISSING"];
+  const reviewRow: BootstrapRow = { ...row, state: "REVIEW", reasons: warnings, warnings, blockingReasons: [], values: { firstName: "Synthetic", lastName: "Baseline", email: "baseline@example.invalid", program: "", educationLevel: "", ownerId: null } }; delete reviewRow.decision;
+  await renderRow(reviewRow, (_value, decision) => { decisions.push(decision); return Promise.resolve(); });
+  assert.match(dom.window.document.body.textContent ?? "", /avertissements serveur/u);
+  assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Décisions à résoudre pour cette occurrence/u);
+  assert.equal(control<HTMLSelectElement>(dom, "Formation validée").value, "");
+  assert.equal(control<HTMLSelectElement>(dom, "Niveau validé").value, "");
+  await edit(control<HTMLTextAreaElement>(dom, "Justification conservée"), "Source historique réellement absente, aucune valeur inventée");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, true);
+  await dispatch(control<HTMLSelectElement>(dom, "Responsable actif validé").closest("form")!, "submit");
+  assert.equal(decisions.length, 0);
+  await edit(control<HTMLSelectElement>(dom, "Responsable actif validé"), "__UNASSIGNED");
+  assert.equal(button(dom, "Enregistrer la décision").disabled, false);
+  await click(button(dom, "Enregistrer la décision"));
+  assert.equal(decisions.length, 1);
+  assert.deepEqual(decisions[0]!.overrides, { ownerId: "" });
+  assert.equal(decisions[0]!.cycle, undefined);
+  assert.equal(reviewRow.values.program, "");
+  assert.equal(reviewRow.values.educationLevel, "");
+});

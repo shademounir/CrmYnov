@@ -49,7 +49,7 @@ export function historicalReconciliation(input: {
   leads: ReconciliationLead[]; truncated: boolean;
 }): {
   complete: boolean; truncated: boolean; totalOccurrences: number; unresolvedOccurrences: number;
-  effects: { createdOccurrences: number; linkedOccurrences: number; ignoredOccurrences: number; distinctTargetDossiers: number; expectedNotes: number; persistedNotes: number; exactNotes: number; expectedRowReceipts: number; persistedRowReceipts: number; exactRowReceipts: number; expectedProvenance: number; persistedProvenance: number; exactProvenance: number };
+  effects: { createdOccurrences: number; linkedOccurrences: number; ignoredOccurrences: number; distinctTargetDossiers: number; expectedNotes: number; persistedNotes: number; exactNotes: number; preservedNonInteractionBlankRecords: number; expectedRowReceipts: number; persistedRowReceipts: number; exactRowReceipts: number; expectedProvenance: number; persistedProvenance: number; exactProvenance: number };
   contacts: { email: { groups: number; occurrences: number }; phone: { groups: number; occurrences: number }; overlappingGroupsNotUniquePeople: true };
   currentDossierAxes: { visible: number; withheld: number };
   axes: Record<string, Record<string, number>>; discrepancies: Array<{ code: string; count: number }>;
@@ -69,6 +69,7 @@ export function historicalReconciliation(input: {
     provenanceByKey.set(key, [...(provenanceByKey.get(key) ?? []), provenance]);
   }
   const expectedNotes = new Map<string, ExpectedNote>();
+  const blankSourceRecords = new Map<string, ExpectedNote>();
   const targets = new Set<string>();
   let created = 0, linked = 0, ignored = 0, expectedReceipts = 0, exactReceipts = 0, expectedProvenance = 0, exactProvenance = 0, unresolved = 0;
   for (const row of input.rows) {
@@ -107,7 +108,11 @@ export function historicalReconciliation(input: {
     if (provenance.length === 1 && provenance[0]!.leadId === lead.id && provenance[0]!.submissionFingerprint === row.fingerprint
       && provenance[0]!.sourceType === "LEGACY_CRM" && provenance[0]!.technicalSystem === "EXCEL_BOOTSTRAP_R8") exactProvenance++;
     else fail("PROVENANCE_MISMATCH");
-    const addNote = (key: string, note: ExpectedNote): void => { if (expectedNotes.has(key)) fail("EXPECTED_NOTE_KEY_COLLISION"); expectedNotes.set(key, note); };
+    const addNote = (key: string, note: ExpectedNote): void => {
+      if (expectedNotes.has(key) || blankSourceRecords.has(key)) fail("EXPECTED_NOTE_KEY_COLLISION");
+      if (note.text.trim()) expectedNotes.set(key, note);
+      else blankSourceRecords.set(key, note); // Optional old technical trace; never an expected interaction.
+    };
     for (const value of array(mapped.comments)) {
       const comment = object(value);
       if (typeof comment.column !== "string" || typeof comment.text !== "string" || !Object.hasOwn(cells, comment.column)) { fail("COMMENT_SOURCE_INVALID"); continue; }
@@ -128,13 +133,16 @@ export function historicalReconciliation(input: {
     }
   }
   let exactNotes = 0;
+  let preservedNonInteractionBlankRecords = 0;
   const seenNoteKeys = new Set<string>();
   for (const note of input.notes) {
-    const expected = expectedNotes.get(note.cellKey);
+    const expected = expectedNotes.get(note.cellKey) ?? blankSourceRecords.get(note.cellKey);
     if (!expected || seenNoteKeys.has(note.cellKey)) { fail("UNEXPECTED_OR_DUPLICATE_NOTE"); continue; }
     seenNoteKeys.add(note.cellKey);
     if (note.rowId === expected.rowId && note.leadId === expected.leadId && note.sourceSheet === expected.sheet && note.sourceRow === expected.row && note.sourceColumn === expected.column
-      && note.text === expected.text && note.author === expected.author && note.occurredAt === null && note.fingerprint === hash(expected.value) && hash(note.sourceValue) === hash(expected.value)) exactNotes++;
+      && note.text === expected.text && note.author === expected.author && note.occurredAt === null && note.fingerprint === hash(expected.value) && hash(note.sourceValue) === hash(expected.value)) {
+      if (expected.text.trim()) exactNotes++; else preservedNonInteractionBlankRecords++;
+    }
     else fail("NOTE_EXACT_CONTENT_MISMATCH");
   }
   for (const key of expectedNotes.keys()) if (!seenNoteKeys.has(key)) fail("EXPECTED_NOTE_MISSING");
@@ -152,7 +160,7 @@ export function historicalReconciliation(input: {
     complete: !input.truncated && unresolved === 0 && Object.keys(discrepancies).length === 0, truncated: input.truncated,
     totalOccurrences: input.rows.length, unresolvedOccurrences: unresolved,
     effects: { createdOccurrences: created, linkedOccurrences: linked, ignoredOccurrences: ignored, distinctTargetDossiers: targets.size,
-      expectedNotes: expectedNotes.size, persistedNotes: input.notes.length, exactNotes,
+      expectedNotes: expectedNotes.size, persistedNotes: input.notes.length - preservedNonInteractionBlankRecords, exactNotes, preservedNonInteractionBlankRecords,
       expectedRowReceipts: expectedReceipts, persistedRowReceipts: input.receipts.length, exactRowReceipts: exactReceipts,
       expectedProvenance, persistedProvenance: input.provenance.length, exactProvenance },
     contacts: { email: contactGroups(input.rows, "email"), phone: contactGroups(input.rows, "phone"), overlappingGroupsNotUniquePeople: true },

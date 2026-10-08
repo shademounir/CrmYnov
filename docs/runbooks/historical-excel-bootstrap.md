@@ -42,7 +42,11 @@ restent dans le checkpoint privé, pas dans Git.
 5. Examiner chaque ligne : créer un dossier, rattacher sa provenance à un dossier
    explicitement choisi dans le campus, ou l'ignorer avec motif. Une ressemblance
    de nom, d'email ou de téléphone n'autorise pas une fusion aveugle. Les champs
-   obligatoires non résolus restent en revue. Un statut terminal historique
+   réellement obligatoires non résolus restent en revue. Pour une création
+   `BASELINE`, une formation ou un niveau littéralement absents restent inconnus
+   (`""` dans la projection persistée), sans référence fictive. Cette exception
+   ne concerne ni les nouvelles acquisitions `NEW`, ni l'effacement d'une
+   information connue, ni une formule non résolue. Un statut terminal historique
    exige une résolution explicite, pas une nouvelle approbation de clôture.
    Un statut vide ou un jalon (« À qualifier », rendez-vous planifié/effectué,
    dossier ouvert) n'est pas converti silencieusement en statut CRM. Une création
@@ -58,6 +62,28 @@ restent dans le checkpoint privé, pas dans Git.
    même si d'autres lignes ont déjà un reçu. Le rapport rapproche les candidats,
    cellules littérales, formules, commentaires et annotations de l'inventaire
    source ; la somme des seuls dossiers acceptés n'est pas cette preuve.
+
+## Avertissements, décisions et quarantaine
+
+L'API distingue `warnings` et `blockingReasons` ; une ancienne réponse ne
+fournissant que `reasons` reste en revue, sans qualification optimiste du client.
+Les motifs peuvent se recouvrir : compter les dispositions exclusives des
+occurrences, pas additionner les catégories d'anomalies.
+
+| Situation | Disposition préparatoire | Condition avant confirmation |
+| --- | --- | --- |
+| Cycle, formation ou niveau absents littéralement | Import possible avec information inconnue | Décision explicite et autres contrôles satisfaits ; compléter ensuite par le métier |
+| Responsable absent | Information inconnue, choix nécessaire | Choisir explicitement « À affecter » ou un compte éligible ; aucune redistribution automatique |
+| Alias responsable inconnu ou ambigu, dont nouvelle affectation S | Rapprochement ou décision | Identité et droits vérifiés ; ne jamais revenir silencieusement à R |
+| Contact invalide avec une autre coordonnée utilisable | Correction explicite ou revue | Conserver la source, justifier le champ corrigé ou retiré et rechercher les collisions |
+| Aucun contact utilisable | Ligne à isoler | Motif durable ; aucune création aveugle |
+| Identité en conflit, statut contradictoire, formule non confirmée | Revue ou rapprochement | Décision documentée ; une mention Doublon / ancienne inscription ne crée pas un nouvel inscrit |
+
+Chaque occurrence conserve une disposition durable : création, rattachement
+explicite, exclusion motivée ou revue. Les axes attendus/persistés du rapport
+restent distincts par feuille, responsable, statut, température et cycle. Les
+références et identités proposées dans une préparation privée ne sont pas des
+UUID ou des droits de la cible PROD vérifiés.
 
 ## Contacts, révision d'une décision et preuve CRMY-62
 
@@ -107,12 +133,27 @@ pour combler ces preuves DEV/STAGING.
 
 ## Histoire, température et indicateurs
 
-Le texte des commentaires est conservé exactement, notamment espaces,
-multilignes et valeurs numériques. Une note historique possède une clé de
+Le texte des commentaires non vides est conservé exactement, notamment espaces
+significatifs, multilignes et valeurs numériques. Une cellule contenant
+uniquement des espaces reste dans le snapshot et son inventaire, mais ne crée
+ni note historique ni interaction. Les anciennes notes espaces-seuls ne sont
+ni supprimées ni corrigées rétroactivement : le rapport les distingue comme
+traces techniques préservées et vérifie leurs références et contenus exacts.
+Une divergence ou un doublon n'est pas exempté de réconciliation. Une cellule
+orpheline reste en quarantaine, jamais attachée à un Lead par supposition.
+Une note historique possède une clé de
 cellule et une provenance ; son auteur et sa date peuvent être inconnus. La date
 d'import est distincte de la date d'interaction. Aucune activité commerciale,
 qualification humaine, inscription contemporaine ou relance n'est fabriquée
 pour combler ces absences.
+
+La fiche affiche les notes importées séparément des événements contemporains.
+La lecture est bornée à 1 000 notes et 100 provenances, avec troncature explicite ;
+elle ne constitue pas une pagination exhaustive. La preuve exhaustive du paquet
+reste son rapport durable borné décrit ci-dessus, et une troncature bloque la
+bascule. L'édition métier peut compléter les inconnus `BASELINE` ; le serveur et
+la transaction relisent le dossier courant pour refuser tout effacement d'une
+valeur connue ou élargissement de cette exception aux acquisitions `NEW`.
 
 Une température historique résolue est un fallback identifié
 `HISTORICAL_BASELINE`. La première vraie qualification garde sa version 1 et

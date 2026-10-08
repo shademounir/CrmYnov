@@ -10,6 +10,7 @@ import { resolveReference, validateLeadReferences } from "../references/referenc
 import { parseHistoricalWorkbook, type HistoricalAnnotation } from "./historical-workbook.js";
 import { historicalStatusResolutionReason, normalizeHistoricalEmail, normalizeHistoricalPhone, requireExplicitHistoricalStatus, requireNoHistoricalContactCollision } from "./bootstrap-create-guards.js";
 import { historicalReconciliation } from "./historical-reconciliation.js";
+import { baselineOptionalValues, BASELINE_OPTIONAL_INFORMATION } from "./baseline-unknown-fields.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, hash, HISTORICAL_SHEETS, IMPORT_FIELDS, KEY, MAX_PACKAGE_BYTES, refuse, SHA, UUID,
   record, COLUMN, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
 
@@ -60,12 +61,13 @@ export function mapHistoricalRow(row: SourceRow, mapping: HistoricalSheetMapping
   const rawTemperature = values.temperature?.trim() ? normalized(values.temperature) : "";
   values.temperature = ({ froid: "COLD", cold: "COLD", tiede: "WARM", warm: "WARM", chaud: "HOT", hot: "HOT" } as Record<string, string>)[rawTemperature] ?? (rawTemperature ? null : "UNEVALUATED");
   if (rawTemperature && !values.temperature) reasons.push("TEMPERATURE_UNKNOWN");
-  for (const key of ["firstName", "lastName", "program", "educationLevel", "source"]) if (!values[key]?.trim()) reasons.push(`REQUIRED_MAPPING_MISSING:${key}`);
+  for (const key of ["firstName", "lastName", "source"]) if (!values[key]?.trim()) reasons.push(`REQUIRED_MAPPING_MISSING:${key}`);
+  for (const key of BASELINE_OPTIONAL_INFORMATION) if (!values[key]?.trim() && !reasons.includes(`FORMULA_REVIEW:${key}`)) { values[key] = ""; reasons.push(`BASELINE_INFORMATION_UNKNOWN:${key}`); }
   if (!values.email?.trim() && !values.phone?.trim()) reasons.push("CONTACT_IDENTITY_MISSING");
   const comments = mapping.commentColumns.flatMap((column) => {
     const cell = row.cells[column]; const value = text(cell);
     if (cell?.formula) reasons.push(`FORMULA_REVIEW:comment:${column}`);
-    return value === null || value.length === 0 ? [] : [{ column, text: value }];
+    return value === null || value.trim().length === 0 ? [] : [{ column, text: value }];
   });
   const dateColumn = mapping.fields.receivedDate; const dateCell = dateColumn ? row.cells[dateColumn] : undefined;
   return { values, comments, sourceOwner, replacementOwner, rawStatus, originalSource, reasons: [...new Set(reasons)], ...(dateColumn && dateCell ? { receivedDateEvidence: { column: dateColumn, reference: `${dateColumn}${row.rowNumber}`, cell: dateCell, date1904: row.date1904 ?? false } } : {}) };
@@ -386,8 +388,8 @@ export class BootstrapImportService {
       if (!["lead.view", "interaction.view"].every((key) => evaluatePermission(principal, key, snapshots, context).allowed)) permissionDenied();
       const rows = await tx.importedHistoricalNote.findMany({ where: { leadId }, orderBy: [{ sourceSheet: "asc" }, { sourceRow: "asc" }, { sourceColumn: "asc" }], take: 1000 });
       const occurrences = await tx.bootstrapImportRow.findMany({ where: { leadId }, orderBy: [{ sheet: "asc" }, { rowNumber: "asc" }], take: 100 });
-      return { items: rows.map((row) => ({ id: row.id, text: row.text, sourceSheet: row.sourceSheet, sourceRow: row.sourceRow, sourceColumn: row.sourceColumn, author: row.author, sourceDate: object<{ sourceDate?: string | null }>(row.sourceValue)?.sourceDate ?? null,
-        occurredAt: row.occurredAt?.toISOString() ?? null, importedAt: row.importedAt.toISOString() })), historical: true, truncated: rows.length === 1000,
+      return { items: rows.filter((row) => row.text.trim().length > 0).map((row) => ({ id: row.id, text: row.text, sourceSheet: row.sourceSheet, sourceRow: row.sourceRow, sourceColumn: row.sourceColumn, author: row.author, sourceDate: object<{ sourceDate?: string | null }>(row.sourceValue)?.sourceDate ?? null,
+        occurredAt: row.occurredAt?.toISOString() ?? null, importedAt: row.importedAt.toISOString() })), historical: true, truncated: rows.length === 1000, preservedNonInteractionBlankRecords: rows.filter((row) => !row.text.trim()).length,
         provenance: occurrences.map((row) => { const mapped = object<MappedRow>(row.mapped); const decision = object<HistoricalDecisionInput>(row.decision); const cycle = decision?.cycle; return { sheet: row.sheet, rowNumber: row.rowNumber,
           cycleLabel: cycle?.state === "CONFIRMED_TARGET" ? `Candidature ${cycle.label}` : cycle?.state === "HISTORICAL_ENROLMENT" ? `Inscription antérieure ${cycle.label}` : cycle?.state === "REVIEW" ? "Cycle à vérifier" : "Cycle à préciser",
           cycle: this.cycleView(cycle, object<SourceRow>(row.payload)), receivedDateEvidence: mapped.receivedDateEvidence ?? null, sourceOwner: mapped.sourceOwner, replacementOwner: mapped.replacementOwner, originalSource: mapped.originalSource, rawStatus: mapped.rawStatus ?? null }; }), provenanceTruncated: occurrences.length === 100 };
@@ -403,10 +405,10 @@ export class BootstrapImportService {
     }
     let leadId = decision.targetLeadId;
     if (decision.action === "CREATE_DOSSIER") {
-      const values = decision.values;
+      const values = baselineOptionalValues(decision.values, mapped.values, mapped.reasons);
       await this.validateCreate(tx, actor, packageRow, row, values, decision);
       const campus = await canonicalCampus(tx, packageRow.campusId);
-      const reference = await validateLeadReferences(tx, { campus: campus.keys[1]!, campaign: values.campaign!, program: values.program! });
+      const reference = await validateLeadReferences(tx, { campus: campus.keys[1]!, campaign: values.campaign!, program: values.program! }, undefined, { allowMissingBaselineProgram: true });
       leadId = randomUUID();
       await tx.lead.create({ data: { id: leadId, leadCode: `LD-${new Date().getUTCFullYear()}-${leadId.slice(0, 8).toUpperCase()}`, acquisitionKind: "BASELINE", firstName: values.firstName!.trim(), lastName: values.lastName!.trim(),
         email: normalizeHistoricalEmail(values.email), phone: normalizeHistoricalPhone(values.phone), ...reference, educationLevel: values.educationLevel!.trim(), source: values.source!.trim(),
@@ -421,6 +423,7 @@ export class BootstrapImportService {
       campaign: mapped.values.campaign ?? null, externalId: row.sourceKey, rawStatus: this.rawMappedStatus(row), submissionFingerprint: row.fingerprint } });
     const source = object<SourceRow>(row.payload);
     for (const comment of mapped.comments) {
+      if (!comment.text.trim()) continue; // Source/replay receipts remain intact; blank evidence is not an interaction.
       const cellKey = hash([packageRow.sha256, row.relationId, row.rowNumber, comment.column]);
       await tx.importedHistoricalNote.create({ data: { rowId: row.id, leadId, cellKey, fingerprint: hash(source.cells[comment.column]), sourceSheet: row.sheet, sourceRow: row.rowNumber, sourceColumn: comment.column,
         text: comment.text, sourceValue: json(source.cells[comment.column]), author: null, occurredAt: null } });
@@ -428,6 +431,7 @@ export class BootstrapImportService {
     for (const native of source.annotations ?? []) {
       const disposition = decision.annotations!.find((item) => item.annotationId === native.annotationId && item.reference === native.reference && item.relationshipId === native.relationshipId)!;
       if (disposition.action !== "PRESERVE_NOTE") continue;
+      if (!native.text.trim()) continue;
       const sourceColumn = native.reference.replace(/\d+$/, ""); const cellKey = hash([packageRow.sha256, row.relationId, row.rowNumber, "native-annotation", native.relationshipId, native.annotationId, native.reference]);
       await tx.importedHistoricalNote.create({ data: { rowId: row.id, leadId, cellKey, fingerprint: hash(native), sourceSheet: row.sheet, sourceRow: row.rowNumber, sourceColumn,
         text: native.text, sourceValue: json(native), author: native.author, occurredAt: null } });
@@ -450,13 +454,14 @@ export class BootstrapImportService {
   private async validateCreate(tx: PermissionTransaction, actor: Principal, packageRow: BootstrapImportPackage, row: BootstrapImportRow, values: Values, decision: HistoricalDecisionInput): Promise<void> {
     await this.authorize(tx, actor, packageRow.campusId, ["lead.create"]);
     const mapped = object<MappedRow>(row.mapped);
+    values = baselineOptionalValues(values, mapped.values, mapped.reasons);
     if (row.state !== "ACCEPTED") requireExplicitHistoricalStatus(mapped.reasons, decision, mapped.rawStatus ?? null);
-    for (const key of ["firstName", "lastName", "campaign", "program", "educationLevel", "source", "status"]) if (!values[key]?.trim()) throw new UnprocessableEntityException({ code: "bootstrap_required_value_missing", field: key });
+    for (const key of ["firstName", "lastName", "campaign", "source", "status"]) if (!values[key]?.trim()) throw new UnprocessableEntityException({ code: "bootstrap_required_value_missing", field: key });
     if (values.firstName!.length > 100 || values.lastName!.length > 100 || values.educationLevel!.length > 80 || values.source!.length > 80 || !statuses.includes(values.status!)) refuse("bootstrap_lead_values_invalid");
     if (!values.email?.trim() && !values.phone?.trim()) refuse("bootstrap_contact_required");
     if (values.email?.trim() && !normalizeHistoricalEmail(values.email)) refuse("bootstrap_email_invalid");
     if (values.phone?.trim() && !normalizeHistoricalPhone(values.phone)) throw new UnprocessableEntityException({ code: "bootstrap_phone_explicit_resolution_required" });
-    if (!sources.includes(values.source!) || !educationLevels.includes(values.educationLevel!) || !["COLD", "WARM", "HOT", "UNEVALUATED"].includes(values.temperature ?? "")) refuse("bootstrap_lead_domain_invalid");
+    if (!sources.includes(values.source!) || (values.educationLevel && !educationLevels.includes(values.educationLevel)) || !["COLD", "WARM", "HOT", "UNEVALUATED"].includes(values.temperature ?? "")) refuse("bootstrap_lead_domain_invalid");
     this.validateSourceCoverage(mapped, decision, object<SourceRow>(row.payload));
     if (mapped.reasons.includes("HISTORICAL_DUPLICATE_STATUS_REVIEW")) throw new UnprocessableEntityException({ code: "bootstrap_duplicate_requires_link_or_ignore" });
     if (mapped.reasons.some((reason) => reason.startsWith("FORMULA_REVIEW"))) {
@@ -467,7 +472,7 @@ export class BootstrapImportService {
     if (["ENROLLED", "CLOSED_LOST"].includes(values.status!) && (mapped.values.status !== values.status || mapped.reasons.includes("FORMULA_REVIEW:status"))
       && !(values.status === "ENROLLED" && decision.cycle?.state === "HISTORICAL_ENROLMENT" && decision.cycle.sourceColumns.length)) throw new UnprocessableEntityException({ code: "bootstrap_terminal_source_evidence_required" });
     const campus = await canonicalCampus(tx, packageRow.campusId);
-    await validateLeadReferences(tx, { campus: campus.keys[1]!, program: values.program!, campaign: values.campaign! });
+    await validateLeadReferences(tx, { campus: campus.keys[1]!, program: values.program!, campaign: values.campaign! }, undefined, { allowMissingBaselineProgram: true });
     if (mapped.reasons.includes("OWNER_UNKNOWN") && !Object.hasOwn(decision.overrides ?? {}, "ownerId")) throw new UnprocessableEntityException({ code: "bootstrap_owner_review_required" });
     if (!values.ownerId && decision.overrides?.ownerId !== "") throw new UnprocessableEntityException({ code: "bootstrap_unassigned_explicit_resolution_required" });
     if (values.ownerId) {
@@ -547,7 +552,11 @@ export class BootstrapImportService {
   private rowView(row: BootstrapImportRow, actor?: Principal): Record<string, unknown> {
     const mapped = object<MappedRow>(row.mapped); const decision = row.decision ? object<HistoricalDecisionInput & { values: Values; actorId: string }>(row.decision) : undefined; const source = object<SourceRow>(row.payload);
     const statusResolution = ["REVIEW", "READY"].includes(row.state) ? historicalStatusResolutionReason(mapped.rawStatus ?? null) : null;
-    return { id: row.id, sheet: row.sheet, rowNumber: row.rowNumber, fingerprint: row.fingerprint, version: row.version, state: row.state, reasons: [...new Set([...row.reasons, ...(statusResolution ? [statusResolution] : [])])], values: mapped.values, comments: mapped.comments,
+    const reasons = [...new Set([...row.reasons, ...(statusResolution ? [statusResolution] : [])])];
+    const warnings = BASELINE_OPTIONAL_INFORMATION.filter((field) => !mapped.values[field]?.trim() && !reasons.includes(`FORMULA_REVIEW:${field}`)).map((field) => `BASELINE_INFORMATION_UNKNOWN:${field}`);
+    if (reasons.includes("OWNER_MISSING")) warnings.push("OWNER_MISSING"); // Explicit unassigned decision is still required; no arbitrary redistribution.
+    const blockingReasons = reasons.filter((reason) => !warnings.includes(reason) && !reason.startsWith("BASELINE_INFORMATION_UNKNOWN:") && !BASELINE_OPTIONAL_INFORMATION.some((field) => reason === `REQUIRED_MAPPING_MISSING:${field}` && warnings.includes(`BASELINE_INFORMATION_UNKNOWN:${field}`)));
+    return { id: row.id, sheet: row.sheet, rowNumber: row.rowNumber, fingerprint: row.fingerprint, version: row.version, state: row.state, reasons, warnings, blockingReasons, values: mapped.values, comments: mapped.comments.filter((comment) => comment.text.trim().length > 0),
       canReopen: row.state === "READY" && !row.leadId && !!actor && decision?.actorId === actor.userId,
       sourceOwner: mapped.sourceOwner, replacementOwner: mapped.replacementOwner, annotations: source.annotations ?? [], sourceEvidence: Object.entries(source.cells).map(([column, cell]) => ({ column, reference: `${column}${source.rowNumber}`, text: text(cell), raw: cell.raw, type: cell.type,
         formula: !!cell.formula, ...(cell.formula ? { formulaText: cell.formula.text } : {}), ...(cell.style ? { style: cell.style } : {}) })), sourceEvidenceTruncated: false,

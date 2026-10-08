@@ -13,7 +13,7 @@ export function BootstrapMapping({ source, context, mappings, disabled, onChange
   function change(index: number, next: BootstrapSheetMapping): void { onChange(mappings.map((item, position) => position === index ? next : item)); }
   return <section className={styles.card} aria-labelledby="bootstrap-mapping-title">
     <h2 id="bootstrap-mapping-title">2. Mapping et rapprochement des responsables</h2>
-    <p>Quatre feuilles uniquement, en-tête ligne 6. Choisissez les colonnes réelles ; aucune formation, campagne ou affectation n’est inventée. Les colonnes contenant des données sans intitulé en ligne 6 restent à qualifier explicitement, sans interprétation automatique. Les valeurs inconnues restent en revue. Le nouveau responsable renseigné prime sur l’ancien, sans repli silencieux.</p>
+    <p>Quatre feuilles uniquement, en-tête ligne 6. Choisissez les colonnes réelles ; aucune formation, campagne ou affectation n’est inventée. Le niveau et la formation réellement absents pourront rester explicitement à préciser dans la reprise historique, selon la vérification du serveur. Une valeur présente, ambiguë ou calculée ne doit pas être vidée pour éviter sa revue. Les colonnes contenant des données sans intitulé en ligne 6 restent à qualifier explicitement, sans interprétation automatique. Le nouveau responsable renseigné prime sur l’ancien, sans repli silencieux.</p>
     {mappings.map((mapping, index) => {
       const sheet = source.sheets.find((item) => item.name === mapping.name);
       if (!sheet) return null;

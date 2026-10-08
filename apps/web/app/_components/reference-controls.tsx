@@ -18,16 +18,16 @@ export async function loadReferences(kind: ReferenceKind, campusId?: string, inc
   return body.items;
 }
 
-export function ReferenceSelect({ name, label, options, value, disabled = false, onChange }: Readonly<{ name: string; label: string; options: ReferenceOption[]; value: string; disabled?: boolean; onChange: (value: string) => void }>): React.JSX.Element {
+export function ReferenceSelect({ name, label, options, value, disabled = false, required = true, emptyLabel = "Sélectionner une valeur active", onChange }: Readonly<{ name: string; label: string; options: ReferenceOption[]; value: string; disabled?: boolean; required?: boolean; emptyLabel?: string; onChange: (value: string) => void }>): React.JSX.Element {
   const historical = Boolean(value) && !options.some((item) => item.code === value);
-  return <label>{label}<select name={name} value={value} onChange={(event) => onChange(event.target.value)} required disabled={disabled} style={{ minHeight: 44 }}>
-    <option value="">Sélectionner une valeur active</option>
+  return <label>{label}<select name={name} value={value} onChange={(event) => onChange(event.target.value)} required={required} disabled={disabled} style={{ minHeight: 44 }}>
+    <option value="" disabled={required}>{emptyLabel}</option>
     {historical ? <option value={value}>{value} — valeur historique conservée</option> : null}
     {options.map((item) => <option key={item.id} value={item.code}>{item.label}</option>)}
   </select></label>;
 }
 
-export function LeadReferenceSelectors({ initial = { campus: "", program: "", campaign: "" }, legend = "Référentiels gouvernés" }: Readonly<{ initial?: { campus: string; program: string; campaign: string }; legend?: string }>): React.JSX.Element {
+export function LeadReferenceSelectors({ initial = { campus: "", program: "", campaign: "" }, legend = "Référentiels gouvernés", allowUnknownProgram = false }: Readonly<{ initial?: { campus: string; program: string; campaign: string }; legend?: string; allowUnknownProgram?: boolean }>): React.JSX.Element {
   const [values, setValues] = useState(initial);
   const [campuses, setCampuses] = useState<ReferenceOption[]>([]);
   const [programs, setPrograms] = useState<ReferenceOption[]>([]);
@@ -52,7 +52,7 @@ export function LeadReferenceSelectors({ initial = { campus: "", program: "", ca
   }, [campuses, values.campus]);
   return <fieldset className="reference-fields" aria-busy={state === "loading"}><legend>{legend}</legend>
     <ReferenceSelect name="campus" label="Campus" options={campuses} value={values.campus} disabled={state === "loading"} onChange={(campus) => setValues({ campus, program: "", campaign: "" })} />
-    <ReferenceSelect name="program" label="Formation" options={programs} value={values.program} disabled={state !== "ready"} onChange={(program) => setValues({ ...values, program })} />
+    <ReferenceSelect name="program" label="Formation" options={programs} value={values.program} disabled={state !== "ready"} required={!allowUnknownProgram} emptyLabel={allowUnknownProgram ? "À préciser · formation historique inconnue" : "Sélectionner une valeur active"} onChange={(program) => setValues({ ...values, program })} />
     <ReferenceSelect name="campaign" label="Campagne" options={campaigns} value={values.campaign} disabled={state !== "ready"} onChange={(campaign) => setValues({ ...values, campaign })} />
     {state === "loading" ? <output>Chargement des valeurs autorisées…</output> : null}
     {state === "error" ? <p role="alert">Référentiels indisponibles. Ne validez pas le formulaire. <button className="reference-retry" type="button" onClick={() => setReloadVersion((version) => version + 1)}>Réessayer</button></p> : null}

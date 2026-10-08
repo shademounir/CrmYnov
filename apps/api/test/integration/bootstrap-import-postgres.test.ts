@@ -185,9 +185,10 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     assert.equal(nativeProvenance.provenance[0]!.cycleLabel, "Candidature 2027-2028"); assert.equal(nativeProvenance.provenance[0]!.receivedDateEvidence.date1904, true); assert.equal(nativeProvenance.provenance[0]!.receivedDateEvidence.cell.raw, "45123"); assert.ok(nativeProvenance.items.some((item) => item.sourceDate === "2025-07-02T09:30:00Z"));
     // CRMY-62: source statuses stay unresolved; contact checks use the same real
     // permission transaction at decision, commit and authenticated replay.
-    const scopedPackage = async (tag: string, email: string, status = "À contacter"): Promise<{ pack: Package; rows: Row[] }> => {
+    const scopedPackage = async (tag: string, email: string, status = "À contacter", transform?: (xml: string) => string): Promise<{ pack: Package; rows: Row[] }> => {
       const fixtureParts = syntheticHistoricalParts();
       for (const part of fixtureParts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code).replaceAll("synthetic@example.invalid", email).replaceAll("À contacter", status).replaceAll("Synthétique", `Synthétique ${tag}`);
+      if (transform) for (const part of fixtureParts.filter(([path]) => path.startsWith("xl/worksheets/"))) part[1] = transform(part[1]);
       const fixture = syntheticZip(fixtureParts); const sha = bytesHash(fixture);
       let value = await success<Package>(await request("/packages", "POST", { fileName: `synthetic-${tag}.xlsx`, sizeBytes: fixture.length, sha256: sha, campusId: campus.id, idempotencyKey: `synthetic-${tag}-${marker}` }));
       for (let offset = 0, index = 0; offset < fixture.length; offset += CHUNK_BYTES, index++) { const chunk = fixture.subarray(offset, offset + CHUNK_BYTES); await success(await request(`/packages/${value.id}/chunks`, "POST", { index, contentBase64: chunk.toString("base64"), sha256: bytesHash(chunk) })); }
@@ -196,6 +197,38 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
       return { pack: value, rows: (await success<{ items: Row[] }>(await request(`/packages/${value.id}/rows`), 200)).items };
     };
     const decisionFor = (row: Row, tag: string, overrides?: Record<string, string>): unknown => ({ expectedVersion: row.version, idempotencyKey: `resolved-${tag}-${marker}`, action: "CREATE_DOSSIER", reason: "Qualification explicite sans déduction automatique ni fusion de contacts", ...(overrides ? { overrides } : {}) });
+    // Truly absent educational facts remain unknown BASELINE facts. They do
+    // not require invented references, and whitespace is source evidence only.
+    const unknown = await scopedPackage("baseline-unknown", `unknown-${marker.toLowerCase()}@example.invalid`, "À contacter", (xml) => xml.replace(/<c r="D9"[^>]*>[\s\S]*?<\/c>/g, '<c r="D9"/>').replace(/<c r="E9"[^>]*>[\s\S]*?<\/c>/g, '<c r="E9"/>').replace(/<c r="I9"[^>]*>[\s\S]*?<\/c>/g, '<c r="I9" t="inlineStr"><is><t> \t\n </t></is></c>'));
+    const unknownSource = unknown.rows[0]!;
+    const unknownView = await success<{ items: Array<Row & { warnings: string[]; blockingReasons: string[]; comments: unknown[] }> }>(await request(`/packages/${unknown.pack.id}/rows`), 200);
+    const absentView = unknownView.items.find((item) => item.id === unknownSource.id)!;
+    assert.ok(absentView.warnings.includes("BASELINE_INFORMATION_UNKNOWN:program")); assert.ok(absentView.warnings.includes("BASELINE_INFORMATION_UNKNOWN:educationLevel")); assert.equal(absentView.comments.length, 0);
+    assert.ok(!absentView.blockingReasons.includes("REQUIRED_MAPPING_MISSING:program"));
+    await success(await request(`/packages/${unknown.pack.id}/rows/${unknownSource.id}/decision`, "POST", decisionFor(unknownSource, "unknown-allowed")));
+    for (const item of unknown.rows.filter((item) => item.id !== unknownSource.id)) await success(await request(`/packages/${unknown.pack.id}/rows/${item.id}/decision`, "POST", { expectedVersion: item.version, idempotencyKey: `unknown-ignore-${item.id}`, action: "IGNORE", reason: "Occurrence synthétique isolée pour la conservation explicite des inconnues" }));
+    const unknownConfirm = { expectedVersion: unknown.pack.version, idempotencyKey: `unknown-confirm-${marker}`, confirmed: true, limit: 25 };
+    await success(await request(`/packages/${unknown.pack.id}/confirm`, "POST", unknownConfirm));
+    const unknownCommitted = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: unknownSource.id } }), unknownLeadId = unknownCommitted.leadId!;
+    const unknownLead = await client.lead.findUniqueOrThrow({ where: { id: unknownLeadId } }); assert.equal(unknownLead.program, ""); assert.equal(unknownLead.educationLevel, ""); assert.equal(unknownLead.acquisitionKind, "BASELINE");
+    assert.equal(await client.importedHistoricalNote.count({ where: { leadId: unknownLeadId } }), 0); assert.equal(await client.leadActivity.count({ where: { leadId: unknownLeadId } }), 0);
+    const unknownPayload = unknownCommitted.payload as { cells: { I: { value: string } } }; assert.equal(unknownPayload.cells.I.value, " \t\n ");
+    const unknownNotes = await success<{ items: unknown[]; provenance: Array<{ cycleLabel: string }> }>(await request(`/leads/${unknownLeadId}/notes`), 200); assert.equal(unknownNotes.items.length, 0); assert.equal(unknownNotes.provenance[0]!.cycleLabel, "Cycle à préciser");
+    const unknownReport = await success<{ cutoverBlocked: boolean; reconciliation: { complete: boolean; effects: { expectedNotes: number; persistedNotes: number; exactNotes: number; preservedNonInteractionBlankRecords: number } } }>(await request(`/packages/${unknown.pack.id}/report`), 200);
+    assert.equal(unknownReport.cutoverBlocked, false); assert.equal(unknownReport.reconciliation.complete, true); assert.equal(unknownReport.reconciliation.effects.expectedNotes, 0); assert.equal(unknownReport.reconciliation.effects.persistedNotes, 0); assert.equal(unknownReport.reconciliation.effects.preservedNonInteractionBlankRecords, 0);
+    const leadRequest = (method: string, body: unknown, token = auth.token): Promise<Response> => fetch(`${origin}/leads/${unknownLeadId}`, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    const retained = await success<{ program: string; educationLevel: string; version: number }>(await leadRequest("PATCH", { firstName: "Exemple corrigé", program: "", educationLevel: "", expectedVersion: 1, idempotencyKey: `unknown-retain-${marker}` }), 200); assert.equal(retained.program, ""); assert.equal(retained.educationLevel, "");
+    const completion = { program: program.code, educationLevel: "Bac", expectedVersion: retained.version, idempotencyKey: `unknown-complete-${marker}` };
+    const completed = await success<{ program: string; educationLevel: string; version: number }>(await leadRequest("PATCH", completion), 200); assert.equal(completed.program, program.code); assert.equal(completed.educationLevel, "Bac");
+    const afterCompletion = await effectCounts(); await success(await leadRequest("PATCH", completion), 200); await success(await request(`/packages/${unknown.pack.id}/confirm`, "POST", unknownConfirm)); assert.deepEqual(await effectCounts(), afterCompletion);
+    assert.equal((await client.lead.findUniqueOrThrow({ where: { id: unknownLeadId } })).program, program.code);
+    assert.ok([403, 404].includes((await leadRequest("PATCH", { firstName: "Refusé", idempotencyKey: `unknown-outside-${marker}` }, outsiderAuth.token)).status));
+    assert.ok([400, 422].includes((await leadRequest("PATCH", { educationLevel: "", idempotencyKey: `unknown-clear-known-${marker}` })).status));
+    const newMissing = await fetch(`${origin}/leads`, { method: "POST", headers: { authorization: `Bearer ${auth.token}`, "content-type": "application/json" }, body: JSON.stringify({ firstName: "Nouveau", lastName: "Synthétique", email: `new-missing-${marker.toLowerCase()}@example.invalid`, campus: campus.code, campaign: campaign.code, program: "", educationLevel: "", source: "OTHER", idempotencyKey: `new-missing-${marker}` }) }); assert.ok([400, 422].includes(newMissing.status));
+    const formulaAbsent = await scopedPackage("baseline-formula", `formula-${marker.toLowerCase()}@example.invalid`, "À contacter", (xml) => xml.replace(/<c r="D9"[^>]*>[\s\S]*?<\/c>/g, '<c r="D9"><f>1+1</f></c>'));
+    const formulaRefusal = await request(`/packages/${formulaAbsent.pack.id}/rows/${formulaAbsent.rows[0]!.id}/decision`, "POST", decisionFor(formulaAbsent.rows[0]!, "formula-not-unknown")); assert.equal(formulaRefusal.status, 422); assert.deepEqual(await formulaRefusal.json(), { code: "bootstrap_formula_review_required" });
+    const knownErase = await scopedPackage("baseline-known-erase", `known-erase-${marker.toLowerCase()}@example.invalid`);
+    const knownRefusal = await request(`/packages/${knownErase.pack.id}/rows/${knownErase.rows[0]!.id}/decision`, "POST", decisionFor(knownErase.rows[0]!, "known-cannot-clear", { program: "" })); assert.equal(knownRefusal.status, 422); assert.deepEqual(await knownRefusal.json(), { code: "bootstrap_baseline_known_value_cannot_clear", field: "program" });
     for (const [index, status] of ["", "RDV planifié", "RDV effectué", "Dossier ouvert", "À qualifier"].entries()) {
       const fixture = await scopedPackage(`status-${index}`, `status-${index}-${marker.toLowerCase()}@example.invalid`, status); const source = fixture.rows[0]!;
       const refused = await request(`/packages/${fixture.pack.id}/rows/${source.id}/decision`, "POST", decisionFor(source, `status-${index}`));

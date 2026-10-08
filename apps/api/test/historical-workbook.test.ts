@@ -39,13 +39,23 @@ test("shared/array/missing formula caches preserved but never treated as certain
   assert.equal(workbook.formulaCount, 8); const row = workbook.sheets[0]!.rows[0]!;
   assert.deepEqual(row.cells.C!.formula, { text: "", attributes: { t: "shared", si: "4" } }); assert.equal(row.cells.D!.value, null);
   const mapping = { name: HISTORICAL_SHEETS[0], campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D" }, commentColumns: ["I"], ownerAliases: {} };
-  const mapped = mapHistoricalRow(row, mapping); assert.ok(mapped.reasons.includes("FORMULA_REVIEW:email")); assert.equal(mapped.comments[0]!.text, "   "); assert.equal(mapped.values.educationLevel, null);
+  const mapped = mapHistoricalRow(row, mapping); assert.ok(mapped.reasons.includes("FORMULA_REVIEW:email")); assert.equal(mapped.comments.length, 0); assert.equal(row.cells.I!.value, "   "); assert.equal(mapped.values.educationLevel, null);
 });
 test("replacement owner is authoritative even unknown; no fallback to certain original owner", () => {
   const cell = (value: string): { value: string; raw: null; type: string } => ({ value, raw: null, type: "inlineStr" });
   const original = "00000000-0000-4000-8000-000000000061";
   const mapped = mapHistoricalRow({ rowNumber: 9, cells: { R: cell("Original"), S: cell("Unknown replacement") } }, { name: HISTORICAL_SHEETS[2], campaign: "SYNTHETIC", fields: { owner: "R", replacementOwner: "S" }, commentColumns: [], ownerAliases: { Original: original } });
   assert.equal(mapped.values.ownerId, null); assert.equal(mapped.sourceOwner, "Original"); assert.equal(mapped.replacementOwner, "Unknown replacement"); assert.ok(mapped.reasons.includes("OWNER_UNKNOWN"));
+});
+test("literal optional educational absence is a BASELINE warning and whitespace comments remain source only", () => {
+  const cell = (value: string): { value: string; raw: null; type: string } => ({ value, raw: null, type: "inlineStr" });
+  const source = { rowNumber: 9, cells: { A: cell("Synthétique"), B: cell("Exemple"), C: cell("synth@example.invalid"), E: cell("   "), I: cell(" \t\n ") } };
+  const mapping = { name: HISTORICAL_SHEETS[0], campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D", program: "E" }, commentColumns: ["I"], ownerAliases: {} };
+  const mapped = mapHistoricalRow(source, mapping);
+  assert.equal(mapped.values.program, ""); assert.equal(mapped.values.educationLevel, "");
+  assert.ok(mapped.reasons.includes("BASELINE_INFORMATION_UNKNOWN:program")); assert.ok(mapped.reasons.includes("BASELINE_INFORMATION_UNKNOWN:educationLevel"));
+  assert.ok(!mapped.reasons.includes("REQUIRED_MAPPING_MISSING:program")); assert.equal(mapped.comments.length, 0);
+  assert.equal(source.cells.I.value, " \t\n "); assert.equal(source.cells.E.value, "   ");
 });
 test("terminal historical status requires review, comments never synthesize status/owner/dates", () => {
   const source = parseHistoricalWorkbook(syntheticHistoricalWorkbook()).sheets[0]!.rows[0]!;
