@@ -5,7 +5,19 @@ export interface SheetsAccessTokenProvider {
 
 export type SheetsTransport = (url: URL, init: RequestInit) => Promise<Response>;
 export interface SheetTab { id: number; title: string }
-export interface SheetValues { columns: string[]; rows: Array<Record<string, string>>; observation?: { sheetId: number; range: string; values: string[][] } }
+/** Internal opt-in only. These column names do not attest their producer or immutability. */
+export interface SheetLiteralIdentityContract { externalIdColumn: string; originalArrivalColumn: string }
+export interface SheetLiteralIdentityEvidence extends SheetLiteralIdentityContract {
+  kind: "LITERAL_IDENTITY_COLUMNS";
+  producerAttested: false;
+  /** Positions are observation provenance, never submission identities. */
+  rows: Array<{ rowNumber: number; externalId: string; originalArrivedAt: string }>;
+}
+export interface SheetValues {
+  columns: string[]; rows: Array<Record<string, string>>;
+  observation?: { sheetId: number; range: string; values: string[][] };
+  literalEvidence?: SheetLiteralIdentityEvidence;
+}
 
 export class SheetsSourceError extends Error {
   constructor(readonly code: string, readonly status: number | "NETWORK", readonly retryAfter?: string) {
@@ -94,14 +106,22 @@ export class GoogleSheetsAdapter {
   }
 
   /** Identity and requested cells originate in the same read response, avoiding a metadata/values rename race. */
-  async boundedValues(id: string, tab: string, range: string, sheetId: number, identityMode: "EXTERNAL_ID" | "LOCAL_ROW" = "EXTERNAL_ID"): Promise<SheetValues> {
+  async boundedValues(id: string, tab: string, range: string, sheetId: number, identityMode: "EXTERNAL_ID" | "LOCAL_ROW" = "EXTERNAL_ID",
+    literalContract?: SheetLiteralIdentityContract): Promise<SheetValues> {
     validateSheetRange(range);
     if (!Number.isSafeInteger(sheetId) || sheetId < 0 || !tab.length || tab.length > 100 || /[\p{Cc}]/u.test(tab)) {
       throw new SheetsSourceError("sheet_tab_invalid", 400);
     }
+    const literalColumns = literalContract === undefined ? undefined : validateLiteralContract(literalContract, identityMode);
     const url = this.endpoint(id);
     url.searchParams.set("ranges", `'${tab.replaceAll("'", "''")}'!${range}`);
-    url.searchParams.set("fields", "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue))))");
+    // Google applies this mask to the entire rectangle in this ONE response.
+    // Only the two opted-in columns are inspected/returned as literal evidence;
+    // other columns' entered/effective metadata is neither retained nor logged.
+    // The existing 4 MiB response bound also covers this enriched envelope.
+    url.searchParams.set("fields", literalColumns === undefined
+      ? "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue))))"
+      : "sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(formattedValue,userEnteredValue,effectiveValue))))");
     const raw = object(await this.read(url));
     if (!Array.isArray(raw.sheets) || raw.sheets.length !== 1) throw new SheetsSourceError("sheet_response_invalid", 502);
     const sheet = object(raw.sheets[0]), properties = object(sheet.properties);
@@ -110,7 +130,8 @@ export class GoogleSheetsAdapter {
     // The local-row ledger needs unmodified header positions to retain an invalid observation for reconciliation.
     // No key projection is manufactured from empty or duplicate headers in this mode.
     const projection = identityMode === "LOCAL_ROW" ? { columns: values[0] ?? [], rows: [] } : parseValues({ values });
-    return { ...projection, observation: { sheetId, range, values } };
+    const literalEvidence = literalColumns === undefined ? undefined : literalIdentityEvidence(sheet.data, range, values, literalColumns);
+    return { ...projection, observation: { sheetId, range, values }, ...(literalEvidence ? { literalEvidence } : {}) };
   }
 
   private endpoint(id: string, suffix = ""): URL {
@@ -174,6 +195,81 @@ function gridValues(data: unknown, range: string): string[][] {
     if (!Array.isArray(values) || values.length > lastColumn - firstColumn + 1) throw new SheetsSourceError("sheet_columns_invalid", 502);
     return values.map((entry: unknown): string => cell(object(entry).formattedValue));
   });
+}
+
+/** Copy the two validated strings before any I/O; caller mutation cannot rebind the read. */
+function validateLiteralContract(contract: SheetLiteralIdentityContract, identityMode: "EXTERNAL_ID" | "LOCAL_ROW"): SheetLiteralIdentityContract {
+  if (identityMode !== "EXTERNAL_ID" || !contract || typeof contract !== "object" || Array.isArray(contract)
+    || Object.keys(contract).length !== 2 || !Object.hasOwn(contract, "externalIdColumn") || !Object.hasOwn(contract, "originalArrivalColumn")) {
+    throw new SheetsSourceError("sheet_literal_contract_invalid", 400);
+  }
+  const externalIdColumn = contract.externalIdColumn, originalArrivalColumn = contract.originalArrivalColumn;
+  if (![externalIdColumn, originalArrivalColumn].every((name) => typeof name === "string" && name.length > 0
+    && name.length <= 200 && name === name.trim() && !/[\p{Cc}]/u.test(name)) || externalIdColumn === originalArrivalColumn) {
+    throw new SheetsSourceError("sheet_literal_contract_invalid", 400);
+  }
+  return { externalIdColumn, originalArrivalColumn };
+}
+
+function emptyLiteralCell(value: unknown): boolean {
+  const item = object(value ?? {});
+  return item.userEnteredValue === undefined && item.effectiveValue === undefined
+    && (item.formattedValue === undefined || item.formattedValue === "");
+}
+
+/** ExtendedValue is a oneof. Missing/derived/effective-only is not literal evidence. */
+function literalString(value: unknown): string {
+  const item = object(value ?? {}), entered = object(item.userEnteredValue ?? {}), effective = object(item.effectiveValue ?? {});
+  if (Object.hasOwn(entered, "formulaValue")) throw new SheetsSourceError("sheet_identity_formula_refused", 409);
+  if (Object.keys(entered).length !== 1 || typeof entered.stringValue !== "string"
+    || Object.keys(effective).length !== 1 || typeof effective.stringValue !== "string") {
+    throw new SheetsSourceError("sheet_identity_literal_required", 409);
+  }
+  if (entered.stringValue !== effective.stringValue || entered.stringValue !== item.formattedValue) {
+    throw new SheetsSourceError("sheet_identity_literal_mismatch", 409);
+  }
+  return entered.stringValue;
+}
+
+function literalOriginalUtc(value: string): void {
+  // Same strict calendar round-trip as cutoverInstant, without coupling the
+  // Google transport to the cutover/Nest feature or accepting Date.parse heuristics.
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)) {
+    throw new SheetsSourceError("sheet_original_utc_literal_required", 409);
+  }
+  const instant = new Date(value);
+  if (!Number.isFinite(instant.valueOf()) || instant.toISOString().replace(".000Z", "Z") !== value.replace(".000Z", "Z")) {
+    throw new SheetsSourceError("sheet_original_utc_literal_required", 409);
+  }
+}
+
+function literalIdentityEvidence(data: unknown, range: string, values: string[][], contract: SheetLiteralIdentityContract): SheetLiteralIdentityEvidence {
+  const columns = values[0] ?? [], idColumn = columns.indexOf(contract.externalIdColumn), dateColumn = columns.indexOf(contract.originalArrivalColumn);
+  if (idColumn < 0 || dateColumn < 0) throw new SheetsSourceError("sheet_literal_columns_required", 409);
+  // gridValues already checked the range, offsets, grids and row/cell bounds.
+  const grid = object((data as unknown[])[0]), rawRows = (grid.rowData ?? []) as unknown[];
+  const headerCells = (object(rawRows[0]).values ?? []) as unknown[];
+  if (literalString(headerCells[idColumn]) !== contract.externalIdColumn || literalString(headerCells[dateColumn]) !== contract.originalArrivalColumn) {
+    throw new SheetsSourceError("sheet_literal_columns_required", 409);
+  }
+  const firstRow = Number(/^[A-Z]+([0-9]+):/u.exec(range)?.[1]), seen = new Set<string>();
+  const rows: SheetLiteralIdentityEvidence["rows"] = [];
+  for (let index = 1; index < values.length; index++) {
+    const cells = (object(rawRows[index]).values ?? []) as unknown[];
+    // Preserve original row alignment. Only genuinely empty rows have no submission;
+    // a formula returning empty or an entered empty identity is not inferred away.
+    if (values[index]!.every((value) => !value.trim()) && emptyLiteralCell(cells[idColumn]) && emptyLiteralCell(cells[dateColumn])) continue;
+    const externalId = literalString(cells[idColumn]), originalArrivedAt = literalString(cells[dateColumn]);
+    if (!externalId.length || externalId.length > 128 || externalId !== externalId.trim()
+      || [...externalId].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) {
+      throw new SheetsSourceError("sheet_submission_literal_invalid", 409);
+    }
+    if (seen.has(externalId)) throw new SheetsSourceError("sheet_submission_literal_ambiguous", 409);
+    literalOriginalUtc(originalArrivedAt); seen.add(externalId);
+    rows.push({ rowNumber: firstRow + index, externalId, originalArrivedAt });
+  }
+  return { kind: "LITERAL_IDENTITY_COLUMNS", producerAttested: false,
+    externalIdColumn: contract.externalIdColumn, originalArrivalColumn: contract.originalArrivalColumn, rows };
 }
 
 async function readBoundedJson(response: Response): Promise<unknown> {

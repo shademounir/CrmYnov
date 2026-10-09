@@ -150,6 +150,43 @@ resolution or recoverable compensation engine. Google qualification still stays
 `PREPARATION_ONLY`; the upstream immutable-ID/original-arrival proof and real
 activation gates remain open. Sheets stays OFF for real environments.
 
+## Preparatory literal Google observation — not producer attestation
+
+`GoogleSheetsAdapter.boundedValues` accepts an optional internal
+`SheetLiteralIdentityContract` naming the two distinct ID/original-arrival
+columns. This is not an HTTP configuration switch, a new credential path or a
+runtime qualification. The two column names must be own properties, with no
+additional contract fields, and are copied before I/O so a concurrent caller
+mutation cannot rebind the observation. Existing callers do not supply it; their response mask,
+business projection and `LOCAL_ROW` behavior remain unchanged.
+
+The opt-in uses one bounded Google response for numeric tab identity, formatted
+values, and entered/effective cell values. The Google field mask applies to the
+whole requested rectangle, not selectively to two columns. Only the two named
+columns are extracted into `literalEvidence`; additional entered/effective
+metadata from other columns is not returned, persisted or logged. The existing
+4 MiB response and rectangular row/column bounds still apply to the enriched
+envelope. See Google's [CellData contract](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/cells)
+and [bounded spreadsheet GET](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get).
+
+Identity cells must be nonempty bounded literal strings, without implicit trim
+or numeric conversion. Original arrival must be a calendar-valid literal UTC
+instant in the existing cutover format. Formulas, spreadsheet numeric dates,
+local/offset dates, missing or inconsistent entered/effective values, duplicate
+IDs and ambiguous columns fail closed with expurgated errors. Physical row
+numbers only locate observations; they are never submission identities. A
+literal string beginning with `=` is not inferred to be a formula.
+
+The returned kind is `LITERAL_IDENTITY_COLUMNS` and `producerAttested` is always
+`false`; an initially enriched untyped contract is refused rather than trusted.
+This proves the observed cell format only: not future immutability, non-reuse,
+original arrival semantics, producer identity or authority. No caller hash,
+checkbox, two snapshots or passing fixture may upgrade it to `GOOGLE_ATTESTED`.
+The server-owned attestation/revocation registry and its fenced authority checks
+remain a separate internal prerequisite, alongside the real upstream contract.
+Google stays `PREPARATION_ONLY`; all existing fixture/arm guards and flags OFF
+remain intact. No real Sheet read or ingestion is performed by this increment.
+
 ## External one-shot worker — synthetic qualification only
 
 `jobs/sheet-cutover` is a dedicated bounded process, not an HTTP request or an
