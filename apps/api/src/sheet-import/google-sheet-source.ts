@@ -34,6 +34,9 @@ export class RoutedSheetSource extends SheetSource {
     private readonly allowed: readonly GoogleAllowedSource[] = []) { super(); }
 
   get googleReady(): boolean { return this.google !== undefined; }
+  override cutoverFixtureArtifact(configuration: SheetConfiguration): string | undefined {
+    return configuration.source?.mode === "SIMULATED" ? this.synthetic.cutoverFixtureArtifact?.(configuration) : undefined;
+  }
 
   override canProcess(configuration: SheetConfiguration): boolean {
     return configuration.source?.mode !== "GOOGLE" || this.googleReady;

@@ -85,6 +85,12 @@ export function scheduledImportCapability(roleList: readonly Role[], key: "setti
   if (!definition(key)?.available || !roleList.some((role) => role === "ADMIN" || role === "SUPER_ADMIN")) return false;
   return [...new Set(roleList)].some((role) => explainRole(role, key, rows, context).allowed);
 }
+
+/** Narrow cutover job authority, never an HTTP identity or invented session. */
+export function scheduledCutoverCapability(roleList: readonly Role[], key: string, rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  if (!["settings.campus.manage", "import.view", "import.execute", "import.confirm", "lead.create", "lead.view", "lead.assign"].includes(key) || !definition(key)?.available) return false;
+  return roleList.filter((role) => role === "ADMIN" || role === "SUPER_ADMIN").some((role) => explainRole(role, key, rows, context).allowed);
+}
 export function evaluatePermission(principal: Principal, key: string, rows: readonly ConfigurationSnapshot[], context: EvaluationContext): PermissionDecision {
   if (!definition(key)?.available || !principal.userId || !principal.sessionId || principal.mustChangeSecret) return { permission: key, allowed: false, sources: [], restriction: "permission_or_session_invalid" };
   if (key === "audit.view") {

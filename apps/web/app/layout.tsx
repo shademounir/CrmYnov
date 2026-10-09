@@ -18,6 +18,7 @@ import "./notifications/notifications.css";
 import "./appointments/admissions/admissions.css";
 import "./manager/assignment/assignment.css";
 import "./imports/bootstrap/bootstrap.css";
+import "./imports/cutover/cutover.css";
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
   return <html lang="fr"><body><Suspense fallback={children}><AppShell>{children}</AppShell></Suspense></body></html>;

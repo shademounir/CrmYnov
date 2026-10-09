@@ -1001,6 +1001,7 @@ model BootstrapImportPackage {
   plans BootstrapImportPlan[]
   rows BootstrapImportRow[]
   receipts BootstrapImportReceipt[]
+  cutover ImportCutoverManifest?
   batch IngestionBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
   @@unique([actorId, key])
   @@index([campusId, createdAt])
@@ -1326,10 +1327,147 @@ model SheetImportConnector {
   runs            SheetImportRun[]
   submissions     SheetImportSubmission[]
   versions        SheetImportConfigurationVersion[]
+  cutover         ImportCutoverManifest?
 
   @@unique([workbookId, tab])
   @@index([enabled, nextRunAt])
   @@map("sheet_import_connectors")
+}
+
+// Preparatory cutover ledger, never an implicit activation flag.
+model ImportCutoverManifest {
+  exceptionObservation Json? @map("exception_observation")
+  exceptionCases ImportCutoverExceptionCase[]
+  runtime ImportCutoverRuntime?
+  streamKey           String? @unique @map("stream_key") @db.VarChar(64)
+  effects             ImportCutoverEffect[]
+  id String @id @db.Uuid
+  campusId String @map("campus_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  bootstrapPackageId String @unique @map("bootstrap_package_id") @db.Uuid
+  connectorId String @unique @map("connector_id") @db.Uuid
+  state String @default("DRAFT") @db.VarChar(24)
+  version Int @default(1)
+  contract Json
+  inventory Json @default("[]")
+  headerSha256 String? @map("header_sha256") @db.VarChar(64)
+  snapshotSha256 String? @map("snapshot_sha256") @db.VarChar(64)
+  observedAt DateTime? @map("observed_at") @db.Timestamptz(6)
+  sourceCount Int @default(0) @map("source_count")
+  reportSha256 String? @map("report_sha256") @db.VarChar(64)
+  suspensionReason String? @map("suspension_reason") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  bootstrapPackage BootstrapImportPackage @relation(fields: [bootstrapPackageId], references: [id], onDelete: Restrict)
+  connector SheetImportConnector @relation(fields: [connectorId], references: [id], onDelete: Restrict)
+  receipts ImportCutoverReceipt[]
+  @@index([campusId, createdAt])
+  @@map("import_cutover_manifests")
+}
+
+model ImportCutoverExceptionCase {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  sourceKey String @map("source_key") @db.VarChar(64)
+  kind String @db.VarChar(24)
+  generation Int
+  evidenceSha256 String @map("evidence_sha256") @db.VarChar(64)
+  evidence Json
+  observedPayload Json? @map("observed_payload")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  manifest ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  disposition ImportCutoverExceptionDisposition?
+  @@unique([manifestId, sourceKey, kind, generation], map: "import_cutover_exception_cases_generation_key")
+  @@map("import_cutover_exception_cases")
+}
+
+model ImportCutoverExceptionDisposition {
+  id String @id @db.Uuid
+  caseId String @unique(map: "import_cutover_exception_dispositions_case_key") @map("case_id") @db.Uuid
+  action String @db.VarChar(24)
+  evidenceSha256 String @map("evidence_sha256") @db.VarChar(64)
+  reason String @db.VarChar(500)
+  actorId String @map("actor_id") @db.Uuid
+  decidedManifestVersion Int @map("decided_manifest_version")
+  decidedAt DateTime @default(now()) @map("decided_at") @db.Timestamptz(6)
+  exceptionCase ImportCutoverExceptionCase @relation(fields: [caseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@map("import_cutover_exception_dispositions")
+}
+
+model ImportCutoverRuntime {
+  manifestId String @id @map("manifest_id") @db.Uuid
+  version Int @default(1)
+  state String @db.VarChar(16)
+  qualification Json
+  delegation Json?
+  epoch Int @default(0)
+  leaseOwner String? @map("lease_owner") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  leaseManifestVersion Int? @map("lease_manifest_version")
+  activeRunId String? @map("active_run_id") @db.Uuid
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  manifest ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  runs ImportCutoverRuntimeRun[]
+  receipts ImportCutoverRuntimeReceipt[]
+  @@map("import_cutover_runtimes")
+}
+
+model ImportCutoverRuntimeRun {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  epoch Int
+  status String @db.VarChar(16)
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+  errorCode String? @map("error_code") @db.VarChar(128)
+  runtime ImportCutoverRuntime @relation(fields: [manifestId], references: [manifestId], onDelete: Restrict, onUpdate: Cascade)
+  @@unique([manifestId, epoch], map: "import_cutover_runtime_runs_epoch_key")
+  @@map("import_cutover_runtime_runs")
+}
+
+model ImportCutoverRuntimeReceipt {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  operation String @db.VarChar(24)
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  actorId String @map("actor_id") @db.VarChar(64)
+  response Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  runtime ImportCutoverRuntime @relation(fields: [manifestId], references: [manifestId], onDelete: Restrict, onUpdate: Cascade)
+  @@unique([manifestId, operation, key], map: "import_cutover_runtime_receipts_request_key")
+  @@map("import_cutover_runtime_receipts")
+}
+
+model ImportCutoverEffect {
+  id                  String @id @default(uuid()) @db.Uuid
+  manifestId          String @map("manifest_id") @db.Uuid
+  sourceKey           String @map("source_key") @db.VarChar(64)
+  outcome             String @db.VarChar(24)
+  batchId             String? @map("batch_id") @db.Uuid
+  leadId              String? @map("lead_id") @db.Uuid
+  reason              String? @db.VarChar(128)
+  downstreamSha256    String? @map("downstream_sha256") @db.VarChar(64)
+  compensationStatus  String? @map("compensation_status") @db.VarChar(32)
+  compensationReason  String? @map("compensation_reason") @db.VarChar(500)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  comparedAt          DateTime? @map("compared_at") @db.Timestamptz(6)
+  manifest            ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@unique([manifestId, sourceKey])
+  @@map("import_cutover_effects")
+}
+
+model ImportCutoverReceipt {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  operation String @db.VarChar(24)
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  actorId String @map("actor_id") @db.Uuid
+  response Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  manifest ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict)
+  @@unique([manifestId, operation, key])
+  @@map("import_cutover_receipts")
 }
 
 model SheetImportRun {

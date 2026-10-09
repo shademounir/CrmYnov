@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma, SheetImportConnector, SheetImportRun } from "@prisma/client";
 import type { PrismaService } from "../persistence/prisma.service.js";
+import { cutoverConnectorBound } from "../cutover/cutover.store.js";
 
 export interface SheetLease { connectorId: string; runId: string; epoch: number; version: number }
 export type SheetClaim = { lease: SheetLease; connector: SheetImportConnector; run: SheetImportRun } | undefined;
@@ -15,6 +16,10 @@ export class SheetImportCoordinator {
     return this.client.$transaction(async (tx): Promise<SheetClaim> => {
       const candidate = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
       if (!candidate || !eligible(candidate)) return undefined;
+      const raw = candidate.configuration;
+      const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.source : null;
+      const sheetId = source && typeof source === "object" && !Array.isArray(source) ? source.sheetId : undefined;
+      if (await cutoverConnectorBound(tx, connectorId, typeof sheetId === "number" ? { workbookId: candidate.workbookId, sheetId } : undefined)) return undefined;
       const active = candidate?.activeRunId ? await tx.sheetImportRun.findUnique({ where: { id: candidate.activeRunId } }) : null;
       const manualResume = active?.trigger === "MANUAL" && active.status === "RUNNING" ? [{ activeRunId: active.id }] : [];
       const claimed = await tx.sheetImportConnector.updateMany({

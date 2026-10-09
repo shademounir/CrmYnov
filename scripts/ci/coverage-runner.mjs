@@ -89,4 +89,5 @@ run(process.execPath, ["scripts/ci/assignment-flow-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/reporting-freshness-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/access-recovery-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/bootstrap-import-postgres.mjs"]);
+run(process.execPath, ["scripts/ci/cutover-postgres.mjs"]);
 leadWorkflowPostgresProofs();

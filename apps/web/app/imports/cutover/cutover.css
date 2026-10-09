@@ -1,0 +1,38 @@
+.cutover-page { display: grid; gap: 20px; min-width: 0; color: var(--onyx); }
+.cutover-card { min-width: 0; border: 1px solid var(--border); border-radius: 12px; padding: 22px; background: var(--surface); box-shadow: var(--shadow); }
+.cutover-page h2 { margin: 0 0 10px; font-size: 18px; }
+.cutover-page h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.cutover-page p, .cutover-page li { font-size: 12px; line-height: 1.6; }
+.cutover-notice, .cutover-error { padding: 13px 16px; border-radius: 9px; background: var(--teal-soft); color: var(--teal-dark); overflow-wrap: anywhere; }
+.cutover-error { background: #fff0f1; color: #a52232; border-left: 3px solid #bf293a; }
+.cutover-page form, .cutover-page label { display: grid; gap: 10px; min-width: 0; }
+.cutover-page label { font-size: 12px; font-weight: 600; }
+.cutover-fields { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cutover-page input:not([type="checkbox"]), .cutover-page select, .cutover-page textarea { width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--onyx); background: var(--surface); font: inherit; }
+.cutover-page textarea { min-height: 80px; resize: vertical; }
+.cutover-page small, .cutover-help { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.6; overflow-wrap: anywhere; }
+.cutover-check { display: flex !important; gap: 10px !important; align-items: flex-start; padding-top: 10px; line-height: 1.6; }
+.cutover-check input { width: 18px; height: 18px; flex-shrink: 0; margin: 2px 0 0; }
+.cutover-actions, .cutover-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; min-width: 0; }
+.cutover-heading { justify-content: space-between; margin-top: 0; align-items: flex-start; }
+.cutover-page button, .cutover-page a { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.cutover-page :is(button, input, select, textarea, a):focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+.cutover-page button:disabled { opacity: .6; cursor: not-allowed; }
+.cutover-badge { padding: 6px 10px; border-radius: 18px; background: var(--teal-soft); color: var(--teal-dark); font-size: 10px; font-weight: 700; max-width: 100%; overflow-wrap: anywhere; }
+.cutover-metadata { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cutover-metadata div { min-width: 0; }
+.cutover-metadata dt, .cutover-counts dt { color: var(--muted); font-size: 11px; }
+.cutover-metadata dd { margin: 7px 0 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.cutover-limits { padding-left: 18px; color: var(--muted); }
+.cutover-counts { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cutover-counts div { min-width: 0; border: 1px solid var(--border); border-radius: 9px; padding: 14px; }
+.cutover-counts dd { margin: 8px 0 0; font-size: 23px; font-weight: 750; overflow-wrap: anywhere; }
+.cutover-submissions { display: grid; gap: 14px; }
+.cutover-submission { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; }
+.cutover-exception-proof { margin-top: 16px; min-width: 0; }
+.cutover-exception-proof summary { min-height: 44px; padding: 10px 0; box-sizing: border-box; cursor: pointer; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.cutover-exception-proof summary:focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+@media (max-width: 1280px) { .cutover-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1024px) { .cutover-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px) { .cutover-card { padding: 16px; } .cutover-fields { grid-template-columns: minmax(0, 1fr); } .cutover-page .ui-page-header { grid-template-columns: minmax(0, 1fr); align-items: stretch; } .cutover-page .ui-page-header__actions, .cutover-page .ui-page-header__actions a { width: 100%; min-width: 0; box-sizing: border-box; } }
+@media (max-width: 480px) { .cutover-page { gap: 14px; } .cutover-metadata { grid-template-columns: minmax(0, 1fr); } .cutover-actions { flex-direction: column; align-items: stretch; } .cutover-actions > * { width: 100%; min-width: 0; box-sizing: border-box; } .cutover-submission { padding: 12px; } }
