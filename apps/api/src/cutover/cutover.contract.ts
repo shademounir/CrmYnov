@@ -6,7 +6,9 @@ export const CUTOVER_ROW_LIMIT = 10_000;
 export const CUTOVER_BYTE_LIMIT = 4 * 1024 * 1024;
 export type CutoverState = "DRAFT" | "BASELINED" | "READY_FOR_CATCHUP" | "SUSPENDED";
 export interface CutoverContract {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  streamKey?: string;
+  sourceSheetId?: number;
   bootstrapPackageId: string;
   connectorId: string;
   excelSha256: string;
@@ -43,6 +45,10 @@ export function cutoverHash(value: unknown): string {
     : item && typeof item === "object" ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, child]) => [key, canonical(child)])) : item;
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 }
+export function cutoverStreamKey(workbookId: string, sheetId: number): string {
+  if (!workbookId || !Number.isSafeInteger(sheetId) || sheetId < 0) cutoverInvalid("cutover_sheet_identity_required");
+  return cutoverHash(["GOOGLE_SHEETS", workbookId, sheetId]);
+}
 export function cutoverInvalid(code = "cutover_input_invalid"): never { throw new BadRequestException({ code }); }
 export function cutoverObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) cutoverInvalid();
@@ -66,6 +72,11 @@ export function cutoverInstant(value: unknown): string {
   const date = new Date(result);
   if (!Number.isFinite(date.valueOf()) || date.toISOString().replace(".000Z", "Z") !== result.replace(".000Z", "Z")) cutoverInvalid("cutover_original_instant_required");
   return date.toISOString();
+}
+/** This first lot has no independently attested Excel delta covering a gap.
+ * Equal declared instants are necessary, not proof of the actual final freeze. */
+export function cutoverFinalFreeze(excelFrozenAt: unknown, t0: unknown): void {
+  if (cutoverInstant(excelFrozenAt) !== cutoverInstant(t0)) cutoverInvalid("cutover_freeze_delta_unqualified");
 }
 export function cutoverTimeZone(value: unknown): string {
   const result = cutoverText(value, 80);
@@ -96,7 +107,7 @@ export function observeCutover(contract: CutoverContract, values: SheetValues, p
     if (Object.entries(payload).some(([key, value]) => !values.columns.includes(key) || typeof value !== "string" || value.length > 4000)) cutoverInvalid("cutover_source_payload_invalid");
     if (Object.values(payload).every((value) => !value.trim())) continue;
     const externalId = cutoverText(payload[contract.externalIdColumn]), originalArrivedAt = cutoverInstant(payload[contract.originalArrivalColumn]);
-    const key = cutoverHash([contract.connectorId, externalId]);
+    const key = cutoverHash([contract.streamKey ?? contract.connectorId, externalId]);
     if (observed.has(key)) cutoverInvalid("cutover_source_identity_ambiguous");
     observed.add(key);
     const fingerprint = cutoverHash(payload), old = earlier.get(key);

@@ -15,16 +15,17 @@ const proofRoot = resolve(process.env.CRMY63_PROOF_ROOT ?? process.env.RUNNER_TE
 mkdirSync(proofRoot, { recursive: true });
 const proofDirectory = mkdtempSync(join(proofRoot, "crmy63-cutover-"));
 const migrationId = "20261009070000_cutover_preparation";
+const consumerMigrationId = "20261009090000_cutover_manual_catchup";
 const schemaPath = resolve(repository, "apps/api/prisma/schema.prisma");
-const migrationPath = resolve(repository, `apps/api/prisma/migrations/${migrationId}/migration.sql`);
-const bindings = () => ["package-lock.json", "apps/api/prisma/schema.prisma", `apps/api/prisma/migrations/${migrationId}/migration.sql`].map(path => ({ path, sha256: hash(readFileSync(resolve(repository, path))) }));
+const newMigrations = [migrationId, consumerMigrationId].map(id => ({ id, sha256: hash(readFileSync(resolve(repository, `apps/api/prisma/migrations/${id}/migration.sql`))) }));
+const bindings = () => ["package-lock.json", "apps/api/prisma/schema.prisma", ...[migrationId, consumerMigrationId].map(id => `apps/api/prisma/migrations/${id}/migration.sql`)].map(path => ({ path, sha256: hash(readFileSync(resolve(repository, path))) }));
 const bindingsBefore = bindings();
 const { sourceHashes, sourcesBefore } = compilePostgresProof({ repository, proofDirectory,
   testSource: resolve(repository, "apps/api/test/integration/cutover-postgres.test.ts"), errorPrefix: "cutover", requireCommonJs: true, includeDatabaseBindings: true,
   metadataInputType: "commonjs", metadataProgram: `require('reflect-metadata');
     const { CutoverService } = require('./compiled/src/cutover/cutover.service.js');
     const { CutoverController } = require('./compiled/src/cutover/cutover.controller.js');
-    console.log(JSON.stringify([[CutoverService,['DynamicPermissionRepository','BootstrapImportService','SheetSource']],[CutoverController,['CutoverService']]].map(([provider,expected]) => {
+    console.log(JSON.stringify([[CutoverService,['DynamicPermissionRepository','BootstrapImportService','SheetSource','PersistentIngestionService','ImportMappingService']],[CutoverController,['CutoverService']]].map(([provider,expected]) => {
       const names = (Reflect.getMetadata('design:paramtypes',provider) ?? []).map(value => value?.name);
       if (JSON.stringify(names) !== JSON.stringify(expected)) throw new Error('cutover_compiled_metadata_invalid');
       return { provider: provider.name, designParamTypes: names };
@@ -48,7 +49,7 @@ await withPreservedCleanup(async () => {
   const legacyDirectory = join(proofDirectory, "legacy-prisma"); mkdirSync(legacyDirectory);
   const legacySchema = runNode(["-e", "process.stdout.write(require('node:child_process').execFileSync('git',['show','397883c46793c8cee5f71700df78b849722ac418:apps/api/prisma/schema.prisma'],{encoding:'utf8'}))"]);
   writeFileSync(join(legacyDirectory, "schema.prisma"), legacySchema, { flag: "wx" });
-  cpSync(resolve(repository, "apps/api/prisma/migrations"), join(legacyDirectory, "migrations"), { recursive: true, filter: path => !path.split(/[\\/]/u).includes(migrationId) });
+  cpSync(resolve(repository, "apps/api/prisma/migrations"), join(legacyDirectory, "migrations"), { recursive: true, filter: path => ![migrationId, consumerMigrationId].some(id => path.split(/[\\/]/u).includes(id)) });
   const legacyOutput = prisma(join(legacyDirectory, "schema.prisma"), env);
   writeFileSync(join(proofDirectory, "migration-legacy.log"), legacyOutput, { flag: "wx" });
   sql(database, `INSERT INTO system_probes(id) VALUES ('${nonce}');`);
@@ -56,21 +57,22 @@ await withPreservedCleanup(async () => {
   const populatedOutput = prisma(schemaPath, env);
   writeFileSync(join(proofDirectory, "migration-populated.log"), populatedOutput, { flag: "wx" });
   if (sql(database, "SELECT id::text || ':' || created_at::text FROM system_probes ORDER BY id") !== oldProbe) throw new Error("cutover_populated_data_changed");
-  if (sql(database, `SELECT migration_name || ':' || checksum FROM _prisma_migrations WHERE migration_name <> '${migrationId}' ORDER BY migration_name`) !== oldHistory) throw new Error("cutover_prisma_history_changed");
-  if (sql(database, `SELECT checksum FROM _prisma_migrations WHERE migration_name='${migrationId}' AND finished_at IS NOT NULL AND rolled_back_at IS NULL`) !== hash(readFileSync(migrationPath))) throw new Error("cutover_new_checksum_mismatch");
+  if (sql(database, `SELECT migration_name || ':' || checksum FROM _prisma_migrations WHERE migration_name NOT IN ('${migrationId}','${consumerMigrationId}') ORDER BY migration_name`) !== oldHistory) throw new Error("cutover_prisma_history_changed");
+  for (const migration of newMigrations) if (sql(database, `SELECT checksum FROM _prisma_migrations WHERE migration_name='${migration.id}' AND finished_at IS NOT NULL AND rolled_back_at IS NULL`) !== migration.sha256) throw new Error(`cutover_new_checksum_mismatch:${migration.id}`);
   docker(["exec", container, "createdb", "-h", "127.0.0.1", "-U", "postgres", emptyDatabase]);
   const emptyOutput = prisma(schemaPath, { ...env, DATABASE_URL: `postgresql://postgres@${binding}/${emptyDatabase}` });
   writeFileSync(join(proofDirectory, "migration-empty.log"), emptyOutput, { flag: "wx" });
+  for (const migration of newMigrations) if (sql(emptyDatabase, `SELECT checksum FROM _prisma_migrations WHERE migration_name='${migration.id}' AND finished_at IS NOT NULL AND rolled_back_at IS NULL`) !== migration.sha256) throw new Error(`cutover_empty_checksum_mismatch:${migration.id}`);
   // Fresh client generation is isolated too, then queried against both actual migrated schemas.
   const clientDirectory = join(proofDirectory, "generated-client"), clientSchema = join(proofDirectory, "schema-client.prisma");
   writeFileSync(clientSchema, readFileSync(schemaPath, "utf8").replace('provider = "prisma-client-js"', `provider = "prisma-client-js"\n  output = ${JSON.stringify(clientDirectory)}`), { flag: "wx" });
   const generate = runNode(["node_modules/prisma/build/index.js", "generate", "--schema", clientSchema], { env });
   writeFileSync(join(proofDirectory, "private-client-generation.log"), generate, { flag: "wx" });
   const clientSmoke = `const {PrismaClient}=require(${JSON.stringify(clientDirectory)}); const p=new PrismaClient();
-    (async()=>{try{if(await p.importCutoverManifest.count()!==0||await p.importCutoverReceipt.count()!==0)throw Error('ledger_not_empty');
+    (async()=>{try{if(await p.importCutoverManifest.count()!==0||await p.importCutoverReceipt.count()!==0||await p.importCutoverEffect.count()!==0)throw Error('ledger_not_empty');
       console.log(JSON.stringify({newClient:true,manifestCount:0,receiptCount:0}));}finally{await p.$disconnect();}})().catch(e=>{console.error(e.message);process.exitCode=1});`;
   const smoke = [database, emptyDatabase].map(db => ({ database: db, result: JSON.parse(runNode(["-e", clientSmoke], { env: { ...env, DATABASE_URL: `postgresql://postgres@${binding}/${db}` } })) }));
-  writeFileSync(join(proofDirectory, "migration-proof.json"), `${JSON.stringify({ migrationId, migrationSha256: hash(readFileSync(migrationPath)), emptyApplied: true, populatedApplied: true,
+  writeFileSync(join(proofDirectory, "migration-proof.json"), `${JSON.stringify({ migrations: newMigrations, checksumsAndFinishedHistoryVerifiedOnBothDatabases: true, emptyApplied: true, populatedApplied: true,
     preservedSystemProbe: true, preservedOldHistoryAndChecksums: true, oldMigrationCount: oldHistory.split("\n").length, isolatedGeneratedClient: smoke, noSharedGeneration: true }, null, 2)}\n`, { flag: "wx" });
   const run = { runtime: process.version, image, container, nonce, binding, generatedAt: new Date().toISOString(), database, emptyDatabase, realDataUsed: false, sheetsEnabled: false, bindings: bindingsBefore };
   writeFileSync(join(proofDirectory, "run-start.json"), `${JSON.stringify(run, null, 2)}\n`, { flag: "wx" });

@@ -8,6 +8,7 @@ import { CutoverService } from "./cutover.service.js";
 @RequireRoles("SUPER_ADMIN", "ADMIN", "MANAGER")
 export class CutoverController {
   constructor(@Inject(CutoverService) private readonly cutover: CutoverService) {}
+  @Get("context") context(@Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.context(this.actor(request)); }
   @Post("manifests") create(@Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.create(input, this.actor(request)); }
   @Get("manifests/:id") get(@Param("id") id: string, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.get(id, this.actor(request)); }
   @Post("manifests/:id/observe") observe(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.observe(id, input, this.actor(request)); }
@@ -15,5 +16,7 @@ export class CutoverController {
   @Post("manifests/:id/reconcile") reconcile(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.reconcile(id, input, this.actor(request)); }
   @Post("manifests/:id/suspend") suspend(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.suspend(id, input, this.actor(request)); }
   @Post("manifests/:id/resume") resume(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.suspend(id, input, this.actor(request), true); }
+  @Post("manifests/:id/consume") consume(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.consume(id, input, this.actor(request)); }
+  @Post("manifests/:id/compensate") compensate(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.compensate(id, input, this.actor(request)); }
   private actor(request: AuthenticatedRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }
 }

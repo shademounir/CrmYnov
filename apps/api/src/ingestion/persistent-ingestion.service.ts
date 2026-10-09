@@ -127,6 +127,43 @@ export class PersistentIngestionService {
     return { batchId, outcome: line.outcome, ...(selected.reason ? { assignmentReason: selected.reason } : {}) };
   }
 
+  /** Explicit authenticated cutover catch-up. The caller supplies its fenced
+   * transaction and durable source key. No automatic connector is enabled and
+   * contact collisions always go to review, never heuristic attachment. */
+  async persistCutoverRecord(tx: Prisma.TransactionClient, record: IngestionRecordInput, mapping: { id: string; version: number }, key: string,
+    actor: Principal, correlationId: string, assignment: IngestionBatchInput["assignment"]): Promise<{ batchId: string; outcome: LineOutcome; leadId?: string; reason?: string }> {
+    const current = await currentPrincipal(tx, actor);
+    const input: ConfirmPersistentImportInput = { confirmed: true, profile: "FORMINATOR_ZAPIER", idempotencyKey: key, mappingId: mapping.id,
+      mappingVersion: mapping.version, sourceFileSha256: this.fingerprintRecord(record), assignment, records: [record] };
+    this.assertAllowed(input, current);
+    if (record.source !== "WEB_FORM" || record.technicalSystem !== "FORMINATOR_ZAPIER" || record.historicalActivities?.length || record.historicalStatus) throw new BadRequestException({ code: "cutover_new_record_required" });
+    if (await tx.ingestionBatch.findUnique({ where: { idempotencyKey: key } })) throw new ConflictException({ code: "cutover_effect_reconciliation_required" });
+    const campus = await canonicalCampus(tx, record.campus ?? "");
+    if (!this.permissions) throw new ConflictException({ code: "cutover_permissions_unavailable" });
+    const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+    const grants = await this.permissions.snapshots(tx);
+    if (!["settings.campus.manage", "import.execute", "import.confirm", "lead.create"].every((permission) => evaluatePermission(current, permission, grants, context).allowed)) permissionDenied();
+    if (assignment.strategy !== "UNASSIGNED") await this.authorizeAssignment(tx, current, record.campus ?? "");
+    const matches = await this.findMatches(tx, record.technicalSystem, record.externalId, record.email?.trim().toLowerCase(), record.phone?.replace(/[^+\d]/g, ""));
+    await this.assertMatchedLeadScopes(tx, matches.matches, campus.id);
+    const selected = matches.matches.size ? { eventKey: key, reason: "cutover_identity_review_required" }
+      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, assignment.strategy !== "FIXED", { commercialOnly: true, permissions: grants });
+    const batchId = randomUUID();
+    await tx.ingestionBatch.create({ data: { id: batchId, idempotencyKey: key, fingerprint: this.fingerprint(input), profile: input.profile,
+      assignmentMode: assignment.strategy, actorId: current.userId, totalCount: 1, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
+    const line = matches.matches.size ? await this.review(tx, batchId, record.lineNumber, "CUTOVER_IDENTITY_REVIEW_REQUIRED")
+      : await this.persistLine(tx, batchId, record, input, current, correlationId, selected);
+    if (line.outcome === "CREATED" && line.leadId) await commitSheetAssignment(tx, selected, line.leadId);
+    await tx.ingestionBatch.update({ where: { id: batchId }, data: { createdCount: Number(line.outcome === "CREATED"), reviewCount: Number(line.outcome === "MANUAL_REVIEW"), invalidCount: Number(line.outcome === "INVALID") } });
+    await tx.importReport.create({ data: { jobId: key, batchId, mappingId: mapping.id, mappingVersion: mapping.version, sourceFileSha256: input.sourceFileSha256,
+      totalCount: 1, createdCount: Number(line.outcome === "CREATED"), updatedCount: 0, ignoredCount: 0, duplicateCount: 0, errorCount: Number(line.outcome !== "CREATED"),
+      ...(line.reason ? { rejections: { create: { lineNumber: record.lineNumber, category: line.outcome, reasonCode: line.reason } } } : {}) } });
+    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: campus.id, resourceType: "INGESTION_BATCH", resourceId: batchId,
+      eventType: "CUTOVER_NEW_INGESTION", correlationId, result: line.outcome === "CREATED" ? "SUCCESS" : "FAILED", idempotencyKey: key,
+      after: { outcome: line.outcome, assignmentReason: selected.reason ?? "assignment_selected", mappingId: mapping.id, mappingVersion: mapping.version } } });
+    return { batchId, outcome: line.outcome, ...(line.leadId ? { leadId: line.leadId } : {}), ...(line.reason || selected.reason ? { reason: line.reason ?? selected.reason } : {}) };
+  }
+
   private async sheetRecordContext(tx: Prisma.TransactionClient, connectorId: string, record: IngestionRecordInput): Promise<{ connector: SheetConnector; campus: CampusReference; local: boolean; externalId: string }> {
     const connector = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
     if (!connector) throw new ForbiddenException({ code: "sheet_connector_disabled" });

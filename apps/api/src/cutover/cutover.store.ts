@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import type { PermissionTransaction } from "../permissions/dynamic-repository.js";
-import type { CutoverContract, CutoverEntry, CutoverState } from "./cutover.contract.js";
+import { cutoverStreamKey, type CutoverContract, type CutoverEntry, type CutoverState } from "./cutover.contract.js";
 
 export interface StoredCutover {
   id: string; campusId: string; actorId: string; bootstrapPackageId: string; connectorId: string;
@@ -16,9 +16,11 @@ const projection = `id, campus_id AS "campusId", actor_id AS "actorId", bootstra
 
 /** Serializes legacy job claims/activation with creation of a preparatory binding.
  * A bound connector must not bypass the cutover ledger through the old executor. */
-export async function cutoverConnectorBound(tx: PermissionTransaction, connectorId: string): Promise<boolean> {
+export async function cutoverConnectorBound(tx: PermissionTransaction, connectorId: string, source?: { workbookId: string; sheetId: number }): Promise<boolean> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${connectorId},63))`;
-  const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM import_cutover_manifests WHERE connector_id=${connectorId}::uuid`;
+  const stream = source ? cutoverStreamKey(source.workbookId, source.sheetId) : null;
+  if (stream) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${stream},63))`;
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM import_cutover_manifests WHERE connector_id=${connectorId}::uuid OR stream_key=${stream}`;
   return rows.length !== 0;
 }
 
@@ -34,8 +36,8 @@ export async function cutoverReplay(tx: PermissionTransaction, id: string, opera
   return rows[0].response;
 }
 export async function insertCutover(tx: PermissionTransaction, id: string, campusId: string, actorId: string, contract: CutoverContract): Promise<StoredCutover> {
-  await tx.$executeRaw`INSERT INTO import_cutover_manifests (id,campus_id,actor_id,bootstrap_package_id,connector_id,contract)
-    VALUES (${id}::uuid,${campusId}::uuid,${actorId}::uuid,${contract.bootstrapPackageId}::uuid,${contract.connectorId}::uuid,${JSON.stringify(contract)}::jsonb)`;
+  await tx.$executeRaw`INSERT INTO import_cutover_manifests (id,campus_id,actor_id,bootstrap_package_id,connector_id,stream_key,contract)
+    VALUES (${id}::uuid,${campusId}::uuid,${actorId}::uuid,${contract.bootstrapPackageId}::uuid,${contract.connectorId}::uuid,${contract.streamKey ?? null},${JSON.stringify(contract)}::jsonb)`;
   return loadCutover(tx, id, true);
 }
 export async function updateCutover(tx: PermissionTransaction, row: StoredCutover, next: Pick<StoredCutover, "state" | "inventory" | "headerSha256" | "snapshotSha256" | "observedAt" | "sourceCount" | "reportSha256" | "suspensionReason">): Promise<StoredCutover> {

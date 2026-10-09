@@ -116,6 +116,7 @@ export class SheetImportAdminService {
       const reference = await tx.crmReference.findUniqueOrThrow({ where: { id: campus.id } });
       if (configuration.context.campus !== reference.code) throw new BadRequestException({ code: "sheet_campus_mapping_invalid" });
       const enabled = body.enabled === true;
+      if (enabled && typeof configuration.source?.sheetId === "number" && await cutoverConnectorBound(tx, previous?.id ?? randomUUID(), { workbookId: workbook, sheetId: configuration.source.sheetId })) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       this.validateActivationSource(enabled, workbook, body.tab, configuration);
       await this.validateConfiguredLocalStream(tx, campus.id, workbook, configuration, enabled);
       if (enabled) await this.authorizeActivation(tx, current.userId, campus.id, configuration, id);
@@ -157,6 +158,7 @@ export class SheetImportAdminService {
       const row = await this.connector(tx, actor, id);
       if (await cutoverConnectorBound(tx, row.id)) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       const config = readSheetConfiguration(row.configuration);
+      if (typeof config.source?.sheetId === "number" && await cutoverConnectorBound(tx, row.id, { workbookId: row.workbookId, sheetId: config.source.sheetId })) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       if ((!row.enabled && config.source?.identityMode !== "LOCAL_ROW") || row.version !== expectedVersion) throw new ConflictException({ code: "sheet_disabled_or_version_conflict" });
       if (this.source instanceof RoutedSheetSource) this.source.validateSelection(row.workbookId, row.tab, config.source);
       if (config.source?.identityMode === "LOCAL_ROW" && config.source.sheetId !== undefined) {

@@ -15,6 +15,8 @@ import { BootstrapImportService } from "../../src/bootstrap-import/bootstrap-imp
 import { CutoverService } from "../../src/cutover/cutover.service.js";
 import { SheetImportAdminService } from "../../src/sheet-import/sheet-import-admin.service.js";
 import { SheetImportCoordinator } from "../../src/sheet-import/sheet-import-coordinator.js";
+import { PersistentIngestionService } from "../../src/ingestion/persistent-ingestion.service.js";
+import { ImportMappingService } from "../../src/import-mapping/import-mapping.service.js";
 import { SheetSource } from "../../src/sheet-import/synthetic-sheet-source.js";
 import { bytesHash, CHUNK_BYTES, HISTORICAL_SHEETS, type HistoricalMappingInput } from "../../src/bootstrap-import/bootstrap-import.contract.js";
 import { syntheticHistoricalParts, syntheticZip } from "../fixtures/import/historical-workbook.synthetic.js";
@@ -96,12 +98,12 @@ test("CRMY-63 real PostgreSQL/HTTP: durable T0, bounded delta, lost response rep
         { sourceColumn: "Comment", targetField: "firstName", action: "DIRECT" }] },
       context: { source: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER", originalSource: "FORMINATOR", recentSource: "GOOGLE_SHEETS", campus: campus.code, campaign: campaign.code }, assignment: { strategy: "UNASSIGNED" } };
     const connector = await client.sheetImportConnector.create({ data: { campusId: campus.id, workbookId: `synthetic_cutover_${nonce}`, tab: "SYNTHETIC", configuration: JSON.parse(JSON.stringify(configuration)) as Prisma.InputJsonValue, updatedBy: admin.id } });
-    const create = { bootstrapPackageId: pack.id, connectorId: connector.id, t0: "2026-09-05T12:00:00Z", timeZone: "Africa/Casablanca", excelFrozenAt: "2026-09-05T11:55:00Z",
+    const create = { bootstrapPackageId: pack.id, connectorId: connector.id, sourceSheetId: 0, t0: "2026-09-05T12:00:00Z", timeZone: "Africa/Casablanca", excelFrozenAt: "2026-09-05T12:00:00Z",
       originalArrivalColumn: "Original arrival UTC", identityEvidenceSha256: "a".repeat(64), idempotencyKey: `cutover-create-${nonce}` };
     const path = "/lead-import/cutover/manifests";
     let manifest = await success<Manifest>(await request(path, "POST", create)); const id = manifest.id;
     assert.deepEqual(await success(await request(path, "POST", create)), manifest);
-    assert.equal((await request(path, "POST", { ...create, t0: "2026-09-05T12:01:00Z" })).status, 409);
+    assert.equal((await request(path, "POST", { ...create, t0: "2026-09-05T12:01:00Z", excelFrozenAt: "2026-09-05T12:01:00Z" })).status, 409);
     assert.equal((await request(`${path}/${id}`, "GET", undefined, outsideAuth.token)).status, 403);
     assert.equal((await request(`${path}/${id}`, "GET", undefined, commercialAuth.token)).status, 403);
     assert.equal((await request(`${path}/${id}`, "GET", undefined, managerAuth.token)).status, 200);
@@ -205,6 +207,150 @@ test("CRMY-63 real PostgreSQL/HTTP: durable T0, bounded delta, lost response rep
     await assert.rejects(() => revokeService.observe(id, delta, actor), (error: unknown) => error instanceof HttpException && error.getStatus() === 403);
     assert.equal((await request(`${path}/${id}`, "GET")).status, 401);
     const swagger = await success<{ paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } }>(await fetch(`${origin}/docs-json`), 200);
-    assert.equal(Object.keys(swagger.paths).filter((route) => route.startsWith("/lead-import/cutover/")).length, 7); assert.ok(swagger.components.schemas.CutoverCreate);
+    assert.equal(Object.keys(swagger.paths).filter((route) => route.startsWith("/lead-import/cutover/")).length, 10); assert.ok(swagger.components.schemas.CutoverCreate);
+  } finally { await app.close(); await prisma.onModuleDestroy(); }
+});
+
+test("CRMY-63 manual NEW catch-up: stable stream, atomic replay, explicit baseline link and conservative compensation", { skip: !enabled, timeout: 120000 }, async () => {
+  const database = new URL(process.env.DATABASE_URL ?? ""); assert.equal(database.hostname, "127.0.0.1"); assert.equal(database.pathname, "/crmy63_cutover_synthetic");
+  const prisma = new PrismaService(), client = prisma.client!;
+  const marker = await client.$queryRaw<Array<{ nonce: string }>>`SELECT nonce FROM crmy63_test_identity.marker WHERE purpose='cutover-synthetic-qualification'`;
+  assert.ok(marker.some((row) => row.nonce === process.env.CRMY63_DATABASE_NONCE));
+  const nonce = randomUUID().slice(0, 8);
+  const reference = async (kind: string, code: string): Promise<{ id: string; code: string }> => {
+    const row = await client.crmReference.create({ data: { kind, code, label: `Synthetic ${code}`, scope: "GLOBAL", scopeKey: "GLOBAL" } });
+    await client.crmReferenceKey.create({ data: { referenceId: row.id, kind, scopeKey: "GLOBAL", key: referenceKey(code) } }); return row;
+  };
+  const campus = await reference("CAMPUS", `CONSUMER63-${nonce}`), program = await reference("PROGRAM", `PROGRAM63-${nonce}`), campaign = await reference("CAMPAIGN", `CATCHUP63-${nonce}`);
+  await client.crmProgramAvailability.create({ data: { programId: program.id, campusId: campus.id } });
+  const password = `Synthetic63!${randomBytes(12).toString("hex")}`, email = `consumer-${nonce}@example.invalid`, salt = randomBytes(16).toString("hex");
+  const admin = await client.collaborator.create({ data: { professionalEmail: email, professionalDisplayName: "Synthetic cutover consumer", roles: ["SUPER_ADMIN"], campusId: campus.id, active: true, firstLoginRequired: false } });
+  await client.localPasswordHash.create({ data: { collaboratorId: admin.id, identityDigest: digestRecoveryValue(email), passwordSalt: salt, passwordDigest: deriveSecret(password, salt), mustChange: false } });
+  const app = await createApplication(); await app.listen(0, "127.0.0.1");
+  try {
+    const origin = await app.getUrl(), logged = await fetch(`${origin}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+    assert.equal(logged.status, 201); const auth = await logged.json() as { token: string; sessionId: string };
+    const actor: Principal = { userId: admin.id, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: auth.sessionId };
+    const request = async (path: string, body?: unknown): Promise<Response> => fetch(`${origin}${path}`, { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${auth.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const success = async <T>(response: Response, status = 201): Promise<T> => { assert.equal(response.status, status, `Unexpected HTTP status ${response.status}: ${response.status === status ? "" : await response.text()}`); return response.json() as Promise<T>; };
+    const bootstrapPath = "/lead-import/bootstrap/packages";
+    const upload = async (tag: string): Promise<{ id: string; version: number }> => {
+      const parts = syntheticHistoricalParts({ workbookExtra: `<definedNames data-synthetic="${nonce}-${tag}"/>` });
+      for (const part of parts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code).replaceAll("synthetic@example.invalid", `baseline-${nonce}-${tag}@example.invalid`);
+      const bytes = syntheticZip(parts), sha256 = bytesHash(bytes);
+      let pack = await success<{ id: string; version: number }>(await request(bootstrapPath, { fileName: "cutover-consumer-synthetic.xlsx", sizeBytes: bytes.length, sha256, campusId: campus.id, idempotencyKey: `create-${nonce}-${tag}` }));
+      for (let index = 0, offset = 0; offset < bytes.length; index++, offset += CHUNK_BYTES) {
+        const chunk = bytes.subarray(offset, offset + CHUNK_BYTES); pack = await success(await request(`${bootstrapPath}/${pack.id}/chunks`, { index, contentBase64: chunk.toString("base64"), sha256: bytesHash(chunk) }));
+      }
+      return success(await request(`${bootstrapPath}/${pack.id}/seal`, { sha256 }));
+    };
+    let pack = await upload("main");
+    pack = await success(await request(`${bootstrapPath}/${pack.id}/mappings`, { expectedVersion: pack.version, mappingVersion: "R8-v1", sheets: HISTORICAL_SHEETS.map((name) => ({ name, campaign: campaign.code,
+      fields: { lastName: "A", firstName: "B", email: "C", educationLevel: "D", program: "E", source: "F", status: "G", owner: "H", temperature: "J" }, commentColumns: ["I"], ownerAliases: {} })) }));
+    const rows = await success<{ items: Array<{ id: string; version: number }> }>(await request(`${bootstrapPath}/${pack.id}/rows`), 200), baselineRow = rows.items[0]!;
+    for (const row of rows.items.slice(1)) await success(await request(`${bootstrapPath}/${pack.id}/rows/${row.id}/decision`, { expectedVersion: row.version, idempotencyKey: `ignore-${row.id}`, action: "IGNORE", reason: "Synthetic excluded source retained explicitly" }));
+    await success(await request(`${bootstrapPath}/${pack.id}/rows/${baselineRow.id}/decision`, { expectedVersion: baselineRow.version, idempotencyKey: `baseline-${nonce}`, action: "CREATE_DOSSIER", reason: "Synthetic baseline created unassigned explicitly", overrides: { ownerId: "" } }));
+    pack = await success(await request(`${bootstrapPath}/${pack.id}/confirm`, { expectedVersion: pack.version, idempotencyKey: `confirm-${nonce}`, confirmed: true, limit: 25 }));
+    assert.equal((await success<{ cutoverBlocked: boolean }>(await request(`${bootstrapPath}/${pack.id}/report`), 200)).cutoverBlocked, false);
+    const baselineLeadId = (await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: baselineRow.id } })).leadId!;
+    const mappings = app.get(ImportMappingService);
+    const mapping = mappings.snapshot({ mappingKey: `consumer-${nonce}`, name: "Synthetic catch-up mapping", profile: "FORMINATOR_ZAPIER", expectedVersion: 0,
+      columns: [{ sourceColumn: "ID", targetField: "externalId", action: "DIRECT" }, { sourceColumn: "Arrived", targetField: "occurredAt", action: "DIRECT" },
+        { sourceColumn: "First", targetField: "firstName", action: "DIRECT" }, { sourceColumn: "Last", targetField: "lastName", action: "DIRECT" }, { sourceColumn: "Email", targetField: "email", action: "DIRECT" }] }, actor.userId, new Date().toISOString());
+    const configuration: SheetConfiguration = { source: { mode: "SIMULATED", identityMode: "EXTERNAL_ID" }, mapping,
+      context: { source: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER", originalSource: "FORMINATOR", recentSource: "GOOGLE_SHEETS", campus: campus.code, campaign: campaign.code, program: program.code, educationLevel: "BAC" }, assignment: { strategy: "ROUND_ROBIN" } };
+    const connector = await client.sheetImportConnector.create({ data: { campusId: campus.id, workbookId: `synthetic_consumer_${nonce}`, tab: "Synthetic", configuration: JSON.parse(JSON.stringify(configuration)) as Prisma.InputJsonValue, updatedBy: actor.userId } });
+    const path = "/lead-import/cutover/manifests", creation = { bootstrapPackageId: pack.id, connectorId: connector.id, sourceSheetId: 0, t0: "2026-09-05T12:00:00Z", timeZone: "Africa/Casablanca", excelFrozenAt: "2026-09-05T12:00:00Z", originalArrivalColumn: "Arrived", identityEvidenceSha256: "b".repeat(64), idempotencyKey: `manifest-${nonce}` };
+    assert.equal((await request(path, { ...creation, excelFrozenAt: "2026-09-05T11:55:00Z" })).status, 400, "The unqualified gap cannot silently exclude an arrival at 11:59:59 absent from Excel");
+    let manifest = await success<Manifest>(await request(path, creation)); const id = manifest.id;
+    const secondPack = await upload("recreated"), secondConnector = await client.sheetImportConnector.create({ data: { campusId: campus.id, workbookId: connector.workbookId, tab: "Synthetic renamed", configuration: connector.configuration as Prisma.InputJsonValue, updatedBy: actor.userId } });
+    assert.equal((await request(path, { ...creation, bootstrapPackageId: secondPack.id, connectorId: secondConnector.id, idempotencyKey: `recreated-${nonce}` })).status, 409, "A recreated connector is not a new source stream");
+    await client.sheetImportConnector.update({ where: { id: secondConnector.id }, data: { enabled: true, configuration: { ...configuration, source: { mode: "GOOGLE", identityMode: "EXTERNAL_ID", sheetId: 0, range: "A1:E100" } } as unknown as Prisma.InputJsonValue } });
+    assert.equal(await new SheetImportCoordinator(prisma).claim(secondConnector.id, "MANUAL"), undefined, "Legacy execution also recognizes the same stream on a recreated connector");
+    await client.sheetImportConnector.update({ where: { id: secondConnector.id }, data: { enabled: false } });
+    const values: SheetValues = { columns: ["ID", "Arrived", "First", "Last", "Email"], rows: [
+      { ID: "old", Arrived: "2026-09-05T11:59:59Z", First: "Old", Last: "Synthetic", Email: `old-${nonce}@example.invalid` },
+      ...["one", "two", "linked"].map((name) => ({ ID: name, Arrived: "2026-09-05T12:01:00Z", First: name, Last: "Synthetic", Email: `${name}-${nonce}@example.invalid` }))] };
+    // Keep all nested services on the application's transaction/permission fence.
+    // A second PrismaService would legitimately contend with the outer write lock.
+    const source = new ControlledCutoverSource(values), repository = app.get(DynamicPermissionRepository), bootstrap = app.get(BootstrapImportService), ingestion = app.get(PersistentIngestionService);
+    const service = (): CutoverService => new CutoverService(repository, bootstrap, source, ingestion, mappings);
+    const observeBody = { expectedVersion: manifest.version, idempotencyKey: `observe-${nonce}` };
+    manifest = await service().observe(id, observeBody, actor) as Manifest;
+    const decisionBodies = new Map<string, Record<string, unknown>>();
+    for (const entry of manifest.submissions.filter((item) => item.classification === "BACKLOG")) {
+      const body = { expectedVersion: manifest.version, idempotencyKey: `decide-${entry.externalId}-${nonce}`, sourceKey: entry.key,
+        action: entry.externalId === "linked" ? "LINK_BASELINE" : "KEEP_FOR_CATCHUP", ...(entry.externalId === "linked" ? { targetBootstrapRowId: baselineRow.id } : {}), reason: "Synthetic explicit overlap reconciliation" };
+      decisionBodies.set(entry.externalId, body); manifest = await success(await request(`${path}/${id}/decisions`, body));
+    }
+    manifest = await success(await request(`${path}/${id}/reconcile`, { expectedVersion: manifest.version, idempotencyKey: `reconcile-${nonce}` }));
+    const counts = async (): Promise<unknown> => ({ leads: await client.lead.count(), provenance: await client.leadProvenance.count(), activities: await client.leadActivity.count(), notifications: await client.internalNotification.count(),
+      effects: await client.$queryRaw`SELECT count(*)::int AS count FROM import_cutover_effects WHERE manifest_id=${id}::uuid`, receipts: await client.$queryRaw`SELECT count(*)::int AS count FROM import_cutover_receipts WHERE manifest_id=${id}::uuid`, audits: await client.auditEvent.count({ where: { resourceId: id } }) });
+    const before = await counts(), consume = { expectedVersion: manifest.version, idempotencyKey: `consume-${nonce}`, limit: 1, confirmed: true };
+    for (const operation of ["reconcile", "consume"] as const) {
+      await assert.rejects(() => repository.transaction(async (tx) => {
+        // Emulate a previously persisted preparatory contract only inside the
+        // aborting synthetic transaction; never rewrite real contract/history.
+        await tx.$executeRaw`UPDATE import_cutover_manifests SET contract=jsonb_set(contract,'{excelFrozenAt}',${JSON.stringify("2026-09-05T11:55:00.000Z")}::jsonb) WHERE id=${id}::uuid`;
+        await service()[operation](id, consume, actor);
+      }), (error: unknown) => error instanceof HttpException && error.getStatus() === 400 && JSON.stringify(error.getResponse()).includes("cutover_freeze_delta_unqualified"));
+      assert.deepEqual(await counts(), before);
+    }
+    let reachedAbort = false;
+    await assert.rejects(() => repository.transaction(async () => { await new CutoverService(repository, bootstrap, source, ingestion, mappings).consume(id, consume, actor); reachedAbort = true; throw new Error("synthetic_consume_abort"); }), (error: unknown) => error instanceof HttpException && error.getStatus() === 503);
+    assert.equal(reachedAbort, true, "The explicit transaction abort occurs only after a complete consumer write, not an accidental earlier store error");
+    assert.deepEqual(await counts(), before);
+    const first = await success<Record<string, unknown>>(await request(`${path}/${id}/consume`, consume)); const afterFirst = await counts();
+    assert.deepEqual(await service().consume(id, consume, actor), first); assert.deepEqual(await counts(), afterFirst);
+    manifest = first as unknown as Manifest;
+    const remaining = { expectedVersion: manifest.version, idempotencyKey: `consume-rest-${nonce}`, limit: 25, confirmed: true };
+    const concurrent = await Promise.all([service().consume(id, remaining, actor), service().consume(id, remaining, actor)]); assert.deepEqual(concurrent[0], concurrent[1]);
+    const completed = concurrent[0] as Manifest & { effects: Array<{ sourceKey: string; outcome: string; leadId?: string }>; catchup: { created: number; linkedBaseline: number; pending: number; complete: boolean } };
+    assert.equal(completed.catchup.created, 2); assert.equal(completed.catchup.linkedBaseline, 1); assert.equal(completed.catchup.pending, 0); assert.equal(completed.catchup.complete, true);
+    const createdEffects = completed.effects.filter((effect) => effect.outcome === "CREATED");
+    for (const effect of createdEffects) { const lead = await client.lead.findUniqueOrThrow({ where: { id: effect.leadId! } }); assert.equal(lead.acquisitionKind, "NEW"); assert.equal(lead.assignedToId, null);
+      assert.equal(await client.leadActivity.count({ where: { leadId: lead.id, type: "LEAD_CREATED" } }), 1); assert.equal(await client.leadProvenance.count({ where: { leadId: lead.id } }), 1); }
+    assert.ok((await client.leadActivity.findMany({ where: { leadId: { in: createdEffects.map((effect) => effect.leadId!) } } })).every((activity) => activity.correlationId.length <= 64 && activity.correlationId.startsWith("c63:")));
+    assert.equal((await client.lead.findUniqueOrThrow({ where: { id: baselineLeadId } })).acquisitionKind, "BASELINE");
+    assert.equal(await client.leadProvenance.count({ where: { leadId: baselineLeadId } }), 1, "LINK_BASELINE must not fabricate a NEW reception");
+    assert.equal(await client.lead.count({ where: { email: `old-${nonce}@example.invalid` } }), 0);
+    // Persisted receipts never retain the initial actor's visibility after current grants change.
+    const target = { kind: "ROLE" as const, role: "SUPER_ADMIN" as const, campus: "GLOBAL" }, original = defaultConfiguration(target);
+    const grant = async (grants: Grants, previous: Grants, expectedVersion: number): Promise<void> => repository.transaction(async (tx) => {
+      await repository.append(tx, { ...target, expectedVersion, grants, reason: "ACCESS_REVIEW", confirmed: true }, previous, actor);
+    });
+    const noView: Grants = { ...original, "lead.view": "NONE" }; await grant(noView, original, 0);
+    const beforeRestrictedReplay = await counts();
+    const restricted = await success<{ effects: Array<{ leadId?: string; leadVisible: boolean }>; submissions: Array<{ targetBootstrapRowId: string | null }> }>(await request(`${path}/${id}`), 200);
+    assert.ok(restricted.effects.every((effect) => !effect.leadVisible && effect.leadId === undefined));
+    assert.ok(restricted.submissions.every((submission) => submission.targetBootstrapRowId === null));
+    assert.equal((await request(`${path}/${id}/decisions`, decisionBodies.get("linked"))).status, 403, "A replayed receipt must not disclose a previously readable BASELINE target");
+    assert.equal((await request(`${path}/${id}/consume`, remaining)).status, 403);
+    assert.deepEqual(await counts(), beforeRestrictedReplay);
+    await grant(original, noView, 1);
+    const noConfirm: Grants = { ...original, "import.confirm": "NONE" }; await grant(noConfirm, original, 2);
+    const beforeCapabilityReplay = await counts();
+    const observedReplay = await success<{ capabilities: { canConsume: boolean } }>(await request(`${path}/${id}/observe`, observeBody));
+    assert.equal(observedReplay.capabilities.canConsume, false, "An OBSERVE replay cannot advertise a removed confirmation capability");
+    assert.deepEqual(await counts(), beforeCapabilityReplay); await grant(original, noConfirm, 3);
+    const noMore = await service().consume(id, { expectedVersion: completed.version, idempotencyKey: `no-more-${nonce}`, limit: 25, confirmed: true }, actor) as Manifest;
+    assert.equal((await client.sheetImportConnector.findUniqueOrThrow({ where: { id: connector.id } })).enabled, false);
+    // An untouched creation can request compensation, but no retirement is falsely claimed.
+    const untouched = createdEffects[0]!, touched = createdEffects[1]!;
+    const requestBody = { expectedVersion: noMore.version, idempotencyKey: `compensate-request-${nonce}`, sourceKey: untouched.sourceKey, reason: "Synthetic reversible forward-action request", confirmed: true };
+    const ownEdit: Grants = { ...original, "lead.edit": "OWN" }; await grant(ownEdit, original, 4);
+    const beforeEditRefusal = await counts();
+    const replayAfterEditRestriction = await success<{ capabilities: { canCompensate: boolean } }>(await request(`${path}/${id}/decisions`, decisionBodies.get("linked")));
+    assert.equal(replayAfterEditRestriction.capabilities.canCompensate, false, "Receipt capabilities are recalculated rather than copied from their original actor");
+    assert.equal((await request(`${path}/${id}/compensate`, requestBody)).status, 403, "Compensation checks lead.edit on the actual unassigned Lead, not only import campus rights");
+    assert.equal((await success<{ capabilities: { canCompensate: boolean } }>(await request(`${path}/${id}`), 200)).capabilities.canCompensate, false);
+    assert.deepEqual(await counts(), beforeEditRefusal); await grant(original, ownEdit, 5);
+    const requested = await success<Manifest & { compensation: { status: string; applied: boolean } }>(await request(`${path}/${id}/compensate`, requestBody));
+    assert.equal(requested.compensation.status, "REQUESTED"); assert.equal(requested.compensation.applied, false); assert.equal(requested.state, "SUSPENDED");
+    const afterRequest = await counts(); assert.deepEqual(await service().compensate(id, requestBody, actor), requested); assert.deepEqual(await counts(), afterRequest);
+    await client.leadActivity.create({ data: { leadId: touched.leadId!, type: "MEETING", result: "Synthetic later business activity", authorId: actor.userId, correlationId: `downstream-${nonce}` } });
+    const blocked = await success<Manifest & { compensation: { status: string; applied: boolean } }>(await request(`${path}/${id}/compensate`, { expectedVersion: requested.version, idempotencyKey: `compensate-blocked-${nonce}`, sourceKey: touched.sourceKey, reason: "Synthetic downstream write must not be erased", confirmed: true }));
+    assert.equal(blocked.compensation.status, "BLOCKED_DOWNSTREAM"); assert.equal(blocked.compensation.applied, false);
+    assert.equal(await client.lead.count({ where: { id: { in: createdEffects.map((effect) => effect.leadId!) } } }), 2, "Requests/refusals never delete or reclassify data");
   } finally { await app.close(); await prisma.onModuleDestroy(); }
 });

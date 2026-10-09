@@ -1336,6 +1336,8 @@ model SheetImportConnector {
 
 // Preparatory cutover ledger, never an implicit activation flag.
 model ImportCutoverManifest {
+  streamKey           String? @unique @map("stream_key") @db.VarChar(64)
+  effects             ImportCutoverEffect[]
   id String @id @db.Uuid
   campusId String @map("campus_id") @db.Uuid
   actorId String @map("actor_id") @db.Uuid
@@ -1357,6 +1359,24 @@ model ImportCutoverManifest {
   receipts ImportCutoverReceipt[]
   @@index([campusId, createdAt])
   @@map("import_cutover_manifests")
+}
+
+model ImportCutoverEffect {
+  id                  String @id @default(uuid()) @db.Uuid
+  manifestId          String @map("manifest_id") @db.Uuid
+  sourceKey           String @map("source_key") @db.VarChar(64)
+  outcome             String @db.VarChar(24)
+  batchId             String? @map("batch_id") @db.Uuid
+  leadId              String? @map("lead_id") @db.Uuid
+  reason              String? @db.VarChar(128)
+  downstreamSha256    String? @map("downstream_sha256") @db.VarChar(64)
+  compensationStatus  String? @map("compensation_status") @db.VarChar(32)
+  compensationReason  String? @map("compensation_reason") @db.VarChar(500)
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  comparedAt          DateTime? @map("compared_at") @db.Timestamptz(6)
+  manifest            ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@unique([manifestId, sourceKey])
+  @@map("import_cutover_effects")
 }
 
 model ImportCutoverReceipt {

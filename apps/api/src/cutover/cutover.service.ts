@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, HttpException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { Prisma, type SheetImportConnector } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
@@ -9,27 +9,53 @@ import { canonicalCampus, leadResource } from "../permissions/dynamic-resources.
 import { DynamicPermissionRepository, type PermissionTransaction } from "../permissions/dynamic-repository.js";
 import { readSheetConfiguration } from "../sheet-import/sheet-import-configuration.js";
 import { SheetSource } from "../sheet-import/synthetic-sheet-source.js";
-import { cutoverCounts, cutoverHash, cutoverInstant, cutoverInvalid, cutoverObject, cutoverRequest, cutoverSha, cutoverText, cutoverTimeZone, cutoverUuid,
-  observeCutover, type CutoverContract, type CutoverEntry } from "./cutover.contract.js";
+import { PersistentIngestionService } from "../ingestion/persistent-ingestion.service.js";
+import { ImportMappingService } from "../import-mapping/import-mapping.service.js";
+import { cutoverCounts, cutoverFinalFreeze, cutoverHash, cutoverInstant, cutoverInvalid, cutoverObject, cutoverRequest, cutoverSha, cutoverText, cutoverTimeZone, cutoverUuid,
+  cutoverStreamKey, observeCutover, type CutoverContract, type CutoverEntry } from "./cutover.contract.js";
 import { cutoverReplay, insertCutover, loadCutover, saveCutoverReceipt, updateCutover, type StoredCutover } from "./cutover.store.js";
+import { cutoverDownstreamHash, cutoverEffects, saveCutoverEffect } from "./cutover.effects.js";
 
 function conflict(code: string): never { throw new ConflictException({ code }); }
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
-/** Preparation is separate from activation: no connector enabling, Lead effect or mail.
+/** Manual bounded catch-up is separate from automatic activation: no connector enabling or mail.
  * Source reads are split-phase; permissions and source bindings are rechecked after I/O. */
 @Injectable()
 export class CutoverService {
   constructor(@Inject(DynamicPermissionRepository) private readonly permissions: DynamicPermissionRepository,
     @Inject(BootstrapImportService) private readonly bootstrap: BootstrapImportService,
-    @Inject(SheetSource) private readonly source: SheetSource) {}
+    @Inject(SheetSource) private readonly source: SheetSource,
+    @Optional() @Inject(PersistentIngestionService) private readonly ingestion?: PersistentIngestionService,
+    @Optional() @Inject(ImportMappingService) private readonly mappings?: ImportMappingService) {}
+
+  async context(actor: Principal): Promise<unknown> {
+    return this.permissions.readTransaction(async (tx) => {
+      const current = await currentPrincipal(tx, actor);
+      if (current.mustChangeSecret || !current.roles.some((role) => ["SUPER_ADMIN", "ADMIN", "MANAGER"].includes(role))) permissionDenied();
+      const references = await tx.crmReference.findMany({ where: { kind: "CAMPUS", state: "ACTIVE" }, orderBy: { label: "asc" }, take: 101 });
+      if (references.length > 100) conflict("cutover_context_capacity_exceeded");
+      const snapshots = await this.permissions.snapshots(tx), campuses = [];
+      for (const reference of references) {
+        const campus = await canonicalCampus(tx, reference.id), context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+        const allowed = (keys: string[]): boolean => keys.every((key) => evaluatePermission(current, key, snapshots, context).allowed);
+        if (allowed(["settings.campus.manage", "import.view"])) campuses.push({ id: reference.id, label: reference.label, canCreate: allowed(["import.confirm"]) });
+      }
+      const rows = await tx.sheetImportConnector.findMany({ where: { campusId: { in: campuses.map((campus) => campus.id) } }, orderBy: { id: "asc" }, take: 101 });
+      if (rows.length > 100) conflict("cutover_context_capacity_exceeded");
+      return { campuses, connectors: rows.map((row) => { const config = readSheetConfiguration(row.configuration); return { id: row.id, campusId: row.campusId, label: row.tab,
+        enabled: row.enabled, sourceSheetId: config.source?.sheetId ?? null, identityMode: config.source?.identityMode ?? null }; }), automaticActivationAvailable: false };
+    });
+  }
 
   async create(raw: unknown, actor: Principal): Promise<unknown> {
     const body = cutoverObject(raw), bootstrapPackageId = cutoverUuid(body.bootstrapPackageId), connectorId = cutoverUuid(body.connectorId);
     const key = cutoverText(body.idempotencyKey), fingerprint = cutoverHash(body);
     const t0 = cutoverInstant(body.t0), excelFrozenAt = cutoverInstant(body.excelFrozenAt), timeZone = cutoverTimeZone(body.timeZone);
     if (excelFrozenAt > t0 || new Date(excelFrozenAt).valueOf() > Date.now()) cutoverInvalid("cutover_freeze_window_invalid");
+    cutoverFinalFreeze(excelFrozenAt, t0);
     const originalArrivalColumn = cutoverText(body.originalArrivalColumn, 200), identityEvidenceSha256 = cutoverSha(body.identityEvidenceSha256);
+    const sourceSheetId = body.sourceSheetId; if (typeof sourceSheetId !== "number" || !Number.isSafeInteger(sourceSheetId) || sourceSheetId < 0) cutoverInvalid("cutover_sheet_identity_required");
     return this.permissions.transaction(async (tx) => {
       const pack = await tx.bootstrapImportPackage.findUnique({ where: { id: bootstrapPackageId } });
       if (!pack) throw new NotFoundException({ code: "cutover_package_not_found" });
@@ -40,7 +66,7 @@ export class CutoverService {
         const previous = await loadCutover(tx, existing[0].id, true);
         if (previous.campusId !== pack.campusId || previous.connectorId !== connectorId || previous.bootstrapPackageId !== bootstrapPackageId) conflict("cutover_binding_conflict");
         await this.binding(tx, previous);
-        const replay = await cutoverReplay(tx, previous.id, "CREATE", key, fingerprint);
+        const replay = await this.replay(tx, previous, "CREATE", key, fingerprint, actor);
         if (replay !== undefined) return replay; conflict("cutover_already_bound");
       }
       const connector = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
@@ -49,41 +75,46 @@ export class CutoverService {
       if (!pack.sealedAt || !pack.snapshot) conflict("cutover_excel_snapshot_not_sealed");
       const configuration = readSheetConfiguration(connector.configuration);
       if (configuration.source?.identityMode !== "EXTERNAL_ID") conflict("cutover_durable_source_identity_required");
+      if (configuration.source.mode === "GOOGLE" && configuration.source.sheetId !== sourceSheetId) conflict("cutover_sheet_identity_mismatch");
+      const streamKey = cutoverStreamKey(connector.workbookId, sourceSheetId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${streamKey},63))`;
+      if ((await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM import_cutover_manifests WHERE stream_key=${streamKey}`).length) conflict("cutover_stream_already_bound");
       const column = configuration.mapping.columns.filter((item) => item.targetField === "externalId");
       if (column.length !== 1 || !["DIRECT", "TRIM"].includes(column[0]!.action) || column[0]!.sourceColumn === originalArrivalColumn) conflict("cutover_external_identity_mapping_invalid");
-      const contract: CutoverContract = { schemaVersion: 1, bootstrapPackageId, connectorId, excelSha256: pack.sha256,
+      const contract: CutoverContract = { schemaVersion: 2, streamKey, sourceSheetId, bootstrapPackageId, connectorId, excelSha256: pack.sha256,
         connectorVersion: connector.version, configurationSha256: cutoverHash(connector.configuration), t0, timeZone, equality: "POST_T0", excelFrozenAt,
         originalArrivalColumn, externalIdColumn: column[0]!.sourceColumn, identityEvidenceSha256 };
       const row = await insertCutover(tx, randomUUID(), pack.campusId, current.userId, contract);
-      return this.record(tx, current, row, "CREATE", key, fingerprint, this.view(row));
+      return this.record(tx, current, row, "CREATE", key, fingerprint, await this.view(tx, row, actor));
     });
   }
   async get(id: string, actor: Principal): Promise<unknown> {
-    cutoverUuid(id); return this.permissions.readTransaction(async (tx) => this.view(await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view"])));
+    cutoverUuid(id); return this.permissions.readTransaction(async (tx) => this.view(tx, await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view"]), actor));
   }
   async observe(id: string, raw: unknown, actor: Principal): Promise<unknown> {
     cutoverUuid(id); const input = cutoverRequest(raw);
     const preparation = await this.permissions.readTransaction(async (tx) => {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.execute"]);
       await this.binding(tx, row);
-      const replay = await cutoverReplay(tx, id, "OBSERVE", input.key, input.fingerprint); if (replay !== undefined) return { replay };
+      const replay = await this.replay(tx, row, "OBSERVE", input.key, input.fingerprint, actor); if (replay !== undefined) return { replay };
       this.expected(row, input.expectedVersion); this.available(row);
       const connector = await this.binding(tx, row);
       return { row, connector, configuration: readSheetConfiguration(connector.configuration) };
     });
     if ("replay" in preparation) return preparation.replay;
     const values = await this.source.read(preparation.connector.workbookId, preparation.connector.tab, preparation.configuration);
+    if (preparation.configuration.source?.mode === "GOOGLE" && values.observation?.sheetId !== preparation.row.contract.sourceSheetId) conflict("cutover_sheet_identity_mismatch");
     const capturedAt = new Date();
     return this.permissions.transaction(async (tx) => {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.execute"], true);
       await this.binding(tx, row);
-      const replay = await cutoverReplay(tx, id, "OBSERVE", input.key, input.fingerprint); if (replay !== undefined) return replay;
+      const replay = await this.replay(tx, row, "OBSERVE", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
       this.expected(row, input.expectedVersion); this.available(row); await this.binding(tx, row);
       const observed = observeCutover(row.contract, values, row.inventory, row.headerSha256 ?? undefined);
       const updated = await updateCutover(tx, row, { ...row, state: "BASELINED", inventory: observed.entries,
         headerSha256: observed.headerSha256, snapshotSha256: observed.snapshotSha256, observedAt: capturedAt, sourceCount: observed.sourceCount,
         reportSha256: null, suspensionReason: null });
-      return this.record(tx, actor, updated, "OBSERVE", input.key, input.fingerprint, this.view(updated));
+      return this.record(tx, actor, updated, "OBSERVE", input.key, input.fingerprint, await this.view(tx, updated, actor));
     });
   }
   async decide(id: string, raw: unknown, actor: Principal): Promise<unknown> {
@@ -93,7 +124,7 @@ export class CutoverService {
     return this.permissions.transaction(async (tx) => {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.review.resolve"], true);
       await this.binding(tx, row);
-      const replay = await cutoverReplay(tx, id, "DECIDE", input.key, input.fingerprint); if (replay !== undefined) return replay;
+      const replay = await this.replay(tx, row, "DECIDE", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
       this.expected(row, input.expectedVersion); this.available(row); await this.binding(tx, row);
       if (!row.observedAt) conflict("cutover_baseline_missing");
       const source = row.inventory.find((entry) => entry.key === sourceKey);
@@ -105,7 +136,7 @@ export class CutoverService {
       }
       const inventory = row.inventory.map((entry): CutoverEntry => entry.key === sourceKey ? { ...entry, decision: action, targetBootstrapRowId } : entry);
       const updated = await updateCutover(tx, row, { ...row, inventory, state: "BASELINED", reportSha256: null });
-      return this.record(tx, actor, updated, "DECIDE", input.key, input.fingerprint, { ...this.view(updated), decision: { sourceKey, action, targetBootstrapRowId, reason } });
+      return this.record(tx, actor, updated, "DECIDE", input.key, input.fingerprint, { ...await this.view(tx, updated, actor), decision: { sourceKey, action, targetBootstrapRowId, reason } });
     });
   }
   async reconcile(id: string, raw: unknown, actor: Principal): Promise<unknown> {
@@ -113,7 +144,8 @@ export class CutoverService {
     return this.permissions.transaction(async (tx) => {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.confirm"], true);
       await this.binding(tx, row);
-      const replay = await cutoverReplay(tx, id, "RECONCILE", input.key, input.fingerprint); if (replay !== undefined) return replay;
+      cutoverFinalFreeze(row.contract.excelFrozenAt, row.contract.t0);
+      const replay = await this.replay(tx, row, "RECONCILE", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
       this.expected(row, input.expectedVersion); this.available(row); await this.binding(tx, row);
       if (!row.observedAt || !row.headerSha256 || !row.snapshotSha256) conflict("cutover_baseline_missing");
       const report = cutoverObject(await this.bootstrap.report(row.bootstrapPackageId, actor));
@@ -125,7 +157,7 @@ export class CutoverService {
         await this.authorizeLead(tx, actor, target.leadId);
       }
       const updated = await updateCutover(tx, row, { ...row, state: "READY_FOR_CATCHUP", reportSha256: cutoverHash(report) });
-      return this.record(tx, actor, updated, "RECONCILE", input.key, input.fingerprint, this.view(updated));
+      return this.record(tx, actor, updated, "RECONCILE", input.key, input.fingerprint, await this.view(tx, updated, actor));
     });
   }
   async suspend(id: string, raw: unknown, actor: Principal, resume = false): Promise<unknown> {
@@ -133,12 +165,79 @@ export class CutoverService {
     return this.permissions.transaction(async (tx) => {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.confirm"], true);
       await this.binding(tx, row);
-      const replay = await cutoverReplay(tx, id, operation, input.key, input.fingerprint); if (replay !== undefined) return replay;
+      const replay = await this.replay(tx, row, operation, input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
       this.expected(row, input.expectedVersion); await this.binding(tx, row);
       if (resume && row.state !== "SUSPENDED" || !resume && row.state === "SUSPENDED") conflict("cutover_state_conflict");
       const updated = await updateCutover(tx, row, { ...row, state: resume ? "DRAFT" : "SUSPENDED", observedAt: resume ? null : row.observedAt,
         reportSha256: null, suspensionReason: resume ? null : reason });
-      return this.record(tx, actor, updated, operation, input.key, input.fingerprint, { ...this.view(updated), reason });
+      return this.record(tx, actor, updated, operation, input.key, input.fingerprint, { ...await this.view(tx, updated, actor), reason });
+    });
+  }
+  async consume(id: string, raw: unknown, actor: Principal): Promise<unknown> {
+    cutoverUuid(id); const input = cutoverRequest(raw), limit = input.body.limit;
+    if (input.body.confirmed !== true || typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 25) cutoverInvalid("cutover_manual_confirmation_required");
+    if (!this.ingestion || !this.mappings) conflict("cutover_consumer_unavailable");
+    const ingestion = this.ingestion, mappings = this.mappings;
+    return this.permissions.transaction(async (tx) => {
+      const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.execute", "import.confirm", "lead.create", "lead.view"], true);
+      const connector = await this.binding(tx, row), current = await currentPrincipal(tx, actor);
+      cutoverFinalFreeze(row.contract.excelFrozenAt, row.contract.t0);
+      const replay = await this.replay(tx, row, "CONSUME", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
+      this.expected(row, input.expectedVersion); this.available(row);
+      if (row.contract.schemaVersion !== 2 || !row.contract.streamKey || row.contract.sourceSheetId === undefined) conflict("cutover_durable_stream_upgrade_required");
+      if (row.state !== "READY_FOR_CATCHUP" || !row.reportSha256 || !row.observedAt) conflict("cutover_reconciliation_required");
+      const report = cutoverObject(await this.bootstrap.report(row.bootstrapPackageId, actor));
+      if (report.cutoverBlocked !== false || cutoverHash(report) !== row.reportSha256) conflict("cutover_reconciliation_required");
+      const counts = cutoverCounts(row.inventory); if (counts.sourceIssues || counts.overlapReview) conflict("cutover_reconciliation_incomplete");
+      const existing = new Set((await cutoverEffects(tx, id)).map((effect) => effect.sourceKey));
+      const pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !existing.has(entry.key)).slice(0, limit);
+      const configuration = readSheetConfiguration(connector.configuration);
+      // jsonb object key order is not source header order. The immutable mapping
+      // must match the observed ordered headers, then supplies that exact order.
+      const sourceColumns = configuration.mapping.columns.map((column) => column.sourceColumn);
+      if (cutoverHash(sourceColumns) !== row.headerSha256) conflict("cutover_mapping_headers_mismatch");
+      for (const entry of pending) {
+        if (entry.decision === "LINK_BASELINE") {
+          const target = entry.targetBootstrapRowId ? await tx.bootstrapImportRow.findUnique({ where: { id: entry.targetBootstrapRowId } }) : null;
+          if (!target || target.packageId !== row.bootstrapPackageId || target.state !== "ACCEPTED" || !target.leadId) conflict("cutover_baseline_target_invalid");
+          await this.authorizeLead(tx, actor, target.leadId);
+          await saveCutoverEffect(tx, { manifestId: id, sourceKey: entry.key, outcome: "LINKED_BASELINE", leadId: target.leadId, batchId: null, reason: null, downstreamSha256: null });
+          continue;
+        }
+        if (entry.decision !== "KEEP_FOR_CATCHUP") conflict("cutover_overlap_decision_invalid");
+        const [mapped] = mappings.recordsFromSnapshot(configuration.mapping, { idempotencyKey: `cutover:${entry.key}`, mappingKey: configuration.mapping.mappingKey,
+          mappingVersion: configuration.mapping.version, rows: [entry.payload], sourceColumns, context: configuration.context, assignment: configuration.assignment });
+        if (!mapped) conflict("cutover_mapping_record_missing");
+        const result = await ingestion.persistCutoverRecord(tx, { ...mapped, lineNumber: 1, externalId: `cutover:${entry.key}`, occurredAt: entry.originalArrivedAt },
+          configuration.mapping, `cutover-ingest:${entry.key}`, current, `c63:${cutoverHash([id, entry.key]).slice(0, 40)}`, configuration.assignment);
+        if (result.leadId) await this.authorizeLead(tx, actor, result.leadId);
+        const outcome = result.outcome === "CREATED" ? "CREATED" : "REVIEW";
+        if (outcome === "CREATED" && (!result.leadId || (await tx.lead.findUniqueOrThrow({ where: { id: result.leadId } })).acquisitionKind !== "NEW")) conflict("cutover_new_effect_required");
+        await saveCutoverEffect(tx, { manifestId: id, sourceKey: entry.key, outcome, batchId: result.batchId, leadId: result.leadId ?? null,
+          reason: result.reason ?? null, downstreamSha256: outcome === "CREATED" && result.leadId ? await cutoverDownstreamHash(tx, result.leadId) : null });
+      }
+      const updated = await updateCutover(tx, row, { ...row });
+      return this.record(tx, actor, updated, "CONSUME", input.key, input.fingerprint, { ...await this.view(tx, updated, actor), processed: pending.length });
+    });
+  }
+  async compensate(id: string, raw: unknown, actor: Principal): Promise<unknown> {
+    cutoverUuid(id); const input = cutoverRequest(raw), sourceKey = cutoverSha(input.body.sourceKey), reason = cutoverText(input.body.reason, 500);
+    if (input.body.confirmed !== true) cutoverInvalid("cutover_manual_confirmation_required");
+    return this.permissions.transaction(async (tx) => {
+      const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.confirm"], true);
+      await this.binding(tx, row);
+      const replay = await this.replay(tx, row, "COMPENSATE", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
+      this.expected(row, input.expectedVersion);
+      const effect = (await cutoverEffects(tx, id)).find((item) => item.sourceKey === sourceKey);
+      if (!effect || effect.outcome !== "CREATED" || !effect.leadId || effect.compensationStatus) conflict("cutover_compensation_target_invalid");
+      await this.authorizeLead(tx, actor, effect.leadId, ["lead.view", "lead.edit"]);
+      await tx.$queryRaw`SELECT id FROM leads WHERE id=${effect.leadId}::uuid FOR UPDATE`;
+      const same = effect.downstreamSha256 !== null && await cutoverDownstreamHash(tx, effect.leadId) === effect.downstreamSha256;
+      const status = same ? "REQUESTED" : "BLOCKED_DOWNSTREAM";
+      await tx.$executeRaw`UPDATE import_cutover_effects SET compensation_status=${status},compensation_reason=${reason},compared_at=CURRENT_TIMESTAMP WHERE id=${effect.id}::uuid`;
+      const updated = await updateCutover(tx, row, { ...row, state: "SUSPENDED", suspensionReason: "cutover_compensation_requires_controlled_forward_action", reportSha256: null });
+      return this.record(tx, actor, updated, "COMPENSATE", input.key, input.fingerprint, { ...await this.view(tx, updated, actor),
+        compensation: { sourceKey, status, applied: false, downstreamUnchanged: same, reason, limitation: "RECOVERABLE_WITHDRAWAL_NOT_IMPLEMENTED" } });
     });
   }
   private async binding(tx: PermissionTransaction, row: StoredCutover): Promise<SheetImportConnector> {
@@ -161,19 +260,75 @@ export class CutoverService {
     const snapshots = await this.permissions.snapshots(tx);
     if (!keys.every((key) => evaluatePermission(current, key, snapshots, context).allowed)) permissionDenied(); return current;
   }
-  private async authorizeLead(tx: PermissionTransaction, actor: Principal, leadId: string): Promise<void> {
+  private async authorizeLead(tx: PermissionTransaction, actor: Principal, leadId: string, keys = ["lead.view"]): Promise<void> {
     const current = await currentPrincipal(tx, actor), context = await resourceEvaluationContext(tx, current, await leadResource(tx, leadId));
-    if (!evaluatePermission(current, "lead.view", await this.permissions.snapshots(tx), context).allowed) permissionDenied();
+    const snapshots = await this.permissions.snapshots(tx);
+    if (!keys.every((key) => evaluatePermission(current, key, snapshots, context).allowed)) permissionDenied();
   }
-  private view(row: StoredCutover): Record<string, unknown> {
+  /** A receipt is an immutable result, not an authorization grant. Refuse its
+   * replay if any previously visible Lead/BASELINE target is no longer readable. */
+  private async replay(tx: PermissionTransaction, row: StoredCutover, operation: string, key: string, fingerprint: string, actor: Principal): Promise<unknown> {
+    const replay = await cutoverReplay(tx, row.id, operation, key, fingerprint);
+    if (replay === undefined) return undefined;
+    const response = cutoverObject(replay), leadIds = new Set<string>(), targetIds = new Set<string>();
+    for (const effect of Array.isArray(response.effects) ? response.effects : []) {
+      const item = cutoverObject(effect); if (typeof item.leadId === "string") leadIds.add(item.leadId);
+    }
+    for (const submission of Array.isArray(response.submissions) ? response.submissions : []) {
+      const item = cutoverObject(submission); if (typeof item.targetBootstrapRowId === "string") targetIds.add(item.targetBootstrapRowId);
+    }
+    if (response.decision) { const decision = cutoverObject(response.decision); if (typeof decision.targetBootstrapRowId === "string") targetIds.add(decision.targetBootstrapRowId); }
+    for (const targetId of targetIds) {
+      const target = await tx.bootstrapImportRow.findUnique({ where: { id: targetId } });
+      if (!target || target.packageId !== row.bootstrapPackageId || !target.leadId) permissionDenied(); leadIds.add(target.leadId);
+    }
+    for (const leadId of leadIds) await this.authorizeLead(tx, actor, leadId);
+    if (operation === "COMPENSATE") {
+      const sourceKey = cutoverObject(response.compensation).sourceKey, effect = (await cutoverEffects(tx, row.id)).find((item) => item.sourceKey === sourceKey);
+      if (!effect?.leadId) permissionDenied(); await this.authorizeLead(tx, actor, effect.leadId, ["lead.view", "lead.edit"]);
+    }
+    return { ...response, capabilities: (await this.view(tx, row, actor)).capabilities, bindingValid: true };
+  }
+  private async view(tx: PermissionTransaction, row: StoredCutover, actor: Principal): Promise<Record<string, unknown>> {
+    const current = await currentPrincipal(tx, actor), campus = await canonicalCampus(tx, row.campusId), snapshots = await this.permissions.snapshots(tx);
+    const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+    const allowed = (keys: string[]): boolean => keys.every((key) => evaluatePermission(current, key, snapshots, context).allowed);
+    let bindingValid = true;
+    try { await this.binding(tx, row); } catch (error) { if (!(error instanceof ConflictException)) throw error; bindingValid = false; }
+    const effects = await cutoverEffects(tx, row.id), visibleEffects = []; let compensable = false;
+    for (const effect of effects) {
+      let leadVisible = false;
+      if (effect.leadId) { try { await this.authorizeLead(tx, actor, effect.leadId); leadVisible = true; } catch (error) { if (!(error instanceof HttpException && error.getStatus() === 403)) throw error; } }
+      if (effect.leadId && effect.outcome === "CREATED" && !effect.compensationStatus) { try { await this.authorizeLead(tx, actor, effect.leadId, ["lead.view", "lead.edit"]); compensable = true; } catch (error) { if (!(error instanceof HttpException && error.getStatus() === 403)) throw error; } }
+      visibleEffects.push({ id: effect.id, sourceKey: effect.sourceKey, outcome: effect.outcome, batchId: effect.batchId, reason: effect.reason,
+        compensationStatus: effect.compensationStatus, compensationReason: effect.compensationReason, createdAt: effect.createdAt.toISOString(), comparedAt: effect.comparedAt?.toISOString() ?? null,
+        ...(leadVisible ? { leadId: effect.leadId } : {}), leadVisible });
+    }
+    const done = new Set(effects.map((effect) => effect.sourceKey)), pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !done.has(entry.key)).length;
+    const operational = bindingValid && row.state !== "SUSPENDED", freezeQualified = row.contract.excelFrozenAt === row.contract.t0;
+    const capabilities = { canObserve: operational && allowed(["import.execute"]), canDecide: operational && !!row.observedAt && allowed(["import.review.resolve"]),
+      canReconcile: operational && freezeQualified && !!row.observedAt && allowed(["import.confirm"]), canSuspend: operational && allowed(["import.confirm"]),
+      canResume: bindingValid && row.state === "SUSPENDED" && allowed(["import.confirm"]),
+      canConsume: operational && freezeQualified && row.state === "READY_FOR_CATCHUP" && row.contract.schemaVersion === 2 && allowed(["import.execute", "import.confirm", "lead.create", "lead.view"]),
+      canCompensate: bindingValid && compensable && allowed(["import.confirm"]) };
+    const submissions = [];
+    for (const { key, externalId, fingerprint, originalArrivedAt, classification, issue, decision, targetBootstrapRowId } of row.inventory) {
+      let visibleTarget: string | null = null;
+      if (targetBootstrapRowId) { const target = await tx.bootstrapImportRow.findUnique({ where: { id: targetBootstrapRowId } });
+        if (target?.leadId) { try { await this.authorizeLead(tx, actor, target.leadId); visibleTarget = targetBootstrapRowId; } catch (error) { if (!(error instanceof HttpException && error.getStatus() === 403)) throw error; } } }
+      submissions.push({ key, externalId, fingerprint, originalArrivedAt, classification, issue, decision, targetBootstrapRowId: visibleTarget });
+    }
     return { id: row.id, campusId: row.campusId, state: row.state, version: row.version, contract: row.contract,
+      bindingValid, capabilities,
       counts: cutoverCounts(row.inventory), sourceCount: row.sourceCount, headerSha256: row.headerSha256, snapshotSha256: row.snapshotSha256,
       observedAt: row.observedAt?.toISOString() ?? null, reportSha256: row.reportSha256, suspensionReason: row.suspensionReason,
       captureWindow: { excelFrozenAt: row.contract.excelFrozenAt, sourceCapturedAt: row.observedAt?.toISOString() ?? null },
       localT0: new Intl.DateTimeFormat("fr-MA", { timeZone: row.contract.timeZone, dateStyle: "full", timeStyle: "long" }).format(new Date(row.contract.t0)),
-      submissions: row.inventory.map(({ key, externalId, fingerprint, originalArrivedAt, classification, issue, decision, targetBootstrapRowId }) => ({ key, externalId, fingerprint, originalArrivedAt, classification, issue, decision, targetBootstrapRowId })),
-      automaticActivationAvailable: false, effectsApplied: false, privateSourcePayloadOmitted: true,
-      limitations: ["SOURCE_IDENTITY_EVIDENCE_DECLARED_NOT_UPSTREAM_ATTESTED", "CATCHUP_CONSUMER_NOT_IMPLEMENTED", "LOCAL_ROW_NOT_SUPPORTED", "SHEETS_REMAINS_DISABLED"] };
+      submissions,
+      effects: visibleEffects, catchup: { total: effects.length, created: effects.filter((effect) => effect.outcome === "CREATED").length, linkedBaseline: effects.filter((effect) => effect.outcome === "LINKED_BASELINE").length,
+        review: effects.filter((effect) => effect.outcome === "REVIEW").length, pending, complete: bindingValid && freezeQualified && row.state === "READY_FOR_CATCHUP" && pending === 0 && effects.every((effect) => effect.outcome !== "REVIEW" && !effect.compensationStatus) },
+      automaticActivationAvailable: false, effectsApplied: effects.some((effect) => effect.outcome === "CREATED"), compensationApplied: false, privateSourcePayloadOmitted: true,
+      limitations: ["SOURCE_IDENTITY_EVIDENCE_DECLARED_NOT_UPSTREAM_ATTESTED", "AUTOMATIC_CATCHUP_NOT_IMPLEMENTED", "RECOVERABLE_COMPENSATION_NOT_IMPLEMENTED", "LOCAL_ROW_NOT_SUPPORTED", "SHEETS_REMAINS_DISABLED"] };
   }
   private async record(tx: PermissionTransaction, actor: Principal, row: StoredCutover, operation: string, key: string, fingerprint: string, response: unknown): Promise<unknown> {
     const current = await currentPrincipal(tx, actor);

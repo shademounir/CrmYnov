@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { CUTOVER_BYTE_LIMIT, cutoverCounts, cutoverHash, cutoverInstant, cutoverTimeZone, observeCutover, type CutoverContract } from "../src/cutover/cutover.contract.js";
+import { CUTOVER_BYTE_LIMIT, cutoverCounts, cutoverFinalFreeze, cutoverHash, cutoverInstant, cutoverStreamKey, cutoverTimeZone, observeCutover, type CutoverContract } from "../src/cutover/cutover.contract.js";
 import type { SheetValues } from "../src/sheet-import/google-sheets-adapter.js";
 
 const contract: CutoverContract = { schemaVersion: 1, bootstrapPackageId: "00000000-0000-4000-8000-000000000063", connectorId: "00000000-0000-4000-8000-000000000064",
@@ -10,6 +10,23 @@ const contract: CutoverContract = { schemaVersion: 1, bootstrapPackageId: "00000
 const columns = ["Submission ID", "Original arrival UTC", "Comment"];
 const row = (id: string, date: string, comment = "Synthetic comment"): Record<string, string> => ({ "Submission ID": id, "Original arrival UTC": date, Comment: comment });
 const values = (rows: Array<Record<string, string>>): SheetValues => ({ columns, rows });
+
+test("CRMY-63 submission identity survives connector recreation and numeric sheet zero is valid", () => {
+  const streamKey = cutoverStreamKey("synthetic_workbook", 0);
+  const first = observeCutover({ ...contract, schemaVersion: 2, streamKey, sourceSheetId: 0 }, values([row("same", contract.t0)]), []);
+  const recreated = observeCutover({ ...contract, schemaVersion: 2, connectorId: "00000000-0000-4000-8000-000000000099", streamKey, sourceSheetId: 0 }, values([row("same", contract.t0)]), []);
+  assert.equal(first.entries[0]!.key, recreated.entries[0]!.key);
+  assert.notEqual(streamKey, cutoverStreamKey("synthetic_workbook", 1));
+  assert.notEqual(streamKey, cutoverStreamKey("other_workbook", 0));
+  for (const invalid of [-1, 0.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) assert.throws(() => cutoverStreamKey("synthetic_workbook", invalid));
+});
+
+test("CRMY-63 refuses an unqualified freeze/T0 gap instead of losing arrivals in that window", () => {
+  const arrivalInGap = row("during-gap", "2026-10-09T08:57:00Z");
+  assert.equal(observeCutover(contract, values([arrivalInGap]), []).entries[0]!.classification, "EXCLUDED_PRE_T0");
+  assert.throws(() => cutoverFinalFreeze(contract.excelFrozenAt, contract.t0), /Bad Request/u);
+  assert.doesNotThrow(() => cutoverFinalFreeze("2026-10-09T09:00:00Z", contract.t0));
+});
 
 test("CRMY-63 records explicit before/equal/after T0 independently from row positions", () => {
   const observed = observeCutover(contract, values([row("before", "2026-10-09T08:59:59Z"), row("equal", contract.t0), row("after", "2026-10-09T09:00:01Z")]), []);

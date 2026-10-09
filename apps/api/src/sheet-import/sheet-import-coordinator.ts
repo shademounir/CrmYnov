@@ -14,9 +14,12 @@ export class SheetImportCoordinator {
   async claim(connectorId: string, trigger: "MANUAL" | "SCHEDULED", eligible: SheetEligibility = (): boolean => true): Promise<SheetClaim> {
     const now = this.clock();
     return this.client.$transaction(async (tx): Promise<SheetClaim> => {
-      if (await cutoverConnectorBound(tx, connectorId)) return undefined;
       const candidate = await tx.sheetImportConnector.findUnique({ where: { id: connectorId } });
       if (!candidate || !eligible(candidate)) return undefined;
+      const raw = candidate.configuration;
+      const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.source : null;
+      const sheetId = source && typeof source === "object" && !Array.isArray(source) ? source.sheetId : undefined;
+      if (await cutoverConnectorBound(tx, connectorId, typeof sheetId === "number" ? { workbookId: candidate.workbookId, sheetId } : undefined)) return undefined;
       const active = candidate?.activeRunId ? await tx.sheetImportRun.findUnique({ where: { id: candidate.activeRunId } }) : null;
       const manualResume = active?.trigger === "MANUAL" && active.status === "RUNNING" ? [{ activeRunId: active.id }] : [];
       const claimed = await tx.sheetImportConnector.updateMany({
