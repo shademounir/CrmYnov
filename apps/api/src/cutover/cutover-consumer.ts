@@ -9,6 +9,7 @@ import { cutoverCounts, cutoverFinalFreeze, cutoverHash, cutoverObject } from ".
 import { cutoverDownstreamHash, cutoverEffects, saveCutoverEffect } from "./cutover.effects.js";
 import { loadCutover, type StoredCutover } from "./cutover.store.js";
 import { canonicalCampus } from "../permissions/dynamic-resources.js";
+import { assertCutoverExceptions, type CutoverExceptionCase } from "./cutover-exceptions.js";
 
 function conflict(code: string): never { throw new ConflictException({ code }); }
 export async function cutoverBinding(tx: PermissionTransaction, row: StoredCutover): Promise<SheetImportConnector> {
@@ -33,6 +34,17 @@ export async function cutoverBaselineTarget(tx: PermissionTransaction, row: Stor
   if ((await canonicalCampus(tx, lead.campus)).id !== row.campusId) conflict("cutover_baseline_campus_mismatch");
   return target.leadId;
 }
+/** Quarantining a key is not a permanent grant to its existing Lead or BASELINE
+ * target. Manual and scheduled commands revalidate every referenced target. */
+export async function authorizeCutoverExceptionTargets(tx: PermissionTransaction, row: StoredCutover, items: readonly CutoverExceptionCase[], authorizeLead: (id: string) => Promise<void>): Promise<void> {
+  const entries = new Map(row.inventory.map((entry) => [entry.key, entry])), effects = await cutoverEffects(tx, row.id), leadIds = new Set<string>();
+  for (const item of items) {
+    const source = entries.get(item.sourceKey); if (!source) conflict("cutover_exception_evidence_changed");
+    if (source.targetBootstrapRowId) leadIds.add(await cutoverBaselineTarget(tx, row, source.targetBootstrapRowId));
+    for (const effect of effects) if (effect.sourceKey === item.sourceKey && effect.leadId) leadIds.add(effect.leadId);
+  }
+  for (const leadId of leadIds) await authorizeLead(leadId);
+}
 /** Caller owns the permission fence and manifest lock. All effects/reconciliation
  * are one transaction; authority differs, durable identities/keys never do. */
 export async function consumeCutover(tx: PermissionTransaction, row: StoredCutover, limit: number, mappings: ImportMappingService, authority: CutoverConsumerAuthority): Promise<number> {
@@ -43,9 +55,12 @@ export async function consumeCutover(tx: PermissionTransaction, row: StoredCutov
   if (row.state !== "READY_FOR_CATCHUP" || !row.reportSha256 || !row.observedAt) conflict("cutover_reconciliation_required");
   const report = cutoverObject(await authority.report());
   if (report.cutoverBlocked !== false || cutoverHash(report) !== row.reportSha256) conflict("cutover_reconciliation_required");
-  const counts = cutoverCounts(row.inventory); if (counts.sourceIssues || counts.overlapReview) conflict("cutover_reconciliation_incomplete");
+  const exceptions = await assertCutoverExceptions(tx, row);
+  await authorizeCutoverExceptionTargets(tx, row, exceptions.cases.map(({ item }) => item), (leadId) => authority.authorizeLead(leadId));
+  const counts = cutoverCounts(row.inventory);
+  if (counts.overlapReview && row.inventory.some((entry) => entry.classification === "BACKLOG" && !entry.decision && !exceptions.quarantinedKeys.has(entry.key))) conflict("cutover_reconciliation_incomplete");
   const existing = new Set((await cutoverEffects(tx, row.id)).map((effect) => effect.sourceKey));
-  const pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !existing.has(entry.key)).slice(0, limit);
+  const pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !existing.has(entry.key) && !exceptions.quarantinedKeys.has(entry.key)).slice(0, limit);
   const configuration = readSheetConfiguration(connector.configuration), sourceColumns = configuration.mapping.columns.map((column) => column.sourceColumn);
   if (cutoverHash(sourceColumns) !== row.headerSha256) conflict("cutover_mapping_headers_mismatch");
   for (const entry of pending) {

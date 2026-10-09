@@ -103,7 +103,7 @@ test("suspension requires a reason and successful mutations reread without enabl
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
   let state = manifest;
   t.mock.method(globalThis, "fetch", (path: string | URL | Request, init?: RequestInit) => {
-    if (init?.method === "POST") { const body = requestBody(init); calls.push({ path: requestPath(path), body }); state = { ...state, state: "SUSPENDED", version: 3, suspensionReason: String(body.reason), capabilities: { ...manifest.capabilities!, canResume: true } }; return Promise.resolve(Response.json(state)); }
+    if (init?.method === "POST") { const body = requestBody(init); calls.push({ path: requestPath(path), body }); state = { ...state, state: "SUSPENDED", version: 3, suspensionReason: String(body.reason), capabilities: { ...manifest.capabilities!, canResume: true, canObserve: false, canReconcile: false } }; return Promise.resolve(Response.json(state)); }
     return Promise.resolve(Response.json(requestPath(path).endsWith("/context") ? context : state));
   });
   const { dom, render, edit, click } = await setup(t); await render(manifestId);
@@ -114,6 +114,13 @@ test("suspension requires a reason and successful mutations reread without enabl
   assert.equal(button(dom, "Observer la source").disabled, true); assert.equal(button(dom, "Reprendre la préparation").disabled, true, "reason resets after acknowledgment");
   assert.match(dom.window.document.body.textContent ?? "", /Préparation suspendue/u);
   assert.equal(calls.some((call) => call.path.includes("enable") || call.path.includes("consume")), false);
+});
+
+test("only the server capability permits re-observation while a quarantine suspension is retained", async (t) => {
+  mockRead(t, { ...manifest, state: "SUSPENDED", suspensionReason: "cutover_quarantine_requires_reobservation", capabilities: { ...manifest.capabilities!, canObserve: true, canReconcile: false, canConsume: false } });
+  const { dom, render } = await setup(t); await render(manifestId);
+  assert.equal(button(dom, "Observer la source").disabled, false, "current server authority permits the separate required observation");
+  assert.equal(button(dom, "Vérifier la réconciliation").disabled, true, "no implicit reconciliation or worker resumption follows");
 });
 
 test("manual catchup is bounded and separately confirmed; opening ready state never starts it", async (t) => {

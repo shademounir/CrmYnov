@@ -16,6 +16,8 @@ export class CutoverController {
   @Get("context") context(@Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.context(this.actor(request)); }
   @Post("manifests") create(@Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.create(input, this.actor(request)); }
   @Get("manifests/:id") get(@Param("id") id: string, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.get(id, this.actor(request)); }
+  @Get("manifests/:id/exceptions") exceptions(@Param("id") id: string, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.exceptions(id, this.actor(request)); }
+  @Post("manifests/:id/exceptions/:caseId/disposition") quarantine(@Param("id") id: string, @Param("caseId") caseId: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.quarantine(id, caseId, input, this.actor(request)); }
   @Post("manifests/:id/observe") observe(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.observe(id, input, this.actor(request)); }
   @Post("manifests/:id/decisions") decide(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.decide(id, input, this.actor(request)); }
   @Post("manifests/:id/reconcile") reconcile(@Param("id") id: string, @Body() input: unknown, @Req() request: AuthenticatedRequest): Promise<unknown> { return this.cutover.reconcile(id, input, this.actor(request)); }

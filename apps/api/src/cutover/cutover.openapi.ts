@@ -27,6 +27,9 @@ export const cutoverSchemas = {
     ...request, expectedVersion: { ...request.expectedVersion, description: "Current runtime version, not manifest version" }, confirmed: { const: true } } },
   CutoverCompensate: { type: "object", required: ["expectedVersion", "idempotencyKey", "sourceKey", "reason", "confirmed"], properties: {
     ...request, sourceKey: sha, reason: { type: "string", maxLength: 500 }, confirmed: { const: true } } },
+  CutoverQuarantine: { type: "object", required: ["expectedVersion", "idempotencyKey", "evidenceSha256", "action", "reason", "confirmed"], properties: {
+    ...request, evidenceSha256: sha, action: { type: "string", enum: ["QUARANTINE_PRESERVE"] }, reason: { type: "string", minLength: 8, maxLength: 500 }, confirmed: { const: true } },
+    description: "Current exact true-observation evidence only; preserve source/REVIEW/batch/Lead/keys. Suspends and disarms atomically; fresh observe, reconciliation and separate requalification are required. Quarantine is not ingestion" },
 };
 export const cutoverPaths = {
   "/lead-import/cutover/context": { get: { ...secured, summary: "Current permitted campuses and connectors only; no nominal-role inference", responses: { "200": { description: "Bounded server-filtered context" }, "403": responses["403"] } } },
@@ -43,4 +46,6 @@ export const cutoverPaths = {
   "/lead-import/cutover/manifests/{id}/runtime/qualify": { post: { ...secured, parameters: [id], summary: "Prepare provider-owned SIMULATED_FIXTURE qualification only inside nonce-isolated test database; no client attestation", requestBody: body("CutoverRuntimeQualification"), responses } },
   "/lead-import/cutover/manifests/{id}/runtime/arm": { post: { ...secured, parameters: [id], summary: "Explicitly arm qualified synthetic runtime; not real Google activation and not legacy enabling", requestBody: body("CutoverRuntimeArm"), responses } },
   "/lead-import/cutover/manifests/{id}/runtime/disarm": { post: { ...secured, parameters: [id], summary: "Disarm/invalidate worker epoch; preserve all effects, business data and receipts", requestBody: body("CutoverRuntimeArm"), responses } },
+  "/lead-import/cutover/manifests/{id}/exceptions": { get: { ...secured, parameters: [id], summary: "Read exact current exception coverage and true-observation hashes; private source payloads omitted, quarantine is not ingestion", responses: { "200": { description: "Current cases, dispositions, coverage and live capabilities; old snapshots are not backfilled" }, ...Object.fromEntries(Object.entries(responses).filter(([code]) => code !== "201")) } } },
+  "/lead-import/cutover/manifests/{id}/exceptions/{caseId}/disposition": { post: { ...secured, parameters: [id, { name: "caseId", in: "path", required: true, schema: uuid }], summary: "Explicit motivated QUARANTINE_PRESERVE only; never retries/rewrites REVIEW or Leads and never rearms on replay", requestBody: body("CutoverQuarantine"), responses } },
 };

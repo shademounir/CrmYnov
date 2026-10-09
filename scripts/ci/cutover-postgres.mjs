@@ -18,7 +18,9 @@ const proofDirectory = mkdtempSync(join(proofRoot, "crmy63-cutover-"));
 const baselineRef = "397883c46793c8cee5f71700df78b849722ac418";
 // The baseline object must exist in the checkout. No implicit fetch or guessed
 // fallback: CI checks out full history, while local work remains read-only Git.
-const git = args => execFileSync("git", args, { cwd: repository, encoding: "utf8", windowsHide: true, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
+// Fixed system installations only: never resolve a program from the checkout or PATH.
+const git = args => execFileSync(process.platform === "win32" ? "C:/Program Files/Git/cmd/git.exe" : "/usr/bin/git", args,
+  { cwd: repository, encoding: "utf8", windowsHide: true, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
 const migrationDirectory = resolve(repository, "apps/api/prisma/migrations");
 const migrationSets = cutoverMigrationSets(git(["ls-tree", "-d", "--name-only", `${baselineRef}:apps/api/prisma/migrations`]).trim().split(/\r?\n/u),
   readdirSync(migrationDirectory, { withFileTypes: true }).filter(entry => entry.isDirectory() && existsSync(join(migrationDirectory, entry.name, "migration.sql"))).map(entry => entry.name));
@@ -108,7 +110,8 @@ await withPreservedCleanup(async () => {
   writeFileSync(join(proofDirectory, "private-client-generation.log"), generate, { flag: "wx" });
   const clientSmoke = `const {PrismaClient}=require(${JSON.stringify(clientDirectory)}); const p=new PrismaClient();
     (async()=>{try{const counts={manifests:await p.importCutoverManifest.count(),receipts:await p.importCutoverReceipt.count(),effects:await p.importCutoverEffect.count(),
-      runtimes:await p.importCutoverRuntime.count(),runtimeRuns:await p.importCutoverRuntimeRun.count(),runtimeReceipts:await p.importCutoverRuntimeReceipt.count()};
+      runtimes:await p.importCutoverRuntime.count(),runtimeRuns:await p.importCutoverRuntimeRun.count(),runtimeReceipts:await p.importCutoverRuntimeReceipt.count(),
+      exceptionCases:await p.importCutoverExceptionCase.count(),exceptionDispositions:await p.importCutoverExceptionDisposition.count()};
       if(Object.values(counts).some(count=>count!==0))throw Error('ledger_not_empty');
       console.log(JSON.stringify({newClient:true,counts}));}finally{await p.$disconnect();}})().catch(e=>{console.error(e.message);process.exitCode=1});`;
   const smoke = [database, emptyDatabase].map(db => ({ database: db, result: JSON.parse(runNode(["-e", clientSmoke], { env: { ...env, DATABASE_URL: `postgresql://postgres@${binding}/${db}` } })) }));

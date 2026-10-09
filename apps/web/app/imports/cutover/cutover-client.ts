@@ -20,6 +20,22 @@ export interface CutoverManifest {
   compensationApplied?: false;
 }
 export interface CutoverEffect { id: string; sourceKey: string; outcome: "CREATED" | "LINKED_BASELINE" | "REVIEW"; batchId: string | null; reason: string | null; compensationStatus: "REQUESTED" | "BLOCKED_DOWNSTREAM" | null; compensationReason: string | null; createdAt: string; comparedAt: string | null; leadVisible: boolean; leadId?: string }
+export interface CutoverExceptionDisposition { action: "QUARANTINE_PRESERVE"; reason: string; actorId: string; decidedAt: string; decidedManifestVersion: number }
+export interface CutoverExceptionCase {
+  id: string; sourceKey: string; kind: "SOURCE_CHANGED" | "SOURCE_REMOVED" | "EFFECT_REVIEW"; evidenceSha256: string; generation: number;
+  present: boolean; originalFingerprint: string; observedFingerprint: string | null; observedOriginalArrivedAt: string | null;
+  effectId?: string | null; batchId?: string | null; reasonCode?: string | null;
+  disposition: CutoverExceptionDisposition | null; current: boolean; requiresReobservation: boolean;
+}
+export interface CutoverExceptions {
+  id: string; version: number; state: CutoverState; bindingValid: boolean;
+  observation: { sourceEvidenceSha256: string; bindingSha256: string; headerSha256: string; observedAt: string; observedManifestVersion: number } | null;
+  cases: CutoverExceptionCase[];
+  summary: { currentCases: number; unresolvedCases: number; quarantinedCases: number; uniqueQuarantinedSources: number; coverageValid: boolean; requiresReobservation: boolean; allDispositionsReconciled: boolean };
+  capabilities: { canQuarantine: boolean; canObserve: boolean };
+}
+export interface CutoverQuarantineInput { expectedVersion: number; evidenceSha256: string; action: "QUARANTINE_PRESERVE"; reason: string; confirmed: true; idempotencyKey: string }
+export interface CutoverQuarantineResult extends CutoverExceptions { receipt: { caseId: string; evidenceSha256: string; action: "QUARANTINE_PRESERVE"; reason: string; actorId: string; decidedAt: string }; replayed: boolean }
 export class CutoverApiError extends Error { constructor(readonly status: number, readonly code: string) { super("cutover_request_refused"); } }
 export function cutoverId(value: string): string | undefined { return /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/iu.test(value) ? value : undefined; }
 export function cutoverUtc(value: string): boolean {

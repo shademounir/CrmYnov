@@ -10,10 +10,11 @@ import { DynamicPermissionRepository, type PermissionTransaction } from "../perm
 import { readSheetConfiguration } from "../sheet-import/sheet-import-configuration.js";
 import { SheetSource } from "../sheet-import/synthetic-sheet-source.js";
 import { cutoverCounts, cutoverFinalFreeze, cutoverHash, cutoverInvalid, cutoverObject, cutoverRequest, cutoverUuid, observeCutover } from "./cutover.contract.js";
-import { consumeCutover, cutoverBinding } from "./cutover-consumer.js";
+import { authorizeCutoverExceptionTargets, consumeCutover, cutoverBinding } from "./cutover-consumer.js";
 import { assertCutoverRuntimeAuthority, assertCutoverRuntimeLead, type CutoverDelegation, type CutoverRuntimeAuthority } from "./cutover-runtime-authority.js";
 import { loadCutover, updateCutover, type StoredCutover } from "./cutover.store.js";
 import { loadCutoverRuntime, runtimeBindingHash, runtimeReceipt, runtimeReplay, type CutoverQualification, type StoredCutoverRuntime } from "./cutover-runtime.store.js";
+import { assertCutoverExceptions, cutoverExceptionState, observeCutoverExceptions, refreshCutoverExceptions } from "./cutover-exceptions.js";
 
 function conflict(code: string): never { throw new ConflictException({ code }); }
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -137,12 +138,15 @@ export class CutoverRuntimeService {
               const automaticKeys = new Set(automatic.map((entry) => entry.key));
               const inventory = observed.entries.map((entry) => automaticKeys.has(entry.key) ? { ...entry, decision: "KEEP_FOR_CATCHUP" as const } : entry);
               row = await updateCutover(tx, row, { ...row, inventory, headerSha256: observed.headerSha256, snapshotSha256: observed.snapshotSha256,
-                observedAt: new Date(), sourceCount: observed.sourceCount, ...(cutoverCounts(inventory).sourceIssues ? { state: "BASELINED" as const, reportSha256: null } : {}) });
+                observedAt: new Date(), sourceCount: observed.sourceCount });
+              row = await observeCutoverExceptions(tx, row, values);
               ownedClaim.manifestVersion = row.version;
               if (automatic.length) await this.audit(tx, row, authority.actorId, ["SYSTEM"], "AUTOMATIC_POST_T0_POLICY", `${ownedClaim.runId}:observe`,
                 { runId: ownedClaim.runId, runtimeVersion: runtime.version, epoch: ownedClaim.epoch, delegation: runtime.delegation, qualificationSha256: runtime.qualification.artifactSha256,
                   policy: "AUTOMATIC_POST_T0_POLICY_V1", sourceKeys: automatic.map((entry) => entry.key) });
-              if (cutoverCounts(inventory).sourceIssues) {
+              const exceptions = await cutoverExceptionState(tx, row);
+              if (!exceptions.coverageValid || exceptions.unresolvedCases || exceptions.requiresReobservation) {
+                row = await updateCutover(tx, row, { ...row, state: "BASELINED", reportSha256: null }); ownedClaim.manifestVersion = row.version;
                 await tx.$executeRaw`UPDATE import_cutover_runtimes SET state='PAUSED',lease_manifest_version=${row.version} WHERE manifest_id=${id}::uuid`;
                 await this.audit(tx, row, authority.actorId, ["SYSTEM"], "SOURCE_REVIEW_REQUIRED", `${ownedClaim.runId}:source`, { runId: ownedClaim.runId, delegation: runtime.delegation, counts: cutoverCounts(inventory) });
                 this.flags(); await this.renew(tx, ownedClaim, row.version); return { processed: 0, blocked: true };
@@ -155,12 +159,18 @@ export class CutoverRuntimeService {
                 runtime.version, correlationId, configuration.assignment),
             });
             row = await updateCutover(tx, row, { ...row }); ownedClaim.manifestVersion = row.version;
+            row = await refreshCutoverExceptions(tx, row);
+            const exceptions = await cutoverExceptionState(tx, row), reviewBlocked = !exceptions.coverageValid || exceptions.unresolvedCases > 0 || exceptions.requiresReobservation;
+            if (reviewBlocked) {
+              row = await updateCutover(tx, row, { ...row, state: "BASELINED", reportSha256: null }); ownedClaim.manifestVersion = row.version;
+              await tx.$executeRaw`UPDATE import_cutover_runtimes SET state='PAUSED',lease_manifest_version=${row.version} WHERE manifest_id=${id}::uuid`;
+            }
             const summary = { processed: consumed, runId: ownedClaim.runId, epoch: ownedClaim.epoch, manifestVersion: row.version, runtimeVersion: runtime.version, delegation: runtime.delegation };
             await runtimeReceipt(tx, id, "CONSUME", `${ownedClaim.runId}:${chunk}`, cutoverHash(summary), authority.actorId, summary);
             await this.audit(tx, row, authority.actorId, ["SYSTEM"], "SCHEDULED_CONSUME", `${ownedClaim.runId}:${chunk}`, summary);
             await this.authority(tx, row, runtime); this.flags();
             await this.renew(tx, ownedClaim, row.version);
-            return { processed: consumed, blocked: false };
+            return { processed: consumed, blocked: reviewBlocked };
           });
           processed += result.processed; blocked = result.blocked; if (result.blocked || result.processed < limit) break;
         }
@@ -200,8 +210,10 @@ export class CutoverRuntimeService {
   }
   private async ready(tx: PermissionTransaction, row: StoredCutover, authority: CutoverRuntimeAuthority): Promise<void> {
     cutoverFinalFreeze(row.contract.excelFrozenAt, row.contract.t0);
-    const counts = cutoverCounts(row.inventory);
-    if (row.state !== "READY_FOR_CATCHUP" || !row.reportSha256 || !row.observedAt || counts.sourceIssues || counts.overlapReview) conflict("cutover_reconciliation_required");
+    const exceptions = await assertCutoverExceptions(tx, row);
+    await authorizeCutoverExceptionTargets(tx, row, exceptions.cases.map(({ item }) => item), (leadId) => assertCutoverRuntimeLead(tx, authority, leadId));
+    if (row.state !== "READY_FOR_CATCHUP" || !row.reportSha256 || !row.observedAt
+      || row.inventory.some((entry) => entry.classification === "BACKLOG" && !entry.decision && !exceptions.quarantinedKeys.has(entry.key))) conflict("cutover_reconciliation_required");
     const configuration = readSheetConfiguration((await cutoverBinding(tx, row)).configuration);
     const report = cutoverObject(await this.bootstrap.reportCutoverRuntime(tx, row.bootstrapPackageId, authority.delegation, row.id, configuration.assignment.strategy !== "UNASSIGNED"));
     if (report.cutoverBlocked !== false || cutoverHash(report) !== row.reportSha256) conflict("cutover_reconciliation_required");
@@ -248,6 +260,7 @@ export class CutoverRuntimeService {
   }
   private async audit(tx: PermissionTransaction, row: StoredCutover, actorId: string, roles: readonly string[], operation: string, key: string, after: unknown): Promise<void> {
     await tx.auditEvent.create({ data: { actorId, actorRoles: [...roles], campusId: row.campusId, eventType: `CUTOVER_RUNTIME_${operation}`, resourceType: "IMPORT_CUTOVER", resourceId: row.id,
-      result: "SUCCESS", correlationId: `cutover:${row.id}`, idempotencyKey: `c63runtime:${row.id}:${cutoverHash([operation, key])}`, after: json(after) } });
+      result: "SUCCESS", correlationId: `cutover:${row.id}`, idempotencyKey: `c63runtime:${row.id}:${cutoverHash([operation, key])}`,
+      after: json({ ...cutoverObject(after), sourceEvidenceSha256: row.exceptionObservation?.sourceEvidenceSha256 ?? null, exceptionCaseIds: row.exceptionObservation?.cases.map((item) => item.caseId) ?? [] }) } });
   }
 }

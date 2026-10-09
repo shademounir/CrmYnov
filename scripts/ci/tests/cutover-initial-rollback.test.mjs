@@ -20,6 +20,14 @@ test("migration discovery keeps all old identifiers and accepts future additive 
   assert.throws(() => cutoverMigrationSets([old], [old, old]), /history_invalid/u);
   assert.throws(() => cutoverMigrationSets([old], [old, "../private"]), /history_invalid/u);
 });
+test("migration ordering is explicit ordinal order for timestamp and name ties, independent of input order", () => {
+  const oldA = "20260901000000_a", oldZ = "20260901000000_z";
+  const first = "20261009070000_a", tied = "20261009070000_z", later = "20261009120000_quarantine";
+  const before = [oldZ, oldA], current = [later, oldZ, tied, first, oldA];
+  assert.deepEqual(cutoverMigrationSets(before, current), { legacy: [oldA, oldZ], added: [first, tied, later] });
+  assert.deepEqual(before, [oldZ, oldA]);
+  assert.deepEqual(current, [later, oldZ, tied, first, oldA]);
+});
 test("snapshot hashes exact row content, not only counts, and rejects unsafe catalogue identifiers", () => {
   let label = "Before";
   const sql = (_database, statement) => {

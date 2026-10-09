@@ -29,6 +29,9 @@
 .cutover-counts dd { margin: 8px 0 0; font-size: 23px; font-weight: 750; overflow-wrap: anywhere; }
 .cutover-submissions { display: grid; gap: 14px; }
 .cutover-submission { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; }
+.cutover-exception-proof { margin-top: 16px; min-width: 0; }
+.cutover-exception-proof summary { min-height: 44px; padding: 10px 0; box-sizing: border-box; cursor: pointer; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.cutover-exception-proof summary:focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
 @media (max-width: 1280px) { .cutover-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1024px) { .cutover-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 768px) { .cutover-card { padding: 16px; } .cutover-fields { grid-template-columns: minmax(0, 1fr); } .cutover-page .ui-page-header { grid-template-columns: minmax(0, 1fr); align-items: stretch; } .cutover-page .ui-page-header__actions, .cutover-page .ui-page-header__actions a { width: 100%; min-width: 0; box-sizing: border-box; } }

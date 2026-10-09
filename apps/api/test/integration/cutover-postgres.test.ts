@@ -210,9 +210,11 @@ test("CRMY-63 real PostgreSQL/HTTP: durable T0, bounded delta, lost response rep
     await assert.rejects(() => revokeService.observe(id, delta, actor), (error: unknown) => error instanceof HttpException && error.getStatus() === 403);
     assert.equal((await request(`${path}/${id}`, "GET")).status, 401);
     const swagger = await success<{ paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } }>(await fetch(`${origin}/docs-json`), 200);
-    assert.equal(Object.keys(swagger.paths).filter((route) => route.startsWith("/lead-import/cutover/")).length, 14); assert.ok(swagger.components.schemas.CutoverCreate);
+    assert.equal(Object.keys(swagger.paths).filter((route) => route.startsWith("/lead-import/cutover/")).length, 16); assert.ok(swagger.components.schemas.CutoverCreate);
     for (const suffix of ["", "/qualify", "/arm", "/disarm"]) assert.ok(swagger.paths[`/lead-import/cutover/manifests/{id}/runtime${suffix}`]);
     assert.ok(swagger.components.schemas.CutoverRuntimeQualification); assert.ok(swagger.components.schemas.CutoverRuntimeArm);
+    assert.ok(swagger.paths["/lead-import/cutover/manifests/{id}/exceptions"]);
+    assert.ok(swagger.paths["/lead-import/cutover/manifests/{id}/exceptions/{caseId}/disposition"]); assert.ok(swagger.components.schemas.CutoverQuarantine);
   } finally { await app.close(); await prisma.onModuleDestroy(); }
 });
 
@@ -376,6 +378,29 @@ test("CRMY-63 manual NEW catch-up: stable stream, atomic replay, explicit baseli
     assert.deepEqual(await counts(), beforeCapabilityReplay); await grant(original, noConfirm, 3);
     const noMore = await service().consume(id, { expectedVersion: completed.version, idempotencyKey: `no-more-${nonce}`, limit: 25, confirmed: true }, actor) as Manifest;
     assert.equal((await client.sheetImportConnector.findUniqueOrThrow({ where: { id: connector.id } })).enabled, false);
+    // An exception also revalidates the actual BASELINE target on detail reads
+    // and historical decision replay, even for a GLOBAL Super Admin.
+    const linkedPayload = source.values.rows.find((row) => row.ID === "linked")!, linkedFirst = linkedPayload.First!, beforeExceptionTarget = await counts();
+    try {
+      linkedPayload.First = "Synthetic changed linked submission";
+      await assert.rejects(() => repository.transaction(async (tx) => {
+        const observed = await service().observe(id, { expectedVersion: noMore.version, idempotencyKey: `baseline-case-observe-${nonce}` }, actor) as Manifest;
+        const exception = await service().exceptions(id, actor) as { version: number; cases: Array<{ id: string; evidenceSha256: string }> };
+        assert.equal(exception.cases.length, 1);
+        const entry = exception.cases[0]!, body = { expectedVersion: exception.version, evidenceSha256: entry.evidenceSha256, action: "QUARANTINE_PRESERVE",
+          reason: "Synthetic BASELINE target exception remains protected", confirmed: true, idempotencyKey: `baseline-case-quarantine-${nonce}` };
+        await service().quarantine(id, entry.id, body, actor);
+        await tx.lead.update({ where: { id: baselineLeadId }, data: { campus: otherCampus.code } });
+        for (const action of [(): Promise<unknown> => service().exceptions(id, actor), (): Promise<unknown> => service().quarantine(id, entry.id, body, actor)]) {
+          await assert.rejects(action, (error: unknown) => error instanceof HttpException && error.getStatus() === 409 && JSON.stringify(error.getResponse()).includes("cutover_baseline_campus_mismatch"));
+        }
+        const masked = await service().get(id, actor) as { catchup: { allDispositionsReconciled: boolean }; capabilities: { canConsume: boolean } };
+        assert.equal(masked.catchup.allDispositionsReconciled, false); assert.equal(masked.capabilities.canConsume, false);
+        assert.ok(observed.version > noMore.version);
+        throw new HttpException({ code: "synthetic_abort_baseline_exception" }, 409);
+      }), (error: unknown) => error instanceof HttpException && JSON.stringify(error.getResponse()).includes("synthetic_abort_baseline_exception"));
+    } finally { linkedPayload.First = linkedFirst; }
+    assert.deepEqual(await counts(), beforeExceptionTarget);
     // An untouched creation can request compensation, but no retirement is falsely claimed.
     const untouched = createdEffects[0]!, touched = createdEffects[1]!;
     const requestBody = { expectedVersion: noMore.version, idempotencyKey: `compensate-request-${nonce}`, sourceKey: untouched.sourceKey, reason: "Synthetic reversible forward-action request", confirmed: true };

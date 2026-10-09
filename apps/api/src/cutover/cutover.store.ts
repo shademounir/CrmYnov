@@ -2,17 +2,20 @@ import { randomUUID } from "node:crypto";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import type { PermissionTransaction } from "../permissions/dynamic-repository.js";
 import { cutoverStreamKey, type CutoverContract, type CutoverEntry, type CutoverState } from "./cutover.contract.js";
+import type { CutoverExceptionObservation } from "./cutover-exceptions.contract.js";
+import { assertCutoverJournalBounds } from "./cutover-exceptions.bounds.js";
 
 export interface StoredCutover {
   id: string; campusId: string; actorId: string; bootstrapPackageId: string; connectorId: string;
   state: CutoverState; version: number; contract: CutoverContract; inventory: CutoverEntry[];
   headerSha256: string | null; snapshotSha256: string | null; observedAt: Date | null;
   sourceCount: number; reportSha256: string | null; suspensionReason: string | null; createdAt: Date;
+  exceptionObservation: CutoverExceptionObservation | null;
 }
 const projection = `id, campus_id AS "campusId", actor_id AS "actorId", bootstrap_package_id AS "bootstrapPackageId",
   connector_id AS "connectorId", state, version, contract, inventory, header_sha256 AS "headerSha256",
   snapshot_sha256 AS "snapshotSha256", observed_at AS "observedAt", source_count AS "sourceCount",
-  report_sha256 AS "reportSha256", suspension_reason AS "suspensionReason", created_at AS "createdAt"`;
+  report_sha256 AS "reportSha256", suspension_reason AS "suspensionReason", created_at AS "createdAt",exception_observation AS "exceptionObservation"`;
 
 /** Serializes legacy job claims/activation with creation of a preparatory binding.
  * A bound connector must not bypass the cutover ledger through the old executor. */
@@ -45,7 +48,8 @@ export async function updateCutover(tx: PermissionTransaction, row: StoredCutove
     header_sha256=${next.headerSha256},snapshot_sha256=${next.snapshotSha256},observed_at=${next.observedAt},source_count=${next.sourceCount},
     report_sha256=${next.reportSha256},suspension_reason=${next.suspensionReason},version=version+1
     WHERE id=${row.id}::uuid AND version=${row.version}`;
-  if (changed !== 1) throw new ConflictException({ code: "cutover_version_conflict" }); return loadCutover(tx, row.id, true);
+  if (changed !== 1) throw new ConflictException({ code: "cutover_version_conflict" });
+  await assertCutoverJournalBounds(tx, row.id); return loadCutover(tx, row.id, true);
 }
 export async function saveCutoverReceipt(tx: PermissionTransaction, row: StoredCutover, operation: string, key: string, fingerprint: string, actorId: string, response: unknown): Promise<void> {
   await tx.$executeRaw`INSERT INTO import_cutover_receipts (id,manifest_id,operation,key,fingerprint,actor_id,response)

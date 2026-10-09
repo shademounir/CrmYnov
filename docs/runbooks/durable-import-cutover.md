@@ -96,6 +96,60 @@ The guard is not a claim that unbound connectors or the entire upstream Google
 pipeline have been qualified. The runtime routes below cannot arm a real Google
 source.
 
+## Minimal exception quarantine — preservation, not ingestion
+
+`GET manifests/{id}/exceptions` exposes current source incidents and ingestion
+`REVIEW` cases without source payloads or contact values. Each immutable case has
+a generation and a hash of the **actual observation**: presence/absence, actual
+payload fingerprint, original arrival, stream/configuration binding and headers.
+The original inventory payload is preserved separately. An incident kind remains
+historical: a conserved disappearance may now show `present: true`. A subsequent
+edit or return creates a new case/generation; A→B→A never revives A's old decision.
+
+An authorized operator uses `POST .../exceptions/{caseId}/disposition` with the
+exact manifest version/evidence hash, an idempotency key, `confirmed: true`, a
+reason of 8–500 characters and the sole action `QUARANTINE_PRESERVE`. The command
+rechecks current campus, import rights and every referenced Lead/BASELINE target.
+In one transaction it records the disposition, suspends readiness, pauses/disarms
+the runtime, increments its epoch and abandons any owned running lease. An old
+worker returning from source I/O cannot commit over that epoch. Exact replay
+returns the decision and current authorized projection, never rearming anything.
+
+The operator sequence is explicit:
+
+1. Observe the source and inspect its current cases and true evidence.
+2. Decide motivated preservation for every current case that must be isolated.
+3. Perform a **new actual observation after the decision**. Neither the decision,
+   its replay nor an internal journal refresh counts as a source read.
+4. Reconcile the exact complete case set and the current BASELINE report.
+5. Separately requalify and explicitly rearm only when the runtime contract and
+   current authority permit it. A former qualification or arm receipt is not
+   reused as a new authorization.
+
+Quarantine does not create, link, retry, edit, delete or reclassify a Lead. It does
+not resolve an ingestion REVIEW, alter its batch/report/review items or release
+its durable submission/ingestion key. Such keys are excluded from catch-up, not
+converted into NEW. `allDispositionsReconciled` means every current case is covered
+and freshly reobserved/reconciled; it is distinct from `catchup.complete`, which
+remains false while quarantined keys or REVIEW effects exist. Missing/extra case
+references, changed bindings, inaccessible targets and new divergences fail
+closed. Old manifests with nullable observation metadata require a genuine new
+observation; no backfill or implicit requalification occurs.
+
+The durable exception bound is **cumulative**, not several independent 4 MiB
+allowances: the complete manifest row (inventory, observation, contract and
+metadata), all preserved case payloads/evidence and all dispositions together
+must stay within 4 MiB. Inventory entries + case rows + disposition rows must not
+exceed 10,000. The check runs again after final state updates. Refusal rolls back
+the attempted observation/disposition, version, receipt, audit and cursor; it
+never truncates history to make room. Existing receipts/audits retain their own
+contract; this is not a quota claim for all database storage.
+
+This minimal disposition is not a general revision, source correction, REVIEW
+resolution or recoverable compensation engine. Google qualification still stays
+`PREPARATION_ONLY`; the upstream immutable-ID/original-arrival proof and real
+activation gates remain open. Sheets stays OFF for real environments.
+
 ## External one-shot worker — synthetic qualification only
 
 `jobs/sheet-cutover` is a dedicated bounded process, not an HTTP request or an
@@ -137,7 +191,8 @@ arrival `>= T0` and unchanged binding/qualification, can become catch-up candida
 Initial overlap decisions are not inferred. Late pre-T0 arrivals remain excluded;
 contact collisions remain REVIEW. Changed/removed source entries pause the runtime
 and preserve the original inventory. A blocked or failed run must not be reported
-as successful ingestion. Resolving those source conflicts remains an open contract.
+as successful ingestion. Minimal motivated quarantine is available as described
+above; it preserves the conflict rather than correcting or ingesting its source.
 
 ## Mutations and replay
 
@@ -161,10 +216,10 @@ real workbook, contact, password or raw Terraform state belongs in Git/Jira.
   supersede workflow; do not delete its ledger or change T0 to bypass that guard.
 - `LOCAL_ROW` append-only mode is not supported by this cutover increment. The
   existing local-row detector is not proof of a T0-aware producer.
-- Effective recoverable compensation, revision/supersede workflow, explicit
-  SOURCE_CHANGED/SOURCE_REMOVED/REVIEW resolution and real Google qualification
-  remain unavailable. The isolated worker is not real Sheets activation, and a
-  compensation request is not a withdrawal.
+- Effective recoverable compensation, revision/supersede workflow, correction or
+  retry of SOURCE_CHANGED/SOURCE_REMOVED/REVIEW and real Google qualification remain
+  unavailable. Minimal quarantine only preserves/isolates these cases. The isolated
+  worker is not real Sheets activation, and a compensation request is not a withdrawal.
 - Upstream ID/original-date capability, real T0, final Excel freeze/delta review,
   STAGING rehearsal, target identities, notifications and monitoring remain
   separate operational gates. Keep Sheets OFF while these are incomplete.

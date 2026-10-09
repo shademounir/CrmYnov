@@ -78,7 +78,7 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
   private cutoverAdministration(context: ExecutionContext, next: CallHandler<unknown>, handler: string): Observable<unknown> {
     // Same split-phase boundary as Sheets: service owns fenced authorization before
     // and after source reads; never hold an outer transaction across remote I/O.
-    if (!["context", "create", "get", "observe", "decide", "reconcile", "suspend", "resume", "consume", "compensate", "runtimeGet", "runtimeQualify", "runtimeArm", "runtimeDisarm"].includes(handler)) permissionDenied();
+    if (!["context", "create", "get", "observe", "decide", "reconcile", "suspend", "resume", "consume", "compensate", "exceptions", "quarantine", "runtimeGet", "runtimeQualify", "runtimeArm", "runtimeDisarm"].includes(handler)) permissionDenied();
     const check = this.repository.readTransaction(async (tx): Promise<void> => {
       const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
       if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });

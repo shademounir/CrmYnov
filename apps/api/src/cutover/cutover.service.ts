@@ -15,7 +15,9 @@ import { cutoverCounts, cutoverFinalFreeze, cutoverHash, cutoverInstant, cutover
   cutoverStreamKey, observeCutover, type CutoverContract, type CutoverEntry } from "./cutover.contract.js";
 import { cutoverReplay, insertCutover, loadCutover, saveCutoverReceipt, updateCutover, type StoredCutover } from "./cutover.store.js";
 import { cutoverDownstreamHash, cutoverEffects } from "./cutover.effects.js";
-import { consumeCutover, cutoverBaselineTarget, cutoverBinding } from "./cutover-consumer.js";
+import { authorizeCutoverExceptionTargets, consumeCutover, cutoverBaselineTarget, cutoverBinding } from "./cutover-consumer.js";
+import { assertCutoverExceptions, cutoverExceptionState, loadCutoverExceptionCase, observeCutoverExceptions, refreshCutoverExceptions, quarantineCutoverCase,
+  CUTOVER_QUARANTINE_PAUSE, type CutoverExceptionCase, type CutoverExceptionState } from "./cutover-exceptions.js";
 
 function conflict(code: string): never { throw new ConflictException({ code }); }
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -98,7 +100,7 @@ export class CutoverService {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.execute"]);
       await this.binding(tx, row);
       const replay = await this.replay(tx, row, "OBSERVE", input.key, input.fingerprint, actor); if (replay !== undefined) return { replay };
-      this.expected(row, input.expectedVersion); this.available(row);
+      this.expected(row, input.expectedVersion); this.available(row, true);
       const connector = await this.binding(tx, row);
       return { row, connector, configuration: readSheetConfiguration(connector.configuration) };
     });
@@ -110,11 +112,12 @@ export class CutoverService {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.execute"], true);
       await this.binding(tx, row);
       const replay = await this.replay(tx, row, "OBSERVE", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
-      this.expected(row, input.expectedVersion); this.available(row); await this.binding(tx, row);
+      this.expected(row, input.expectedVersion); this.available(row, true); await this.binding(tx, row);
       const observed = observeCutover(row.contract, values, row.inventory, row.headerSha256 ?? undefined);
-      const updated = await updateCutover(tx, row, { ...row, state: "BASELINED", inventory: observed.entries,
+      let updated = await updateCutover(tx, row, { ...row, state: "BASELINED", inventory: observed.entries,
         headerSha256: observed.headerSha256, snapshotSha256: observed.snapshotSha256, observedAt: capturedAt, sourceCount: observed.sourceCount,
         reportSha256: null, suspensionReason: null });
+      updated = await observeCutoverExceptions(tx, updated, values);
       return this.record(tx, actor, updated, "OBSERVE", input.key, input.fingerprint, await this.view(tx, updated, actor));
     });
   }
@@ -148,8 +151,9 @@ export class CutoverService {
       this.expected(row, input.expectedVersion); this.available(row); await this.binding(tx, row);
       if (!row.observedAt || !row.headerSha256 || !row.snapshotSha256) conflict("cutover_baseline_missing");
       const report = cutoverObject(await this.bootstrap.report(row.bootstrapPackageId, actor));
-      const counts = cutoverCounts(row.inventory);
-      if (report.cutoverBlocked !== false || counts.sourceIssues || counts.overlapReview) conflict("cutover_reconciliation_incomplete");
+      const exceptions = await assertCutoverExceptions(tx, row);
+      await authorizeCutoverExceptionTargets(tx, row, exceptions.cases.map(({ item }) => item), (leadId) => this.authorizeLead(tx, actor, leadId));
+      if (report.cutoverBlocked !== false || row.inventory.some((entry) => entry.classification === "BACKLOG" && !entry.decision && !exceptions.quarantinedKeys.has(entry.key))) conflict("cutover_reconciliation_incomplete");
       for (const entry of row.inventory.filter((item) => item.targetBootstrapRowId)) {
         await this.authorizeLead(tx, actor, await cutoverBaselineTarget(tx, row, entry.targetBootstrapRowId));
       }
@@ -184,8 +188,42 @@ export class CutoverService {
       const processed = await consumeCutover(tx, row, limit, mappings, { report: () => this.bootstrap.report(row.bootstrapPackageId, actor),
         authorizeLead: (leadId) => this.authorizeLead(tx, actor, leadId),
         persist: (record, configuration, key, correlationId) => ingestion.persistCutoverRecord(tx, record, configuration.mapping, key, current, correlationId, configuration.assignment) });
-      const updated = await updateCutover(tx, row, { ...row });
+      let updated = await updateCutover(tx, row, { ...row });
+      updated = await refreshCutoverExceptions(tx, updated);
+      if ((await cutoverExceptionState(tx, updated)).unresolvedCases) updated = await updateCutover(tx, updated, { ...updated, state: "BASELINED", reportSha256: null });
       return this.record(tx, actor, updated, "CONSUME", input.key, input.fingerprint, { ...await this.view(tx, updated, actor), processed });
+    });
+  }
+  async exceptions(id: string, actor: Principal): Promise<unknown> {
+    cutoverUuid(id); return this.permissions.readTransaction(async (tx) => {
+      const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view"]);
+      return this.exceptionView(tx, row, actor, await cutoverExceptionState(tx, row));
+    });
+  }
+  async quarantine(id: string, caseId: string, raw: unknown, actor: Principal): Promise<unknown> {
+    cutoverUuid(id); cutoverUuid(caseId); const input = cutoverRequest(raw), evidenceSha256 = cutoverSha(input.body.evidenceSha256), reason = cutoverText(input.body.reason, 500);
+    if (input.body.action !== "QUARANTINE_PRESERVE" || input.body.confirmed !== true || reason.length < 8) cutoverInvalid("cutover_quarantine_confirmation_required");
+    return this.permissions.transaction(async (tx) => {
+      const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.review.resolve", "import.confirm"], true);
+      await this.binding(tx, row); const current = await currentPrincipal(tx, actor);
+      const referencedCase = await loadCutoverExceptionCase(tx, id, caseId);
+      if (referencedCase) await this.authorizeExceptionCase(tx, row, actor, referencedCase);
+      const replay = await this.replay(tx, row, "QUARANTINE", input.key, cutoverHash({ ...input.body, caseId }), actor);
+      if (replay !== undefined) {
+        const receipt = cutoverObject(replay).receipt;
+        return { ...await this.exceptionView(tx, row, actor, await cutoverExceptionState(tx, row)), receipt, replayed: true };
+      }
+      this.expected(row, input.expectedVersion);
+      if (row.state === "SUSPENDED" && row.suspensionReason !== CUTOVER_QUARANTINE_PAUSE) conflict("cutover_suspended");
+      const state = await cutoverExceptionState(tx, row), entry = state.cases.find(({ item }) => item.id === caseId);
+      if (!state.coverageValid || !entry || entry.item.evidenceSha256 !== evidenceSha256) conflict("cutover_exception_evidence_changed");
+      if (entry.disposition) conflict("cutover_exception_already_disposed");
+      await this.authorizeExceptionCase(tx, row, actor, entry.item);
+      const disposition = await quarantineCutoverCase(tx, row, entry.item, current.userId, reason);
+      const updated = await updateCutover(tx, row, { ...row, state: "SUSPENDED", suspensionReason: CUTOVER_QUARANTINE_PAUSE, reportSha256: null });
+      const receipt = { caseId, evidenceSha256, action: disposition.action, reason, actorId: current.userId, decidedAt: disposition.decidedAt.toISOString() };
+      return this.record(tx, actor, updated, "QUARANTINE", input.key, cutoverHash({ ...input.body, caseId }),
+        { ...await this.exceptionView(tx, updated, actor, await cutoverExceptionState(tx, updated)), receipt, replayed: false });
     });
   }
   async compensate(id: string, raw: unknown, actor: Principal): Promise<unknown> {
@@ -212,7 +250,7 @@ export class CutoverService {
     return cutoverBinding(tx, row);
   }
   private expected(row: StoredCutover, version: number): void { if (row.version !== version) conflict("cutover_version_conflict"); }
-  private available(row: StoredCutover): void { if (row.state === "SUSPENDED") conflict("cutover_suspended"); }
+  private available(row: StoredCutover, observing = false): void { if (row.state === "SUSPENDED" && !(observing && row.suspensionReason === CUTOVER_QUARANTINE_PAUSE)) conflict("cutover_suspended"); }
   private async manifest(tx: PermissionTransaction, id: string, actor: Principal, keys: string[], lock = false): Promise<StoredCutover> {
     const row = await loadCutover(tx, id, lock); await this.authorize(tx, actor, row.campusId, keys); return row;
   }
@@ -267,12 +305,18 @@ export class CutoverService {
         compensationStatus: effect.compensationStatus, compensationReason: effect.compensationReason, createdAt: effect.createdAt.toISOString(), comparedAt: effect.comparedAt?.toISOString() ?? null,
         ...(leadVisible ? { leadId: effect.leadId } : {}), leadVisible });
     }
-    const done = new Set(effects.map((effect) => effect.sourceKey)), pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !done.has(entry.key)).length;
+    const exceptions = await cutoverExceptionState(tx, row);
+    let exceptionTargetsVisible = true;
+    for (const { item } of exceptions.cases) {
+      try { await this.authorizeExceptionCase(tx, row, actor, item); }
+      catch (error) { if (!(error instanceof HttpException && [403, 409].includes(error.getStatus()))) throw error; exceptionTargetsVisible = false; }
+    }
+    const done = new Set(effects.map((effect) => effect.sourceKey)), pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !done.has(entry.key) && !exceptions.quarantinedKeys.has(entry.key)).length;
     const operational = bindingValid && row.state !== "SUSPENDED", freezeQualified = row.contract.excelFrozenAt === row.contract.t0;
-    const capabilities = { canObserve: operational && allowed(["import.execute"]), canDecide: operational && !!row.observedAt && allowed(["import.review.resolve"]),
+    const capabilities = { canObserve: bindingValid && (operational || row.suspensionReason === CUTOVER_QUARANTINE_PAUSE) && allowed(["import.execute"]), canDecide: operational && !!row.observedAt && allowed(["import.review.resolve"]),
       canReconcile: operational && freezeQualified && !!row.observedAt && allowed(["import.confirm"]), canSuspend: operational && allowed(["import.confirm"]),
       canResume: bindingValid && row.state === "SUSPENDED" && allowed(["import.confirm"]),
-      canConsume: operational && freezeQualified && row.state === "READY_FOR_CATCHUP" && row.contract.schemaVersion === 2 && allowed(["import.execute", "import.confirm", "lead.create", "lead.view"]),
+      canConsume: operational && freezeQualified && exceptionTargetsVisible && exceptions.allDispositionsReconciled && row.state === "READY_FOR_CATCHUP" && row.contract.schemaVersion === 2 && allowed(["import.execute", "import.confirm", "lead.create", "lead.view"]),
       canCompensate: bindingValid && compensable && allowed(["import.confirm"]) };
     const submissions = [];
     for (const { key, externalId, fingerprint, originalArrivedAt, classification, issue, decision, targetBootstrapRowId } of row.inventory) {
@@ -289,9 +333,38 @@ export class CutoverService {
       localT0: new Intl.DateTimeFormat("fr-MA", { timeZone: row.contract.timeZone, dateStyle: "full", timeStyle: "long" }).format(new Date(row.contract.t0)),
       submissions,
       effects: visibleEffects, catchup: { total: effects.length, created: effects.filter((effect) => effect.outcome === "CREATED").length, linkedBaseline: effects.filter((effect) => effect.outcome === "LINKED_BASELINE").length,
-        review: effects.filter((effect) => effect.outcome === "REVIEW").length, pending, complete: bindingValid && freezeQualified && row.state === "READY_FOR_CATCHUP" && pending === 0 && effects.every((effect) => effect.outcome !== "REVIEW" && !effect.compensationStatus) },
+        review: effects.filter((effect) => effect.outcome === "REVIEW").length, quarantined: exceptions.quarantinedKeys.size,
+        allDispositionsReconciled: bindingValid && exceptionTargetsVisible && row.state === "READY_FOR_CATCHUP" && exceptions.allDispositionsReconciled,
+        pending, complete: bindingValid && freezeQualified && exceptionTargetsVisible && exceptions.allDispositionsReconciled && exceptions.quarantinedKeys.size === 0 && row.state === "READY_FOR_CATCHUP" && pending === 0 && effects.every((effect) => effect.outcome !== "REVIEW" && !effect.compensationStatus) },
       automaticActivationAvailable: false, effectsApplied: effects.some((effect) => effect.outcome === "CREATED"), compensationApplied: false, privateSourcePayloadOmitted: true,
       limitations: ["SOURCE_IDENTITY_EVIDENCE_DECLARED_NOT_UPSTREAM_ATTESTED", "AUTOMATIC_CATCHUP_NOT_IMPLEMENTED", "RECOVERABLE_COMPENSATION_NOT_IMPLEMENTED", "LOCAL_ROW_NOT_SUPPORTED", "SHEETS_REMAINS_DISABLED"] };
+  }
+  private async exceptionView(tx: PermissionTransaction, row: StoredCutover, actor: Principal, state: CutoverExceptionState): Promise<Record<string, unknown>> {
+    const current = await currentPrincipal(tx, actor), campus = await canonicalCampus(tx, row.campusId), snapshots = await this.permissions.snapshots(tx);
+    const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
+    const allowed = (keys: string[]): boolean => keys.every((key) => evaluatePermission(current, key, snapshots, context).allowed);
+    let bindingValid = true; try { await this.binding(tx, row); } catch (error) { if (!(error instanceof ConflictException)) throw error; bindingValid = false; }
+    for (const { item } of state.cases) await this.authorizeExceptionCase(tx, row, actor, item);
+    const observation = state.observation;
+    return { id: row.id, version: row.version, state: row.state, bindingValid,
+      observation: observation ? { sourceEvidenceSha256: observation.sourceEvidenceSha256, bindingSha256: observation.bindingSha256, headerSha256: observation.headerSha256,
+        observedAt: observation.observedAt, observedManifestVersion: observation.observedManifestVersion } : null,
+      cases: state.cases.map(({ item, disposition, requiresReobservation }) => ({ id: item.id, sourceKey: item.sourceKey, kind: item.kind, generation: item.generation,
+        evidenceSha256: item.evidenceSha256, present: item.evidence.source.present, originalFingerprint: item.evidence.originalFingerprint,
+        observedFingerprint: item.evidence.source.fingerprint, observedOriginalArrivedAt: item.evidence.source.originalArrivedAt,
+        effectId: item.evidence.review?.effectId ?? null, batchId: item.evidence.review?.batchId ?? null, reasonCode: item.evidence.review?.reason ?? null,
+        disposition: disposition ? { action: disposition.action, reason: disposition.reason, actorId: disposition.actorId, decidedAt: disposition.decidedAt.toISOString(), decidedManifestVersion: disposition.decidedManifestVersion } : null,
+        current: true, requiresReobservation })),
+      summary: { coverageValid: state.coverageValid, currentCases: state.expectedCases, unresolvedCases: state.unresolvedCases, quarantinedCases: state.quarantinedCases,
+        uniqueQuarantinedSources: state.quarantinedKeys.size, requiresReobservation: state.requiresReobservation,
+        allDispositionsReconciled: bindingValid && row.state === "READY_FOR_CATCHUP" && state.allDispositionsReconciled },
+      capabilities: { canQuarantine: bindingValid && state.coverageValid && state.unresolvedCases > 0 && (row.state !== "SUSPENDED" || row.suspensionReason === CUTOVER_QUARANTINE_PAUSE)
+          && allowed(["import.review.resolve", "import.confirm"]),
+        canObserve: bindingValid && (row.state !== "SUSPENDED" || row.suspensionReason === CUTOVER_QUARANTINE_PAUSE) && allowed(["import.execute"]) },
+      privateSourcePayloadOmitted: true, quarantineIsNotIngestion: true, effectsPreserved: true };
+  }
+  private async authorizeExceptionCase(tx: PermissionTransaction, row: StoredCutover, actor: Principal, item: CutoverExceptionCase): Promise<void> {
+    await authorizeCutoverExceptionTargets(tx, row, [item], (leadId) => this.authorizeLead(tx, actor, leadId));
   }
   private async record(tx: PermissionTransaction, actor: Principal, row: StoredCutover, operation: string, key: string, fingerprint: string, response: unknown): Promise<unknown> {
     const current = await currentPrincipal(tx, actor);
@@ -299,7 +372,8 @@ export class CutoverService {
     await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: row.campusId,
       eventType: `CUTOVER_${operation}`, resourceType: "IMPORT_CUTOVER", resourceId: row.id, result: "SUCCESS",
       correlationId: `cutover:${row.id}`, idempotencyKey: `cutover:${row.id}:${operation}:${cutoverHash(key)}`,
-      after: json({ manifestId: row.id, state: row.state, version: row.version, counts: cutoverCounts(row.inventory), requestFingerprint: fingerprint }) } });
+      after: json({ manifestId: row.id, state: row.state, version: row.version, counts: cutoverCounts(row.inventory), requestFingerprint: fingerprint,
+        sourceEvidenceSha256: row.exceptionObservation?.sourceEvidenceSha256 ?? null, exceptionCaseIds: row.exceptionObservation?.cases.map((item) => item.caseId) ?? [] }) } });
     return response;
   }
 }

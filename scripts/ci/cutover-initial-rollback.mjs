@@ -18,7 +18,11 @@ export function cutoverMigrationSets(baseline, current) {
   const valid = value => /^\d{14}_[a-z0-9_]+$/u.test(value);
   if (!baseline.length || [...baseline, ...current].some(value => !valid(value)) || new Set(current).size !== current.length
     || new Set(baseline).size !== baseline.length || baseline.some(value => !current.includes(value))) throw new Error("cutover_rollback_migration_history_invalid");
-  return { legacy: [...baseline].sort(), added: current.filter(value => !baseline.includes(value)).sort() };
+  const compareIds = (left, right) => {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+  };
+  return { legacy: [...baseline].sort(compareIds), added: current.filter(value => !baseline.includes(value)).sort(compareIds) };
 }
 
 /** An oracle over observations collected from PostgreSQL by this owned synthetic

@@ -2,7 +2,7 @@ import "reflect-metadata";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { HttpException } from "@nestjs/common";
+import { ConflictException, HttpException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { createApplication } from "../../src/application.js";
 import { PrismaService } from "../../src/persistence/prisma.service.js";
@@ -23,9 +23,18 @@ import { bytesHash, CHUNK_BYTES, HISTORICAL_SHEETS } from "../../src/bootstrap-i
 import { syntheticHistoricalParts, syntheticZip } from "../fixtures/import/historical-workbook.synthetic.js";
 import type { SheetConfiguration } from "../../src/sheet-import/sheet-import-configuration.js";
 import type { SheetValues } from "../../src/sheet-import/google-sheets-adapter.js";
+import { loadCutover, updateCutover } from "../../src/cutover/cutover.store.js";
+import { cutoverEffects } from "../../src/cutover/cutover.effects.js";
 
 interface Manifest { id: string; version: number; state: string; counts: Record<string, number>; submissions: Array<{ key: string; externalId: string; classification: string; issue: string | null; decision: string | null }> }
 interface Runtime { version: number; state: string; delegation: { creatorId: string; authorizedBy: string }; }
+interface Exceptions {
+  id: string; version: number; state: string; bindingValid: boolean; observation: null | { sourceEvidenceSha256: string };
+  cases: Array<{ id: string; sourceKey: string; kind: string; generation: number; evidenceSha256: string; present: boolean; observedFingerprint: string | null;
+    disposition: null | { action: string }; requiresReobservation: boolean }>;
+  summary: { coverageValid: boolean; currentCases: number; unresolvedCases: number; quarantinedCases: number; allDispositionsReconciled: boolean; requiresReobservation: boolean };
+  capabilities: { canQuarantine: boolean; canObserve: boolean }; replayed?: boolean; receipt?: { caseId: string };
+}
 class ServerFixtureSource extends SyntheticSheetSource {
   reads = 0; afterRead: (() => Promise<void>) | undefined;
   constructor(public values: SheetValues) { super(); }
@@ -47,15 +56,19 @@ test("CRMY-63 PostgreSQL T0-aware one-shot: dual authority, synthetic qualificat
     };
     const campus = await reference("CAMPUS", "WORKER63"), otherCampus = await reference("CAMPUS", "OTHERWORKER63"), campaign = await reference("CAMPAIGN", "WORKER63"), program = await reference("PROGRAM", "WORKER63");
     await client.crmProgramAvailability.createMany({ data: [{ programId: program.id, campusId: campus.id, active: true }, { programId: program.id, campusId: otherCampus.id, active: true }] });
+    const tokens = new Map<string, string>();
     const account = async (role: "SUPER_ADMIN" | "ADMIN"): Promise<Principal> => {
       const password = `Synthetic!${randomBytes(12).toString("hex")}`, email = `worker-${randomUUID()}@example.invalid`, salt = randomBytes(16).toString("hex");
       const user = await client.collaborator.create({ data: { professionalEmail: email, professionalDisplayName: "Synthetic worker authority", roles: [role], campusId: campus.id, active: true, firstLoginRequired: false } });
       await client.localPasswordHash.create({ data: { collaboratorId: user.id, identityDigest: digestRecoveryValue(email), passwordSalt: salt, passwordDigest: deriveSecret(password, salt), mustChange: false } });
       const response = await fetch(`${origin}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
-      assert.equal(response.status, 201); const session = await response.json() as { sessionId: string };
+      assert.equal(response.status, 201); const session = await response.json() as { sessionId: string; token: string }; tokens.set(user.id, session.token);
       return { userId: user.id, roles: [role], scopes: role === "SUPER_ADMIN" ? [{ kind: "GLOBAL" }] : [{ kind: "CAMPUS", id: campus.id }], sessionId: session.sessionId };
     };
     const creator = await account("ADMIN"), authorizer = await account("SUPER_ADMIN");
+    const request = async (id: string, suffix: string, actor: Principal | null, body?: unknown): Promise<Response> => fetch(`${origin}/lead-import/cutover/manifests/${id}${suffix}`,
+      { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(actor ? { authorization: `Bearer ${tokens.get(actor.userId)!}` } : {}) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const columns = [{ sourceColumn: "ID", targetField: "externalId" as const, action: "DIRECT" as const }, { sourceColumn: "Original UTC", targetField: "occurredAt" as const, action: "DIRECT" as const },
       { sourceColumn: "First", targetField: "firstName" as const, action: "DIRECT" as const }, { sourceColumn: "Last", targetField: "lastName" as const, action: "DIRECT" as const },
       { sourceColumn: "Email", targetField: "email" as const, action: "DIRECT" as const }, { sourceColumn: "Education", targetField: "educationLevel" as const, action: "DIRECT" as const },
@@ -226,6 +239,169 @@ test("CRMY-63 PostgreSQL T0-aware one-shot: dual authority, synthetic qualificat
     assert.equal((await fixture.worker.tick({ manifestId: id }) as { runs: Array<{ status: string }> }).runs[0]?.status, "BLOCKED");
     const changed = await fixture.manual.get(id, creator) as Manifest; assert.equal(changed.submissions.find((entry) => entry.externalId === "initial-primary")?.issue, "SOURCE_CHANGED");
     assert.equal((await fixture.worker.get(id, authorizer) as Runtime).state, "PAUSED"); assert.equal((await counts() as { leads: number }).leads, (changedBefore as { leads: number }).leads);
+    // Minimal durable exception resolution never edits an imported Lead,
+    // historical payload, ingestion REVIEW or its stable submission key.
+    const business = async (): Promise<unknown> => ({ leads: await client.lead.findMany({ orderBy: { id: "asc" } }), activities: await client.leadActivity.findMany({ orderBy: { id: "asc" } }),
+      provenance: await client.leadProvenance.findMany({ orderBy: { id: "asc" } }), batches: await client.ingestionBatch.findMany({ orderBy: { id: "asc" } }), reports: await client.importReport.findMany({ orderBy: { id: "asc" } }),
+      review: await client.ingestionReviewItem.findMany({ orderBy: { id: "asc" } }), effects: await client.$queryRaw`SELECT * FROM import_cutover_effects ORDER BY id` });
+    const durable = async (manifestId: string): Promise<unknown> => ({ manifests: await client.$queryRaw`SELECT * FROM import_cutover_manifests WHERE id=${manifestId}::uuid`,
+      cases: await client.$queryRaw`SELECT * FROM import_cutover_exception_cases WHERE manifest_id=${manifestId}::uuid ORDER BY id`,
+      dispositions: await client.$queryRaw`SELECT d.* FROM import_cutover_exception_dispositions d JOIN import_cutover_exception_cases c ON c.id=d.case_id WHERE c.manifest_id=${manifestId}::uuid ORDER BY d.id`,
+      receipts: await client.$queryRaw`SELECT * FROM import_cutover_receipts WHERE manifest_id=${manifestId}::uuid ORDER BY id`,
+      runtime: await client.$queryRaw`SELECT * FROM import_cutover_runtimes WHERE manifest_id=${manifestId}::uuid`,
+      audits: await client.auditEvent.findMany({ where: { resourceId: manifestId }, orderBy: { id: "asc" } }) });
+    const exceptionGet = async (item = fixture): Promise<Exceptions> => item.manual.exceptions(item.manifest.id, creator) as Promise<Exceptions>;
+    const refresh = async (item = fixture): Promise<Manifest> => {
+      const current = await item.manual.get(item.manifest.id, creator) as Manifest;
+      return item.manual.observe(current.id, { expectedVersion: current.version, idempotencyKey: `exception-observe-${randomUUID()}` }, creator) as Promise<Manifest>;
+    };
+    const quarantineBody = (view: Exceptions, index = 0): Record<string, unknown> => ({ expectedVersion: view.version, evidenceSha256: view.cases[index]!.evidenceSha256,
+      action: "QUARANTINE_PRESERVE", reason: "Synthetic exception preserved for explicit later investigation", confirmed: true, idempotencyKey: `quarantine-${randomUUID()}` });
+    let exceptions = await exceptionGet(); assert.equal(exceptions.cases.length, 1); assert.equal(exceptions.cases[0]!.kind, "SOURCE_CHANGED");
+    const detailResponse = await request(id, "/exceptions", creator); assert.equal(detailResponse.status, 200);
+    const detail = await detailResponse.json() as Exceptions; assert.deepEqual(detail, exceptions);
+    assert.equal((await request(id, "/exceptions", null)).status, 401);
+    assert.ok(!JSON.stringify(detail).includes("@example.invalid")); assert.ok(!JSON.stringify(detail).includes('"payload"'));
+    const other = await account("ADMIN"); await client.collaborator.update({ where: { id: other.userId }, data: { campusId: otherCampus.id } });
+    assert.equal((await request(id, "/exceptions", other)).status, 403);
+    const firstCase = exceptions.cases[0]!, decision = quarantineBody(exceptions), beforeInvalid = await durable(id), businessBefore = await business();
+    for (const invalid of [{ ...decision, evidenceSha256: "0".repeat(64) }, { ...decision, confirmed: false }, { ...decision, reason: "short" }, { ...decision, action: "INGEST" }]) {
+      assert.ok([400, 409].includes((await request(id, `/exceptions/${firstCase.id}/disposition`, creator, invalid)).status));
+      assert.deepEqual(await durable(id), beforeInvalid);
+    }
+    // Aborting the outer transaction also rolls back the decision, audit,
+    // receipt, runtime epoch/disarm and manifest suspension together.
+    await assert.rejects(() => permissions.transaction(async () => { await fixture.manual.quarantine(id, firstCase.id, decision, creator); throw new ConflictException({ code: "synthetic_abort_quarantine" }); }), (error: unknown) => code(error) === "synthetic_abort_quarantine");
+    assert.deepEqual(await durable(id), beforeInvalid);
+    const epochBefore = (await fixture.worker.get(id, authorizer) as { epoch: number }).epoch;
+    const concurrent = await Promise.allSettled([fixture.manual.quarantine(id, firstCase.id, decision, creator), fixture.manual.quarantine(id, firstCase.id, decision, creator)]);
+    const outcomes: Exceptions[] = [];
+    for (const result of concurrent) {
+      if (result.status === "fulfilled") outcomes.push(result.value as Exceptions);
+      else { assert.equal(code(result.reason), "permission_version_conflict"); outcomes.push(await fixture.manual.quarantine(id, firstCase.id, decision, creator) as Exceptions); }
+    }
+    assert.deepEqual(outcomes.map((item) => item.replayed).sort(), [false, true]);
+    assert.equal((await fixture.worker.get(id, authorizer) as { epoch: number }).epoch, epochBefore + 1);
+    exceptions = await exceptionGet(); assert.equal(exceptions.state, "SUSPENDED"); assert.equal(exceptions.summary.requiresReobservation, true);
+    assert.equal(exceptions.summary.allDispositionsReconciled, false); assert.equal(exceptions.capabilities.canObserve, true);
+    await assert.rejects(() => fixture.manual.reconcile(id, { expectedVersion: exceptions.version, idempotencyKey: `no-observe-${nonce}` }, creator), (error: unknown) => code(error) === "cutover_suspended");
+    const armReplay = await fixture.worker.arm(id, { expectedVersion: 1, confirmed: true, idempotencyKey: `arm-${nonce}-primary` }, authorizer) as { state: string; epoch: number };
+    assert.equal(armReplay.state, "PAUSED"); assert.equal(armReplay.epoch, epochBefore + 1);
+    let renewed = await refresh();
+    renewed = await fixture.manual.reconcile(id, { expectedVersion: renewed.version, idempotencyKey: `quarantine-reconcile-${nonce}` }, creator) as Manifest;
+    exceptions = await exceptionGet(); assert.equal(exceptions.summary.allDispositionsReconciled, true);
+    assert.equal((await fixture.manual.get(id, creator) as { catchup: { complete: boolean; quarantined: number } }).catchup.complete, false);
+    assert.equal((await fixture.manual.get(id, creator) as { catchup: { quarantined: number } }).catchup.quarantined, 1);
+    assert.deepEqual(await business(), businessBefore);
+    const paused = await fixture.worker.get(id, authorizer) as Runtime;
+    await assert.rejects(() => fixture.worker.arm(id, { expectedVersion: paused.version, confirmed: true, idempotencyKey: `no-requalification-${nonce}` }, authorizer),
+      (error: unknown) => code(error) === "cutover_runtime_requalification_required");
+    const requalified = await fixture.worker.qualify(id, { expectedVersion: renewed.version, idempotencyKey: `exception-requalify-${nonce}` }, authorizer) as Runtime;
+    await fixture.worker.arm(id, { expectedVersion: requalified.version, confirmed: true, idempotencyKey: `exception-rearm-${nonce}` }, authorizer);
+    const quarantineTick = await fixture.worker.tick({ manifestId: id }) as { runs: Array<{ status: string; processed: number }> };
+    assert.equal(quarantineTick.runs[0]!.status, "COMPLETED"); assert.equal(quarantineTick.runs[0]!.processed, 0);
+    const testedRuntime = await fixture.worker.get(id, authorizer) as Runtime;
+    await fixture.worker.arm(id, { expectedVersion: testedRuntime.version, confirmed: true, idempotencyKey: `exception-disarm-after-proof-${nonce}` }, authorizer, true);
+    renewed = await fixture.manual.get(id, creator) as Manifest; assert.deepEqual(await business(), businessBefore);
+    // Replay is immutable but never acts as a grant or a new arm operation.
+    const settled = await durable(id); const replay = await fixture.manual.quarantine(id, firstCase.id, decision, creator) as Exceptions;
+    assert.equal(replay.replayed, true); assert.deepEqual(await durable(id), settled);
+    const replayResponse = await request(id, `/exceptions/${firstCase.id}/disposition`, creator, decision); assert.equal(replayResponse.status, 201);
+    assert.equal((await replayResponse.json() as Exceptions).replayed, true); assert.deepEqual(await durable(id), settled);
+    const affectedLeadId = (await permissions.readTransaction((tx) => cutoverEffects(tx, id))).find((effect) => effect.sourceKey === firstCase.sourceKey)!.leadId!;
+    const currentDefaults = defaultConfiguration(target);
+    await permissions.transaction((tx) => permissions.append(tx, { ...target, expectedVersion: 2, grants: { ...currentDefaults, "lead.view": "OWN" }, reason: "ACCESS_REVIEW", confirmed: true }, currentDefaults, authorizer));
+    const restricted = await fixture.manual.get(id, creator) as { capabilities: { canConsume: boolean }; catchup: { allDispositionsReconciled: boolean } };
+    assert.equal(restricted.capabilities.canConsume, false); assert.equal(restricted.catchup.allDispositionsReconciled, false);
+    for (const operation of [(): Promise<unknown> => fixture.manual.exceptions(id, creator), (): Promise<unknown> => fixture.manual.quarantine(id, firstCase.id, decision, creator),
+      (): Promise<unknown> => fixture.manual.reconcile(id, { expectedVersion: renewed.version, idempotencyKey: `restricted-reconcile-${nonce}` }, creator),
+      (): Promise<unknown> => fixture.manual.consume(id, { expectedVersion: renewed.version, idempotencyKey: `restricted-consume-${nonce}`, limit: 1, confirmed: true }, creator),
+      (): Promise<unknown> => fixture.worker.qualify(id, { expectedVersion: renewed.version, idempotencyKey: `restricted-qualify-${nonce}` }, authorizer)]) {
+      await assert.rejects(operation, (error: unknown) => error instanceof HttpException && error.getStatus() === 403);
+    }
+    assert.equal((await client.lead.findUniqueOrThrow({ where: { id: affectedLeadId } })).assignedToId, null);
+    await permissions.transaction((tx) => permissions.append(tx, { ...target, expectedVersion: 3, grants: currentDefaults, reason: "RESTORE_VERSION", confirmed: true }, { ...currentDefaults, "lead.view": "OWN" }, authorizer));
+    assert.deepEqual(await durable(id), settled);
+    // Nullable historical rows are unqualified, never silently backfilled.
+    await assert.rejects(() => permissions.transaction(async (tx) => {
+      const before = await durable(id); await tx.$executeRaw`UPDATE import_cutover_manifests SET exception_observation=NULL WHERE id=${id}::uuid`;
+      const old = await fixture.manual.exceptions(id, creator) as Exceptions;
+      assert.equal(old.observation, null); assert.deepEqual(old.cases, []); assert.equal(old.summary.coverageValid, false); assert.equal(old.summary.allDispositionsReconciled, false);
+      await assert.rejects(() => fixture.manual.consume(id, { expectedVersion: renewed.version, idempotencyKey: `old-unqualified-${nonce}`, confirmed: true, limit: 1 }, creator), (error: unknown) => code(error) === "cutover_exception_observation_required");
+      const after = await durable(id) as Record<string, unknown>, prior = before as Record<string, unknown>;
+      for (const key of ["cases", "dispositions", "receipts", "runtime", "audits"]) assert.deepEqual(after[key], prior[key]);
+      throw new ConflictException({ code: "synthetic_abort_nullable_historical" });
+    }), (error: unknown) => code(error) === "synthetic_abort_nullable_historical"); assert.deepEqual(await durable(id), settled);
+    // Coverage cannot be certified through an empty/filtered list of refs.
+    await assert.rejects(() => permissions.transaction(async (tx) => {
+      await tx.$executeRaw`UPDATE import_cutover_manifests SET exception_observation=jsonb_set(exception_observation,'{cases}','[]'::jsonb) WHERE id=${id}::uuid`;
+      const empty = await fixture.manual.exceptions(id, creator) as Exceptions;
+      assert.equal(empty.summary.currentCases, 1); assert.equal(empty.summary.coverageValid, false); assert.equal(empty.summary.allDispositionsReconciled, false);
+      throw new ConflictException({ code: "synthetic_abort_empty_coverage" });
+    }), (error: unknown) => code(error) === "synthetic_abort_empty_coverage"); assert.deepEqual(await durable(id), settled);
+    // A→B→A retains immutable generations. Returning to an older payload does
+    // not revive its former quarantine disposition or change the Lead.
+    fixture.source.values.rows[0]!.First = "Changed twice"; await refresh();
+    const twice = await exceptionGet(); assert.equal(twice.cases[0]!.generation, 2); assert.equal(twice.cases[0]!.disposition, null); assert.notEqual(twice.cases[0]!.evidenceSha256, firstCase.evidenceSha256);
+    fixture.source.values.rows[0]!.First = "Changed"; await refresh();
+    const returned = await exceptionGet(); assert.equal(returned.cases[0]!.generation, 3); assert.equal(returned.cases[0]!.disposition, null);
+    assert.equal(returned.cases[0]!.evidenceSha256, firstCase.evidenceSha256); assert.notEqual(returned.cases[0]!.id, firstCase.id);
+    assert.deepEqual(await business(), businessBefore);
+    // Quarantine during source I/O fences that actual RUNNING lease, not only
+    // a previously finished/paused worker. The stale worker cannot ingest.
+    const inFlight = await prepare("quarantine-fence"), inFlightBefore = await business(), inFlightEpoch = (await inFlight.worker.get(inFlight.manifest.id, authorizer) as { epoch: number }).epoch;
+    inFlight.source.afterRead = async (): Promise<void> => {
+      inFlight.source.afterRead = undefined; inFlight.source.values.rows[0]!.First = "Synthetic changed during worker read";
+      await refresh(inFlight);
+      const current = await exceptionGet(inFlight); await inFlight.manual.quarantine(current.id, current.cases[0]!.id, quarantineBody(current), creator);
+    };
+    const fenced = await inFlight.worker.tick({ manifestId: inFlight.manifest.id }) as { runs: Array<{ code: string }> };
+    assert.equal(fenced.runs[0]!.code, "cutover_runtime_lease_lost");
+    assert.equal((await inFlight.worker.get(inFlight.manifest.id, authorizer) as { epoch: number }).epoch, inFlightEpoch + 2);
+    assert.deepEqual(await client.$queryRaw`SELECT status,error_code AS code FROM import_cutover_runtime_runs WHERE manifest_id=${inFlight.manifest.id}::uuid`, [{ status: "ABANDONED", code: "cutover_quarantined" }]);
+    assert.deepEqual(await business(), inFlightBefore);
+    // Removal and reappearance are equally durable, never new ingestion.
+    resumed.source.values.rows.shift();
+    await restarted.tick({ manifestId: resumed.manifest.id });
+    const removed = await exceptionGet(resumed); assert.equal(removed.cases[0]!.kind, "SOURCE_REMOVED"); assert.equal(removed.cases[0]!.present, false);
+    await resumed.manual.quarantine(resumed.manifest.id, removed.cases[0]!.id, quarantineBody(removed), creator);
+    const removedObserved = await refresh(resumed); await resumed.manual.reconcile(removedObserved.id, { expectedVersion: removedObserved.version, idempotencyKey: `removed-reconcile-${nonce}` }, creator);
+    resumed.source.values.rows.unshift(sourceRow("initial-resume")); await refresh(resumed);
+    const reappeared = await exceptionGet(resumed); assert.equal(reappeared.cases[0]!.generation, 2); assert.equal(reappeared.cases[0]!.present, true); assert.equal(reappeared.cases[0]!.disposition, null);
+    // A contact collision remains REVIEW with its batch/report/Lead preserved.
+    const review = await prepare("review");
+    // A genuinely new post-T0 identity collides; existing inventory is intact.
+    review.source.values.rows.push({ ...sourceRow("review-collision"), Email: fixture.source.values.rows[0]!.Email! });
+    const reviewRun = await review.worker.tick({ manifestId: review.manifest.id }) as { runs: Array<{ status: string }> }; assert.equal(reviewRun.runs[0]!.status, "BLOCKED");
+    const reviewExceptions = await exceptionGet(review), reviewCase = reviewExceptions.cases.find((item) => item.kind === "EFFECT_REVIEW")!; assert.ok(reviewCase);
+    const reviewPreserved = await business();
+    await review.manual.quarantine(review.manifest.id, reviewCase.id, quarantineBody(reviewExceptions, reviewExceptions.cases.indexOf(reviewCase)), creator);
+    const reviewObserved = await refresh(review); await review.manual.reconcile(reviewObserved.id, { expectedVersion: reviewObserved.version, idempotencyKey: `review-reconcile-${nonce}` }, creator);
+    assert.equal((await exceptionGet(review)).summary.allDispositionsReconciled, true);
+    assert.equal((await review.manual.get(review.manifest.id, creator) as { catchup: { review: number; complete: boolean } }).catchup.review, 1);
+    assert.equal((await review.manual.get(review.manifest.id, creator) as { catchup: { complete: boolean } }).catchup.complete, false);
+    const reviewCurrent = await review.manual.get(review.manifest.id, creator) as Manifest;
+    await review.manual.consume(reviewCurrent.id, { expectedVersion: reviewCurrent.version, idempotencyKey: `review-no-reingest-${nonce}`, confirmed: true, limit: 25 }, creator);
+    assert.deepEqual(await business(), reviewPreserved);
+    // Global durable capacity includes inventory + actual payload cases, not
+    // separate 4 MiB allowances. The refused observation leaves all cursors,
+    // receipts, audits and epoch unchanged after the transaction aborts.
+    const large = await prepare("capacity"), largeBefore = await durable(large.manifest.id);
+    const largeColumns = ["ID", "Original UTC", ...Array.from({ length: 98 }, (_, index) => `Synthetic ${index}`)];
+    const largeRows = Array.from({ length: 10 }, (_, index) => Object.fromEntries(largeColumns.map((column) => [column, column === "ID" ? `large-${index}` : column === "Original UTC" ? "2026-09-05T12:00:00Z" : "x".repeat(4000)])));
+    large.source.values = { columns: largeColumns, rows: largeRows };
+    await assert.rejects(() => permissions.transaction(async (tx) => {
+      const old = await loadCutover(tx, large.manifest.id, true);
+      await tx.$executeRaw`UPDATE import_cutover_manifests SET exception_observation=NULL WHERE id=${old.id}::uuid`;
+      const reset = await updateCutover(tx, old, { ...old, inventory: [], headerSha256: null, snapshotSha256: null, observedAt: null, reportSha256: null, state: "DRAFT" });
+      // This setup is nonce-only and itself rolled back; no historical/real row
+      // or contract is rewritten, and all payloads satisfy the source limits.
+      const initial = await large.manual.observe(reset.id, { expectedVersion: reset.version, idempotencyKey: `large-initial-${nonce}` }, creator) as Manifest;
+      assert.ok(JSON.stringify(largeRows).length < 4 * 1024 * 1024);
+      large.source.values.rows[0]!["Synthetic 0"] = "y".repeat(4000);
+      await large.manual.observe(initial.id, { expectedVersion: initial.version, idempotencyKey: `large-refused-${nonce}` }, creator);
+    }), (error: unknown) => code(error) === "cutover_exception_journal_bound_exceeded");
+    assert.deepEqual(await durable(large.manifest.id), largeBefore);
   } finally {
     process.env.SHEETS_ENABLED = original.sheets; process.env.SHEET_CUTOVER_ENABLED = original.cutover; process.env.CRM_BACKGROUND_WORKERS = original.background; process.env.CRMY63_DATABASE_NONCE = original.nonce;
     await app.close();
