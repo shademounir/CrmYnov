@@ -50,7 +50,9 @@ async function checkRuns() {
     : ["unit-tests", "terraform-static", "iac-security", "secret-scan"];
   const requiredChecks = process.env.PR_APPROVAL_MODE === DELEGATED_CODEX_MODE
     ? [...new Set([...originalChecks, ...DELEGATED_CHECKS])] : originalChecks;
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  // Coverage and Sonar have a bounded 30-minute job budget. Keep waiting for
+  // the same exact-SHA checks; elapsed time never substitutes for success.
+  for (let attempt = 0; attempt < 360; attempt += 1) {
     const runs = await fetchAllCheckRuns({ repository, commitSha: checkSha, token });
     const byName = new Map();
     for (const run of runs) {

@@ -343,7 +343,9 @@ jobs:
     name: SonarQube Quality Gate
     needs: trusted-source
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Coverage includes real isolated PostgreSQL rehearsals. Keep a finite
+    # budget for both LCOV generation and the server-side quality-gate wait.
+    timeout-minutes: 30
     steps:
       - name: Refuse incomplete SonarCloud configuration
         shell: bash
