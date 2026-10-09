@@ -38,6 +38,7 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
     if (controller === "UserController" && handler === "issueInvitation") return next.handle();
     if (lifecycleControllers.has(controller)) return this.lifecycle(context, next, controller, handler);
     if (controller === "SheetImportController") return this.sheetAdministration(context, next, handler);
+    if (controller === "CutoverController") return this.cutoverAdministration(context, next, handler);
     return from(this.repository.transaction(async (tx) => {
       const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
       if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
@@ -66,6 +67,18 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
   private sheetAdministration(context: ExecutionContext, next: CallHandler<unknown>, handler: string): Observable<unknown> {
     // Split-phase service releases its transaction before source I/O, then reauthorizes.
     if (!["list", "create", "update", "run", "simulate", "history", "reconciliation"].includes(handler)) permissionDenied();
+    const check = this.repository.readTransaction(async (tx): Promise<void> => {
+      const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+      if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });
+      request.principal = await currentPrincipal(tx, request.principal);
+      this.rbac.canActivate(context);
+    });
+    return from(check.then(() => lastValueFrom(next.handle())));
+  }
+  private cutoverAdministration(context: ExecutionContext, next: CallHandler<unknown>, handler: string): Observable<unknown> {
+    // Same split-phase boundary as Sheets: service owns fenced authorization before
+    // and after source reads; never hold an outer transaction across remote I/O.
+    if (!["create", "get", "observe", "decide", "reconcile", "suspend", "resume"].includes(handler)) permissionDenied();
     const check = this.repository.readTransaction(async (tx): Promise<void> => {
       const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
       if (!request.principal) throw new UnauthorizedException({ code: "session_invalid" });

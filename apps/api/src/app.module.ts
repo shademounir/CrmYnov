@@ -56,6 +56,8 @@ import { AssignmentDashboardService } from "./assignment/assignment-dashboard.se
 import { IngestionController } from "./ingestion/ingestion.controller.js";
 import { BootstrapImportController, BootstrapHistoricalNotesController } from "./bootstrap-import/bootstrap-import.controller.js";
 import { BootstrapImportService } from "./bootstrap-import/bootstrap-import.service.js";
+import { CutoverController } from "./cutover/cutover.controller.js";
+import { CutoverService } from "./cutover/cutover.service.js";
 import { IngestionService } from "./ingestion/ingestion.service.js";
 import { PersistentIngestionService } from "./ingestion/persistent-ingestion.service.js";
 import { ImportProfileController } from "./import-profile/import-profile.controller.js";
@@ -130,8 +132,9 @@ import { createSheetSource } from "./sheet-import/google-sheet-source.js";
 import { resolve } from "node:path";
 
 @Module({
-controllers: [BootstrapHistoricalNotesController, BootstrapImportController, TelephonyOwnController, AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController, DashboardRecentLeadsController, DashboardCapabilitiesController],
+controllers: [CutoverController, BootstrapHistoricalNotesController, BootstrapImportController, TelephonyOwnController, AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController, DashboardRecentLeadsController, DashboardCapabilitiesController],
   providers: [
+    CutoverService,
     BootstrapImportService,
     TelephonyOwnService,
     AdmissionsService,

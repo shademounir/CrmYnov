@@ -1001,6 +1001,7 @@ model BootstrapImportPackage {
   plans BootstrapImportPlan[]
   rows BootstrapImportRow[]
   receipts BootstrapImportReceipt[]
+  cutover ImportCutoverManifest?
   batch IngestionBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
   @@unique([actorId, key])
   @@index([campusId, createdAt])
@@ -1326,10 +1327,50 @@ model SheetImportConnector {
   runs            SheetImportRun[]
   submissions     SheetImportSubmission[]
   versions        SheetImportConfigurationVersion[]
+  cutover         ImportCutoverManifest?
 
   @@unique([workbookId, tab])
   @@index([enabled, nextRunAt])
   @@map("sheet_import_connectors")
+}
+
+// Preparatory cutover ledger, never an implicit activation flag.
+model ImportCutoverManifest {
+  id String @id @db.Uuid
+  campusId String @map("campus_id") @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  bootstrapPackageId String @unique @map("bootstrap_package_id") @db.Uuid
+  connectorId String @unique @map("connector_id") @db.Uuid
+  state String @default("DRAFT") @db.VarChar(24)
+  version Int @default(1)
+  contract Json
+  inventory Json @default("[]")
+  headerSha256 String? @map("header_sha256") @db.VarChar(64)
+  snapshotSha256 String? @map("snapshot_sha256") @db.VarChar(64)
+  observedAt DateTime? @map("observed_at") @db.Timestamptz(6)
+  sourceCount Int @default(0) @map("source_count")
+  reportSha256 String? @map("report_sha256") @db.VarChar(64)
+  suspensionReason String? @map("suspension_reason") @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  bootstrapPackage BootstrapImportPackage @relation(fields: [bootstrapPackageId], references: [id], onDelete: Restrict)
+  connector SheetImportConnector @relation(fields: [connectorId], references: [id], onDelete: Restrict)
+  receipts ImportCutoverReceipt[]
+  @@index([campusId, createdAt])
+  @@map("import_cutover_manifests")
+}
+
+model ImportCutoverReceipt {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  operation String @db.VarChar(24)
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  actorId String @map("actor_id") @db.Uuid
+  response Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  manifest ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict)
+  @@unique([manifestId, operation, key])
+  @@map("import_cutover_receipts")
 }
 
 model SheetImportRun {

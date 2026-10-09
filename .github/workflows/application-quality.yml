@@ -138,6 +138,8 @@ jobs:
         run: node scripts/ci/access-recovery-postgres.mjs
       - name: Prove historical bootstrap decisions, atomic notes, crash restart and replay on isolated PostgreSQL
         run: node scripts/ci/bootstrap-import-postgres.mjs
+      - name: Prove durable cutover preparation, source boundary and replay on isolated PostgreSQL
+        run: node scripts/ci/cutover-postgres.mjs
       - name: Run targeted end-to-end contracts
         run: npm run test:e2e
 

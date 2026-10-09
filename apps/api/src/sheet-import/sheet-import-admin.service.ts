@@ -18,6 +18,7 @@ import { RoutedSheetSource } from "./google-sheet-source.js";
 import { sheetStreamId } from "./sheet-local-ledger.js";
 import { localObservation } from "./sheet-local-ledger.js";
 import { evaluateLocalMappedRow } from "./sheet-local-simulation.js";
+import { cutoverConnectorBound } from "../cutover/cutover.store.js";
 import { parseSheetLocalRange, reconcileSheetObservation, type SheetLocalObservation } from "./sheet-local-observation.js";
 
 type SimulationResult = { rows: number; mapped: number; review: number; mutated: false; simulated: boolean; reconciliationRequired: boolean; reason: string | null };
@@ -105,6 +106,7 @@ export class SheetImportAdminService {
       const current = await this.authorize(tx, actor, campus.id, ["settings.campus.manage"]);
       const previous = id ? await this.connector(tx, current, id) : null;
       if ((previous?.version ?? 0) !== expected || previous && previous.campusId !== campus.id) throw new ConflictException({ code: "sheet_version_conflict" });
+      if (body.enabled && previous && await cutoverConnectorBound(tx, previous.id)) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       if (body.enabled && previous?.leaseUntil && previous.leaseUntil > new Date()) throw new ConflictException({ code: "sheet_execution_active" });
       const template = sheetObject(body.mapping);
       const parsed = readSheetConfiguration({ mapping: { ...template, id: "pending", version: expected + 1, createdBy: current.userId, createdAt: new Date().toISOString() },
@@ -153,6 +155,7 @@ export class SheetImportAdminService {
   async requestRun(actor: Principal, id: string, expectedVersion: number): Promise<{ queued: true; version: number }> {
     return this.repository.transaction(async (tx) => {
       const row = await this.connector(tx, actor, id);
+      if (await cutoverConnectorBound(tx, row.id)) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       const config = readSheetConfiguration(row.configuration);
       if ((!row.enabled && config.source?.identityMode !== "LOCAL_ROW") || row.version !== expectedVersion) throw new ConflictException({ code: "sheet_disabled_or_version_conflict" });
       if (this.source instanceof RoutedSheetSource) this.source.validateSelection(row.workbookId, row.tab, config.source);
