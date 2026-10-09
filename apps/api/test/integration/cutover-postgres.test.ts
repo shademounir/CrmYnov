@@ -108,6 +108,9 @@ test("CRMY-63 real PostgreSQL/HTTP: durable T0, bounded delta, lost response rep
     assert.equal((await request(`${path}/${id}`, "GET", undefined, commercialAuth.token)).status, 403);
     assert.equal((await request(`${path}/${id}`, "GET", undefined, managerAuth.token)).status, 200);
     assert.equal((await request(`${path}/${id}`, "GET", undefined, outsideManagerAuth.token)).status, 403);
+    assert.equal((await success<{ state: string }>(await request(`${path}/${id}/runtime`), 200)).state, "UNQUALIFIED");
+    assert.equal((await fetch(`${origin}${path}/${id}/runtime`)).status, 401, "Runtime HTTP inspection requires a real authenticated session");
+    assert.equal((await request(`${path}/${id}/runtime`, "GET", undefined, managerAuth.token)).status, 403, "A valid Manager preparation grant is not a scheduled runtime authority");
     assert.equal((await request(`${path}/${id}/activate`, "POST", {})).status, 404);
     const sheetAdmin = app.get(SheetImportAdminService);
     await assert.rejects(() => sheetAdmin.save(actor, { expectedVersion: connector.version, campusId: campus.id, workbookLink: `https://docs.google.com/spreadsheets/d/${connector.workbookId}/edit`, enabled: true }, connector.id),
@@ -207,7 +210,9 @@ test("CRMY-63 real PostgreSQL/HTTP: durable T0, bounded delta, lost response rep
     await assert.rejects(() => revokeService.observe(id, delta, actor), (error: unknown) => error instanceof HttpException && error.getStatus() === 403);
     assert.equal((await request(`${path}/${id}`, "GET")).status, 401);
     const swagger = await success<{ paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } }>(await fetch(`${origin}/docs-json`), 200);
-    assert.equal(Object.keys(swagger.paths).filter((route) => route.startsWith("/lead-import/cutover/")).length, 10); assert.ok(swagger.components.schemas.CutoverCreate);
+    assert.equal(Object.keys(swagger.paths).filter((route) => route.startsWith("/lead-import/cutover/")).length, 14); assert.ok(swagger.components.schemas.CutoverCreate);
+    for (const suffix of ["", "/qualify", "/arm", "/disarm"]) assert.ok(swagger.paths[`/lead-import/cutover/manifests/{id}/runtime${suffix}`]);
+    assert.ok(swagger.components.schemas.CutoverRuntimeQualification); assert.ok(swagger.components.schemas.CutoverRuntimeArm);
   } finally { await app.close(); await prisma.onModuleDestroy(); }
 });
 
@@ -275,18 +280,54 @@ test("CRMY-63 manual NEW catch-up: stable stream, atomic replay, explicit baseli
     // A second PrismaService would legitimately contend with the outer write lock.
     const source = new ControlledCutoverSource(values), repository = app.get(DynamicPermissionRepository), bootstrap = app.get(BootstrapImportService), ingestion = app.get(PersistentIngestionService);
     const service = (): CutoverService => new CutoverService(repository, bootstrap, source, ingestion, mappings);
+    const otherCampus = await reference("CAMPUS", `MOVED63-${nonce}`);
+    const scopedAdmin = await client.collaborator.create({ data: { professionalEmail: `scoped-${nonce}@example.invalid`, professionalDisplayName: "Synthetic runtime target reader", roles: ["ADMIN"], campusId: campus.id, active: true, firstLoginRequired: false } });
+    const counts = async (): Promise<unknown> => ({ leads: await client.lead.count(), provenance: await client.leadProvenance.count(), activities: await client.leadActivity.count(), notifications: await client.internalNotification.count(),
+      batches: await client.ingestionBatch.count(), reports: await client.importReport.count(), allAudits: await client.auditEvent.count(),
+      effects: await client.$queryRaw`SELECT count(*)::int AS count FROM import_cutover_effects WHERE manifest_id=${id}::uuid`, receipts: await client.$queryRaw`SELECT count(*)::int AS count FROM import_cutover_receipts WHERE manifest_id=${id}::uuid`, audits: await client.auditEvent.count({ where: { resourceId: id } }) });
     const observeBody = { expectedVersion: manifest.version, idempotencyKey: `observe-${nonce}` };
     manifest = await service().observe(id, observeBody, actor) as Manifest;
     const decisionBodies = new Map<string, Record<string, unknown>>();
     for (const entry of manifest.submissions.filter((item) => item.classification === "BACKLOG")) {
       const body = { expectedVersion: manifest.version, idempotencyKey: `decide-${entry.externalId}-${nonce}`, sourceKey: entry.key,
         action: entry.externalId === "linked" ? "LINK_BASELINE" : "KEEP_FOR_CATCHUP", ...(entry.externalId === "linked" ? { targetBootstrapRowId: baselineRow.id } : {}), reason: "Synthetic explicit overlap reconciliation" };
+      if (entry.externalId === "linked") {
+        const beforeMovedDecision = await counts();
+        await assert.rejects(() => repository.transaction(async (tx) => {
+          await tx.lead.update({ where: { id: baselineLeadId }, data: { campus: otherCampus.code } });
+          await service().decide(id, body, actor);
+        }), (error: unknown) => error instanceof HttpException && error.getStatus() === 409 && JSON.stringify(error.getResponse()).includes("cutover_baseline_campus_mismatch"));
+        assert.deepEqual(await counts(), beforeMovedDecision);
+        assert.equal((await client.lead.findUniqueOrThrow({ where: { id: baselineLeadId } })).campus, campus.code);
+      }
       decisionBodies.set(entry.externalId, body); manifest = await success(await request(`${path}/${id}/decisions`, body));
     }
     manifest = await success(await request(`${path}/${id}/reconcile`, { expectedVersion: manifest.version, idempotencyKey: `reconcile-${nonce}` }));
-    const counts = async (): Promise<unknown> => ({ leads: await client.lead.count(), provenance: await client.leadProvenance.count(), activities: await client.leadActivity.count(), notifications: await client.internalNotification.count(),
-      effects: await client.$queryRaw`SELECT count(*)::int AS count FROM import_cutover_effects WHERE manifest_id=${id}::uuid`, receipts: await client.$queryRaw`SELECT count(*)::int AS count FROM import_cutover_receipts WHERE manifest_id=${id}::uuid`, audits: await client.auditEvent.count({ where: { resourceId: id } }) });
     const before = await counts(), consume = { expectedVersion: manifest.version, idempotencyKey: `consume-${nonce}`, limit: 1, confirmed: true };
+    // Even GLOBAL visibility cannot bind a historical target that moved out of
+    // this immutable campus; an attempted mixed NEW+LINK chunk rolls back whole.
+    for (const operation of ["reconcile", "consume"] as const) {
+      await assert.rejects(() => repository.transaction(async (tx) => {
+        await tx.lead.update({ where: { id: baselineLeadId }, data: { campus: otherCampus.code } });
+        await service()[operation](id, { ...consume, limit: 25, idempotencyKey: `moved-${operation}-${nonce}` }, actor);
+      }), (error: unknown) => error instanceof HttpException && error.getStatus() === 409 && JSON.stringify(error.getResponse()).includes("cutover_baseline_campus_mismatch"));
+      assert.deepEqual(await counts(), before);
+    }
+    // Structural completeness is not permission to hide current target axes.
+    // Either persisted authority being unable to see a BASELINE target denies
+    // the runtime report, while the ordinary GLOBAL HTTP projection is intact.
+    for (const [creator, authorizer] of [[admin, scopedAdmin], [scopedAdmin, admin]]) {
+      const delegation = { creatorId: creator!.id, authorizedBy: authorizer!.id,
+        creatorAuthenticationVersion: creator!.authenticationVersion, authorizerAuthenticationVersion: authorizer!.authenticationVersion };
+      const visibleReport = await repository.readTransaction((tx) => bootstrap.reportCutoverRuntime(tx, pack.id, delegation, id, false)) as { reconciliation: { currentDossierAxes: { withheld: number } } };
+      assert.equal(visibleReport.reconciliation.currentDossierAxes.withheld, 0, "Both authority arrangements are valid before the actual Lead moves");
+      await assert.rejects(() => repository.transaction(async (tx) => {
+        await tx.lead.update({ where: { id: baselineLeadId }, data: { campus: otherCampus.code } });
+        assert.equal((await bootstrap.report(pack.id, actor) as { cutoverBlocked: boolean }).cutoverBlocked, false);
+        await bootstrap.reportCutoverRuntime(tx, pack.id, delegation, id, false);
+      }), (error: unknown) => error instanceof HttpException && error.getStatus() === 403 && JSON.stringify(error.getResponse()).includes("cutover_runtime_authority_revoked"));
+      assert.deepEqual(await counts(), before);
+    }
     for (const operation of ["reconcile", "consume"] as const) {
       await assert.rejects(() => repository.transaction(async (tx) => {
         // Emulate a previously persisted preparatory contract only inside the

@@ -30,11 +30,14 @@ export async function currentPrincipal(tx: PermissionTransaction, principal: Pri
   if (user.teamId) scopes.push({ kind: "TEAM", id: user.teamId });
   return { ...principal, roles: user.roles as Role[], scopes, mustChangeSecret: user.firstLoginRequired || principal.mustChangeSecret };
 }
-export function campusContext(principal: Principal, campus: string): EvaluationContext {
+/** Resource identity is intentionally session-free; HTTP evaluatePermission still
+ * requires a real Principal/session. Scheduled capabilities use separate gates. */
+export type PermissionIdentity = Pick<Principal, "userId" | "roles" | "scopes">;
+export function campusContext(principal: PermissionIdentity, campus: string): EvaluationContext {
   const globalAllowed = principal.roles.includes("SUPER_ADMIN");
   return { campus, active: true, own: false, team: false, globalAllowed, campusAllowed: globalAllowed || principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === campus) };
 }
-export async function resourceEvaluationContext(tx: PermissionTransaction, principal: Principal, resource: ResourceContext): Promise<EvaluationContext> {
+export async function resourceEvaluationContext(tx: PermissionTransaction, principal: PermissionIdentity, resource: ResourceContext): Promise<EvaluationContext> {
   const campus = resource.campusKeys[0] ?? "GLOBAL";
   const context = campusContext(principal, campus);
   context.campusAllowed ||= principal.scopes.some((scope) => scope.kind === "CAMPUS" && resource.campusKeys.includes(scope.id));

@@ -1336,6 +1336,7 @@ model SheetImportConnector {
 
 // Preparatory cutover ledger, never an implicit activation flag.
 model ImportCutoverManifest {
+  runtime ImportCutoverRuntime?
   streamKey           String? @unique @map("stream_key") @db.VarChar(64)
   effects             ImportCutoverEffect[]
   id String @id @db.Uuid
@@ -1359,6 +1360,51 @@ model ImportCutoverManifest {
   receipts ImportCutoverReceipt[]
   @@index([campusId, createdAt])
   @@map("import_cutover_manifests")
+}
+
+model ImportCutoverRuntime {
+  manifestId String @id @map("manifest_id") @db.Uuid
+  version Int @default(1)
+  state String @db.VarChar(16)
+  qualification Json
+  delegation Json?
+  epoch Int @default(0)
+  leaseOwner String? @map("lease_owner") @db.Uuid
+  leaseUntil DateTime? @map("lease_until") @db.Timestamptz(6)
+  leaseManifestVersion Int? @map("lease_manifest_version")
+  activeRunId String? @map("active_run_id") @db.Uuid
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  manifest ImportCutoverManifest @relation(fields: [manifestId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  runs ImportCutoverRuntimeRun[]
+  receipts ImportCutoverRuntimeReceipt[]
+  @@map("import_cutover_runtimes")
+}
+
+model ImportCutoverRuntimeRun {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  epoch Int
+  status String @db.VarChar(16)
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+  errorCode String? @map("error_code") @db.VarChar(128)
+  runtime ImportCutoverRuntime @relation(fields: [manifestId], references: [manifestId], onDelete: Restrict, onUpdate: Cascade)
+  @@unique([manifestId, epoch], map: "import_cutover_runtime_runs_epoch_key")
+  @@map("import_cutover_runtime_runs")
+}
+
+model ImportCutoverRuntimeReceipt {
+  id String @id @db.Uuid
+  manifestId String @map("manifest_id") @db.Uuid
+  operation String @db.VarChar(24)
+  key String @db.VarChar(128)
+  fingerprint String @db.VarChar(64)
+  actorId String @map("actor_id") @db.VarChar(64)
+  response Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  runtime ImportCutoverRuntime @relation(fields: [manifestId], references: [manifestId], onDelete: Restrict, onUpdate: Cascade)
+  @@unique([manifestId, operation, key], map: "import_cutover_runtime_receipts_request_key")
+  @@map("import_cutover_runtime_receipts")
 }
 
 model ImportCutoverEffect {

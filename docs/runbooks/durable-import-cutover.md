@@ -1,4 +1,4 @@
-# Durable import cutover — preparation and manual catch-up
+# Durable import cutover — preparation, catch-up and isolated worker
 
 This increment is **not an automatic Sheets activation** and is not the complete
 CRMY-63 acceptance. No real T0 or upstream identity capability is inferred from a
@@ -43,7 +43,9 @@ including retained removed payloads and metadata, has the same limits. A refused
 delta commits no inventory, receipt or audit and must not advance a cursor.
 
 Overlap requires `KEEP_FOR_CATCHUP` or `LINK_BASELINE`. Linking requires an accepted
-row from the bound bootstrap package and a currently readable target Lead.
+row from the bound bootstrap package and a currently readable target Lead whose
+current canonical campus still matches the manifest. A global administrative
+grant is not permission to link a Lead moved to a different campus ledger.
 Reconciliation reads the actual complete server bootstrap report; a client
 boolean or a successful batch response is insufficient. `READY_FOR_CATCHUP` is
 preparation, not activation, and applies no Lead effects by itself.
@@ -90,8 +92,52 @@ forward action. `REQUESTED` must never be displayed as `COMPENSATED`.
 
 The old Sheet administration and job coordinator refuse a bound preparatory
 connector. They cannot bypass this boundary through an enable/manual-run request.
-No automatic activation route exists. The guard is not a claim that unbound
-connectors or the entire upstream Google pipeline have been qualified.
+The guard is not a claim that unbound connectors or the entire upstream Google
+pipeline have been qualified. The runtime routes below cannot arm a real Google
+source.
+
+## External one-shot worker — synthetic qualification only
+
+`jobs/sheet-cutover` is a dedicated bounded process, not an HTTP request or an
+in-process timer. Both `SHEETS_ENABLED=true` and `SHEET_CUTOVER_ENABLED=true`, and
+`CRM_BACKGROUND_WORKERS=external`, are required. OFF returns before creating an
+application context, claiming a run, reading a source or applying an effect.
+Both flags stay OFF in the delivered configuration; no cloud job or Scheduler
+target is deployed by this code increment.
+
+`manifests/{id}/runtime` exposes qualification and arm/disarm state separately
+from manual catch-up. Qualification is server-derived, never a caller's hash or
+boolean. Only the fixed synthetic provider artifact, a synthetic workbook and a
+nonce-marked loopback ephemeral database can qualify and arm this implementation.
+Google remains `PREPARATION_ONLY`; an upstream production qualification adapter
+is still required after the immutable ID/original-arrival contract is verified.
+A passing synthetic test cannot supply that attestation or enable real ingestion.
+
+An authenticated Admin/Super Admin explicitly arms a reconciled manifest. The
+creator and authorizer, their authentication versions, effective current grants,
+campus scopes, role ceilings and Lead visibility are persisted/rechecked before
+source I/O and every committed chunk. This is a scheduled authority, not a
+fabricated user session. Audits identify `SYSTEM:CUTOVER:<manifest>` as executor
+and retain the two authorizing identities separately. Revocation refuses further
+effects. A BASELINE reconciliation with a target withheld from either authority
+also refuses the runtime, even if its structural integrity report is complete.
+Cleanup can finish only its still-owned run, never another worker's lease.
+
+A durable epoch/owner lease fences concurrent workers and expired owners. A
+one-shot reads at most one bounded snapshot per claimed manifest and processes
+at most four chunks of 25 entries. Source I/O has a 30-second deadline; the lease
+lasts 60 seconds and must still be current when renewed/committed. A replacement
+marks an expired run abandoned, then resumes from the shared durable effect
+ledger and canonical ingestion keys. A committed chunk is never recomposed just
+because its process stopped or its response was lost.
+
+The explicit arm audit records `AUTOMATIC_POST_T0_POLICY_V1`: only newly observed
+durable identities absent from the already reconciled inventory, with original
+arrival `>= T0` and unchanged binding/qualification, can become catch-up candidates.
+Initial overlap decisions are not inferred. Late pre-T0 arrivals remain excluded;
+contact collisions remain REVIEW. Changed/removed source entries pause the runtime
+and preserve the original inventory. A blocked or failed run must not be reported
+as successful ingestion. Resolving those source conflicts remains an open contract.
 
 ## Mutations and replay
 
@@ -115,9 +161,10 @@ real workbook, contact, password or raw Terraform state belongs in Git/Jira.
   supersede workflow; do not delete its ledger or change T0 to bypass that guard.
 - `LOCAL_ROW` append-only mode is not supported by this cutover increment. The
   existing local-row detector is not proof of a T0-aware producer.
-- Effective recoverable compensation, revision/supersede workflow and automatic
-  runtime Sheets activation remain unavailable. The manual API is not an upstream
-  worker, and a compensation request is not a withdrawal.
+- Effective recoverable compensation, revision/supersede workflow, explicit
+  SOURCE_CHANGED/SOURCE_REMOVED/REVIEW resolution and real Google qualification
+  remain unavailable. The isolated worker is not real Sheets activation, and a
+  compensation request is not a withdrawal.
 - Upstream ID/original-date capability, real T0, final Excel freeze/delta review,
   STAGING rehearsal, target identities, notifications and monitoring remain
   separate operational gates. Keep Sheets OFF while these are incomplete.
@@ -128,28 +175,56 @@ From the repository root with an official Node runtime and Docker available:
 
 ```powershell
 node --import tsx --test apps/api/test/cutover-contract.test.ts
+node --test scripts/ci/tests/cutover-initial-rollback.test.mjs
 node scripts/ci/cutover-postgres.mjs
 ```
 
 The PostgreSQL harness refuses an inherited `DATABASE_URL`, uses nonce-owned
 loopback/tmpfs synthetic databases and a pinned local PostgreSQL image. It deploys
 the previous schema, preserves a populated row and the exact old Prisma migration
-checksums, applies both additive migrations, and separately deploys them to an empty
-database. Both new checksums and finished/non-rolled-back history are verified.
+checksums, discovers the additive migration set and separately deploys it to an
+empty database. All new checksums and finished/non-rolled-back history are verified.
 A fresh Prisma client is generated **only in the private proof directory**, never
 in shared dependency junctions. Compile metadata and source hashes bind the real
 HTTP/application test to the inspected source. Required tests may not silently
 skip. The owned container is normally stopped and its descriptor retained; tmpfs
-database contents are not a backup or a tested restore.
+database contents are not a backup. The independent custom dump described below
+is the only persisted initial backup in this harness.
 
 These are local qualification results, not distant CI / Sonar / security gates.
 Before a PR/release, attach actual results to its exact SHA and retain any failures.
 
+## Initial restoration qualification — a new synthetic clone only
+
+Before migrations and catch-up effects, the harness creates a populated legacy
+state and two non-superuser synthetic application roles. It observes drained
+clients, closes the owned synthetic application connection window, takes a custom
+dump, compares its container/host size and SHA-256, and reads `pg_restore --list`.
+Readability alone is not a restoration result.
+
+After reopening it records the irreversible window event and a same-cardinality
+business edit. Both reopening and a changed full-state hash refuse a global rewind.
+The source is never restored. After applications drain, the archive is restored
+with `--exit-on-error --single-transaction` into a third, previously absent,
+nonce-owned database, without `--clean`, DROP or reset. The harness compares full
+public table rows/histories, sequences and exact Prisma history, plus the scoped
+effective database/schema/table/sequence privileges of the two existing roles.
+It also exercises an allowed transaction (rolled back) and a refused read-only
+write. It rechecks that the source and its later effects are unchanged.
+
+This is not exhaustive cluster ACL/role-membership/routine restoration, a tested
+Cloud SQL restore, or a production maintenance fence. Superusers bypass connection
+limits and can override default read-only. STAGING/PROD require their own enforced
+producer admission/drain procedure and new-target recovery rehearsal. Never use
+the harness oracle as authorization to replace an open production database.
+
 ## Rollback
 
-Stop cutover mutations and preserve all ledgers, receipts and audits. Preparation
-alone makes no Lead effects. After an explicit manual consumer, any created Leads
-remain useful persisted data; an application revert does not undo them. A protected
+Set both producer flags OFF, disarm the runtime, stop cutover mutations and drain
+active runs or wait for their bounded leases to expire. Preserve all ledgers,
+receipts and audits. Preparation alone makes no Lead effects. After a manual or
+scheduled consumer, any created Leads remain useful persisted data; an application
+revert does not undo them. A protected
 compatible application revert must keep the bound source stopped and retain the
 additive tables and all Prisma history. Keep a patched BASELINE-aware version; do
 not redeploy an old vulnerable image or one that miscounts historical acquisition.

@@ -7,6 +7,7 @@
     "build": "npm run prisma:generate --silent && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
     "job:follow-up-due": "node dist/jobs/follow-up-due.js",
+    "job:sheet-cutover": "node dist/jobs/sheet-cutover.js",
     "job:grant-runtime-database": "node dist/jobs/grant-runtime-database.js",
     "type-check": "npm run prisma:generate --silent && tsc --noEmit",
     "test": "npm run prisma:generate --silent && node --import tsx --test test/*.test.ts",

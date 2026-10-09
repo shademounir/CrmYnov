@@ -12,6 +12,8 @@ import { DynamicPermissionRepository } from "../permissions/dynamic-repository.j
 import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
 import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { submissionFingerprint } from "./submission-fingerprint.js";
+import { assertCutoverRuntimeAuthority, type CutoverDelegation } from "../cutover/cutover-runtime-authority.js";
+import type { ConfigurationSnapshot } from "../permissions/dynamic-contract.js";
 
 export interface ConfirmPersistentImportInput extends IngestionBatchInput {
   confirmed: true;
@@ -136,14 +138,33 @@ export class PersistentIngestionService {
     const input: ConfirmPersistentImportInput = { confirmed: true, profile: "FORMINATOR_ZAPIER", idempotencyKey: key, mappingId: mapping.id,
       mappingVersion: mapping.version, sourceFileSha256: this.fingerprintRecord(record), assignment, records: [record] };
     this.assertAllowed(input, current);
-    if (record.source !== "WEB_FORM" || record.technicalSystem !== "FORMINATOR_ZAPIER" || record.historicalActivities?.length || record.historicalStatus) throw new BadRequestException({ code: "cutover_new_record_required" });
-    if (await tx.ingestionBatch.findUnique({ where: { idempotencyKey: key } })) throw new ConflictException({ code: "cutover_effect_reconciliation_required" });
     const campus = await canonicalCampus(tx, record.campus ?? "");
     if (!this.permissions) throw new ConflictException({ code: "cutover_permissions_unavailable" });
     const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true });
     const grants = await this.permissions.snapshots(tx);
     if (!["settings.campus.manage", "import.execute", "import.confirm", "lead.create"].every((permission) => evaluatePermission(current, permission, grants, context).allowed)) permissionDenied();
     if (assignment.strategy !== "UNASSIGNED") await this.authorizeAssignment(tx, current, record.campus ?? "");
+    return this.persistCutoverCore(tx, record, mapping, key, input, current, correlationId, assignment, grants);
+  }
+  /** Internal runtime entry; audit executor is SYSTEM, not an impersonated user. */
+  async persistScheduledCutoverRecord(tx: Prisma.TransactionClient, record: IngestionRecordInput, mapping: { id: string; version: number }, key: string,
+    delegation: CutoverDelegation, manifestId: string, runtimeVersion: number, correlationId: string, assignment: IngestionBatchInput["assignment"]): Promise<{ batchId: string; outcome: LineOutcome; leadId?: string; reason?: string }> {
+    if (!this.permissions) throw new ConflictException({ code: "cutover_permissions_unavailable" });
+    const campus = await canonicalCampus(tx, record.campus ?? "");
+    const authority = await assertCutoverRuntimeAuthority(tx, this.permissions, delegation, campus.id, manifestId, assignment.strategy !== "UNASSIGNED");
+    const input: ConfirmPersistentImportInput = { confirmed: true, profile: "FORMINATOR_ZAPIER", idempotencyKey: key, mappingId: mapping.id,
+      mappingVersion: mapping.version, sourceFileSha256: this.fingerprintRecord(record), assignment, records: [record] };
+    this.assertInputContract(input);
+    return this.persistCutoverCore(tx, record, mapping, key, input, { userId: authority.actorId, roles: authority.actorRoles }, correlationId, assignment, authority.snapshots,
+      { manifestId, runtimeVersion, ...delegation });
+  }
+  /** All manual and scheduled effects use exactly the same persistence keys and collision policy. */
+  private async persistCutoverCore(tx: Prisma.TransactionClient, record: IngestionRecordInput, mapping: { id: string; version: number }, key: string,
+    input: ConfirmPersistentImportInput, current: Pick<Principal, "userId"> & { roles: Principal["roles"] | readonly ["SYSTEM"] }, correlationId: string,
+    assignment: IngestionBatchInput["assignment"], grants: ConfigurationSnapshot[], runtime?: Record<string, string | number>): Promise<{ batchId: string; outcome: LineOutcome; leadId?: string; reason?: string }> {
+    if (record.source !== "WEB_FORM" || record.technicalSystem !== "FORMINATOR_ZAPIER" || record.historicalActivities?.length || record.historicalStatus) throw new BadRequestException({ code: "cutover_new_record_required" });
+    if (await tx.ingestionBatch.findUnique({ where: { idempotencyKey: key } })) throw new ConflictException({ code: "cutover_effect_reconciliation_required" });
+    const campus = await canonicalCampus(tx, record.campus ?? "");
     const matches = await this.findMatches(tx, record.technicalSystem, record.externalId, record.email?.trim().toLowerCase(), record.phone?.replace(/[^+\d]/g, ""));
     await this.assertMatchedLeadScopes(tx, matches.matches, campus.id);
     const selected = matches.matches.size ? { eventKey: key, reason: "cutover_identity_review_required" }
@@ -158,9 +179,9 @@ export class PersistentIngestionService {
     await tx.importReport.create({ data: { jobId: key, batchId, mappingId: mapping.id, mappingVersion: mapping.version, sourceFileSha256: input.sourceFileSha256,
       totalCount: 1, createdCount: Number(line.outcome === "CREATED"), updatedCount: 0, ignoredCount: 0, duplicateCount: 0, errorCount: Number(line.outcome !== "CREATED"),
       ...(line.reason ? { rejections: { create: { lineNumber: record.lineNumber, category: line.outcome, reasonCode: line.reason } } } : {}) } });
-    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: campus.id, resourceType: "INGESTION_BATCH", resourceId: batchId,
+    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: [...current.roles], campusId: campus.id, resourceType: "INGESTION_BATCH", resourceId: batchId,
       eventType: "CUTOVER_NEW_INGESTION", correlationId, result: line.outcome === "CREATED" ? "SUCCESS" : "FAILED", idempotencyKey: key,
-      after: { outcome: line.outcome, assignmentReason: selected.reason ?? "assignment_selected", mappingId: mapping.id, mappingVersion: mapping.version } } });
+      after: { outcome: line.outcome, assignmentReason: selected.reason ?? "assignment_selected", mappingId: mapping.id, mappingVersion: mapping.version, ...(runtime ? { runtime } : {}) } } });
     return { batchId, outcome: line.outcome, ...(line.leadId ? { leadId: line.leadId } : {}), ...(line.reason || selected.reason ? { reason: line.reason ?? selected.reason } : {}) };
   }
 
@@ -368,13 +389,16 @@ export class PersistentIngestionService {
 
   private assertAllowed(input: ConfirmPersistentImportInput, principal: Principal): void {
     if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "persistent_import_role_forbidden" });
+    this.assertInputContract(input);
+    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
+    const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
+    if (!global && input.records.some((record) => !record.campus || !allowedCampuses.has(record.campus.trim()))) throw new ForbiddenException({ code: "persistent_import_scope_forbidden" });
+  }
+  private assertInputContract(input: ConfirmPersistentImportInput): void {
     if (input.confirmed !== true) throw new ConflictException({ code: "persistent_import_confirmation_required" });
     if (!SAFE_KEY.test(input.idempotencyKey) || !SAFE_MAPPING.test(input.mappingId) || !Number.isInteger(input.mappingVersion) || input.mappingVersion < 1 || !SHA256.test(input.sourceFileSha256) || !input.records.length || input.records.length > 10_000) throw new BadRequestException({ code: "persistent_import_contract_invalid" });
     const lines = input.records.map((record) => record.lineNumber);
     if (lines.some((line) => !Number.isInteger(line) || line < 1) || new Set(lines).size !== lines.length) throw new BadRequestException({ code: "persistent_import_line_invalid" });
-    const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
-    const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
-    if (!global && input.records.some((record) => !record.campus || !allowedCampuses.has(record.campus.trim()))) throw new ForbiddenException({ code: "persistent_import_scope_forbidden" });
   }
 
   private validateRecord(record: IngestionRecordInput): string | undefined {

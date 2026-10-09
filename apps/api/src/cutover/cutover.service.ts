@@ -14,7 +14,8 @@ import { ImportMappingService } from "../import-mapping/import-mapping.service.j
 import { cutoverCounts, cutoverFinalFreeze, cutoverHash, cutoverInstant, cutoverInvalid, cutoverObject, cutoverRequest, cutoverSha, cutoverText, cutoverTimeZone, cutoverUuid,
   cutoverStreamKey, observeCutover, type CutoverContract, type CutoverEntry } from "./cutover.contract.js";
 import { cutoverReplay, insertCutover, loadCutover, saveCutoverReceipt, updateCutover, type StoredCutover } from "./cutover.store.js";
-import { cutoverDownstreamHash, cutoverEffects, saveCutoverEffect } from "./cutover.effects.js";
+import { cutoverDownstreamHash, cutoverEffects } from "./cutover.effects.js";
+import { consumeCutover, cutoverBaselineTarget, cutoverBinding } from "./cutover-consumer.js";
 
 function conflict(code: string): never { throw new ConflictException({ code }); }
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -130,9 +131,7 @@ export class CutoverService {
       const source = row.inventory.find((entry) => entry.key === sourceKey);
       if (!source || source.classification !== "BACKLOG" || source.issue || source.decision) conflict("cutover_overlap_decision_invalid");
       if (targetBootstrapRowId) {
-        const target = await tx.bootstrapImportRow.findUnique({ where: { id: targetBootstrapRowId } });
-        if (!target || target.packageId !== row.bootstrapPackageId || target.state !== "ACCEPTED" || !target.leadId) conflict("cutover_baseline_target_invalid");
-        await this.authorizeLead(tx, actor, target.leadId);
+        await this.authorizeLead(tx, actor, await cutoverBaselineTarget(tx, row, targetBootstrapRowId));
       }
       const inventory = row.inventory.map((entry): CutoverEntry => entry.key === sourceKey ? { ...entry, decision: action, targetBootstrapRowId } : entry);
       const updated = await updateCutover(tx, row, { ...row, inventory, state: "BASELINED", reportSha256: null });
@@ -152,9 +151,7 @@ export class CutoverService {
       const counts = cutoverCounts(row.inventory);
       if (report.cutoverBlocked !== false || counts.sourceIssues || counts.overlapReview) conflict("cutover_reconciliation_incomplete");
       for (const entry of row.inventory.filter((item) => item.targetBootstrapRowId)) {
-        const target = await tx.bootstrapImportRow.findUnique({ where: { id: entry.targetBootstrapRowId! } });
-        if (!target || target.packageId !== row.bootstrapPackageId || target.state !== "ACCEPTED" || !target.leadId) conflict("cutover_baseline_target_invalid");
-        await this.authorizeLead(tx, actor, target.leadId);
+        await this.authorizeLead(tx, actor, await cutoverBaselineTarget(tx, row, entry.targetBootstrapRowId));
       }
       const updated = await updateCutover(tx, row, { ...row, state: "READY_FOR_CATCHUP", reportSha256: cutoverHash(report) });
       return this.record(tx, actor, updated, "RECONCILE", input.key, input.fingerprint, await this.view(tx, updated, actor));
@@ -180,44 +177,15 @@ export class CutoverService {
     const ingestion = this.ingestion, mappings = this.mappings;
     return this.permissions.transaction(async (tx) => {
       const row = await this.manifest(tx, id, actor, ["settings.campus.manage", "import.view", "import.execute", "import.confirm", "lead.create", "lead.view"], true);
-      const connector = await this.binding(tx, row), current = await currentPrincipal(tx, actor);
+      await this.binding(tx, row); const current = await currentPrincipal(tx, actor);
       cutoverFinalFreeze(row.contract.excelFrozenAt, row.contract.t0);
       const replay = await this.replay(tx, row, "CONSUME", input.key, input.fingerprint, actor); if (replay !== undefined) return replay;
       this.expected(row, input.expectedVersion); this.available(row);
-      if (row.contract.schemaVersion !== 2 || !row.contract.streamKey || row.contract.sourceSheetId === undefined) conflict("cutover_durable_stream_upgrade_required");
-      if (row.state !== "READY_FOR_CATCHUP" || !row.reportSha256 || !row.observedAt) conflict("cutover_reconciliation_required");
-      const report = cutoverObject(await this.bootstrap.report(row.bootstrapPackageId, actor));
-      if (report.cutoverBlocked !== false || cutoverHash(report) !== row.reportSha256) conflict("cutover_reconciliation_required");
-      const counts = cutoverCounts(row.inventory); if (counts.sourceIssues || counts.overlapReview) conflict("cutover_reconciliation_incomplete");
-      const existing = new Set((await cutoverEffects(tx, id)).map((effect) => effect.sourceKey));
-      const pending = row.inventory.filter((entry) => entry.classification === "BACKLOG" && !existing.has(entry.key)).slice(0, limit);
-      const configuration = readSheetConfiguration(connector.configuration);
-      // jsonb object key order is not source header order. The immutable mapping
-      // must match the observed ordered headers, then supplies that exact order.
-      const sourceColumns = configuration.mapping.columns.map((column) => column.sourceColumn);
-      if (cutoverHash(sourceColumns) !== row.headerSha256) conflict("cutover_mapping_headers_mismatch");
-      for (const entry of pending) {
-        if (entry.decision === "LINK_BASELINE") {
-          const target = entry.targetBootstrapRowId ? await tx.bootstrapImportRow.findUnique({ where: { id: entry.targetBootstrapRowId } }) : null;
-          if (!target || target.packageId !== row.bootstrapPackageId || target.state !== "ACCEPTED" || !target.leadId) conflict("cutover_baseline_target_invalid");
-          await this.authorizeLead(tx, actor, target.leadId);
-          await saveCutoverEffect(tx, { manifestId: id, sourceKey: entry.key, outcome: "LINKED_BASELINE", leadId: target.leadId, batchId: null, reason: null, downstreamSha256: null });
-          continue;
-        }
-        if (entry.decision !== "KEEP_FOR_CATCHUP") conflict("cutover_overlap_decision_invalid");
-        const [mapped] = mappings.recordsFromSnapshot(configuration.mapping, { idempotencyKey: `cutover:${entry.key}`, mappingKey: configuration.mapping.mappingKey,
-          mappingVersion: configuration.mapping.version, rows: [entry.payload], sourceColumns, context: configuration.context, assignment: configuration.assignment });
-        if (!mapped) conflict("cutover_mapping_record_missing");
-        const result = await ingestion.persistCutoverRecord(tx, { ...mapped, lineNumber: 1, externalId: `cutover:${entry.key}`, occurredAt: entry.originalArrivedAt },
-          configuration.mapping, `cutover-ingest:${entry.key}`, current, `c63:${cutoverHash([id, entry.key]).slice(0, 40)}`, configuration.assignment);
-        if (result.leadId) await this.authorizeLead(tx, actor, result.leadId);
-        const outcome = result.outcome === "CREATED" ? "CREATED" : "REVIEW";
-        if (outcome === "CREATED" && (!result.leadId || (await tx.lead.findUniqueOrThrow({ where: { id: result.leadId } })).acquisitionKind !== "NEW")) conflict("cutover_new_effect_required");
-        await saveCutoverEffect(tx, { manifestId: id, sourceKey: entry.key, outcome, batchId: result.batchId, leadId: result.leadId ?? null,
-          reason: result.reason ?? null, downstreamSha256: outcome === "CREATED" && result.leadId ? await cutoverDownstreamHash(tx, result.leadId) : null });
-      }
+      const processed = await consumeCutover(tx, row, limit, mappings, { report: () => this.bootstrap.report(row.bootstrapPackageId, actor),
+        authorizeLead: (leadId) => this.authorizeLead(tx, actor, leadId),
+        persist: (record, configuration, key, correlationId) => ingestion.persistCutoverRecord(tx, record, configuration.mapping, key, current, correlationId, configuration.assignment) });
       const updated = await updateCutover(tx, row, { ...row });
-      return this.record(tx, actor, updated, "CONSUME", input.key, input.fingerprint, { ...await this.view(tx, updated, actor), processed: pending.length });
+      return this.record(tx, actor, updated, "CONSUME", input.key, input.fingerprint, { ...await this.view(tx, updated, actor), processed });
     });
   }
   async compensate(id: string, raw: unknown, actor: Principal): Promise<unknown> {
@@ -241,12 +209,7 @@ export class CutoverService {
     });
   }
   private async binding(tx: PermissionTransaction, row: StoredCutover): Promise<SheetImportConnector> {
-    const connector = await tx.sheetImportConnector.findUnique({ where: { id: row.connectorId } });
-    const pack = await tx.bootstrapImportPackage.findUnique({ where: { id: row.bootstrapPackageId } });
-    if (!connector || !pack || connector.campusId !== row.campusId || pack.campusId !== row.campusId || pack.sha256 !== row.contract.excelSha256
-      || connector.version !== row.contract.connectorVersion || cutoverHash(connector.configuration) !== row.contract.configurationSha256) conflict("cutover_binding_changed");
-    if (connector.enabled || connector.activeRunId || connector.manualRequested || connector.leaseUntil && connector.leaseUntil > new Date()) conflict("cutover_producer_must_be_stopped");
-    return connector;
+    return cutoverBinding(tx, row);
   }
   private expected(row: StoredCutover, version: number): void { if (row.version !== version) conflict("cutover_version_conflict"); }
   private available(row: StoredCutover): void { if (row.state === "SUSPENDED") conflict("cutover_suspended"); }
