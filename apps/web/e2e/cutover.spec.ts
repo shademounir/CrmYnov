@@ -38,7 +38,12 @@ async function mockCutover(page: Page, options: MockOptions = {}): Promise<Write
 async function assertContained(page: Page, width: number): Promise<void> {
   await page.evaluate(async () => { await document.fonts.ready; });
   const layout = await page.locator("main.cutover-page").evaluate((element) => ({ documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth, overflow: [...element.querySelectorAll(".cutover-card,.cutover-fields,.cutover-metadata,.cutover-counts,.cutover-actions,.cutover-submission,button,input:not([type=checkbox]),select,textarea")].filter((item) => {
-    const rect = item.getBoundingClientRect(); return rect.width > 0 && (rect.left < -1 || rect.right > document.documentElement.clientWidth + 1 || item.scrollWidth > item.clientWidth + 1);
+    const rect = item.getBoundingClientRect();
+    // Native single-line text inputs scroll their editable value internally.
+    // That is not a layout overflow: their outer bounds must still be contained,
+    // and the full prefilled identifier is checked with the keyboard below.
+    const editableText = item instanceof HTMLInputElement && item.type === "text";
+    return rect.width > 0 && (rect.left < -1 || rect.right > document.documentElement.clientWidth + 1 || !editableText && item.scrollWidth > item.clientWidth + 1);
   }).map((item) => item.className || item.tagName) }));
   expect(layout.documentWidth, `Document cutover at ${width}px`).toBeLessThanOrEqual(layout.viewportWidth + 1);
   expect(layout.overflow, `Cards, source hashes and controls at ${width}px`).toEqual([]);
@@ -58,6 +63,10 @@ for (const width of [1440, 1280, 1024, 768, 390]) {
     await expect(page.getByRole("button", { name: "Enregistrer le manifeste préparatoire", exact: true })).toBeDisabled();
     await assertContained(page, width); expect(writes).toHaveLength(0);
     const packageInput = page.getByLabel("Identifiant du lot Excel scellé"); await packageInput.focus(); await expect(packageInput).toBeFocused();
+    await expect(packageInput).toHaveValue(ids.package); await packageInput.press("Control+A");
+    expect(await packageInput.evaluate((input: HTMLInputElement) => ({ start: input.selectionStart, end: input.selectionEnd }))).toEqual({ start: 0, end: ids.package.length });
+    await packageInput.press("End");
+    expect(await packageInput.evaluate((input: HTMLInputElement) => input.selectionStart)).toBe(ids.package.length);
     await page.screenshot({ path: testInfo.outputPath(`cutover-preparation-${width}.png`), fullPage: true, animations: "disabled" });
     await page.goto(`/imports/cutover?manifest=${ids.manifest}`);
     await expect(page.getByRole("heading", { name: "Point de reprise durable", exact: true })).toBeVisible();
@@ -100,7 +109,7 @@ test("creation refuses an earlier freeze and accepts Z or .000Z only for the sam
 for (const [status, message] of [[401, /Votre session a expiré/u], [403, /périmètre actuel/u], [503, /n’a pas confirmé le résultat/u]] as const) {
   test(`cutover context ${status} shows an honest unavailable state without writes`, async ({ page }) => {
     const writes = await mockCutover(page, { contextStatus: status }); await page.goto("/imports/cutover");
-    await expect(page.getByRole("alert")).toContainText(message); await expect(page.locator("main.cutover-page form")).toHaveCount(0);
+    await expect(page.locator("main.cutover-page").getByRole("alert")).toContainText(message); await expect(page.locator("main.cutover-page form")).toHaveCount(0);
     await expect(page.locator("main.cutover-page")).not.toContainText("PRIVATE_SYNTHETIC_CONTEXT_DETAIL"); expect(writes).toHaveLength(0);
   });
 }
@@ -113,7 +122,7 @@ test("uncertain manual catchup retains its exact key and never starts an automat
   const limit = page.getByLabel("Soumissions maximum pour ce clic"); await limit.fill("26"); await page.getByRole("checkbox", { name: /J’autorise uniquement ce bloc borné/u }).check(); await expect(submit).toBeDisabled();
   await limit.fill("1"); await expect(page.getByRole("checkbox", { name: /J’autorise uniquement ce bloc borné/u })).not.toBeChecked();
   await page.getByRole("checkbox", { name: /J’autorise uniquement ce bloc borné/u }).check(); await submit.click();
-  await expect(page.getByRole("alert")).toContainText("Le serveur n’a pas confirmé le résultat"); expect(writes).toHaveLength(1);
+  await expect(page.locator("main.cutover-page").getByRole("alert")).toContainText("Le serveur n’a pas confirmé le résultat"); expect(writes).toHaveLength(1);
   await expect(page.locator("main.cutover-page")).not.toContainText("PRIVATE_UNACKNOWLEDGED_WRITE_DETAIL");
   await submit.click(); await expect.poll(() => writes.length).toBe(2);
   expect(writes[0]).toEqual(writes[1]); expect(writes[0]?.body).toMatchObject({ expectedVersion: 4, limit: 1, confirmed: true });
