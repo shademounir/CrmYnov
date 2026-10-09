@@ -63,3 +63,24 @@ test("pr-policy waits for the migration policy check", async () => {
   assert.match(cli, /"prisma-migration-policy"/);
   assert.match(cli, /assessChangedPrismaMigrations/);
 });
+
+test("policy has a finite wait covering the complete LCOV and Sonar budget", async () => {
+  const [workflow, quality, cli] = await Promise.all([
+    readFile(workflowUrl, "utf8"),
+    readFile(new URL("../../../.github/workflows/application-quality.yml", import.meta.url), "utf8"),
+    readFile(cliUrl, "utf8"),
+  ]);
+  const sonar = quality.split("  sonarcloud:\n")[1].split("  quality-gate:\n")[0];
+  const sonarMinutes = Number(sonar.match(/timeout-minutes: (\d+)/)[1]);
+  const policyMinutes = Number(workflow.match(/timeout-minutes: (\d+)/)[1]);
+  const attempts = Number(cli.match(/attempt < (\d+)/)[1]);
+  const interval = Number(cli.match(/setTimeout\(resolve, (\d+)\)/)[1]);
+  assert.equal(sonarMinutes, 30);
+  assert.equal(policyMinutes, 40);
+  assert.equal(attempts, 360);
+  assert.equal(interval, 5000);
+  assert.ok(attempts * interval >= sonarMinutes * 60_000);
+  assert.ok(policyMinutes * 60_000 >= attempts * interval + 10 * 60_000);
+  assert.match(cli, /requiredChecks\.every\(\(name\) => byName\.get\(name\)\?\.status === "completed"\)/);
+  assert.match(cli, /Required check wait timeout/);
+});

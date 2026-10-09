@@ -2,9 +2,10 @@ import { ConflictException, Inject, Injectable, NotFoundException, Unprocessable
 import { randomUUID } from "node:crypto";
 import { Prisma, type BootstrapImportPackage, type BootstrapImportRow } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
-import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "../permissions/dynamic-context.js";
+import { currentPrincipal, permissionDenied, resourceEvaluationContext, type PermissionIdentity } from "../permissions/dynamic-context.js";
+import { assertCutoverRuntimeAuthority, runtimeDenied, type CutoverDelegation } from "../cutover/cutover-runtime-authority.js";
 import { canonicalCampus, leadResource } from "../permissions/dynamic-resources.js";
-import { assignmentCandidateCapability, evaluatePermission, type EvaluationContext } from "../permissions/dynamic-evaluator.js";
+import { assignmentCandidateCapability, evaluatePermission, scheduledCutoverCapability, type EvaluationContext } from "../permissions/dynamic-evaluator.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "../permissions/dynamic-repository.js";
 import { resolveReference, validateLeadReferences } from "../references/reference.repository.js";
 import { parseHistoricalWorkbook, type HistoricalAnnotation } from "./historical-workbook.js";
@@ -331,7 +332,24 @@ export class BootstrapImportService {
 
   async report(id: string, actor: Principal): Promise<unknown> {
     return this.permissions.readTransaction(async (tx) => {
-      const row = await this.package(tx, id, actor, ["import.view"]); const items = await tx.bootstrapImportRow.groupBy({ by: ["sheet", "state"], where: { packageId: id }, _count: true });
+      const row = await this.package(tx, id, actor, ["import.view"]), principal = await currentPrincipal(tx, actor), snapshots = await this.permissions.snapshots(tx);
+      return this.reportCore(tx, row, [principal], (identity, context) => evaluatePermission(principal, "lead.view", snapshots, context).allowed);
+    });
+  }
+  /** Internal scheduled capability: no HTTP Principal/session is synthesized.
+   * Both persisted delegates must see the current BASELINE targets. */
+  async reportCutoverRuntime(tx: PermissionTransaction, id: string, delegation: CutoverDelegation, manifestId: string, assignment: boolean): Promise<unknown> {
+    const row = await tx.bootstrapImportPackage.findUnique({ where: { id } });
+    if (!row) this.notFound();
+    const authority = await assertCutoverRuntimeAuthority(tx, this.permissions, delegation, row.campusId, manifestId, assignment);
+    const report = await this.reportCore(tx, row, authority.identities, (identity, context) => scheduledCutoverCapability(identity.roles, "lead.view", authority.snapshots, context));
+    // HTTP reports may legitimately omit current axes. A scheduled producer
+    // must instead see every BASELINE target through BOTH current authorities.
+    if (report.reconciliation.currentDossierAxes.withheld > 0) runtimeDenied();
+    return report;
+  }
+  private async reportCore(tx: PermissionTransaction, row: BootstrapImportPackage, identities: PermissionIdentity[], visible: (identity: PermissionIdentity, context: EvaluationContext) => boolean): Promise<Record<string, unknown> & { reconciliation: ReturnType<typeof historicalReconciliation> }> {
+      const id = row.id, items = await tx.bootstrapImportRow.groupBy({ by: ["sheet", "state"], where: { packageId: id }, _count: true });
       const bySheet = HISTORICAL_SHEETS.map((name) => {
         const count = (states: string[]): number => items.filter((item) => item.sheet === name && states.includes(item.state)).reduce((sum, item) => sum + item._count, 0);
         return { name, total: count(["ACCEPTED", "REVIEW", "READY", "INVALID", "IGNORED"]), accepted: count(["ACCEPTED"]), review: count(["REVIEW", "READY"]), invalid: count(["INVALID"]), ignored: count(["IGNORED"]) };
@@ -352,8 +370,7 @@ export class BootstrapImportService {
         select: { leadId: true, externalId: true, submissionFingerprint: true, technicalSystem: true, sourceType: true } }) : [];
       const targetIds = [...new Set(reconciliationRows.slice(0, 10000).flatMap((item) => item.leadId ? [item.leadId] : []))];
       const leads = await tx.lead.findMany({ where: { id: { in: targetIds } }, take: 10001, select: { id: true, campus: true, status: true, assignedToId: true, acquisitionKind: true, baselineTemperature: true,
-        collaborators: { where: { active: true, userId: actor.userId }, select: { userId: true } } } });
-      const principal = await currentPrincipal(tx, actor); const snapshots = await this.permissions.snapshots(tx);
+        collaborators: { where: { active: true }, select: { userId: true } } } });
       const visibleLeads = [];
       const campuses = new Map<string, Awaited<ReturnType<typeof canonicalCampus>>>();
       const contexts = new Map<string, EvaluationContext>();
@@ -363,21 +380,24 @@ export class BootstrapImportService {
         // in this SAME read transaction/principal/permission snapshot.
         let campus = campuses.get(lead.campus);
         if (!campus) { campus = await canonicalCampus(tx, lead.campus); campuses.set(lead.campus, campus); }
-        const collaborating = lead.collaborators.some((item) => item.userId === principal.userId);
-        const key = hash([campus.id, lead.assignedToId, collaborating]);
-        let context = contexts.get(key);
-        if (!context) {
-          context = await resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true,
-            ...(lead.assignedToId ? { ownerId: lead.assignedToId } : {}), collaboratorIds: collaborating ? [principal.userId] : [], readableResource: true });
-          contexts.set(key, context);
+        let visibleForCurrentAxes = true;
+        for (const identity of identities) {
+          const collaborating = lead.collaborators.some((item) => item.userId === identity.userId);
+          const key = hash([identity.userId, campus.id, lead.assignedToId, collaborating]);
+          let context = contexts.get(key);
+          if (!context) {
+            context = await resourceEvaluationContext(tx, identity, { scope: "CAMPUS", campusKeys: campus.keys, active: true,
+              ...(lead.assignedToId ? { ownerId: lead.assignedToId } : {}), collaboratorIds: collaborating ? [identity.userId] : [], readableResource: true });
+            contexts.set(key, context);
+          }
+          visibleForCurrentAxes = visibleForCurrentAxes && visible(identity, context);
         }
-        visibleLeads.push({ ...lead, visibleForCurrentAxes: evaluatePermission(principal, "lead.view", snapshots, context).allowed });
+        visibleLeads.push({ ...lead, visibleForCurrentAxes });
       }
       const reconciliation = historicalReconciliation({ sha256: row.sha256 ?? "", rows: reconciliationRows.slice(0, 10000), notes: notes.slice(0, 100000), receipts: receipts.slice(0, 10000), provenance: provenance.slice(0, 10000), leads: visibleLeads.slice(0, 10000),
         truncated: reconciliationRows.length > 10000 || notes.length > 100000 || receipts.length > 10000 || provenance.length > 10000 || leads.length > 10000 });
       return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage }, reconciliation,
         cutoverBlocked: !complete || !reconciliation.complete || bySheet.some((sheet) => sheet.review || sheet.invalid), historicalAcquisitionsExcluded: true };
-    });
   }
 
   async notes(leadId: string, actor: Principal): Promise<unknown> {

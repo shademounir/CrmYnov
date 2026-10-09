@@ -3,6 +3,8 @@ import { GoogleSheetsAdapter, SheetsSourceError, type SheetValues } from "./goog
 import type { SheetConfiguration } from "./sheet-import-configuration.js";
 
 export abstract class SheetSource {
+  /** Server-owned synthetic provider contract, never a client attestation. */
+  cutoverFixtureArtifact?(configuration: SheetConfiguration): string | undefined;
   /** Local worker capability only. Authorization and source validation still happen during read(). */
   canProcess?(configuration: SheetConfiguration): boolean;
   abstract read(workbookId: string, tab: string, configuration: SheetConfiguration): Promise<SheetValues>;
@@ -11,6 +13,10 @@ export abstract class SheetSource {
 /** Deliberately no fetch, secret provider, arbitrary URL, or real Sheets activation path. */
 @Injectable()
 export class SyntheticSheetSource extends SheetSource {
+  override cutoverFixtureArtifact(configuration: SheetConfiguration): string | undefined {
+    return configuration.source?.mode === "SIMULATED" && configuration.source.identityMode === "EXTERNAL_ID"
+      ? "crm63:synthetic-server-provider:v1:immutable-external-id:original-utc" : undefined;
+  }
   override canProcess(configuration: SheetConfiguration): boolean {
     return configuration.source?.mode !== "GOOGLE";
   }

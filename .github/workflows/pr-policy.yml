@@ -26,7 +26,9 @@ jobs:
   pr-policy:
     name: pr-policy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Read-only preparation plus the longest required coverage/Sonar job.
+    # This changes only the bounded wait, never the required success evidence.
+    timeout-minutes: 40
     env:
       PR_POLICY_ALLOWED_ACTORS: shademounir
       # delegated-codex requires a versioned grant on the protected base and exact-SHA evidence.
