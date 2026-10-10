@@ -1,11 +1,14 @@
 import { PrismaClient } from "@prisma/client";
+import { assertRuntimeDatabaseIdentity, runtimeDatabaseTarget, type RuntimeDatabaseTargetInput } from "./runtime-database-target.js";
 
 interface RuntimeDatabaseClient {
   $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown>;
+  $queryRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown>;
   $disconnect(): Promise<void>;
 }
 
 type RuntimeDatabaseGrantStage =
+  | "verify_database_target"
   | "revoke_cloudsql_admin"
   | "bound_runtime_role"
   | "revoke_public_schema_create"
@@ -25,7 +28,7 @@ class RuntimeDatabaseGrantStepError extends Error {
   }
 }
 
-export interface RuntimeDatabaseGrantDependencies {
+export interface RuntimeDatabaseGrantDependencies extends RuntimeDatabaseTargetInput {
   runtimeRole: string | undefined;
   createClient(): RuntimeDatabaseClient;
   write(message: string): void;
@@ -33,6 +36,10 @@ export interface RuntimeDatabaseGrantDependencies {
 
 const defaults: RuntimeDatabaseGrantDependencies = {
   runtimeRole: process.env.CRM_RUNTIME_DATABASE_ROLE?.trim(),
+  databaseName: process.env.CRM_RUNTIME_DATABASE_NAME?.trim(),
+  databaseEnvironment: process.env.CRM_RUNTIME_DATABASE_ENVIRONMENT?.trim(),
+  databaseProject: process.env.CRM_RUNTIME_DATABASE_PROJECT?.trim(),
+  observedProject: (process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GCLOUD_PROJECT)?.trim(),
   createClient: () => new PrismaClient(),
   write: (message) => process.stdout.write(message),
 };
@@ -45,6 +52,7 @@ export async function runRuntimeDatabaseGrantJob(
     throw new Error("crm_runtime_database_role_invalid");
   }
   if (runtimeRole !== "crm_runtime") throw new Error("crm_runtime_database_role_not_allowlisted");
+  const target = runtimeDatabaseTarget(dependencies);
 
   const prisma = dependencies.createClient();
   let operationFailed = false;
@@ -57,11 +65,22 @@ export async function runRuntimeDatabaseGrantJob(
   };
   let failure: Error | undefined;
   try {
+    // Never change privileges on a miswired DATABASE_URL, including legacy DEV.
+    await runStep("verify_database_target", async () => {
+      assertRuntimeDatabaseIdentity(await prisma.$queryRaw`SELECT current_database() AS "databaseName"`, target);
+    });
     // Cloud SQL built-in users can inherit administrative privileges by default.
     await runStep("revoke_cloudsql_admin", () => prisma.$executeRaw`REVOKE cloudsqlsuperuser FROM "crm_runtime"`);
     await runStep("bound_runtime_role", () => prisma.$executeRaw`ALTER ROLE "crm_runtime" NOCREATEDB NOCREATEROLE CONNECTION LIMIT 20`);
     await runStep("revoke_public_schema_create", () => prisma.$executeRaw`REVOKE CREATE ON SCHEMA public FROM PUBLIC`);
-    await runStep("grant_database_connect", () => prisma.$executeRaw`GRANT CONNECT ON DATABASE crmynov_dev TO "crm_runtime"`);
+    await runStep("grant_database_connect", () => {
+      // Three fixed, quoted identifiers only; never interpolate or parameterize one.
+      switch (target.databaseName) {
+        case "crmynov_dev": return prisma.$executeRaw`GRANT CONNECT ON DATABASE "crmynov_dev" TO "crm_runtime"`;
+        case "crmynov_stg": return prisma.$executeRaw`GRANT CONNECT ON DATABASE "crmynov_stg" TO "crm_runtime"`;
+        case "crmynov_prod": return prisma.$executeRaw`GRANT CONNECT ON DATABASE "crmynov_prod" TO "crm_runtime"`;
+      }
+    });
     await runStep("grant_schema_usage", () => prisma.$executeRaw`GRANT USAGE ON SCHEMA public TO "crm_runtime"`);
     await runStep("grant_table_dml", () => prisma.$executeRaw`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "crm_runtime"`);
     await runStep("grant_sequence_usage", () => prisma.$executeRaw`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO "crm_runtime"`);
@@ -93,6 +112,7 @@ function cloudRunExecutionContext(environment: NodeJS.ProcessEnv): Record<string
 }
 
 function prismaFailureCode(error: unknown): string {
+  if (error instanceof Error && error.message === "crm_runtime_database_target_mismatch") return error.message;
   const candidate = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
   if (typeof candidate === "string" && /^P\d{4}$/.test(candidate)) return candidate;
   const name = error instanceof Error ? error.name : undefined;
@@ -102,7 +122,7 @@ function prismaFailureCode(error: unknown): string {
 }
 
 export function runtimeDatabaseGrantFailure(error: unknown, environment: NodeJS.ProcessEnv = process.env): string {
-  const configurationCode = error instanceof Error && ["crm_runtime_database_role_invalid", "crm_runtime_database_role_not_allowlisted"].includes(error.message)
+  const configurationCode = error instanceof Error && ["crm_runtime_database_role_invalid", "crm_runtime_database_role_not_allowlisted", "crm_runtime_database_target_invalid"].includes(error.message)
     ? error.message : undefined;
   const stepError = error instanceof RuntimeDatabaseGrantStepError ? error : undefined;
   const code = configurationCode ?? prismaFailureCode(stepError?.cause ?? error);
