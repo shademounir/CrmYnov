@@ -42,4 +42,20 @@ export class SheetImportController {
   reconciliation(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Query("page") page?: string): ReturnType<SheetImportAdminService["reconciliation"]> {
     return this.service.reconciliation(principal(request), id, page === undefined ? 1 : Number(page));
   }
+  @Post(":id/append-boundary")
+  appendBoundary(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown): ReturnType<SheetImportAdminService["appendBoundary"]> {
+    return this.service.appendBoundary(principal(request), id, body);
+  }
+  @Get(":id/append-reconciliation")
+  appendReconciliation(@Req() request: AuthenticatedRequest, @Param("id") id: string): ReturnType<SheetImportAdminService["appendReconciliation"]> {
+    return this.service.appendReconciliation(principal(request), id);
+  }
+  @Post(":id/append-qualification")
+  qualifyAppend(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown): ReturnType<SheetImportAdminService["qualifyAppend"]> {
+    return this.service.qualifyAppend(principal(request), id, body);
+  }
+  @Post(":id/append-observations")
+  observeAppend(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown): ReturnType<SheetImportAdminService["observeAppend"]> {
+    return this.service.observeAppend(principal(request), id, body);
+  }
 }

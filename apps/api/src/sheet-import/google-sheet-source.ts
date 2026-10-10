@@ -6,7 +6,7 @@ import type { SheetConfiguration } from "./sheet-import-configuration.js";
 
 export interface SheetSourceSelection {
   mode: "SIMULATED" | "GOOGLE";
-  identityMode: "EXTERNAL_ID" | "LOCAL_ROW";
+  identityMode: "EXTERNAL_ID" | "LOCAL_ROW" | "LOCAL_ROW_APPEND_ONLY";
   sheetId?: number;
   range?: string;
 }
@@ -60,7 +60,7 @@ export class RoutedSheetSource extends SheetSource {
     const google = this.google;
     if (!google) throw new SheetsSourceError("sheet_real_source_disabled", 403);
     if (source.range === undefined || source.sheetId === undefined) throw new SheetsSourceError("sheet_source_not_authorized", 403);
-    return google.boundedValues(workbookId, tab, source.range, source.sheetId, source.identityMode);
+    return google.boundedValues(workbookId, tab, source.range, source.sheetId, source.identityMode === "LOCAL_ROW_APPEND_ONLY" ? "LOCAL_ROW" : source.identityMode);
   }
 }
 

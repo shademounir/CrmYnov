@@ -3,6 +3,7 @@ import React from "react";
 import { apiString, resourceObjects, type ApiObject, type ApiValue } from "../../_components/connected-resource";
 import { LeadReferenceSelectors, ReferenceSelect, type ReferenceOption } from "../../_components/reference-controls";
 import { sheetApiObject, type SheetSimulation } from "./sheets-client";
+import { SheetAppendMonitor } from "./sheet-append-monitor";
 
 export type Feedback = { kind: "neutral" } | { kind: "loading" | "success" | "error"; message: string };
 export type FeedbackArea = "overview" | "configuration" | "execution";
@@ -23,6 +24,7 @@ interface ScheduledSheetsModel {
   identityMode: string;
   googleReady: boolean;
   reconciliation: ApiObject | null;
+  appendState: ApiObject | null;
   loaded: boolean;
   refreshed: string;
   busy: boolean;
@@ -48,6 +50,7 @@ interface ScheduledSheetsActions {
   runManually: () => Promise<void>;
   history: (page?: number) => Promise<void>;
   readReconciliation: (page?: number) => Promise<void>;
+  appendAction: (action: "status" | "boundary" | "observations" | "qualification") => Promise<void>;
 }
 
 const targets = ["firstName", "lastName", "email", "phone", "externalId", "educationLevel", "program", "campus", "campaign", "historicalStatus", "occurredAt"];
@@ -104,9 +107,11 @@ function SourceFields({ model, setSourceMode }: { model: ScheduledSheetsModel; s
 }
 
 function ScopeFields({ model }: { model: ScheduledSheetsModel }): React.JSX.Element {
+  const appendOnly = model.identityMode === "LOCAL_ROW_APPEND_ONLY";
   return <fieldset id="sheets-scope" disabled={model.busy} className="sheets-reference-section"><legend>2 · Campus et périmètre des prospects</legend>
-    <LeadReferenceSelectors initial={{ campus: apiString(model.context, "campus", model.campus), program: apiString(model.context, "program"), campaign: apiString(model.context, "campaign") }} />
-    <label>Niveau par défaut<input name="educationLevel" required defaultValue={apiString(model.context, "educationLevel", "BAC")} /></label>
+    <LeadReferenceSelectors key={String(appendOnly)} allowUnknownProgram={appendOnly} initial={{ campus: apiString(model.context, "campus", model.campus), program: apiString(model.context, "program"), campaign: apiString(model.context, "campaign") }} />
+    <label>Niveau déclaré<input key={String(appendOnly)} name="educationLevel" required={!appendOnly} defaultValue={apiString(model.context, "educationLevel", appendOnly ? "" : "BAC")} /></label>
+    {appendOnly ? <p>Ne renseignez que des valeurs justifiées. Sans les informations nécessaires à un nouveau dossier, la ligne reste conservée et à compléter ; aucune formation ni niveau n’est inventé.</p> : null}
   </fieldset>;
 }
 
@@ -126,10 +131,11 @@ function MappingRow({ column, index, changeColumn }: { column: ApiObject; index:
 }
 
 function MappingFields({ model, actions: pageActions }: { model: ScheduledSheetsModel; actions: ScheduledSheetsActions }): React.JSX.Element {
-  const localRows = model.identityMode === "LOCAL_ROW";
+  const localRows = model.identityMode !== "EXTERNAL_ID";
   return <fieldset id="sheets-mapping" disabled={model.busy}><legend>3 · Correspondance des colonnes</legend>
-    <label>Identification des soumissions<select name="identityMode" value={model.identityMode} onChange={(event) => pageActions.setIdentityMode(event.target.value)}><option value="EXTERNAL_ID">Identifiant de soumission fourni par la source</option><option value="LOCAL_ROW">Suivi local des lignes sans identifiant source</option></select></label>
+    <label>Identification des soumissions<select name="identityMode" value={model.identityMode} onChange={(event) => pageActions.setIdentityMode(event.target.value)}><option value="EXTERNAL_ID">Identifiant de soumission fourni par la source</option><option value="LOCAL_ROW">Suivi local des lignes sans identifiant source</option><option value="LOCAL_ROW_APPEND_ONLY">Nouvelles lignes en fin d’onglet · frontière immuable</option></select></label>
     {localRows ? <LocalIdentityFields context={model.context} /> : <p>Chaque soumission doit avoir un identifiant stable. Les lignes sans identifiant seront à vérifier, sans création automatique.</p>}
+    {model.identityMode === "LOCAL_ROW_APPEND_ONLY" ? <p>Identité : source, onglet, génération et position. Les lignes historiques jusqu’à N0 sont exclues. La frontière privée est chargée côté serveur, jamais recalculée à l’activation. Le producteur doit confirmer l’ajout en fin d’onglet sans tri, suppression ni insertion intermédiaire. La détection des changements n’est pas absolue.</p> : null}
     <div className="sheets-grid"><label>Référence de la correspondance<input name="mappingKey" required defaultValue={apiString(model.mapping, "mappingKey", "synthetic-sheet")} /></label>
       <label>Nom de la correspondance<input name="mappingName" required defaultValue={apiString(model.mapping, "name", "Mapping synthétique")} /></label></div>
     {model.phoneMappingLimited ? <aside className="sheets-mapping-note" role="note"><strong>Téléphone non importé pour cette source</strong><p>Les colonnes téléphoniques restent des informations complémentaires : leur format ne permet pas une normalisation fiable sans inventer un préfixe ou modifier le numéro.</p></aside> : null}
@@ -143,7 +149,7 @@ function ScheduleFields({ model }: { model: ScheduledSheetsModel }): React.JSX.E
     <label>Intervalle entre les imports (minutes)<input name="interval" type="number" min={5} max={15} required defaultValue={apiString(model.selected, "intervalMinutes", "15")} /><small>De 5 à 15 minutes, même lorsque le navigateur est fermé.</small></label>
     <label>Mode d’affectation<select name="strategy" defaultValue={apiString(assignment, "strategy", "UNASSIGNED")}><option value="UNASSIGNED">Non affecté</option><option value="FIXED">Conseiller fixe</option><option value="ROUND_ROBIN">À tour de rôle</option><option value="CONTROLLED_RANDOM">Aléatoire contrôlé</option></select></label>
     <label>Conseiller fixe (identifiant autorisé)<input name="target" defaultValue={apiString(assignment, "targetUserId")} /></label>
-    <label className="sheets-check"><input type="checkbox" name="enabled" disabled={model.realUnavailable} defaultChecked={model.selected.enabled === true} />Activer les imports automatiques</label>
+    <label className="sheets-check"><input type="checkbox" name="enabled" disabled={model.realUnavailable || (model.identityMode === "LOCAL_ROW_APPEND_ONLY" && model.appendState?.qualificationRegistered !== true)} defaultChecked={model.selected.enabled === true} />Activer les imports automatiques</label>
     <p className="sheets-section-intro">L’activation des imports ne remplace pas les règles d’affectation automatique du campus. Une configuration enregistrée peut rester désactivée.</p>
   </fieldset>;
 }
@@ -207,6 +213,7 @@ function ExecutionPanel({ model, actions: pageActions }: { model: ScheduledSheet
       <div><strong>Exécuter à la demande</strong><button type="button" disabled={manualDisabled} onClick={() => { void pageActions.runManually(); }}>Lancer manuellement</button></div>
       <div><strong>Consulter les résultats</strong><button type="button" disabled={model.busy} onClick={() => { void pageActions.history(); }}>Actualiser l’historique</button></div></div>
     {localRows ? <><p>Le lancement manuel importe uniquement le lot autorisé. Il n’active pas les prochains imports automatiques.</p><button type="button" disabled={model.busy} onClick={() => { void pageActions.readReconciliation(); }}>Consulter les lignes à vérifier</button><Reconciliation model={model} read={pageActions.readReconciliation} /></> : null}
+    {model.source.identityMode === "LOCAL_ROW_APPEND_ONLY" ? <SheetAppendMonitor state={model.appendState} busy={model.busy} sourceUnavailable={model.savedRealUnavailable} connectorEnabled={model.selected.enabled === true} action={pageActions.appendAction} /> : null}
     {model.feedbackArea === "execution" ? <ExecutionFeedback feedback={model.feedback} /> : null}
     {model.simulation ? <SimulationSummary {...model.simulation} /> : null}
     <RunHistory model={model} history={pageActions.history} />

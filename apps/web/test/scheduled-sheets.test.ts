@@ -3,7 +3,8 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Page from "../app/admin/scheduled-sheets/page";
-import { sheetApiObject, sheetApiValue, sheetError, sheetRequest, sheetSimulation } from "../app/admin/scheduled-sheets/sheets-client";
+import { sheetApiObject, sheetApiValue, sheetError, sheetRequest, sheetSimulation, sheetSourceConfiguration, sheetAppendState } from "../app/admin/scheduled-sheets/sheets-client";
+import { SheetAppendMonitor } from "../app/admin/scheduled-sheets/sheet-append-monitor";
 
 test("simulation counters preserve real, simulated, empty and review results without inventing import outcomes", () => {
   for (const simulated of [true, false]) {
@@ -57,4 +58,37 @@ test("Sheets requests remain same-origin, uncached and never reveal rejected res
   for (status of [401, 403, 409, 429, 503]) await assert.rejects(sheetRequest("/synthetic/runs", "POST", { expectedVersion: 2 }), (error: unknown): boolean => {
     assert.ok(error instanceof Error); assert.equal(error.message, sheetError(status)); return true;
   });
+});
+
+test("append-only source mode is preserved without client boundary or producer assertions", () => {
+  const form = new FormData();
+  form.set("sourceMode", "GOOGLE"); form.set("identityMode", "LOCAL_ROW_APPEND_ONLY");
+  form.set("sheetId", "0"); form.set("range", " A1:K100 ");
+  form.set("boundaryRow", "999"); form.set("producerAttested", "true");
+  assert.deepEqual(sheetSourceConfiguration(form), { mode: "GOOGLE", identityMode: "LOCAL_ROW_APPEND_ONLY", sheetId: 0, range: "A1:K100" });
+});
+
+test("append monitor distinguishes unregistered, durable and confirmed coverage without PII", () => {
+  const props = { busy: false, sourceUnavailable: false, connectorEnabled: false, action: (): Promise<void> => Promise.resolve() };
+  const empty = renderToStaticMarkup(createElement(SheetAppendMonitor, { ...props, state: null }));
+  assert.match(empty, /État non lu/u); assert.doesNotMatch(empty, /N0<\/dt><dd>0/u);
+  const html = renderToStaticMarkup(createElement(SheetAppendMonitor, { ...props, state: { boundaryRegistered: true, boundaryRow: 4,
+    capturedAt: "2026-10-10T07:00:00.000Z", generation: "synthetic-generation", lastObservedRow: 8, lastDurableRow: 8,
+    lastConfirmedRow: 7, qualificationRegistered: false, suspended: true, counts: { pending: 1, incomplete: 1, review: 1, confirmed: 1 } } }));
+  for (const text of ["Frontière historique N0", "Dernière position observée", "Dernière position durable", "Dernière position confirmée", "non confirmée", "Réception suspendue", "première observation conservée séparément"]) assert.ok(html.includes(text));
+  assert.match(html, /ne prouve pas que toutes les positions précédentes/u);
+  assert.doesNotMatch(html, /type="password"|producerAttested.*true|@example/u);
+});
+
+test("append state rejects missing counters, boundaries and inconsistent positions rather than reporting success", () => {
+  const valid = { boundaryRegistered: true, boundaryRow: 4, generation: "00000000-0000-4000-8000-000000000063", capturedAt: "2026-10-10T07:00:00.000Z",
+    lastObservedRow: 6, lastDurableRow: 6, lastConfirmedRow: null, suspended: false, qualificationRegistered: false, producerConditionConfirmed: false,
+    counts: { observed: 2, pending: 1, incomplete: 1, review: 0, confirmed: 0 } };
+  assert.deepEqual(sheetAppendState(valid), valid);
+  assert.deepEqual(sheetAppendState({ boundaryRegistered: false }), { boundaryRegistered: false });
+  for (const invalid of [null, {}, { ...valid, boundaryRow: -1 }, { ...valid, lastDurableRow: 7 }, { ...valid, generation: "" },
+    { ...valid, capturedAt: "invalid" }, { ...valid, counts: {} }, { ...valid, lastConfirmedRow: 3 },
+    { ...valid, counts: { ...valid.counts, observed: 3 } }, { ...valid, qualificationRegistered: "true" }]) {
+    assert.throws(() => sheetAppendState(invalid), /incomplet ou incohérent/u);
+  }
 });

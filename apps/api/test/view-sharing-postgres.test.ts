@@ -31,8 +31,13 @@ async function awaitLoginWindow(response: Response, firstAttempt: number, report
   report(`Five HTTP 201 logins; sixth HTTP 429 confirmed. Retry-After ${retryAfter === null ? "absent (documented 60-second window)" : "present"}; waiting ${waitMs} ms before one retry.`);
   const started = performance.now();
   // Real elapsed time, no fake clock, limiter reset, address change or server restart.
-  await new Promise<void>((done) => setTimeout(done, waitMs));
-  assert.ok(performance.now() - started >= waitMs - 1, "bounded real-time wait must elapse");
+  // Timers may wake slightly early. Recheck the monotonic deadline instead of
+  // treating one timer callback as proof that the real server window elapsed.
+  const deadline = started + waitMs;
+  while (performance.now() < deadline) {
+    await new Promise<void>((done) => setTimeout(done, Math.ceil(deadline - performance.now())));
+  }
+  assert.ok(performance.now() - started >= waitMs, "bounded real-time wait must elapse");
   assert.ok(performance.now() - firstAttempt >= loginWindowMs, "server login window must have expired");
 }
 

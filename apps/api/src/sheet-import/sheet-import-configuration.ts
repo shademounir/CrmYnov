@@ -4,7 +4,7 @@ import { parseSheetLocalRange } from "./sheet-local-observation.js";
 import { ingestionSources } from "../ingestion/ingestion.service.js";
 
 export interface SheetConfiguration {
-  source?: { mode: "SIMULATED" | "GOOGLE"; identityMode: "EXTERNAL_ID" | "LOCAL_ROW"; sheetId?: number; range?: string };
+  source?: { mode: "SIMULATED" | "GOOGLE"; identityMode: "EXTERNAL_ID" | "LOCAL_ROW" | "LOCAL_ROW_APPEND_ONLY"; sheetId?: number; range?: string };
   mapping: ImportMappingTemplate;
   context: ImportDryRunInput["context"];
   assignment: ImportDryRunInput["assignment"];
@@ -64,7 +64,7 @@ function assignment(value: unknown): ImportDryRunInput["assignment"] {
 export function readSheetConfiguration(value: unknown): SheetConfiguration {
   const item = sheetObject(value), context = sheetObject(item.context);
   const source = readSheetSource(item.source);
-  const local = source?.identityMode === "LOCAL_ROW";
+  const local = source?.identityMode === "LOCAL_ROW" || source?.identityMode === "LOCAL_ROW_APPEND_ONLY";
   const businessSource = ingestionSources.find((candidate) => candidate === context.source);
   if (!businessSource || (!local && businessSource !== "WEB_FORM") || context.technicalSystem !== (local ? "GOOGLE_SHEETS_LOCAL" : "FORMINATOR_ZAPIER")) invalid();
   return { ...(source ? { source } : {}), mapping: mapping(item.mapping, local), assignment: assignment(item.assignment), context: {
@@ -79,8 +79,8 @@ function readSheetSource(raw: unknown): SheetConfiguration["source"] {
   if (raw === undefined) return undefined;
   const item = sheetObject(raw);
   if (item.mode !== "SIMULATED" && item.mode !== "GOOGLE") invalid();
-  if (item.identityMode !== "EXTERNAL_ID" && item.identityMode !== "LOCAL_ROW") invalid();
-  if (item.mode === "GOOGLE" || item.identityMode === "LOCAL_ROW") {
+  if (item.identityMode !== "EXTERNAL_ID" && item.identityMode !== "LOCAL_ROW" && item.identityMode !== "LOCAL_ROW_APPEND_ONLY") invalid();
+  if (item.mode === "GOOGLE" || item.identityMode !== "EXTERNAL_ID") {
     if (typeof item.sheetId !== "number" || !Number.isSafeInteger(item.sheetId) || item.sheetId < 0) invalid();
     const range = sheetText(item.range, 64);
     try { parseSheetLocalRange(range); } catch { invalid(); }

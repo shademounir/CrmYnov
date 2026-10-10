@@ -247,9 +247,16 @@ export class PersistentIngestionService {
   }
 
   private async validateLocalSheetIdentity(tx: Prisma.TransactionClient, connector: { campusId: string; workbookId: string; configuration: Prisma.JsonValue }, id: string): Promise<void> {
-    const tracked = await tx.sheetLocalRow.findUnique({ where: { id }, include: { stream: true } });
     const config = connector.configuration;
     const source = config && typeof config === "object" && !Array.isArray(config) ? config.source : null;
+    if (source && typeof source === "object" && !Array.isArray(source) && source.identityMode === "LOCAL_ROW_APPEND_ONLY") {
+      const rows = await tx.$queryRaw<Array<{ valid: boolean }>>`SELECT true AS valid FROM sheet_local_rows r JOIN sheet_local_streams s ON r.stream_id=s.id
+        WHERE r.append_occurrence_key=${id} AND r.status='PENDING' AND s.suspended=false AND s.campus_id=${connector.campusId}::uuid
+        AND s.workbook_id=${connector.workbookId} AND s.sheet_id=${Number(source.sheetId)} AND s.append_contract IS NOT NULL`;
+      if (!rows[0]?.valid) throw new ForbiddenException({ code: "sheet_append_identity_refused" });
+      return;
+    }
+    const tracked = await tx.sheetLocalRow.findUnique({ where: { id }, include: { stream: true } });
     if (!source || typeof source !== "object" || Array.isArray(source) || source.identityMode !== "LOCAL_ROW"
       || !tracked || tracked.stream.suspended || tracked.stream.campusId !== connector.campusId
       || tracked.stream.workbookId !== connector.workbookId || tracked.stream.sheetId !== source.sheetId || tracked.status !== "PENDING") {
@@ -261,6 +268,7 @@ export class PersistentIngestionService {
     if (!record.campus) return "REQUIRED_MAPPING_MISSING";
     if (!record.email?.trim() && !record.phone?.trim()) return "CONTACT_IDENTITY_MISSING";
     if (matches.size > 1) return "IDENTITY_COLLISION";
+    if (record.externalId && /^[a-f0-9]{64}$/u.test(record.externalId) && matches.size) return "APPEND_CONTACT_MATCH_REVIEW";
     const matched = [...matches][0];
     if (matched) {
       const lead = await tx.lead.findUniqueOrThrow({ where: { id: matched } });
