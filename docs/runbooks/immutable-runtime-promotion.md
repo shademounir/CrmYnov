@@ -71,10 +71,80 @@ projects or impersonate an identity to work around an IAM denial.
 No automatic institutional administrator is provisioned by the migrations.
 `seed-local.ts` is synthetic and resets credentials: **never run it on PROD**.
 The first administrator needs a separately reviewed, target-bound, audited,
-one-shot provisioning operation and an explicitly authorized identity; this
-runbook does not implement or claim that bootstrap. Do not promote Mounir or a
+one-shot provisioning operation and an explicitly authorized identity. The
+`bootstrap-initial-admin` job below provides that narrow operation; its presence
+in source is not proof of execution or activation. Do not promote Mounir or a
 Director to Super Admin as a workaround. Existing user/invitation APIs require
 an activated Super Admin with effective current grants.
+
+### One-shot first administrator (never a seed)
+
+After the target's 52 migrations and least-privilege grant are qualified, and
+before opening application producers, use the qualified API image command
+`node apps/api/dist/jobs/bootstrap-initial-admin.js` in a separately reviewed
+one-task, zero-retry job. This change creates no Terraform job or secret by
+itself. The target must be STAGING or PROD, the actual database must match, and
+the connection's `current_user` must be `crm_migrator`. DEV and missing targets
+are refused; there is no fallback to the DEV database or a default identity.
+
+Required configuration (all values explicit, no `latest`):
+
+| Variable | Contract |
+| --- | --- |
+| `CRM_INITIAL_ADMIN_ENABLED` | Exactly `true`, for this one job only. |
+| `CRM_RUNTIME_DATABASE_ENVIRONMENT`, `CRM_RUNTIME_DATABASE_PROJECT`, `CRM_RUNTIME_DATABASE_NAME` | Exact STAGING/PROD tuple from the table above. |
+| `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT` | Required observed project, matching the tuple. |
+| `CRM_INITIAL_ADMIN_EMAIL`, `CRM_INITIAL_ADMIN_DISPLAY_NAME` | Explicit authorized principal. STAGING is solely `admin-staging@example.invalid` / `Admin synthétique STAGING`. No PROD principal has been selected by this implementation. PROD rejects that synthetic fallback. |
+| `CRM_INITIAL_ADMIN_OPERATION_ID` | Fresh UUIDv4, retained for reconciliation/replay. |
+| `CRM_INITIAL_ADMIN_DECISION_SHA256` | Hash of the reviewed target/identity decision, never a claim that a human wrote it. |
+| `CRM_INITIAL_ADMIN_SOURCE_SHA` | Exact qualified integrated source SHA, independently bound to the image in the execution review. |
+| `CRM_INITIAL_ADMIN_DELEGATION` | `crm-ynov-po-delegation-20261001`. |
+| `CRM_INITIAL_ADMIN_SECRET_VERSION` | Exact `projects/<target-project>/secrets/crm-<staging-or-prod>-initial-admin/versions/<positive-number>`. |
+| `CRM_INITIAL_ADMIN_TEMPORARY_SECRET` | Private value injected from that same numeric target Secret Manager version; 32–128 printable non-whitespace ASCII characters with lower/upper/digit/symbol. Never an argument, ordinary tfvars value, log, image or Git value. |
+
+Prepare the private random secret and pinned version before invoking the job;
+never generate it after committing the database identity. Grant only the
+separately authorized job identity access to this bootstrap secret. Do not copy
+DEV credentials. The version and decision hash are traceability bindings, not
+independent proof of IAM, decision authenticity or which Cloud SQL instance a
+credential reaches: review the actual secret injection, invoker, image, project
+and instance before invocation. A successful local mock is not that proof.
+
+Within one bounded Serializable transaction, the job locks the collaborator,
+credential and audit tables, refuses unfinished/mismatched migration history,
+then refuses **any** existing collaborator or credential, including inactive or
+non-admin users. It never updates or elevates an existing identity. It creates
+one active `SUPER_ADMIN` without campus/team, one scrypt credential with
+`mustChange=true`, and one unique `INITIAL_ADMIN_BOOTSTRAPPED` audit receipt.
+The audit names Codex and the delegation, with no human actor or claimed human
+review. No session, invitation, reference, Lead or mail is created. No migration
+is added. Locks have a 5-second timeout; the statement timeout is 60 seconds.
+
+A replay with the exact original bound configuration returns the prior receipt
+without changing the credential or first-login state. Missing identity/credential
+integrity, changed operation/configuration or another initialized identity store
+fails closed. Serializable/lock/connection errors are not automatically retried.
+If an execution or disconnect is uncertain, read the preserved operation and
+audit receipt before deciding on an exact replay; never reset the database or
+delete the audit to make it pass. The receipt proves initial provisioning, not
+that the administrator is still active after later legitimate role changes.
+
+Keep Gmail/recovery OFF during this initial technical access if not qualified:
+the existing `/first-login/change-secret` route uses the authenticated temporary
+credential without the recovery e-mail feature. Prove temporary login, forced
+password change, revocation of that session and a fresh login through the target
+UI before declaring the administrator usable. Do not clear `firstLoginRequired`
+in SQL to bypass this recipe. After real activation, disable the one-shot job and
+the temporary secret version according to the reviewed retention procedure;
+preserve the audit, deployment and secret-version metadata. An application
+rollback must preserve this identity/credential and may not run a seed/reset.
+
+Tests: `test/initial-admin-bootstrap.test.ts` covers pure target/refusal/replay
+and failure contracts. `test/integration/initial-admin-postgres.test.ts` requires
+an explicitly enabled fresh loopback PostgreSQL fixture, `crmynov_stg`, the
+`crm_migrator` user and a matching private nonce marker; it is not permission to
+connect to cloud STAGING. Its later password change is a SQL fixture, not a UI
+activation claim. Record actual test/recipe results separately.
 
 Before creation, inspect the target's existing identities and preserve them.
 Reuse the authorized Mounir identity if present, without resetting activation,
