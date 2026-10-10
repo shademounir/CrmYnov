@@ -1,0 +1,4 @@
+# Proposed independent runtime bucket in the canonical target project.
+# Not a claim of existence. Create/verify via separately owned metadata bootstrap.
+bucket = "crmynov-runtime-tfstate-prod-n7x4q2"
+prefix = "runtime/prod"

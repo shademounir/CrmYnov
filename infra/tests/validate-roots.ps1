@@ -6,7 +6,9 @@ $roots = @(
   (Resolve-Path "$PSScriptRoot\..\bootstrap\state"),
   (Resolve-Path "$PSScriptRoot\..\bootstrap\wif"),
   (Resolve-Path "$PSScriptRoot\..\bootstrap\dev-runtime-state"),
-  (Resolve-Path "$PSScriptRoot\..\environments\dev")
+  (Resolve-Path "$PSScriptRoot\..\environments\dev"),
+  (Resolve-Path "$PSScriptRoot\..\environments\staging"),
+  (Resolve-Path "$PSScriptRoot\..\environments\prod")
 )
 
 foreach ($root in $roots) {

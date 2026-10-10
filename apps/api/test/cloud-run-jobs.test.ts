@@ -52,6 +52,7 @@ test("runtime database grant validates the allowlist and executes the bounded gr
   await runRuntimeDatabaseGrantJob({
     runtimeRole: "crm_runtime",
     createClient: () => ({
+      $queryRaw: (): Promise<unknown> => Promise.resolve([{ databaseName: "crmynov_dev" }]),
       $executeRaw: (strings): Promise<unknown> => { statements.push(strings.join("?")); return Promise.resolve(1); },
       $disconnect: (): Promise<void> => { disconnected += 1; return Promise.resolve(); },
     }),
@@ -77,6 +78,7 @@ test("runtime database grant reports a safe failing stage and Cloud Run correlat
     runRuntimeDatabaseGrantJob({
       runtimeRole: "crm_runtime",
       createClient: () => ({
+        $queryRaw: (): Promise<unknown> => Promise.resolve([{ databaseName: "crmynov_dev" }]),
         $executeRaw: (): Promise<unknown> => {
           statement += 1;
           if (statement === 4) return Promise.reject(Object.assign(new Error("postgresql://private:secret@host/db"), { code: "P1001" }));

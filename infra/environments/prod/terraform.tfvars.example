@@ -1,0 +1,11 @@
+# Deliberately nonfunctional; copy outside Git and inject authorized values privately.
+billing_account_id     = "INJECT_PRIVATE_AT_EXECUTION"
+operations_alert_email = "INJECT_AUTHORIZED_PRIVATE_MAILBOX"
+api_image              = ""
+web_image              = ""
+job_image              = ""
+deploy_services        = false
+crm_public_origin      = ""
+access_recovery_enabled = false
+gmail_invitation_enabled = false
+deployer_service_account_email = ""

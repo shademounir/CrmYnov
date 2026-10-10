@@ -1,0 +1,10 @@
+output "project_id" { value = local.project_id }
+output "database_name" { value = local.target.database }
+output "database_instance" { value = google_sql_database_instance.postgres.connection_name }
+output "artifact_repository" { value = google_artifact_registry_repository.containers.name }
+output "api_uri" { value = var.deploy_services ? google_cloud_run_v2_service.api[0].uri : null }
+output "web_uri" { value = var.deploy_services ? google_cloud_run_v2_service.web[0].uri : null }
+output "deployed_api_image" { value = var.deploy_services ? var.api_image : "" }
+output "deployed_web_image" { value = var.deploy_services ? var.web_image : "" }
+output "operations_channel" { value = google_monitoring_notification_channel.operations.id }
+output "scheduler_paused" { value = true }
