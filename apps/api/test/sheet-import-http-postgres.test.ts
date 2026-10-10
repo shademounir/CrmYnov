@@ -9,6 +9,8 @@ import { readdir } from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
 import { referenceKey } from "../src/references/reference.contract.js";
 import { imageRuntime, webImageProof } from "./helpers/sheet-image-runtime.js";
+import { CompiledApiLogCapture, compiledApiFailureDiagnostic, compiledBundleIdentity } from "./helpers/compiled-api-diagnostics.js";
+import { ownedApiBundle, type OwnedApiBundle } from "./helpers/compiled-api-bundle.js";
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -18,7 +20,7 @@ async function freePort(): Promise<number> {
   await new Promise<void>((done, reject) => server.close((error) => error ? reject(error) : done()));
   return address.port;
 }
-async function startApi(t: TestContext, database: string): Promise<string> {
+async function startApi(t: TestContext, database: string, bundle: OwnedApiBundle, index: 1 | 2, previousPort: number | null = null): Promise<string> {
   if (process.env.CRMY171_API_IMAGE) {
     assert.equal(process.env.NODE_V8_COVERAGE, undefined, "image execution is a separate proof, never added to local source coverage");
     const url = new URL(database); assert.equal(url.hostname, "127.0.0.1"); url.hostname = "host.docker.internal";
@@ -30,13 +32,19 @@ async function startApi(t: TestContext, database: string): Promise<string> {
   const instrumentation = instrumented
     ? ["--import", pathToFileURL(resolve("../../scripts/ci/tests/coverage-shutdown.mjs")).href]
     : [];
-  const child = spawn(process.execPath, [...instrumentation, resolve("dist/main.js")], { windowsHide: true,
-    stdio: instrumented ? ["ignore", "ignore", "ignore", "ipc"] : "ignore", env: {
+  const bundleRoot = bundle.directory, before = compiledBundleIdentity(bundleRoot), capture = new CompiledApiLogCapture();
+  let spawnErrorCode: string | null = null;
+  const child = spawn(process.execPath, [...instrumentation, resolve(bundleRoot, "main.js")], { windowsHide: true,
+    stdio: instrumented ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"], env: {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP,
     NODE_V8_COVERAGE: coverageDirectory,
     DATABASE_URL: database, API_PORT: String(port), LOG_LEVEL: "error",
   } });
-  t.after(async (): Promise<void> => {
+  child.stdout?.on("data", (chunk: Buffer) => capture.append(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => capture.append(chunk));
+  child.once("error", (error: NodeJS.ErrnoException) => { spawnErrorCode = error.code ?? "OTHER"; });
+  bundle.onClose(async (): Promise<void> => {
+    if (spawnErrorCode !== null) return;
     if (child.exitCode !== null || child.signalCode !== null) return;
     const closed = new Promise<void>((done) => child.once("exit", () => done()));
     if (instrumented && child.connected) child.send({ type: "crmy-coverage-shutdown" });
@@ -48,12 +56,19 @@ async function startApi(t: TestContext, database: string): Promise<string> {
     }
   });
   const base = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 60; attempt++) {
-    if (child.exitCode !== null) throw new Error("synthetic_compiled_api_exited");
-    try { if ((await fetch(`${base}/health/ready`)).ok) return base; } catch { /* bounded local startup */ }
-    await new Promise<void>((done) => setTimeout(done, 250));
+  try {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (child.exitCode !== null || child.signalCode !== null || spawnErrorCode !== null) throw new Error("synthetic_compiled_api_exited");
+      try { if ((await fetch(`${base}/health/ready`)).ok) return base; } catch { /* bounded local startup */ }
+      await new Promise<void>((done) => setTimeout(done, 250));
+    }
+    throw new Error("synthetic_compiled_api_not_ready");
+  } catch (error) {
+    let after: ReturnType<typeof compiledBundleIdentity> | null = null;
+    try { after = compiledBundleIdentity(bundleRoot); } catch { /* identity failure is reported, never substituted for the original failure */ }
+    t.diagnostic(compiledApiFailureDiagnostic({ index, port, previousPort, pid: child.pid, exitCode: child.exitCode, signal: child.signalCode, spawnErrorCode, before, after, capture }));
+    throw error;
   }
-  throw new Error("synthetic_compiled_api_not_ready");
 }
 function object(value: unknown): Record<string, unknown> { assert.ok(value && typeof value === "object" && !Array.isArray(value)); return Object.fromEntries(Object.entries(value)); }
 
@@ -89,7 +104,8 @@ async function verifyPrecreatedDatabase(client: PrismaClient): Promise<void> {
 test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic PostgreSQL", {
   skip: process.env.CRMY171_HTTP_TEST !== "true" && process.env.CI !== "true", timeout: 180_000,
 }, async (t) => {
-  execFileSync(process.execPath, ["../../node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json"], { stdio: "pipe", timeout: 90_000 });
+  const bundle = ownedApiBundle((cleanup) => t.after(cleanup));
+  execFileSync(process.execPath, ["../../node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json", "--outDir", bundle.directory], { stdio: "pipe", timeout: 90_000 });
   const database = testDatabase(t);
   const client = new PrismaClient({ datasourceUrl: database });
   t.after(() => client.$disconnect());
@@ -113,7 +129,8 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   const salt = randomBytes(16).toString("hex");
   await client.localPasswordHash.create({ data: { collaboratorId: user.id, identityDigest: createHash("sha256").update(email).digest("hex"), passwordSalt: salt,
     passwordDigest: scryptSync(password, salt, 32).toString("hex"), mustChange: false } });
-  const first = await startApi(t, database), second = await startApi(t, database);
+  const first = await startApi(t, database, bundle, 1);
+  const second = await startApi(t, database, bundle, 2, Number(new URL(first).port));
   const login = await fetch(`${first}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
   assert.equal(login.status, 201);
   const session = object(await login.json()); assert.equal(typeof session.token, "string");

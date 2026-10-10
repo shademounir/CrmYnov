@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { type TestContext } from "node:test";
+import test from "node:test";
 import { randomBytes, randomUUID, createHash, scryptSync } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
@@ -12,6 +12,7 @@ import { assertViewMetadata } from "./helpers/view-sharing-metadata.test.js";
 import { sharingDatabase, verifySharingDatabase } from "./helpers/view-sharing-database.js";
 import { assertPermissionConcurrency } from "./helpers/permission-concurrency.test.js";
 import { assertFirstLoginAcrossApis } from "./helpers/permission-first-login.test.js";
+import { ownedApiBundle, type OwnedApiBundle } from "./helpers/compiled-api-bundle.js";
 
 const loginWindowMs = 60_000; // RateLimitService: five attempts per IP in this real-time window.
 const loginMarginMs = 250;
@@ -48,12 +49,12 @@ async function port(): Promise<number> {
   await new Promise<void>((done, reject) => server.close((error) => error ? reject(error) : done()));
   return result;
 }
-async function api(t: TestContext, databaseUrl: string): Promise<string> {
+async function api(databaseUrl: string, bundle: OwnedApiBundle): Promise<string> {
   const number = await port();
-  const child = spawn(process.execPath, [resolve("dist/main.js")], {
+  const child = spawn(process.execPath, [resolve(bundle.directory, "main.js")], {
     env: { ...process.env, DATABASE_URL: databaseUrl, API_PORT: String(number), LOG_LEVEL: "error" }, windowsHide: true, stdio: "ignore",
   });
-  t.after(async () => {
+  bundle.onClose(async () => {
     if (child.exitCode === null && child.signalCode === null) {
       const stopped = new Promise<void>((done) => child.once("exit", () => done())); child.kill(); await stopped;
     }
@@ -70,7 +71,8 @@ async function api(t: TestContext, databaseUrl: string): Promise<string> {
 test("CRMY-170 authenticated sharing / two compiled APIs / ephemeral PostgreSQL", {
   skip: process.env.CRMY170_EPHEMERAL_TEST !== "true" && process.env.CI !== "true" && process.env.CRMY170_TEST_DATABASE_URL === undefined, timeout: 240_000,
 }, async (t) => {
-  execFileSync(process.execPath, ["../../node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json"], { stdio: "pipe", timeout: 120_000 });
+  const bundle = ownedApiBundle((cleanup) => t.after(cleanup));
+  execFileSync(process.execPath, ["../../node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json", "--outDir", bundle.directory], { stdio: "pipe", timeout: 120_000 });
   const database = sharingDatabase(process.env, () => {
     const container = `crmy170-views-${randomUUID()}`;
     execFileSync("docker", ["run", "-d", "--name", container, "--label", "crmy.ticket=CRMY-170", "--publish", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data:rw", "--env", "POSTGRES_DB=crm_crmy170", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17.6-bookworm"], { stdio: "pipe", timeout: 120_000 });
@@ -105,7 +107,7 @@ test("CRMY-170 authenticated sharing / two compiled APIs / ephemeral PostgreSQL"
   const manager = await account("MANAGER", campusA, "SYNTHETIC-TEAM"), adviser = await account("ADMISSIONS", campusA, "SYNTHETIC-TEAM");
   const auditor = await account("AUDITOR", campusA, null), superAdmin = await account("SUPER_ADMIN", campusB, null);
   const responsibility = await client.teamResponsibility.create({ data: { teamId: "SYNTHETIC-TEAM", campusId: campusA, managerId: manager.id, active: true } });
-  const bases = [await api(t, databaseUrl), await api(t, databaseUrl)];
+  const bases = [await api(databaseUrl, bundle), await api(databaseUrl, bundle)];
   const firstAttempt = performance.now();
   let successfulLogins = 0;
   async function token(account: { id: string; email: string; password: string }, role: Role, campus: string, sixth = false): Promise<{ id: string; token: string }> {
