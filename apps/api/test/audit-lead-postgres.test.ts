@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { assertLeadAuditCycle, prepareLeadAuditFixture } from "./helpers/audit-lead-cycle.test.js";
+import { ownedApiBundle } from "./helpers/compiled-api-bundle.js";
 
 async function availablePort(): Promise<number> {
   const server = createServer();
@@ -19,9 +20,10 @@ async function availablePort(): Promise<number> {
 const enabled = process.env.CRMY54_EPHEMERAL_TEST === "true" || process.env.CI === "true";
 async function runCompiledAudit(t: TestContext, additionRollbackOnly: boolean): Promise<void> {
   // Same compiler and configuration as the official API build. Never run Nest under tsx.
-  execFileSync(process.execPath, ["../../node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json"], { stdio: "pipe", timeout: 120_000 });
-  const entry = resolve("dist/main.js");
-  assert.ok(readFileSync(resolve("dist/assignment/lead-assignment.service.js"), "utf8").includes('__metadata("design:paramtypes"'));
+  const bundle = ownedApiBundle((cleanup) => t.after(cleanup));
+  execFileSync(process.execPath, ["../../node_modules/typescript/bin/tsc", "-p", "tsconfig.build.json", "--outDir", bundle.directory], { stdio: "pipe", timeout: 120_000 });
+  const entry = resolve(bundle.directory, "main.js");
+  assert.ok(readFileSync(resolve(bundle.directory, "assignment/lead-assignment.service.js"), "utf8").includes('__metadata("design:paramtypes"'));
   const container = `crmy54-lead-${randomUUID()}`;
   execFileSync("docker", ["run", "-d", "--name", container, "--label", "crmy.ticket=CRMY-54", "--publish", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data:rw", "--env", "POSTGRES_DB=crm_crmy54_lead", "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:17.6-bookworm"], { stdio: "pipe", timeout: 120_000 });
   t.after(() => { execFileSync("docker", ["rm", "-f", container], { stdio: "pipe", timeout: 30_000 }); });
@@ -40,7 +42,7 @@ async function runCompiledAudit(t: TestContext, additionRollbackOnly: boolean): 
   let serverLog = "";
   const capture = (chunk: Buffer): void => { serverLog = (serverLog + chunk.toString("utf8")).slice(-32_000); };
   child.stdout.on("data", capture); child.stderr.on("data", capture);
-  t.after(async () => {
+  bundle.onClose(async () => {
     if (child.exitCode === null && child.signalCode === null) {
       const stopped = new Promise<void>((done) => child.once("exit", () => done())); child.kill(); await stopped;
     }
@@ -54,7 +56,7 @@ async function runCompiledAudit(t: TestContext, additionRollbackOnly: boolean): 
       await new Promise((done) => setTimeout(done, 500));
     }
     assert.equal(child.spawnargs[1], entry); assert.ok(child.pid);
-    t.diagnostic(`API process verified: node dist/main.js; PID ${child.pid}; readiness HTTP 200; dedicated localhost PostgreSQL.`);
+    t.diagnostic(`API process verified: owned compiled main.js; PID ${child.pid}; readiness HTTP 200; dedicated localhost PostgreSQL.`);
     await assertLeadAuditCycle(client, base, fixture, (message) => t.diagnostic(message), additionRollbackOnly);
   } catch (error) {
     let redacted = serverLog;
