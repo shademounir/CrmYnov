@@ -1471,6 +1471,7 @@ model ImportCutoverReceipt {
 }
 
 model SheetImportRun {
+  appendObservations SheetAppendObservation[]
   id             String   @id @default(uuid()) @db.Uuid
   connectorId    String   @map("connector_id") @db.Uuid
   status         String   @db.VarChar(24)
@@ -1534,6 +1535,10 @@ model SheetImportSubmission {
 
 // Local Sheets identity is not an upstream submission identity.
 model SheetLocalStream {
+  appendContract Json? @map("append_contract")
+  appendQualification Json? @map("append_qualification")
+  appendLastDurableRow Int? @map("append_last_durable_row")
+  appendObservations SheetAppendObservation[]
   id String @id @db.VarChar(64)
   workbookId String @map("workbook_id") @db.VarChar(200)
   sheetId Int @map("sheet_id")
@@ -1549,6 +1554,8 @@ model SheetLocalStream {
 }
 
 model SheetLocalRow {
+  appendPayload Json? @map("append_payload")
+  appendOccurrenceKey String? @unique @map("append_occurrence_key") @db.VarChar(64)
   id String @id @default(uuid()) @db.Uuid
   streamId String @map("stream_id") @db.VarChar(64)
   rowNumber Int @map("row_number")
@@ -1561,6 +1568,22 @@ model SheetLocalRow {
   stream SheetLocalStream @relation(fields:[streamId], references:[id], onDelete:Restrict)
   @@unique([streamId,rowNumber])
   @@map("sheet_local_rows")
+}
+
+model SheetAppendObservation {
+  id String @id @db.Uuid
+  streamId String @map("stream_id") @db.VarChar(64)
+  occurrenceKey String @map("occurrence_key") @db.VarChar(64)
+  rowNumber Int @map("row_number")
+  fingerprint String @db.VarChar(64)
+  payload Json
+  observedAt DateTime @map("observed_at") @db.Timestamptz(6)
+  runId String @map("run_id") @db.Uuid
+  stream SheetLocalStream @relation(fields:[streamId], references:[id], onDelete:Restrict)
+  run SheetImportRun @relation(fields:[runId], references:[id], onDelete:Restrict)
+  @@unique([streamId,occurrenceKey,fingerprint], map:"sheet_append_observations_identity_key")
+  @@index([streamId,rowNumber], map:"sheet_append_observations_stream_row_idx")
+  @@map("sheet_append_observations")
 }
 
 model CampusAssignmentConfiguration {

@@ -31,7 +31,7 @@ export class SyntheticSheetSource extends SheetSource {
       (): Promise<Response> => Promise.resolve(new Response(JSON.stringify({ values: [columns.map((column) => column.sourceColumn),
         columns.map((column) => column.targetField ? fields[column.targetField] ?? "" : "")] }), { status: 200 })));
     const result = await adapter.values(workbookId, tab);
-    if (configuration.source?.identityMode === "LOCAL_ROW" && configuration.source.sheetId !== undefined && configuration.source.range) {
+    if (["LOCAL_ROW", "LOCAL_ROW_APPEND_ONLY"].includes(configuration.source?.identityMode ?? "") && configuration.source?.sheetId !== undefined && configuration.source.range) {
       result.observation = { sheetId: configuration.source.sheetId, range: configuration.source.range,
         values: [result.columns, ...result.rows.map((row) => result.columns.map((column) => row[column] ?? ""))] };
     }

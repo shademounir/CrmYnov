@@ -35,6 +35,8 @@ export async function verifyLocalLedger(tx: Prisma.TransactionClient, campusId: 
     sheetId: observation.scope.sheetId, campusId, range, headerFingerprint: observation.headerFingerprint,
     lastObservedRow: observation.scope.headerRow }, update: {} });
   const stream = await lockLocalStream(tx, id, campusId);
+  const append = await tx.$queryRaw<Array<{ bound: boolean }>>`SELECT append_contract IS NOT NULL AS bound FROM sheet_local_streams WHERE id=${id}`;
+  if (append[0]?.bound) throw new Error("sheet_append_legacy_execution_refused");
   if (stream.suspended) return false;
   const previousRows = await tx.sheetLocalRow.findMany({ where: { streamId: id }, orderBy: { rowNumber: "asc" }, take: 10_000 });
   const previous: SheetLocalObservation = { scope: { ...observation.scope, ...parseSheetLocalRange(stream.range) },

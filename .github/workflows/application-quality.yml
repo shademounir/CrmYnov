@@ -143,6 +143,8 @@ jobs:
         run: node scripts/ci/bootstrap-import-postgres.mjs
       - name: Prove durable cutover preparation, source boundary and replay on isolated PostgreSQL
         run: node scripts/ci/cutover-postgres.mjs
+      - name: Prove append-only N0 reception, incomplete rows, revocation and replay on isolated PostgreSQL
+        run: node scripts/ci/sheet-append-postgres.mjs
       - name: Run targeted end-to-end contracts
         run: npm run test:e2e
 

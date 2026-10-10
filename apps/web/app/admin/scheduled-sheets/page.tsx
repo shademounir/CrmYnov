@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { apiString, resourceObjects, type ApiObject, type ApiValue } from "../../_components/connected-resource";
 import { loadReferences, referenceFormText, type ReferenceOption } from "../../_components/reference-controls";
-import { sheetApiObject, sheetRequest, sheetSourceConfiguration, sheetSimulation, type SheetSimulation } from "./sheets-client";
+import { sheetApiObject, sheetAppendState, sheetRequest, sheetSourceConfiguration, sheetSimulation, type SheetSimulation } from "./sheets-client";
 import { ScheduledSheetsView, type Feedback, type FeedbackArea } from "./scheduled-sheets-view";
 
 function simulationFeedback(value: ApiValue): Feedback {
@@ -23,6 +23,7 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
   const [sourceMode, setSourceMode] = useState("SIMULATED"), [identityMode, setIdentityMode] = useState("EXTERNAL_ID");
   const [googleReady, setGoogleReady] = useState(false);
   const [reconciliation, setReconciliation] = useState<ApiObject | null>(null);
+  const [appendState, setAppendState] = useState<ApiObject | null>(null);
   const [loaded, setLoaded] = useState(false), [refreshed, setRefreshed] = useState("");
   const revision = useRef(0);
   const activeRequest = useRef<number | null>(null);
@@ -68,7 +69,7 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
     }
   }
   function choose(row: ApiObject, fallback: ApiObject = mapping): void {
-    setSelected(row); setRuns([]); setHistoryPage(0); setReconciliation(null); setSimulation(null);
+    setSelected(row); setRuns([]); setHistoryPage(0); setReconciliation(null); setAppendState(null); setSimulation(null);
     const nextSource = sheetApiObject(sheetApiObject(row.configuration).source);
     setSourceMode(apiString(nextSource, "mode", "SIMULATED")); setIdentityMode(apiString(nextSource, "identityMode", "EXTERNAL_ID"));
     const next = sheetApiObject(sheetApiObject(row.configuration).mapping);
@@ -88,9 +89,12 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
   }
   async function save(form: FormData): Promise<void> {
     const sourceConfiguration = sheetSourceConfiguration(form);
-    const localRows = sourceConfiguration.identityMode === "LOCAL_ROW";
+    const localRows = sourceConfiguration.identityMode !== "EXTERNAL_ID";
+    const appendOnly = sourceConfiguration.identityMode === "LOCAL_ROW_APPEND_ONLY";
     const enabled = form.get("enabled") === "on";
     const fields = { campus: referenceFormText(form, "campus"), program: referenceFormText(form, "program"), campaign: referenceFormText(form, "campaign") };
+    const scopeFields = appendOnly && !fields.program ? { campus: fields.campus, campaign: fields.campaign } : fields;
+    const educationLevel = referenceFormText(form, "educationLevel");
     const cleaned = columns.map((column) => {
       const { targetField, ...rest } = column;
       return ["METADATA", "IGNORE"].includes(apiString(column, "action")) ? { ...rest, reason: apiString(column, "reason", "explicit_mapping_choice") } : { ...column, targetField };
@@ -99,7 +103,7 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
       workbookLink: referenceFormText(form, "workbook"), tab: referenceFormText(form, "tab"), campusId: fields.campus,
       source: sourceConfiguration,
       mapping: { ...mapping, profile: localRows ? "CUSTOM" : "FORMINATOR_ZAPIER", mappingKey: referenceFormText(form, "mappingKey"), name: referenceFormText(form, "mappingName"), columns: cleaned },
-      context: { ...fields, source: localRows ? referenceFormText(form, "businessSource") : "WEB_FORM", technicalSystem: localRows ? "GOOGLE_SHEETS_LOCAL" : "FORMINATOR_ZAPIER", ...(localRows ? { originalSource: referenceFormText(form, "originalSource") } : {}), educationLevel: referenceFormText(form, "educationLevel") },
+      context: { ...scopeFields, source: localRows ? referenceFormText(form, "businessSource") : "WEB_FORM", technicalSystem: localRows ? "GOOGLE_SHEETS_LOCAL" : "FORMINATOR_ZAPIER", ...(localRows ? { originalSource: referenceFormText(form, "originalSource") } : {}), ...(appendOnly && !educationLevel ? {} : { educationLevel }) },
       assignment: { strategy: referenceFormText(form, "strategy"), ...(referenceFormText(form, "target") ? { targetUserId: referenceFormText(form, "target") } : {}) } };
     await perform(() => sheetRequest(id ? `/${encodeURIComponent(id)}` : "", id ? "PUT" : "POST", body),
       `Configuration enregistrée. Import automatique ${enabled ? "actif" : "désactivé"}.`, (value) => {
@@ -113,11 +117,26 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
     setReconciliation(null);
     await perform(() => sheetRequest(`/${encodeURIComponent(id)}/reconciliation?page=${page}`), "Suivi local actualisé.", (value) => setReconciliation(sheetApiObject(value)));
   }
+  async function appendAction(action: "status" | "boundary" | "observations" | "qualification"): Promise<void> {
+    setAppendState(null);
+    const path = `/${encodeURIComponent(id)}/append-`;
+    await perform(async () => {
+      if (action !== "status") {
+        const value = sheetApiObject(await sheetRequest(`${path}${action}`, "POST", { expectedVersion: Number(selected.version), confirmed: true }));
+        if (value.automaticActivationPerformed !== false) throw new Error("Réponse de confirmation incomplète. Vérifiez l’état serveur avant de poursuivre.");
+        if (action === "observations" && (value.businessEffects !== 0 || value.observationDurable !== true)) {
+          throw new Error("Observation suspendue ou incomplète. Aucun effet métier demandé. Consultez l’état serveur avant de poursuivre.");
+        }
+      }
+      return sheetAppendState(await sheetRequest(`${path}reconciliation`));
+    }, "État serveur actualisé. Aucune activation automatique effectuée.", (value) => setAppendState(sheetApiObject(value)));
+  }
   function changeCampus(value: string): void {
     revision.current++;
     setCampus(value);
     setLoaded(false);
     setSelected({});
+    setAppendState(null);
     setConnectors([]);
     setRuns([]);
     setHistoryPage(0);
@@ -138,9 +157,9 @@ export default function ScheduledSheetsPage(): React.JSX.Element {
   }
   return <ScheduledSheetsView
     model={{ campuses, campus, connectors, selected, mapping, columns, runs, feedback, feedbackArea, historyPage, simulation,
-      sourceMode, identityMode, googleReady, reconciliation, loaded, refreshed, busy, id, configuration, context, source,
+      sourceMode, identityMode, googleReady, reconciliation, appendState, loaded, refreshed, busy, id, configuration, context, source,
       realUnavailable, savedRealUnavailable, phoneMappingLimited }}
     actions={{ changeCampus, refresh, selectConnector, newConnector: () => selectConnector({}), save,
-      setSourceMode, setIdentityMode, changeColumn, simulate, runManually, history, readReconciliation }}
+      setSourceMode, setIdentityMode, changeColumn, simulate, runManually, history, readReconciliation, appendAction }}
   />;
 }

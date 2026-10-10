@@ -26,6 +26,8 @@ async function browser(t: TestContext, paginated = false, googleReady = false, r
   const calls: string[] = [];
   let failure = 0;
   let savedVersion = 0;
+  let appendRegistered = false;
+  let appendQualified = false;
   let releaseResponse: (() => void) | undefined;
   let responseGate: Promise<void> | undefined;
   t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => {
@@ -35,6 +37,18 @@ async function browser(t: TestContext, paginated = false, googleReady = false, r
       return Promise.resolve(Response.json({ items: kind === "CAMPUS" ? [campus] : [{ ...campus, id: `${kind}-synthetic`, kind, code: `SYNTHETIC-${kind}`, label: `${kind} synthétique` }] }));
     }
     if (failure) return Promise.resolve(Response.json({ code: "synthetic_refusal" }, { status: failure }));
+    if (url.pathname.includes("/append-")) {
+      if (init?.method === "POST") {
+        assert.equal(typeof init.body, "string"); assert.ok(typeof init.body === "string");
+        assert.deepEqual(JSON.parse(init.body), { expectedVersion: savedVersion, confirmed: true });
+        if (url.pathname.endsWith("/append-boundary")) appendRegistered = true;
+        if (url.pathname.endsWith("/append-qualification")) appendQualified = true;
+        return Promise.resolve(Response.json({ observationDurable: true, businessEffects: 0, automaticActivationPerformed: false }));
+      }
+      return Promise.resolve(Response.json({ boundaryRegistered: appendRegistered, boundaryRow: 4, generation: "00000000-0000-4000-8000-000000000063", capturedAt: "2026-10-10T07:00:00.000Z",
+        lastObservedRow: 6, lastDurableRow: 6, lastConfirmedRow: null, qualificationRegistered: appendQualified, producerAttested: false, producerConditionConfirmed: false, suspended: false,
+        counts: { observed: 2, pending: 1, incomplete: 1, review: 0, confirmed: 0 }, rows: [] }));
+    }
     if (init?.method === "POST" || init?.method === "PUT") {
       if (url.pathname.endsWith("/simulations")) return Promise.resolve(Response.json({ rows: 1, mapped: reconciliationRequired ? 0 : 1, review: reconciliationRequired ? 1 : 0, mutated: false, simulated: true, reconciliationRequired, reason: reconciliationRequired ? "observed_row_changed" : null }));
       if (url.pathname.endsWith("/runs")) {
@@ -45,13 +59,18 @@ async function browser(t: TestContext, paginated = false, googleReady = false, r
       const body = sheetApiObject(sheetApiValue(JSON.parse(init.body)));
       assert.equal(body.campusId, campus.code);
       savedVersion = Number(body.expectedVersion) + 1;
-      if (sheetApiObject(body.source).identityMode === "LOCAL_ROW") {
+      const identityMode = sheetApiObject(body.source).identityMode;
+      if (typeof identityMode === "string" && ["LOCAL_ROW", "LOCAL_ROW_APPEND_ONLY"].includes(identityMode)) {
         assert.equal(sheetApiObject(body.mapping).profile, "CUSTOM");
         assert.equal(sheetApiObject(body.context).technicalSystem, "GOOGLE_SHEETS_LOCAL");
         assert.equal(sheetApiObject(body.context).originalSource, "Campagne synthétique déclarée");
         assert.equal(sheetApiObject(body.context).source, "OTHER_CONTROLLED");
-        assert.deepEqual(body.source, { mode: "GOOGLE", identityMode: "LOCAL_ROW", sheetId: 171, range: "A1:K6" });
+        assert.deepEqual(body.source, { mode: "GOOGLE", identityMode: sheetApiObject(body.source).identityMode, sheetId: 171, range: "A1:K6" });
         assert.equal(body.enabled, false);
+        if (identityMode === "LOCAL_ROW_APPEND_ONLY") {
+          assert.equal("program" in sheetApiObject(body.context), false);
+          assert.equal("educationLevel" in sheetApiObject(body.context), false);
+        }
       }
       const response = Response.json({ id: "synthetic-connector", version: Number(body.expectedVersion) + 1, tab: body.tab, workbookId: "synthetic_crmy171",
         enabled: body.enabled, intervalMinutes: body.intervalMinutes, configuration: { source: body.source, mapping: body.mapping, context: body.context, assignment: body.assignment } });
@@ -259,4 +278,42 @@ test("simulation reconciliation result is an explicit blocking notice, never an 
   assert.equal(ui.doc.querySelectorAll('[role="status"]').length, 0);
   assert.doesNotMatch(ui.doc.body.textContent, /Configuration enregistrée|observed_row_changed/u);
   assert.match(ui.doc.body.textContent, /Aucune ligne ne peut être importée/u);
+});
+
+test("append-only UI loads an immutable server boundary and observes without an activation or client N0", async (t) => {
+  const ui = await browser(t, false, true);
+  await ui.change("consultedCampus", campus.code); await ui.click("Charger / actualiser");
+  await ui.change("sourceMode", "GOOGLE"); await ui.change("identityMode", "LOCAL_ROW_APPEND_ONLY");
+  await ui.change("campaign", "SYNTHETIC-CAMPAIGN");
+  assert.equal(ui.doc.querySelector<HTMLInputElement>('[name="educationLevel"]')?.value, "");
+  assert.equal(ui.doc.querySelector<HTMLInputElement>('[name="educationLevel"]')?.required, false);
+  assert.equal(ui.doc.querySelector<HTMLSelectElement>('[name="program"]')?.required, false);
+  assert.equal(ui.doc.querySelector<HTMLInputElement>('[name="enabled"]')?.disabled, true);
+  await ui.change("originalSource", "Campagne synthétique déclarée");
+  await ui.change("range", "A1:K6"); await ui.change("sheetId", "171"); await ui.submit();
+  await ui.click("Lancer manuellement");
+  assert.equal(ui.calls.some((call) => call.endsWith("/runs")), false);
+  assert.equal(ui.doc.querySelector('[name="boundaryRow"], [name="generation"], [name="producerAttested"]'), null);
+  await ui.click("Enregistrer la frontière privée vérifiée");
+  assert.equal(ui.calls.some((call) => call.endsWith("/append-boundary")), false, "server status must be read before registration");
+  await ui.click("Lire la frontière et les positions");
+  assert.match(ui.doc.body.textContent, /Frontière non enregistrée/u);
+  await ui.click("Enregistrer la frontière privée vérifiée");
+  assert.match(ui.doc.body.textContent, /Frontière historique N0/u);
+  assert.equal(ui.calls.filter((call) => call.endsWith("/append-boundary")).length, 1);
+  await ui.click("Enregistrer la frontière privée vérifiée");
+  assert.equal(ui.calls.filter((call) => call.endsWith("/append-boundary")).length, 1, "no new baseline from a repeated click");
+  await ui.click("Observer sans effet métier");
+  assert.equal(ui.calls.filter((call) => call.endsWith("/append-observations")).length, 1);
+  assert.equal(ui.doc.querySelector<HTMLInputElement>('[name="enabled"]')?.checked, false);
+  assert.equal(ui.doc.querySelector<HTMLInputElement>('[name="enabled"]')?.disabled, true);
+  assert.match(ui.doc.body.textContent, /Aucune activation automatique effectuée/u);
+  ui.fail(409); await ui.click("Vérifier le dossier serveur de qualification");
+  assert.match(ui.doc.querySelector('[role="alert"]')?.textContent ?? "", /Conflit de version/u);
+  assert.equal(ui.doc.querySelectorAll('[role="status"]').length, 0);
+  assert.equal(ui.doc.querySelector<HTMLInputElement>('[name="enabled"]')?.disabled, true);
+  ui.fail(0); await ui.click("Lire la frontière et les positions");
+  ui.fail(403); await ui.click("Observer sans effet métier");
+  assert.match(ui.doc.querySelector('[role="alert"]')?.textContent ?? "", /Accès refusé/u);
+  assert.equal(ui.doc.querySelectorAll('[role="status"]').length, 0);
 });
