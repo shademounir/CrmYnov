@@ -32,7 +32,7 @@ export function validDeferral(sha256: string, row: Row, receipts: Reconciliation
     && Object.keys(decision).every(key => ["action", "confirmed", "expectedVersion", "idempotencyKey", "reason", "actorId", "deferral"].includes(key))
     && same(binding, expectedBinding) && row.decisionFingerprint === hash({ ...decision, expectedVersion: undefined })
     && matches.length === 1 && matches[0]!.actorId === decision.actorId && matches[0]!.fingerprint === row.decisionFingerprint
-    && same(matches[0]!.response, deferralReceiptResponse(row.id, row.decisionFingerprint!, binding));
+    && same(matches[0]!.response, deferralReceiptResponse(row.id, row.decisionFingerprint, binding));
 }
 
 /** Separate from strict complete. Terminal effects are still checked by the

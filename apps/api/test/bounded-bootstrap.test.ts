@@ -53,10 +53,10 @@ test("a deferred source stays globally unresolved, exact comments and annotation
 });
 test("bounded reconciliation refuses omitted disposition, corruption, false receipt and truncation", () => {
   const cases: Array<(input: ReturnType<typeof fixture>) => void> = [
-    input => { input.rows[0]!.state = "READY"; }, input => { input.rows[0]!.version++; }, input => { input.coverageQualified = false; }, input => { input.truncated = true; },
-    input => { input.rows[0]!.mapped = { values: { email: "changed@example.invalid" } }; }, input => { input.rows[0]!.fingerprint = "f".repeat(64); },
-    input => { input.rows[0]!.reasons = []; }, input => { input.deferralReceipts = []; }, input => { input.deferralReceipts[0]!.actorId = planId; },
-    input => { input.deferralReceipts[0]!.response = { rowId: "other" }; }, input => { input.rows.push(input.rows[0]!); },
+    (input): void => { input.rows[0]!.state = "READY"; }, (input): void => { input.rows[0]!.version++; }, (input): void => { input.coverageQualified = false; }, (input): void => { input.truncated = true; },
+    (input): void => { input.rows[0]!.mapped = { values: { email: "changed@example.invalid" } }; }, (input): void => { input.rows[0]!.fingerprint = "f".repeat(64); },
+    (input): void => { input.rows[0]!.reasons = []; }, (input): void => { input.deferralReceipts = []; }, (input): void => { input.deferralReceipts[0]!.actorId = planId; },
+    (input): void => { input.deferralReceipts[0]!.response = { rowId: "other" }; }, (input): void => { input.rows.push(input.rows[0]!); },
   ];
   for (const mutate of cases) { const input = fixture(); mutate(input); assert.equal(boundedBootstrapReconciliation(input).qualified, false); }
 });
@@ -146,7 +146,7 @@ test("external-ID deferred REVIEW is durable across runs, not an implicit future
   assert.equal(receipts[1]?.outcome, "REVIEW"); assert.equal(receipts[1]?.errorCode, "sheet_append_deferred_review_pending");
   assert.equal(guardCalls, 1, "replay cannot later create even after the historical reservation is resolved");
   assert.equal(persistenceCalls, 0);
-  state.previous = { ...state.previous!, batchId: planId };
+  state.previous = { ...state.previous, batchId: planId };
   await executor.processRow(tx, context, row, Object.keys(row));
   assert.equal(receipts[2]?.outcome, "DUPLICATE"); assert.equal(receipts[2]?.errorCode, undefined, "legacy business review is not attributed falsely to a deferral");
 });
