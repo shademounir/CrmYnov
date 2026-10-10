@@ -12,6 +12,7 @@ import { PrismaService } from "../../src/persistence/prisma.service.js";
 import { deriveSecret, digestRecoveryValue } from "../../src/access-recovery/access-recovery.store.js";
 import type { Principal } from "../../src/auth/auth.types.js";
 import { DynamicPermissionRepository } from "../../src/permissions/dynamic-repository.js";
+import { DynamicPermissionService } from "../../src/permissions/dynamic-service.js";
 import { referenceKey } from "../../src/references/reference.contract.js";
 import { BootstrapImportService } from "../../src/bootstrap-import/bootstrap-import.service.js";
 import { PersistentIngestionService } from "../../src/ingestion/persistent-ingestion.service.js";
@@ -104,7 +105,77 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
     const business = async (): Promise<unknown> => ({ leads: await client.lead.count(), provenance: await client.leadProvenance.count(), batches: await client.ingestionBatch.count(), reports: await client.importReport.count(),
       processedAudits: await client.auditEvent.count({ where: { eventType: "SHEET_IMPORT_ROW_PROCESSED" } }), reviews: await client.auditEvent.count({ where: { eventType: "SHEET_IMPORT_ROW_REVIEWED" } }), receipts: await client.sheetImportRunReceipt.count() });
     const row = (name: string, education = "BAC", metadata = ""): string[] => ["Synthetic", name, `${name}-${tag}@example.invalid`, education, program.code, metadata];
-    const main = await fixture("main"), beforeOff = await business();
+    const main = await fixture("main");
+    // Exercise the production HTTP middleware, RBAC and global interceptor, not
+    // only direct service calls: all four reviewed split-phase handlers must be
+    // reachable without granting any new role or campus capability.
+    const routes = [
+      { method: "GET", path: "append-reconciliation" },
+      { method: "POST", path: "append-boundary" },
+      { method: "POST", path: "append-qualification" },
+      { method: "POST", path: "append-observations" },
+    ];
+    const http = async (route: typeof routes[number], id: string, token?: string): Promise<{ status: number; body: Record<string, unknown> }> => {
+      const response = await fetch(`${origin}/scheduled-sheets/${id}/${route.path}`, {
+        method: route.method, signal: AbortSignal.timeout(15000),
+        headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        ...(route.method === "POST" ? { body: JSON.stringify({ confirmed: true, expectedVersion: 1 }) } : {}),
+      });
+      return { status: response.status, body: await response.json() as Record<string, unknown> };
+    };
+    const readRoute = routes[0]!;
+    const visible = await http(readRoute, main.id, session.token);
+    assert.equal(visible.status, 200, JSON.stringify(visible.body));
+    assert.equal(visible.body.boundaryRegistered, true);
+    for (const route of routes) {
+      const absent = await http(route, randomUUID(), session.token);
+      assert.equal(absent.status, 404, `${route.path}: ${JSON.stringify(absent.body)}`);
+      assert.equal(absent.body.code, "sheet_connector_not_found", "authorized HTTP reaches the resource-aware service");
+      assert.equal((await http(route, main.id)).status, 401, "no anonymous append administration");
+    }
+    const adminEmail = `append-http-admin-${tag}@example.invalid`, adminSalt = randomBytes(16).toString("hex");
+    const adminUser = await client.collaborator.create({ data: { professionalEmail: adminEmail, roles: ["ADMIN"], campusId: campus.id, active: true, firstLoginRequired: false } });
+    await client.localPasswordHash.create({ data: { collaboratorId: adminUser.id, identityDigest: digestRecoveryValue(adminEmail), passwordSalt: adminSalt,
+      passwordDigest: deriveSecret(password, adminSalt), mustChange: false } });
+    const adminLogin = await fetch(`${origin}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: adminEmail, password }) });
+    assert.equal(adminLogin.status, 201);
+    const adminSession = await adminLogin.json() as { sessionId: string; token: string };
+    assert.equal((await http(readRoute, main.id, adminSession.token)).status, 200, "Admin retains its own-campus capability");
+    for (const route of routes) {
+      const absent = await http(route, randomUUID(), adminSession.token);
+      assert.equal(absent.status, 404); assert.equal(absent.body.code, "sheet_connector_not_found");
+    }
+    const outsideCampus = await client.crmReference.create({ data: { kind: "CAMPUS", code: `APPEND-OUTSIDE-${tag}`, label: "Synthetic outside campus", scope: "GLOBAL", scopeKey: "GLOBAL" } });
+    await client.crmReferenceKey.create({ data: { referenceId: outsideCampus.id, kind: "CAMPUS", scopeKey: "GLOBAL", key: referenceKey(outsideCampus.code) } });
+    await client.collaborator.update({ where: { id: adminUser.id }, data: { campusId: outsideCampus.id } });
+    const auditBeforeDenied = await client.auditEvent.count();
+    for (const route of routes) {
+      const hidden = await http(route, main.id, adminSession.token), absent = await http(route, randomUUID(), adminSession.token);
+      assert.equal(hidden.status, 404); assert.deepEqual(hidden, absent, "cross-campus resources disclose no existence");
+    }
+    for (const role of ["ADMISSIONS", "MANAGER", "AUDITOR"]) {
+      await client.collaborator.update({ where: { id: adminUser.id }, data: { roles: [role], campusId: campus.id } });
+      for (const route of routes) assert.equal((await http(route, main.id, adminSession.token)).status, 403, `${role} cannot administer ${route.path}`);
+    }
+    assert.equal(await client.auditEvent.count(), auditBeforeDenied, "denied HTTP calls emit no success audit");
+    await client.collaborator.update({ where: { id: adminUser.id }, data: { roles: ["ADMIN"] } });
+    const dynamic = app.get(DynamicPermissionService), target = { kind: "ROLE" as const, role: "ADMIN" as const, campus: campus.id };
+    const initial = await dynamic.read(actor, target);
+    await dynamic.save(actor, { ...target, expectedVersion: initial.version, grants: { ...initial.grants, "import.confirm": "NONE" }, confirmed: true, reason: "ACCESS_REVIEW" });
+    assert.equal((await http(readRoute, main.id, adminSession.token)).status, 200, "read is not accidentally coupled to import confirmation");
+    for (const route of routes.slice(1)) assert.equal((await http(route, main.id, adminSession.token)).status, 403, "current persisted mutation grant is required");
+    const restricted = await dynamic.read(actor, target);
+    await dynamic.save(actor, { ...target, expectedVersion: restricted.version, grants: { ...initial.grants, "import.view": "NONE" }, confirmed: true, reason: "ACCESS_REVIEW" });
+    for (const route of routes) {
+      const denied = await http(route, main.id, adminSession.token);
+      assert.equal(denied.status, 404); assert.equal(denied.body.code, "sheet_connector_not_found");
+    }
+    const last = await dynamic.read(actor, target);
+    await dynamic.save(actor, { ...target, expectedVersion: last.version, grants: initial.grants, confirmed: true, reason: "ACCESS_REVIEW" });
+    assert.equal((await http(readRoute, main.id, adminSession.token)).status, 200);
+    await client.localSession.update({ where: { id: adminSession.sessionId }, data: { active: false, revokedAt: new Date() } });
+    for (const route of routes) assert.equal((await http(route, main.id, adminSession.token)).status, 401, "revoked session cannot use a newly allowlisted handler");
+    const beforeOff = await business();
     await main.worker.execute(main.id, "MANUAL"); assert.equal(main.source.reads, 0); assert.deepEqual(await business(), beforeOff);
     await assert.rejects(() => main.admin.appendBoundary(actor, main.id, { expectedVersion: 1, confirmed: true, boundaryRow: 999 }), (error: unknown) => errorCode(error) === "sheet_append_confirmation_required");
     const unauthorized = await fetch(`${origin}/scheduled-sheets/${main.id}/append-reconciliation`); assert.equal(unauthorized.status, 401);
@@ -180,7 +251,7 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
     assert.equal(appendPositions(rebased.configuration.source!.range!, rebased.source.raw).lastOccupiedRow, 2);
     assert.match(appendHash(registered), /^[a-f0-9]{64}$/u);
     console.log(JSON.stringify({ proof: "sheet-append-postgres", syntheticOnly: true, mode: APPEND_MODE, boundaryExcluded: true, producerAttested: false, qualifiedFixtureOnly: true, noRealActivation: true,
-      assertions: ["flags-off-zero-io", "server-boundary-and-no-rebaseline", "missing-qualification-refused", "qualification-replay", "durable-observation-zero-business", "pending-completion", "concurrent-workers", "row-content-isolation", "contact-match-review", "incomplete-resume", "no-duplicate-effects", "simulation-coherence", "conflicting-tail-quarantined", "bootstrap-receipt-corruption-refused", "authority-revoked-after-io", "transaction-fault-durable-resume", "bulk-1000-positions-replay"], backlogDurationMs, privateProofDirectory: directory }));
+      assertions: ["authenticated-http-four-append-handlers", "http-admin-superadmin-notfound", "http-campus-role-grant-session-revocation", "flags-off-zero-io", "server-boundary-and-no-rebaseline", "missing-qualification-refused", "qualification-replay", "durable-observation-zero-business", "pending-completion", "concurrent-workers", "row-content-isolation", "contact-match-review", "incomplete-resume", "no-duplicate-effects", "simulation-coherence", "conflicting-tail-quarantined", "bootstrap-receipt-corruption-refused", "authority-revoked-after-io", "transaction-fault-durable-resume", "bulk-1000-positions-replay"], backlogDurationMs, privateProofDirectory: directory }));
   }
   finally { for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key]; Object.assign(process.env, original); await app.close(); }
 });
