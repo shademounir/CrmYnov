@@ -54,6 +54,9 @@
 .sheets-runs dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .sheets-runs dt { font-size: 12px; }.sheets-runs dd { margin: 8px 0 0; font-weight: 700; font-size: 22px; }
 .sheets-simulation { border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-top: 18px; overflow-wrap: anywhere; }
+.sheets-append-monitor { border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-block: 18px; overflow-wrap: anywhere; }
+.sheets-append-positions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px; }
+.sheets-append-positions dd { margin: 6px 0 0; font-weight: 600; }
 .sheets-simulation dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .sheets-simulation dt { font-size: 13px; }.sheets-simulation dd { margin: 8px 0; font-size: 24px; font-weight: 700; }
 .sheets-section-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }

@@ -324,3 +324,90 @@ not redeploy an old vulnerable image or one that miscounts historical acquisitio
 Any later catch-up consumer must document effect-level compensation and refuse
 blind withdrawal after downstream activity. A global restore is not an
 application rollback and cannot erase subsequent useful business writes.
+# LOCAL_ROW_APPEND_ONLY — bounded, explicitly qualified reception
+
+This is a separate source mode, not external-ID attestation and not a rewrite of
+the v2 cutover contract. `producerAttested` remains **false**. Original submission
+time is unknown; `firstObservedAt` is the time the server durably saw the row.
+Phone/email and payload hashes are never occurrence IDs. A generation plus source,
+immutable sheet ID and row position define the occurrence. The payload hash names
+a version only. This policy cannot detect every upstream sort/rewrite; it observes
+bounded snapshots, checks historical anchors and previously observed cells, and
+fails closed on observable inconsistency.
+
+## Trusted registration and distinct activation
+
+The server reads `CRM_SHEET_APPEND_BOUNDARY_FILE`, outside any Git checkout, with
+SHA-256 from `CRM_SHEET_APPEND_BOUNDARY_SHA256`. File format v1 includes mode,
+workbookId, sheetId, tab, generation UUID, range, capturedAt UTC, boundaryRow and
+formatted string values. N0 is recomputed from every exact nonempty value (spaces
+remain occupied). Raw/effective and formatted N0 must be compared in the private
+capture procedure. A capture after the decision is not retroactive; reconcile the
+uncaptured interval before any real release. Neither this capture nor an existing
+DEV account proves readiness of PROD.
+
+Authenticated `POST /scheduled-sheets/:id/append-boundary` accepts only
+`{expectedVersion,confirmed:true}`. The connector must be stopped, same source,
+campus/mapping/context and source header. A source stream can register only one
+artifact/generation. The same artifact replays without reset; a different one is
+refused. Rows <= N0 never enter the new acquisition ledger.
+
+`POST .../append-observations` persists a bounded read without business effects,
+even while Sheets remains OFF. Versioned snapshots and pending/incomplete/review
+rows are durable before any creation. Only empty cells in an unprocessed pending
+or incomplete row may be completed; confirmed or nonempty-cell edits suspend the
+stream. A conflicting valid snapshot retains its new tail and changed versions in
+quarantine before suspension, but never overwrites a confirmed payload. Invalid
+or over-capacity snapshots cannot be advertised as durably covered. Each read is
+bounded to 4 MiB/10,000 data positions, each cell 4,000 characters; the journal is
+bounded to 50,000 versions/64 MiB per stream. Capacity refuses/suspends without
+purging, rebaselining or silently extending the range.
+
+`GET .../append-reconciliation` separates last observed/durable/max confirmed row,
+confirmed positions, incomplete and review counts. Max confirmed is **not** a
+coverage cursor: earlier holes remain pending. The projection contains no contact
+or cell text. Simulation checks the same historical/post-boundary coherence and
+does not count already confirmed/review rows as new imports.
+
+## Server-only qualification, still no activation proof
+
+`CRM_SHEET_APPEND_QUALIFICATION_FILE` and its exact SHA-256 configuration name a
+protected artifact with schemaVersion1, mode, policy `LOCAL_ROW_APPEND_ONLY_V1`,
+boundaryArtifactSha256, bootstrapPackageId, excelSha256, reportSha256,
+bindingSha256, evidenceSha256, qualifiedAt and
+`producerCondition:{confirmedAt,evidenceSha256}`. The operator must actually obtain
+and retain confirmation from the upstream responsible person and controlled
+append-only evidence **after capture**, before issuing this artifact. A timestamp
+and hash trace that assertion; parsing them does not establish its truth. UI booleans
+or the user's policy choice alone are not operational producer confirmation.
+No real artifact may be issued while this confirmation is missing.
+
+`POST .../append-qualification` uses the trusted artifact, not caller-provided
+attestation. It binds the current fully reconciled bootstrap package and exact
+historical proof (`appendBootstrapProofHash`), revocable operator grants and
+authentication versions. Current dossier status/owner axes may legitimately change
+without changing the historical proof; exact notes/receipts/provenance, current
+visibility, coverage and `cutoverBlocked=false` are recalculated before every
+effect. 440 reviews/10 quarantines are NOT bypassed: bounded DEFERRED readiness is
+a separate, still-required contract for that real bootstrap. Qualification does
+not enable a connector. Artifact replays do not duplicate the qualification audit.
+
+Actual execution additionally needs explicit connector activation, server flags
+`SHEETS_ENABLED=true`, `SHEET_ROW_APPEND_ENABLED=true`,
+`CRM_SHEET_APPEND_POLICY_QUALIFIED=true`, existing lease/version/permission fences,
+current target references and bootstrap reconciliation. `job:sheet-append` is the
+external worker entry point; it uses the production executor/receipts and reports
+failed runs as failed, unlike a swallowed per-connector failure. OFF exits before
+application initialization, SQL or Google calls. This implementation is not a claim
+that the job is deployed, enabled or its cloud monitoring qualified.
+
+Suspension persists `SHEET_APPEND_SUSPENDED`, prevents subsequent work and emits a
+structured ERROR signal without cell data. Configure monitoring for this signal
+and prove actual alert delivery separately; `alertRequired` is not a received mail.
+The connector's saved enabled preference is not a health assertion; suspended
+stream always refuses execution until explicit investigation. No automatic reset.
+
+Rollback retains additive schema and ledgers, fences producers, exports private
+evidence and resumes forward only. See migration
+`20261010080000_sheet_row_append_boundary/rollback.md`; an older image that does
+not recognize append mode is not a safe active consumer rollback.

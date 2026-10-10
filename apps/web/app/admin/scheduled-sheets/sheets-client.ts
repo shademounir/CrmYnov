@@ -21,16 +21,38 @@ export function sheetSimulation(value: ApiValue): SheetSimulation {
 
 export interface SheetSourceConfiguration {
   mode: "SIMULATED" | "GOOGLE";
-  identityMode: "EXTERNAL_ID" | "LOCAL_ROW";
+  identityMode: "EXTERNAL_ID" | "LOCAL_ROW" | "LOCAL_ROW_APPEND_ONLY";
   sheetId: number;
   range: string;
 }
 
 export function sheetSourceConfiguration(form: FormData): SheetSourceConfiguration {
   const mode = form.get("sourceMode") === "GOOGLE" ? "GOOGLE" : "SIMULATED";
-  const identityMode = form.get("identityMode") === "LOCAL_ROW" ? "LOCAL_ROW" : "EXTERNAL_ID";
+  const selected = form.get("identityMode");
+  const identityMode = selected === "LOCAL_ROW" || selected === "LOCAL_ROW_APPEND_ONLY" ? selected : "EXTERNAL_ID";
   const range = form.get("range");
   return { mode, identityMode, sheetId: Number(form.get("sheetId")), range: typeof range === "string" ? range.trim() : "" };
+}
+
+export function sheetAppendState(value: ApiValue): ApiObject {
+  const state = sheetApiObject(value);
+  const invalid = (): never => { throw new Error("État de réception incomplet ou incohérent. Aucune réussite n’a été confirmée."); };
+  if (typeof state.boundaryRegistered !== "boolean") invalid();
+  if (state.boundaryRegistered === false) return { boundaryRegistered: false };
+  const count = (value: ApiValue | undefined): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const counts = sheetApiObject(state.counts);
+  const positions = [state.boundaryRow, state.lastObservedRow, state.lastDurableRow];
+  const statuses = [counts.pending, counts.incomplete, counts.review, counts.confirmed];
+  if (positions.some((value) => !count(value)) || !count(counts.observed) || statuses.some((value) => !count(value))
+    || typeof state.boundaryRow !== "number" || typeof state.lastObservedRow !== "number" || typeof state.lastDurableRow !== "number"
+    || state.boundaryRow < 1 || state.lastDurableRow < state.boundaryRow || state.lastObservedRow < state.lastDurableRow
+    || statuses.reduce<number>((sum, value) => sum + (typeof value === "number" ? value : 0), 0) !== counts.observed
+    || typeof state.generation !== "string" || !/^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/iu.test(state.generation)
+    || typeof state.capturedAt !== "string" || !Number.isFinite(Date.parse(state.capturedAt))
+    || typeof state.suspended !== "boolean" || typeof state.qualificationRegistered !== "boolean"
+    || typeof state.producerConditionConfirmed !== "boolean"
+    || (state.lastConfirmedRow !== null && (!count(state.lastConfirmedRow) || state.lastConfirmedRow <= state.boundaryRow || state.lastConfirmedRow > state.lastDurableRow))) invalid();
+  return state;
 }
 
 export function sheetApiObject(value: ApiValue | undefined): ApiObject { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }

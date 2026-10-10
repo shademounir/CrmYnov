@@ -1,5 +1,6 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional, UnprocessableEntityException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { Prisma, SheetImportConnector } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
 import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
@@ -20,6 +21,11 @@ import { localObservation } from "./sheet-local-ledger.js";
 import { evaluateLocalMappedRow } from "./sheet-local-simulation.js";
 import { cutoverConnectorBound } from "../cutover/cutover.store.js";
 import { parseSheetLocalRange, reconcileSheetObservation, type SheetLocalObservation } from "./sheet-local-observation.js";
+import { APPEND_MODE, appendPositions } from "./sheet-append-contract.js";
+import { appendObservationConflict, appendRows, appendStream, appendWorkerEnabled, assertAppendBinding, persistAppendObservation, registerAppendBoundary } from "./sheet-append-ledger.js";
+import { privateAppendBoundary, privateAppendQualification } from "./sheet-append-boundary-file.js";
+import { BootstrapImportService } from "../bootstrap-import/bootstrap-import.service.js";
+import { assertAppendQualification, type SheetAppendQualification } from "./sheet-append-qualification.js";
 
 type SimulationResult = { rows: number; mapped: number; review: number; mutated: false; simulated: boolean; reconciliationRequired: boolean; reason: string | null };
 
@@ -76,11 +82,17 @@ function identifier(value: string): string {
   if (!/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/iu.test(value)) throw new BadRequestException({ code: "sheet_identifier_invalid" });
   return value;
 }
+function appendCommand(raw: unknown): Record<string, unknown> & { confirmed: true; expectedVersion: number } {
+  const body = sheetObject(raw);
+  if (Object.keys(body).some((key) => !["confirmed", "expectedVersion"].includes(key)) || body.confirmed !== true || typeof body.expectedVersion !== "number" || !Number.isSafeInteger(body.expectedVersion) || body.expectedVersion < 1) throw new BadRequestException({ code: "sheet_append_confirmation_required" });
+  return body as Record<string, unknown> & { confirmed: true; expectedVersion: number };
+}
 
 @Injectable()
 export class SheetImportAdminService {
   constructor(@Inject(DynamicPermissionRepository) private readonly repository: DynamicPermissionRepository,
-    @Inject(ImportMappingService) private readonly mappings: ImportMappingService, @Inject(SheetSource) private readonly source: SheetSource) {}
+    @Inject(ImportMappingService) private readonly mappings: ImportMappingService, @Inject(SheetSource) private readonly source: SheetSource,
+    @Optional() @Inject(BootstrapImportService) private readonly bootstrap?: BootstrapImportService) {}
 
   async list(actor: Principal, campusValue: string): Promise<{ connectors: ConnectorView[]; mappings: ImportMappingTemplate[]; simulated: boolean; googleReady: boolean }> {
     return this.repository.readTransaction(async (tx) => {
@@ -113,11 +125,22 @@ export class SheetImportAdminService {
         context: body.context, assignment: body.assignment, source: body.source });
       if (parsed.source?.mode !== "GOOGLE" && !workbook.startsWith("synthetic_")) throw new BadRequestException({ code: "sheet_real_source_disabled" });
       const configuration: SheetConfiguration = { ...parsed, mapping: this.mappings.snapshot({ ...parsed.mapping, expectedVersion: expected }, current.userId, new Date().toISOString()) };
+      if (configuration.source?.identityMode === APPEND_MODE && configuration.mapping.columns.some((column) => ["externalId", "occurredAt", "historicalStatus", "comment"].includes(column.targetField ?? "") && !["IGNORE", "METADATA"].includes(column.action))) {
+        throw new BadRequestException({ code: "sheet_append_inferred_identity_or_history_refused" });
+      }
       const reference = await tx.crmReference.findUniqueOrThrow({ where: { id: campus.id } });
       if (configuration.context.campus !== reference.code) throw new BadRequestException({ code: "sheet_campus_mapping_invalid" });
       const enabled = body.enabled === true;
       if (enabled && typeof configuration.source?.sheetId === "number" && await cutoverConnectorBound(tx, previous?.id ?? randomUUID(), { workbookId: workbook, sheetId: configuration.source.sheetId })) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       this.validateActivationSource(enabled, workbook, body.tab, configuration);
+      if (configuration.source?.identityMode === APPEND_MODE && enabled) {
+        if (!appendWorkerEnabled(process.env) || process.env.CRM_SHEET_APPEND_POLICY_QUALIFIED !== "true") throw new ConflictException({ code: "sheet_append_policy_not_qualified" });
+        const stream = await assertAppendBinding(tx, { workbookId: workbook, tab: sheetText(body.tab, 100), campusId: campus.id }, configuration, true);
+        await assertAppendQualification(tx, stream, this.repository, this.bootstrap, configuration.assignment.strategy !== "UNASSIGNED");
+      } else if (configuration.source?.sheetId !== undefined) {
+        const bound = await appendStream(tx, sheetStreamId(workbook, configuration.source.sheetId));
+        if (bound?.contract && configuration.source.identityMode !== APPEND_MODE) throw new ConflictException({ code: "sheet_append_legacy_execution_refused" });
+      }
       await this.validateConfiguredLocalStream(tx, campus.id, workbook, configuration, enabled);
       if (enabled) await this.authorizeActivation(tx, current.userId, campus.id, configuration, id);
       const data = { campusId: campus.id, workbookId: workbook, tab: sheetText(body.tab, 100), enabled, intervalMinutes: interval,
@@ -158,8 +181,13 @@ export class SheetImportAdminService {
       const row = await this.connector(tx, actor, id);
       if (await cutoverConnectorBound(tx, row.id)) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       const config = readSheetConfiguration(row.configuration);
+      if (config.source?.identityMode === APPEND_MODE) {
+        if (!appendWorkerEnabled(process.env) || process.env.CRM_SHEET_APPEND_POLICY_QUALIFIED !== "true") throw new ConflictException({ code: "sheet_append_policy_not_qualified" });
+        const stream = await assertAppendBinding(tx, row, config, true);
+        await assertAppendQualification(tx, stream, this.repository, this.bootstrap, config.assignment.strategy !== "UNASSIGNED");
+      }
       if (typeof config.source?.sheetId === "number" && await cutoverConnectorBound(tx, row.id, { workbookId: row.workbookId, sheetId: config.source.sheetId })) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
-      if ((!row.enabled && config.source?.identityMode !== "LOCAL_ROW") || row.version !== expectedVersion) throw new ConflictException({ code: "sheet_disabled_or_version_conflict" });
+      if ((!row.enabled && !["LOCAL_ROW", APPEND_MODE].includes(config.source?.identityMode ?? "")) || row.version !== expectedVersion) throw new ConflictException({ code: "sheet_disabled_or_version_conflict" });
       if (this.source instanceof RoutedSheetSource) this.source.validateSelection(row.workbookId, row.tab, config.source);
       if (config.source?.identityMode === "LOCAL_ROW" && config.source.sheetId !== undefined) {
         const stream = await tx.sheetLocalStream.findUnique({ where: { id: sheetStreamId(row.workbookId, config.source.sheetId) } });
@@ -171,6 +199,102 @@ export class SheetImportAdminService {
       await tx.sheetImportConnector.update({ where: { id: row.id, version: expectedVersion }, data: { nextRunAt: new Date(), manualRequested: true } });
       await this.audit(tx, current, row, "SHEET_IMPORT_REQUESTED", { version: row.version });
       return { queued: true, version: row.version };
+    });
+  }
+
+  async appendBoundary(actor: Principal, id: string, raw: unknown): Promise<unknown> {
+    const body = appendCommand(raw);
+    // Authorize before private I/O, then reauthorize the same version under the
+    // permission fence. No client cells/path/N0/generation are accepted.
+    await this.repository.readTransaction(async (tx) => {
+      const row = await this.connector(tx, actor, id);
+      await this.authorize(tx, actor, row.campusId, ["settings.campus.manage", "import.confirm"]);
+      if (row.version !== body.expectedVersion) throw new ConflictException({ code: "sheet_version_conflict" });
+    });
+    const artifact = await privateAppendBoundary(process.env, resolve(__dirname, "../../../.."));
+    return this.repository.transaction(async (tx) => {
+      const row = await this.connector(tx, actor, id), current = await this.authorize(tx, actor, row.campusId, ["settings.campus.manage", "import.confirm"]);
+      // Same lock as worker fence / config mutations; source unique advisory
+      // lock inside registration also serializes two connector initializations.
+      await tx.$queryRaw`SELECT id FROM sheet_import_connectors WHERE id=${row.id}::uuid FOR UPDATE`;
+      const latest = await tx.sheetImportConnector.findUniqueOrThrow({ where: { id: row.id } });
+      if (latest.version !== body.expectedVersion || await cutoverConnectorBound(tx, latest.id)) throw new ConflictException({ code: "sheet_version_or_cutover_conflict" });
+      const config = readSheetConfiguration(latest.configuration);
+      if (config.source?.sheetId !== undefined && await cutoverConnectorBound(tx, latest.id, { workbookId: latest.workbookId, sheetId: config.source.sheetId })) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
+      const contract = await registerAppendBoundary(tx, latest, config, artifact.boundary, artifact.sha256);
+      const key = `sheet-append-boundary:${sheetStreamId(latest.workbookId, contract.sheetId)}`;
+      if (!await tx.auditEvent.findUnique({ where: { idempotencyKey: key } })) await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles,
+        campusId: row.campusId, resourceType: "SHEET_IMPORT", resourceId: row.id, eventType: "SHEET_APPEND_BOUNDARY_REGISTERED", result: "SUCCESS", correlationId: row.id,
+        idempotencyKey: key, after: { generation: contract.generation, boundaryRow: contract.boundaryRow, capturedAt: contract.capturedAt, artifactSha256: contract.artifactSha256,
+          producerAttested: false, automaticActivationPerformed: false } } });
+      return { mode: APPEND_MODE, generation: contract.generation, boundaryRow: contract.boundaryRow, capturedAt: contract.capturedAt,
+        artifactSha256: contract.artifactSha256, producerAttested: false, automaticActivationPerformed: false };
+    });
+  }
+
+  async appendReconciliation(actor: Principal, id: string): Promise<unknown> {
+    return this.repository.readTransaction(async (tx) => {
+      const connector = await this.connector(tx, actor, id), config = readSheetConfiguration(connector.configuration);
+      if (config.source?.identityMode !== APPEND_MODE || config.source.sheetId === undefined) throw new BadRequestException({ code: "sheet_append_mode_required" });
+      const stream = await appendStream(tx, sheetStreamId(connector.workbookId, config.source.sheetId));
+      if (!stream?.contract || stream.campusId !== connector.campusId) return { boundaryRegistered: false, rows: [] };
+      const rows = await appendRows(tx, stream.id), count = (status: string): number => rows.filter((row) => row.status === status).length;
+      const confirmedRows = rows.filter((row) => ["CREATED", "DUPLICATE", "IGNORED"].includes(row.status)).map((row) => row.rowNumber);
+      return { boundaryRegistered: true, mode: APPEND_MODE, generation: stream.contract.generation, boundaryRow: stream.contract.boundaryRow,
+        capturedAt: stream.contract.capturedAt, lastObservedRow: stream.lastObservedRow, lastDurableRow: stream.lastDurableRow,
+        lastConfirmedRow: confirmedRows.length ? Math.max(...confirmedRows) : null, confirmedRows, notCoverageCursor: true,
+        suspended: stream.suspended, reason: stream.errorCode, producerAttested: false, originalSubmissionTime: "UNKNOWN",
+        qualificationRegistered: Boolean(stream.qualification), producerConditionConfirmed: Boolean(stream.qualification?.producerCondition), automaticEnabled: connector.enabled, workerFlagsEnabled: appendWorkerEnabled(process.env),
+        bootstrapPackageId: stream.qualification?.bootstrapPackageId ?? null,
+        counts: { observed: rows.length, pending: count("PENDING"), incomplete: count("INCOMPLETE"), review: count("REVIEW"), confirmed: count("CREATED") + count("DUPLICATE") + count("IGNORED") },
+        rows: rows.map(({ rowNumber, occurrenceKey, status, firstObservedAt }) => ({ rowNumber, occurrenceKey, status, firstObservedAt, originalArrivedAt: null })) };
+    });
+  }
+
+  async qualifyAppend(actor: Principal, id: string, raw: unknown): Promise<unknown> {
+    const body = appendCommand(raw);
+    await this.repository.readTransaction(async (tx) => {
+      const row = await this.connector(tx, actor, id); await this.authorize(tx, actor, row.campusId, ["settings.campus.manage", "import.confirm"]);
+      if (row.version !== body.expectedVersion) throw new ConflictException({ code: "sheet_version_conflict" });
+    });
+    const artifact = await privateAppendQualification(process.env, resolve(__dirname, "../../../.."));
+    return this.repository.transaction(async (tx) => {
+      const row = await this.connector(tx, actor, id), current = await this.authorize(tx, actor, row.campusId, ["settings.campus.manage", "import.confirm"]);
+      await tx.$queryRaw`SELECT id FROM sheet_import_connectors WHERE id=${row.id}::uuid FOR UPDATE`;
+      const latest = await tx.sheetImportConnector.findUniqueOrThrow({ where: { id: row.id } });
+      if (latest.version !== body.expectedVersion || latest.enabled || latest.activeRunId || latest.manualRequested) throw new ConflictException({ code: "sheet_append_execution_must_be_stopped" });
+      const config = readSheetConfiguration(latest.configuration), stream = await assertAppendBinding(tx, latest, config, true);
+      const user = await tx.collaborator.findUniqueOrThrow({ where: { id: current.userId } });
+      const qualification: SheetAppendQualification = { ...artifact.qualification, artifactSha256: artifact.sha256, delegation: {
+        creatorId: current.userId, authorizedBy: current.userId, creatorAuthenticationVersion: user.authenticationVersion, authorizerAuthenticationVersion: user.authenticationVersion } };
+      await assertAppendQualification(tx, { ...stream, qualification }, this.repository, this.bootstrap, config.assignment.strategy !== "UNASSIGNED");
+      if (stream.qualification?.artifactSha256 === artifact.sha256) return { qualified: true, producerAttested: false, automaticActivationPerformed: false, artifactSha256: artifact.sha256, reportSha256: qualification.reportSha256 };
+      await tx.$executeRaw`UPDATE sheet_local_streams SET append_qualification=${JSON.stringify(qualification)}::jsonb WHERE id=${stream.id}`;
+      await this.audit(tx, current, latest, "SHEET_APPEND_QUALIFIED", { artifactSha256: artifact.sha256, evidenceSha256: qualification.evidenceSha256,
+        bootstrapPackageId: qualification.bootstrapPackageId, reportSha256: qualification.reportSha256, producerAttested: false, automaticActivationPerformed: false });
+      return { qualified: true, producerAttested: false, automaticActivationPerformed: false, artifactSha256: artifact.sha256, reportSha256: qualification.reportSha256 };
+    });
+  }
+
+  async observeAppend(actor: Principal, id: string, raw: unknown): Promise<unknown> {
+    const body = appendCommand(raw);
+    const row = await this.repository.readTransaction(async (tx) => {
+      const connector = await this.connector(tx, actor, id); await this.authorize(tx, actor, connector.campusId, ["settings.campus.manage", "import.execute", "import.confirm"]);
+      if (connector.version !== body.expectedVersion || connector.enabled || connector.activeRunId || connector.manualRequested) throw new ConflictException({ code: "sheet_append_execution_must_be_stopped" });
+      await assertAppendBinding(tx, connector, readSheetConfiguration(connector.configuration)); return connector;
+    });
+    const config = readSheetConfiguration(row.configuration), values = await this.source.read(row.workbookId, row.tab, config), observation = values.observation;
+    if (!observation || observation.sheetId !== config.source?.sheetId || observation.range !== config.source.range) throw new BadRequestException({ code: "sheet_append_observation_missing" });
+    return this.repository.transaction(async (tx) => {
+      const latest = await this.connector(tx, actor, id); await this.authorize(tx, actor, latest.campusId, ["settings.campus.manage", "import.execute", "import.confirm"]);
+      await tx.$queryRaw`SELECT id FROM sheet_import_connectors WHERE id=${latest.id}::uuid FOR UPDATE`;
+      const locked = await tx.sheetImportConnector.findUniqueOrThrow({ where: { id: latest.id } });
+      if (locked.version !== row.version || locked.enabled || locked.activeRunId || locked.manualRequested) throw new ConflictException({ code: "sheet_append_execution_must_be_stopped" });
+      const run = await tx.sheetImportRun.create({ data: { connectorId: locked.id, status: "RUNNING", trigger: "MANUAL", configurationVersion: locked.version,
+        configurationSnapshot: { observationOnly: true, configuration: locked.configuration } } });
+      const consistent = await persistAppendObservation(tx, locked, config, run.id, observation.values);
+      await tx.sheetImportRun.update({ where: { id: run.id }, data: { status: consistent ? "COMPLETED" : "FAILED", completedAt: new Date(), errorCode: consistent ? null : "sheet_append_reconciliation_required" } });
+      return { runId: run.id, observationDurable: consistent, businessEffects: 0, automaticActivationPerformed: false };
     });
   }
 
@@ -187,6 +311,7 @@ export class SheetImportAdminService {
   async simulate(actor: Principal, id: string): Promise<SimulationResult> {
     const row = await this.repository.readTransaction((tx) => this.connector(tx, actor, id));
     const configuration = readSheetConfiguration(row.configuration);
+    if (configuration.source?.identityMode === APPEND_MODE) return this.simulateAppend(actor, row, configuration);
     const values = await this.source.read(row.workbookId, row.tab, configuration);
     const { rows: sourceRows, observation } = simulationSourceRows(row, configuration, values);
     return this.repository.readTransaction(async (tx) => {
@@ -199,13 +324,30 @@ export class SheetImportAdminService {
     });
   }
 
+  private async simulateAppend(actor: Principal, row: SheetImportConnector, configuration: SheetConfiguration): Promise<SimulationResult> {
+    const values = await this.source.read(row.workbookId, row.tab, configuration), raw = values.observation;
+    if (!raw || raw.sheetId !== configuration.source?.sheetId || raw.range !== configuration.source.range) throw new BadRequestException({ code: "sheet_append_observation_missing" });
+    const observed = appendPositions(raw.range, raw.values);
+    return this.repository.readTransaction(async (tx) => {
+      const latest = await this.connector(tx, actor, row.id); if (latest.version !== row.version) throw new ConflictException({ code: "sheet_version_conflict" });
+      const stream = await assertAppendBinding(tx, latest, configuration);
+      const durable = await appendRows(tx, stream.id), earlier = new Map(durable.map((entry) => [entry.rowNumber, entry]));
+      const reason = appendObservationConflict(stream, observed, durable), bad = reason !== null;
+      const after = observed.positions.filter((position) => position.row > stream.contract.boundaryRow && !["CREATED", "DUPLICATE", "IGNORED", "REVIEW"].includes(earlier.get(position.row)?.status ?? ""));
+      const rows = after.map((position) => Object.fromEntries(observed.header.map((column, index) => [column, position.cells[index] ?? ""])));
+      const mapped = bad ? 0 : await this.countSimulationRows(tx, row.id, configuration, rows, observed.header);
+      return { rows: rows.length, mapped, review: rows.length - mapped, mutated: false, simulated: configuration.source?.mode !== "GOOGLE", reconciliationRequired: bad, reason };
+    });
+  }
+
   private async countSimulationRows(tx: Prisma.TransactionClient, id: string, configuration: SheetConfiguration, rows: Record<string, string>[], columns: string[]): Promise<number> {
     let mapped = 0;
     for (const rawRow of rows) {
       const [record] = this.mappings.recordsFromSnapshot(configuration.mapping, { idempotencyKey: `simulation:${id}`, mappingKey: configuration.mapping.mappingKey,
         mappingVersion: configuration.mapping.version, rows: [rawRow], sourceColumns: columns, context: configuration.context, assignment: configuration.assignment });
-      if (!hasSimulationFields(record, configuration.source?.identityMode === "LOCAL_ROW")) continue;
-      if (configuration.source?.identityMode === "LOCAL_ROW" && evaluateLocalMappedRow(record, rawRow, configuration.mapping)) continue;
+      const local = configuration.source?.identityMode === "LOCAL_ROW" || configuration.source?.identityMode === APPEND_MODE;
+      if (!hasSimulationFields(record, local)) continue;
+      if (local && evaluateLocalMappedRow(record, rawRow, configuration.mapping)) continue;
       if (!await knownSimulationReferences(tx, record.campus, record.program, record.campaign, configuration.context.campus ?? "")) continue;
       mapped++;
     }
