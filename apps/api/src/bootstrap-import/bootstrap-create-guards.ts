@@ -29,6 +29,17 @@ export function requireExplicitHistoricalStatus(reasons: readonly string[], deci
 
 export const MAX_CONTACT_SCOPE_ROWS = 10000;
 
+/** Mapped keys plus literal source values are conservative reservation signals.
+ * Formula/cache/raw metadata are not contacts. No inference or multi-value split. */
+export function historicalContactSignals(mapped: unknown, payload: unknown): { emails: string[]; phones: string[] } {
+  const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const values = object(object(mapped).values);
+  const candidates = [values.email, values.phone, ...Object.values(object(object(payload).cells)).flatMap(raw => {
+    const cell = object(raw); return Object.hasOwn(cell, "formula") ? [] : [cell.value];
+  })].filter((value): value is string | number => typeof value === "string" || typeof value === "number").map(String);
+  return { emails: [...new Set(candidates.flatMap(value => normalizeHistoricalEmail(value) ?? []))], phones: [...new Set(candidates.flatMap(value => normalizeHistoricalPhone(value) ?? []))] };
+}
+
 /** Called inside the existing exclusive PostgreSQL permission transaction.
  * Both source surfaces are bounded before normalization; overflow refuses the
  * CREATE instead of treating a partial search as absence. No matching ID is
@@ -58,4 +69,49 @@ export async function requireNoHistoricalContactCollision(tx: PermissionTransact
   `);
   if (!result || result.overflow) throw new UnprocessableEntityException({ code: "bootstrap_contact_scope_review_required" });
   if (result.collision) throw new UnprocessableEntityException({ code: "bootstrap_contact_reconciliation_required" });
+}
+
+/** Called inside the existing permission/lease-fenced Serializable Sheet
+ * transaction, before any assignment/batch/Lead. No identifiers leave this
+ * query, and an incomplete search never means "no collision". A same-name
+ * signal is only REVIEW: it is deliberately not an identity merge. */
+export async function deferredHistoricalCollision(tx: PermissionTransaction, input: {
+  campusId: string; email: string | null; phone: string | null; firstName: string; lastName: string;
+}): Promise<"sheet_append_deferred_contact_review" | "sheet_append_deferred_name_review" | "sheet_append_deferred_scope_review" | null> {
+  // PostgreSQL's one-argument btrim removes ASCII spaces only. Match the exact
+  // ECMAScript TrimString set used by the existing contact/name normalization;
+  // do not remove internal whitespace or change the preserved source payload.
+  const trimCharacters = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+  const [result] = await tx.$queryRaw<Array<{ overflow: boolean; contact: boolean; name: boolean }>>(Prisma.sql`
+    WITH deferred AS MATERIALIZED (
+      SELECT r.mapped->'values'->>'email' AS email, r.mapped->'values'->>'phone' AS phone,
+        r.decision->'values'->>'email' AS decided_email, r.decision->'values'->>'phone' AS decided_phone,
+        r.mapped->'values'->>'firstName' AS first_name, r.mapped->'values'->>'lastName' AS last_name,
+        r.payload->'cells' AS cells
+      FROM bootstrap_import_rows r JOIN bootstrap_import_packages p ON p.id=r.package_id
+      WHERE p.campus_id=${input.campusId}::uuid AND (r.state='DEFERRED' OR (r.state IN ('REVIEW','READY')
+        AND EXISTS (SELECT 1 FROM bootstrap_import_receipts deferred_receipt WHERE deferred_receipt.package_id=r.package_id
+          AND deferred_receipt.operation='DEFER_ROW' AND deferred_receipt.response->>'rowId'=r.id::text)))
+      LIMIT ${MAX_CONTACT_SCOPE_ROWS + 1}
+    )
+    SELECT (SELECT count(*) FROM deferred) > ${MAX_CONTACT_SCOPE_ROWS} AS overflow,
+      EXISTS (SELECT 1 FROM deferred WHERE
+        (${input.email}::text IS NOT NULL AND lower(btrim(email,${trimCharacters}))=${input.email}::text)
+        OR (${input.email}::text IS NOT NULL AND lower(btrim(decided_email,${trimCharacters}))=${input.email}::text)
+        OR (${input.phone}::text IS NOT NULL AND btrim(phone,${trimCharacters}) ~ '^[+]?[0-9 ().-]+$'
+          AND regexp_replace(btrim(phone,${trimCharacters}), '[ ().-]', '', 'g')=${input.phone}::text)
+        OR (${input.phone}::text IS NOT NULL AND btrim(decided_phone,${trimCharacters}) ~ '^[+]?[0-9 ().-]+$'
+          AND regexp_replace(btrim(decided_phone,${trimCharacters}), '[ ().-]', '', 'g')=${input.phone}::text)
+        OR EXISTS (SELECT 1 FROM jsonb_each(COALESCE(cells,'{}'::jsonb)) AS source_cell(column_name,cell)
+          WHERE NOT (cell ? 'formula') AND jsonb_typeof(cell->'value') IN ('string','number') AND (
+            (${input.email}::text IS NOT NULL AND lower(btrim(cell->>'value',${trimCharacters}))=${input.email}::text)
+            OR (${input.phone}::text IS NOT NULL AND btrim(cell->>'value',${trimCharacters}) ~ '^[+]?[0-9 ().-]+$'
+              AND regexp_replace(btrim(cell->>'value',${trimCharacters}), '[ ().-]', '', 'g')=${input.phone}::text)))) AS contact,
+      EXISTS (SELECT 1 FROM deferred WHERE ${input.firstName.trim()}::text<>'' AND ${input.lastName.trim()}::text<>''
+        AND btrim(first_name,${trimCharacters})=${input.firstName.trim()}::text AND btrim(last_name,${trimCharacters})=${input.lastName.trim()}::text) AS name
+  `);
+  if (!result || typeof result.overflow !== "boolean" || typeof result.contact !== "boolean" || typeof result.name !== "boolean" || result.overflow) return "sheet_append_deferred_scope_review";
+  if (result.contact) return "sheet_append_deferred_contact_review";
+  if (result.name) return "sheet_append_deferred_name_review";
+  return null;
 }

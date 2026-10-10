@@ -369,10 +369,74 @@ coverage cursor: earlier holes remain pending. The projection contains no contac
 or cell text. Simulation checks the same historical/post-boundary coherence and
 does not count already confirmed/review rows as new imports.
 
+## Explicit deferred BASELINE disposition — backend only
+
+Manual confirmation still consumes only explicitly selected READY rows, in batches
+of 1–25. It need not wait for every other occurrence to be resolved. A remaining
+review or quarantine is never silently imported, ignored or redistributed.
+
+The existing `POST /lead-import/bootstrap/packages/:id/rows/:rowId/decision`
+endpoint also accepts exactly
+`{action:"DEFER",confirmed:true,expectedVersion,idempotencyKey,reason}`. The key
+must be a string, the version current and the reason 8–1,000 characters. No target
+Lead, overrides or resolved identity/owner/status/annotations may accompany this
+action. Current `import.view` and `import.review.resolve`, actor/session and campus
+fences remain required. Only an uncommitted REVIEW occurrence can become DEFERRED;
+an ACCEPTED row or a COMMIT_ROW receipt cannot be deferred.
+
+This is an explicit unresolved disposition, **not** IGNORE, exclusion, accepted
+identity or an imported Lead. The transaction preserves the original category,
+reasons, payload, mapping, comments and annotations. Its `EXPLICIT_DEFERRED_V1`
+binding records the Excel hash, plan, source key/fingerprint, mapped fingerprint
+and preceding state/version. It increments the row version and writes an
+actor-bound DEFER_ROW receipt plus BOOTSTRAP_ROW_DEFERRED audit. It creates no
+Lead, assignment, note, provenance, notification or contemporary interaction.
+Exact replay has no additional effects; another actor, row, version or payload
+cannot reuse the decision key.
+
+The existing reopen endpoint accepts an actor-owned READY or DEFERRED decision
+with its current grants/version and matching receipt. It preserves the previous
+decision in REOPEN_ROW/audit, returns the row to REVIEW and permanently retires the
+old decision key. Reopening is not compensation for an already committed Lead.
+Future resolution must still satisfy the original contact, identity, owner and
+status rules; DEFER is not a shortcut around them. There are **no dedicated DEFER
+or bounded-qualification Web controls in this backend tranche**.
+
+The report keeps two different claims:
+
+- Existing `reconciliation.complete`, `sourceCoverage.complete` and
+  `cutoverBlocked` remain globally strict. DEFERRED remains unresolved there and
+  the package remains PARTIAL while nonterminal occurrences remain.
+- Separate `boundedReconciliation` may be `qualified:true` only when every source
+  occurrence is either reconciled terminal work or a valid, explicitly receipted
+  DEFERRED disposition. It binds an `inventorySha256`, counts by sheet, unresolved
+  occurrences, deferred comments/native annotations and
+  `deferredWithoutUsableContact`. Terminal effects are checked against all actual
+  COMMIT_ROW receipts, notes, provenance and Leads; effects attached to a deferred
+  row cannot be hidden by omitting it from the terminal subset. Missing coverage,
+  duplicate source identities, truncation or altered bindings refuse qualification.
+
+Deferred comment text/provenance is retained but **not claimed as persisted Lead
+history**. Unknown author/business date remains unknown. An orphan without usable
+contact is exposed separately: conservative reservations cannot prove identity
+coverage for it and do not silently exclude it from later review.
+
+Before prospective Sheet effects, APPEND, LOCAL_ROW and EXTERNAL_ID use the same
+campus-scoped, transactionally fenced conservative reservation check. DEFERRED and
+its reopened REVIEW/READY descendants reserve exact normalized email/phone,
+including literal source cells absent from the mapping; formula cells are never
+evaluated. Exact first/last names trigger review only, never identity proof or an
+automatic LINK. No country prefix, owner or identity is inferred. A bounded-query
+overflow refuses effects rather than dropping reservations. Matches persist as
+REVIEW without creating a Lead/assignment/batch; EXTERNAL_ID keeps a durable REVIEW
+submission with no batch. Resolution of the historical row does not automatically
+replay a held Sheet REVIEW into a new Lead. Explicit review of those submissions
+remains necessary; no automatic review-resolution consumer is added here.
+
 ## Server-only qualification, still no activation proof
 
 `CRM_SHEET_APPEND_QUALIFICATION_FILE` and its exact SHA-256 configuration name a
-protected artifact with schemaVersion1, mode, policy `LOCAL_ROW_APPEND_ONLY_V1`,
+protected artifact with schemaVersion 1 or 2, mode, policy `LOCAL_ROW_APPEND_ONLY_V1`,
 boundaryArtifactSha256, bootstrapPackageId, excelSha256, reportSha256,
 bindingSha256, evidenceSha256, qualifiedAt and
 `producerCondition:{confirmedAt,evidenceSha256}`. The operator must actually obtain
@@ -383,14 +447,27 @@ or the user's policy choice alone are not operational producer confirmation.
 No real artifact may be issued while this confirmation is missing.
 
 `POST .../append-qualification` uses the trusted artifact, not caller-provided
-attestation. It binds the current fully reconciled bootstrap package and exact
-historical proof (`appendBootstrapProofHash`), revocable operator grants and
-authentication versions. Current dossier status/owner axes may legitimately change
-without changing the historical proof; exact notes/receipts/provenance, current
-visibility, coverage and `cutoverBlocked=false` are recalculated before every
-effect. 440 reviews/10 quarantines are NOT bypassed: bounded DEFERRED readiness is
-a separate, still-required contract for that real bootstrap. Qualification does
-not enable a connector. Artifact replays do not duplicate the qualification audit.
+attestation. It binds the current bootstrap package and exact historical proof
+(`appendBootstrapProofHash`), revocable operator grants and authentication versions.
+Version 1 remains strict: `cutoverBlocked=false` is required. Its historical hash
+excludes the newly added bounded report so an otherwise unchanged strict artifact
+does not acquire different semantics.
+
+Version 2 additionally requires
+`boundedBootstrap:{policy:"EXPLICIT_DEFERRED_V1",inventorySha256,deferredOccurrences,deferredWithoutUsableContact,reservationPolicy:"CONTACT_OR_EXACT_NAME_REVIEW_NO_AUTO_LINK"}`.
+It hashes the separate bounded report and requires its exact inventory/counts,
+`qualified:true`, `executedComplete:true` and zero **undisposed** occurrences. This
+does not assert that deferred cases are resolved, set global completeness true or
+relax the older external-ID cutover runtime contract. A review/quarantine with no
+explicit valid disposition still blocks this bounded qualification.
+
+Current dossier status/owner axes may legitimately change without changing the
+historical proof; exact notes/receipts/provenance, current visibility, source
+coverage and the selected version's reconciliation are recalculated before every
+effect. Reopening, remapping or changing a bound disposition invalidates readiness
+before source I/O/effects. A new independently examined artifact is required; the
+worker cannot requalify itself or redate the old proof. Qualification does not
+enable a connector. Artifact replays do not duplicate the qualification audit.
 
 Actual execution additionally needs explicit connector activation, server flags
 `SHEETS_ENABLED=true`, `SHEET_ROW_APPEND_ENABLED=true`,
@@ -400,6 +477,30 @@ external worker entry point; it uses the production executor/receipts and report
 failed runs as failed, unlike a swallowed per-connector failure. OFF exits before
 application initialization, SQL or Google calls. This implementation is not a claim
 that the job is deployed, enabled or its cloud monitoring qualified.
+
+The backend changes reuse the existing durable row/receipt/audit storage and add
+no migration. The targeted synthetic PostgreSQL cases in
+`apps/api/test/integration/bootstrap-import-postgres.test.ts` and
+`apps/api/test/integration/sheet-append-postgres.test.ts` exercise DEFER/replay,
+permissions and revocation, reopening and retired keys, real raw/mapped collision
+queries, the bounded APPEND worker and qualification invalidation. They also
+exercise LOCAL_ROW and EXTERNAL_ID workers against a deferred collision and an
+independent row, then replay after the historical disposition becomes terminal:
+held REVIEW remains unchanged and no additional business effects are allowed.
+An isolated mocked unit case separately checks EXTERNAL_ID REVIEW replay.
+Test definitions alone are not successful execution evidence: attach actual
+results, source snapshots and retained failures to the exact published SHA. These
+distinct proofs do not decide any real portfolio occurrence, prove PROD
+accounts/references, complete the global cutover or constitute activation.
+
+Before real PROD reception, retain the final Excel freeze and delta, verify the
+target identities/grants, qualify the exact deployed version, reconcile arrivals
+since the captured boundary and obtain the actual producer-condition evidence.
+The durable N0/generation, historical exclusion, observed holes/partial rows,
+capacity limits and explicit activation/flags remain unchanged. STAGING/PROD
+rehearsal, received operational alerts and a usable rollback procedure remain
+separate operational prerequisites. No seed, real import, invitation or Sheet
+activation follows implicitly from a local bounded qualification.
 
 Suspension persists `SHEET_APPEND_SUSPENDED`, prevents subsequent work and emits a
 structured ERROR signal without cell data. Configure monitoring for this signal
@@ -411,3 +512,7 @@ Rollback retains additive schema and ledgers, fences producers, exports private
 evidence and resumes forward only. See migration
 `20261010080000_sheet_row_append_boundary/rollback.md`; an older image that does
 not recognize append mode is not a safe active consumer rollback.
+An older consumer that does not honor DEFERRED reservations is likewise unsafe
+while reception is active. Keep flags OFF and preserve all deferred dispositions,
+reviews, receipts, comments and audit history until a compatible forward recovery;
+do not rebaseline or use a global database restore to erase later useful writes.

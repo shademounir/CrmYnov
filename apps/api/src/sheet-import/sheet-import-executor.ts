@@ -23,6 +23,7 @@ import { appendRows, appendStream, appendWorkerEnabled, assertAppendBinding, per
 import { BootstrapImportService } from "../bootstrap-import/bootstrap-import.service.js";
 import { assertAppendQualification } from "./sheet-append-qualification.js";
 import type { IngestionRecordInput } from "../ingestion/ingestion.service.js";
+import { deferredHistoricalCollision, normalizeHistoricalEmail, normalizeHistoricalPhone } from "../bootstrap-import/bootstrap-create-guards.js";
 
 type RunContext = { lease: SheetLease; configuration: SheetConfiguration; authorizedBy: string; campusId: string; workbookId: string; tab: string };
 type LocalPositionInput = { streamId: string; position: SheetObservedPosition; row: Record<string, string>; columns: string[] };
@@ -155,6 +156,15 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
       await tx.sheetLocalRow.update({ where: { id: tracked.id }, data: { status: incomplete ? "INCOMPLETE" : "REVIEW", errorCode: issue } });
       await this.receipt(tx, context, rowKey, "REVIEW", issue); this.appendFlags(); return;
     }
+    // Deferred historical identities reserve conservative contact/name signals
+    // in the SAME transaction as any prospective Sheet creation. No auto-LINK,
+    // owner allocation, note, provenance or ingestion batch is performed here.
+    const deferredIssue = await deferredHistoricalCollision(tx, { campusId: context.campusId,
+      email: normalizeHistoricalEmail(mapped.email), phone: normalizeHistoricalPhone(mapped.phone), firstName: mapped.firstName, lastName: mapped.lastName });
+    if (deferredIssue) {
+      await tx.sheetLocalRow.update({ where: { id: tracked.id }, data: { status: "REVIEW", errorCode: deferredIssue } });
+      await this.receipt(tx, context, rowKey, "REVIEW", deferredIssue); this.appendFlags(); return;
+    }
     // No original submission timestamp is invented from first observation.
     const record = { ...mapped, occurredAt: undefined, externalId: tracked.occurrenceKey, lineNumber: tracked.rowNumber, technicalSystem: "GOOGLE_SHEETS_LOCAL" };
     const result = await this.ingestion.persistSheetRecord(tx, context.lease.connectorId, record, mapping, context.lease.runId, context.configuration.assignment);
@@ -211,6 +221,11 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
       await this.receipt(tx, context, rowKey, "REVIEW", issue);
       return;
     }
+    const deferredIssue = await this.deferredIssue(tx, context, mapped);
+    if (deferredIssue) {
+      await tx.sheetLocalRow.update({ where: { id: tracked.id }, data: { status: "REVIEW", errorCode: deferredIssue } });
+      await this.receipt(tx, context, rowKey, "REVIEW", deferredIssue); return;
+    }
     const record = { ...mapped, externalId: tracked.id, lineNumber: position.row, technicalSystem: "GOOGLE_SHEETS_LOCAL" };
     const result = await this.ingestion.persistSheetRecord(tx, context.lease.connectorId, record, mapping, context.lease.runId, context.configuration.assignment);
     const outcome = receiptOutcome(result.outcome);
@@ -265,6 +280,9 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     const previous = id && id.length <= 128 ? await tx.sheetImportSubmission.findUnique({ where: { connectorId_externalId: { connectorId: context.lease.connectorId, externalId: id } } }) : null;
     const decision = classifySheetRow(id, row, previous ? { externalId: previous.externalId, fingerprint: previous.fingerprint } : undefined);
     if (decision.kind !== "IMPORT") {
+      if (decision.kind === "REPLAY" && previous?.outcome === "REVIEW" && previous.batchId === null) {
+        await this.receipt(tx, context, rowKey, "REVIEW", "sheet_append_deferred_review_pending"); return;
+      }
       await this.receipt(tx, context, rowKey, decision.kind === "REPLAY" ? "DUPLICATE" : "REVIEW", decision.kind === "REVIEW" ? decision.reason : undefined);
       return;
     }
@@ -272,11 +290,22 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
       mappingKey: mapping.mappingKey, mappingVersion: mapping.version, sourceColumns: columns, rows: [row],
       context: context.configuration.context, assignment: context.configuration.assignment });
     if (!record) throw new Error("sheet_record_missing");
+    const deferredIssue = await this.deferredIssue(tx, context, record);
+    if (deferredIssue) {
+      // A later bootstrap resolution is not permission to create an earlier
+      // quarantined submission automatically. Persist REVIEW across runs.
+      await tx.sheetImportSubmission.create({ data: { connectorId: context.lease.connectorId, externalId: decision.externalId, fingerprint, outcome: "REVIEW", batchId: null } });
+      await this.receipt(tx, context, rowKey, "REVIEW", deferredIssue); return;
+    }
     const result = await this.ingestion.persistSheetRecord(tx, context.lease.connectorId, record, mapping, context.lease.runId, context.configuration.assignment);
     await tx.sheetImportSubmission.create({ data: { connectorId: context.lease.connectorId, externalId: decision.externalId,
       fingerprint, outcome: result.outcome, batchId: result.batchId } });
     const outcome = receiptOutcome(result.outcome);
     await this.receipt(tx, context, rowKey, outcome, result.assignmentReason);
+  }
+
+  private deferredIssue(tx: Prisma.TransactionClient, context: RunContext, record: IngestionRecordInput): ReturnType<typeof deferredHistoricalCollision> {
+    return deferredHistoricalCollision(tx, { campusId: context.campusId, email: normalizeHistoricalEmail(record.email), phone: normalizeHistoricalPhone(record.phone), firstName: record.firstName, lastName: record.lastName });
   }
 
   private async receipt(tx: Prisma.TransactionClient, context: RunContext, rowKey: string, outcome: "CREATED" | "DUPLICATE" | "IGNORED" | "REVIEW", reason?: string): Promise<void> {

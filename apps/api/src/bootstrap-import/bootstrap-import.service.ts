@@ -11,6 +11,7 @@ import { resolveReference, validateLeadReferences } from "../references/referenc
 import { parseHistoricalWorkbook, type HistoricalAnnotation } from "./historical-workbook.js";
 import { historicalStatusResolutionReason, normalizeHistoricalEmail, normalizeHistoricalPhone, requireExplicitHistoricalStatus, requireNoHistoricalContactCollision } from "./bootstrap-create-guards.js";
 import { historicalReconciliation } from "./historical-reconciliation.js";
+import { boundedBootstrapReconciliation, deferralBinding, deferralReceiptResponse, isDeferralInput, validDeferral } from "./bounded-bootstrap.js";
 import { baselineOptionalValues, BASELINE_OPTIONAL_INFORMATION } from "./baseline-unknown-fields.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, hash, HISTORICAL_SHEETS, IMPORT_FIELDS, KEY, MAX_PACKAGE_BYTES, refuse, SHA, UUID,
   record, COLUMN, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
@@ -233,15 +234,17 @@ export class BootstrapImportService {
   }
 
   async decide(id: string, rowId: string, input: HistoricalDecisionInput, actor: Principal): Promise<unknown> {
-    if (!UUID.test(rowId) || !input || !KEY.test(input.idempotencyKey) || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 1
-      || !["CREATE_DOSSIER", "LINK_EXISTING", "IGNORE"].includes(input.action) || typeof input.reason !== "string" || input.reason.trim().length < 8 || input.reason.length > 1000
+    if (!UUID.test(rowId) || !input || typeof input.idempotencyKey !== "string" || !KEY.test(input.idempotencyKey) || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 1
+      || !["CREATE_DOSSIER", "LINK_EXISTING", "IGNORE", "DEFER"].includes(input.action) || typeof input.reason !== "string" || input.reason.trim().length < 8 || input.reason.length > 1000
       || (input.action === "LINK_EXISTING" ? !UUID.test(input.targetLeadId ?? "") : input.targetLeadId !== undefined)
-      || Object.keys(input).some((key) => !["expectedVersion", "idempotencyKey", "action", "targetLeadId", "reason", "overrides", "cycle", "annotations"].includes(key))
+      || Object.keys(input).some((key) => !["expectedVersion", "idempotencyKey", "action", "targetLeadId", "reason", "overrides", "cycle", "annotations", "confirmed"].includes(key))
+      || (input.action === "DEFER" ? !isDeferralInput(input) : input.confirmed !== undefined)
       || (input.overrides !== undefined && (!record(input.overrides) || Object.entries(input.overrides).some(([key, value]) => !overrideFields.includes(key) || typeof value !== "string" || value.length > 254)))) refuse("bootstrap_decision_invalid");
     return this.permissions.transaction(async (tx) => {
       const packageRow = await this.package(tx, id, actor, ["import.review.resolve", "import.view"]);
       const row = await tx.bootstrapImportRow.findFirst({ where: { id: rowId, packageId: id } }); if (!row) this.notFound();
       if (await tx.bootstrapImportReceipt.findFirst({ where: { packageId: id, operation: "REOPEN_ROW", response: { path: ["previousDecisionKey"], equals: input.idempotencyKey } } })) this.conflict("bootstrap_superseded_decision_key");
+      if (input.action === "DEFER") return this.deferRow(tx, packageRow, row, input, actor);
       this.validateCycle(input.cycle, object<SourceRow>(row.payload));
       this.validateAnnotations(input, object<SourceRow>(row.payload));
       const fingerprint = hash({ ...input, actorId: actor.userId, expectedVersion: undefined });
@@ -267,6 +270,33 @@ export class BootstrapImportService {
     });
   }
 
+  private async deferRow(tx: PermissionTransaction, packageRow: BootstrapImportPackage, row: BootstrapImportRow, input: HistoricalDecisionInput, actor: Principal): Promise<unknown> {
+    if (row.fingerprint !== hash(row.payload) || row.sourceKey !== hash([packageRow.sha256, row.relationId, row.rowNumber])) this.conflict("bootstrap_source_integrity_conflict");
+    if (row.leadId || await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: packageRow.id, operation: "COMMIT_ROW", key: row.id } } })) this.conflict("bootstrap_committed_row_cannot_defer");
+    const existing = await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: packageRow.id, operation: "DEFER_ROW", key: input.idempotencyKey } } });
+    if (existing) {
+      if (!row.decision || row.decisionKey !== input.idempotencyKey) this.conflict("bootstrap_deferral_key_conflict");
+      const saved = object<Record<string, unknown>>(row.decision);
+      const fingerprint = hash({ ...input, actorId: actor.userId, deferral: saved.deferral, expectedVersion: undefined });
+      if (existing.actorId !== actor.userId || existing.fingerprint !== fingerprint || row.decisionKey !== input.idempotencyKey
+        || !validDeferral(packageRow.sha256, row, [existing])) this.conflict("bootstrap_deferral_key_conflict");
+      return { ...this.rowView(row, actor), replayed: true };
+    }
+    // No inferred owner/status, validation of a creation, or disposition of an
+    // orphan annotation. The complete source remains in the original ledger.
+    if (row.state !== "REVIEW" || row.version !== input.expectedVersion || row.decision || !packageRow.sealedAt) this.conflict("bootstrap_deferral_conflict");
+    const binding = deferralBinding(packageRow.sha256, row);
+    const decision = { ...input, actorId: actor.userId, deferral: binding };
+    const fingerprint = hash({ ...decision, expectedVersion: undefined });
+    const changed = await tx.bootstrapImportRow.update({ where: { id: row.id, version: row.version }, data: {
+      state: "DEFERRED", version: { increment: 1 }, decision: json(decision), decisionKey: input.idempotencyKey, decisionFingerprint: fingerprint } });
+    const response = deferralReceiptResponse(row.id, fingerprint, binding);
+    await tx.bootstrapImportReceipt.create({ data: { packageId: packageRow.id, operation: "DEFER_ROW", key: input.idempotencyKey,
+      actorId: actor.userId, fingerprint, response: json(response) } });
+    await this.audit(tx, actor, packageRow, "BOOTSTRAP_ROW_DEFERRED", `defer:${hash([row.id, input.idempotencyKey])}`, { ...response, reason: input.reason });
+    return this.rowView(changed, actor);
+  }
+
   async reopen(id: string, rowId: string, input: BootstrapReopenInput, actor: Principal): Promise<unknown> {
     if (!UUID.test(rowId) || !record(input) || Object.keys(input).some((key) => !["expectedVersion", "idempotencyKey", "reason"].includes(key))
       || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 1 || typeof input.idempotencyKey !== "string" || !KEY.test(input.idempotencyKey)
@@ -286,9 +316,13 @@ export class BootstrapImportService {
         return { ...this.rowView(row, actor), replayed: true, reopenedVersion: saved.reopenedVersion };
       }
       if (currentDecision?.actorId !== actor.userId) permissionDenied();
-      if (row.state !== "READY" || row.version !== input.expectedVersion || !row.decision || !row.decisionKey || !row.decisionFingerprint || input.idempotencyKey === row.decisionKey) this.conflict("bootstrap_reopen_conflict");
+      if (!["READY", "DEFERRED"].includes(row.state) || row.version !== input.expectedVersion || !row.decision || !row.decisionKey || !row.decisionFingerprint || input.idempotencyKey === row.decisionKey) this.conflict("bootstrap_reopen_conflict");
       const previousDecision = row.decision;
       if (row.decisionFingerprint !== hash({ ...object<Record<string, unknown>>(previousDecision), expectedVersion: undefined, values: undefined })) this.conflict("bootstrap_decision_integrity_conflict");
+      if (row.state === "DEFERRED") {
+        const receipt = await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: id, operation: "DEFER_ROW", key: row.decisionKey } } });
+        if (!receipt || !validDeferral(packageRow.sha256, row, [receipt])) this.conflict("bootstrap_deferral_integrity_conflict");
+      }
       const changed = await tx.bootstrapImportRow.update({ where: { id: rowId, version: row.version }, data: { state: "REVIEW", version: { increment: 1 }, decision: Prisma.DbNull, decisionKey: null, decisionFingerprint: null } });
       const response = { rowId, previousDecision, previousDecisionKey: row.decisionKey, previousDecisionFingerprint: row.decisionFingerprint, reopenedVersion: changed.version, reason: input.reason };
       await tx.bootstrapImportReceipt.create({ data: { packageId: id, operation: "REOPEN_ROW", key: input.idempotencyKey, actorId: actor.userId, fingerprint, response: json(response) } });
@@ -322,7 +356,7 @@ export class BootstrapImportService {
       const reportValues = { mappingId: id, mappingVersion: 1, sourceFileSha256: row.sha256, totalCount: counts.total, createdCount: batchCounts.createdCount, updatedCount: 0, ignoredCount: counts.ignored,
         duplicateCount: batchCounts.attachedCount, errorCount: counts.review + counts.pending + counts.invalid };
       await tx.importReport.upsert({ where: { batchId: row.batchId }, create: { jobId: `bootstrap:${id}`, batchId: row.batchId, ...reportValues }, update: reportValues });
-      const changed = await tx.bootstrapImportPackage.update({ where: { id, version: row.version }, data: { state: counts.review + counts.pending ? "PARTIAL" : "COMPLETED", version: { increment: 1 } } });
+      const changed = await tx.bootstrapImportPackage.update({ where: { id, version: row.version }, data: { state: counts.review + counts.pending + counts.invalid ? "PARTIAL" : "COMPLETED", version: { increment: 1 } } });
       const result = await this.view(tx, changed);
       await tx.bootstrapImportReceipt.create({ data: { packageId: id, operation: "CONFIRM", key: input.idempotencyKey, actorId: actor.userId, fingerprint, response: json({ result, rowIds: ready.map((item) => item.id) }) } });
       await this.audit(tx, actor, row, "BOOTSTRAP_CONFIRMATION_COMMITTED", `confirm:${row.id}:${input.idempotencyKey}`, { counts, rowIds: ready.map((item) => item.id) });
@@ -352,7 +386,7 @@ export class BootstrapImportService {
       const id = row.id, items = await tx.bootstrapImportRow.groupBy({ by: ["sheet", "state"], where: { packageId: id }, _count: true });
       const bySheet = HISTORICAL_SHEETS.map((name) => {
         const count = (states: string[]): number => items.filter((item) => item.sheet === name && states.includes(item.state)).reduce((sum, item) => sum + item._count, 0);
-        return { name, total: count(["ACCEPTED", "REVIEW", "READY", "INVALID", "IGNORED"]), accepted: count(["ACCEPTED"]), review: count(["REVIEW", "READY"]), invalid: count(["INVALID"]), ignored: count(["IGNORED"]) };
+        return { name, total: count(["ACCEPTED", "REVIEW", "READY", "INVALID", "IGNORED", "DEFERRED"]), accepted: count(["ACCEPTED"]), review: count(["REVIEW", "READY", "DEFERRED"]), invalid: count(["INVALID"]), ignored: count(["IGNORED"]) };
       });
       const plan = await tx.bootstrapImportPlan.findFirst({ where: { packageId: id }, orderBy: { version: "desc" } });
       const coverage = plan ? object<{ sourceCoverage?: SourceCoverage[] }>(plan.configuration).sourceCoverage : undefined;
@@ -362,10 +396,11 @@ export class BootstrapImportService {
         remainingQuarantinedAnnotations: ledgers.filter((item) => item.sheet === sheet.name && item.state !== "IGNORED" && item.reasons.includes("NATIVE_ANNOTATION_QUARANTINE") && !object<HistoricalDecisionInput | null>(item.decision)?.annotations?.length).length }));
       const complete = !!coverage && effectiveCoverage.every((sheet) => !sheet.remainingUnmappedCells && !sheet.remainingQuarantinedAnnotations) && coverage.reduce((total, sheet) => total + sheet.ledgerRows, 0) === bySheet.reduce((total, sheet) => total + sheet.total, 0);
       const reconciliationRows = await tx.bootstrapImportRow.findMany({ where: { packageId: id }, take: 10001,
-        select: { id: true, sheet: true, relationId: true, rowNumber: true, sourceKey: true, fingerprint: true, payload: true, mapped: true, decision: true, decisionFingerprint: true, state: true, leadId: true } });
+        select: { id: true, sheet: true, relationId: true, rowNumber: true, sourceKey: true, fingerprint: true, payload: true, mapped: true, decision: true, decisionFingerprint: true, decisionKey: true, planId: true, version: true, reasons: true, state: true, leadId: true } });
       const notes = await tx.importedHistoricalNote.findMany({ where: { row: { packageId: id } }, take: 100001,
         select: { rowId: true, leadId: true, cellKey: true, fingerprint: true, sourceSheet: true, sourceRow: true, sourceColumn: true, text: true, sourceValue: true, author: true, occurredAt: true } });
       const receipts = await tx.bootstrapImportReceipt.findMany({ where: { packageId: id, operation: "COMMIT_ROW" }, take: 10001, select: { key: true, fingerprint: true, actorId: true, response: true } });
+      const deferralReceipts = await tx.bootstrapImportReceipt.findMany({ where: { packageId: id, operation: "DEFER_ROW" }, take: 10001, select: { key: true, fingerprint: true, actorId: true, response: true } });
       const provenance = row.batchId ? await tx.leadProvenance.findMany({ where: { batchId: row.batchId, sourceType: "LEGACY_CRM" }, take: 10001,
         select: { leadId: true, externalId: true, submissionFingerprint: true, technicalSystem: true, sourceType: true } }) : [];
       const targetIds = [...new Set(reconciliationRows.slice(0, 10000).flatMap((item) => item.leadId ? [item.leadId] : []))];
@@ -394,9 +429,15 @@ export class BootstrapImportService {
         }
         visibleLeads.push({ ...lead, visibleForCurrentAxes });
       }
-      const reconciliation = historicalReconciliation({ sha256: row.sha256 ?? "", rows: reconciliationRows.slice(0, 10000), notes: notes.slice(0, 100000), receipts: receipts.slice(0, 10000), provenance: provenance.slice(0, 10000), leads: visibleLeads.slice(0, 10000),
-        truncated: reconciliationRows.length > 10000 || notes.length > 100000 || receipts.length > 10000 || provenance.length > 10000 || leads.length > 10000 });
-      return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage }, reconciliation,
+      const reconciliationInput = { sha256: row.sha256 ?? "", rows: reconciliationRows.slice(0, 10000), notes: notes.slice(0, 100000), receipts: receipts.slice(0, 10000), provenance: provenance.slice(0, 10000), leads: visibleLeads.slice(0, 10000),
+        truncated: reconciliationRows.length > 10000 || notes.length > 100000 || receipts.length > 10000 || deferralReceipts.length > 10000 || provenance.length > 10000 || leads.length > 10000 };
+      const reconciliation = historicalReconciliation(reconciliationInput);
+      const coverageQualified = !!coverage && coverage.length === HISTORICAL_SHEETS.length && new Set(coverage.map(sheet => sheet.name)).size === HISTORICAL_SHEETS.length
+        && HISTORICAL_SHEETS.every(name => coverage.some(sheet => sheet.name === name)) && coverage.every(sheet => sheet.ledgerRows === bySheet.find(item => item.name === sheet.name)?.total)
+        && ledgers.filter(item => !["IGNORED", "DEFERRED"].includes(item.state)).every(item => !item.reasons.some(reason => reason.startsWith("UNMAPPED_SOURCE_CELL_REVIEW:"))
+          && !(item.reasons.includes("NATIVE_ANNOTATION_QUARANTINE") && !object<HistoricalDecisionInput | null>(item.decision)?.annotations?.length));
+      const boundedReconciliation = boundedBootstrapReconciliation({ ...reconciliationInput, deferralReceipts: deferralReceipts.slice(0, 10000), coverageQualified });
+      return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage }, reconciliation, boundedReconciliation,
         cutoverBlocked: !complete || !reconciliation.complete || bySheet.some((sheet) => sheet.review || sheet.invalid), historicalAcquisitionsExcluded: true };
   }
 
@@ -561,7 +602,7 @@ export class BootstrapImportService {
   }
   private async counts(tx: PermissionTransaction, id: string): Promise<{ total: number; accepted: number; review: number; invalid: number; ignored: number; pending: number }> {
     const rows = await tx.bootstrapImportRow.groupBy({ by: ["state"], where: { packageId: id }, _count: true }); const count = (state: string): number => rows.find((row) => row.state === state)?._count ?? 0;
-    return { total: rows.reduce((sum, row) => sum + row._count, 0), accepted: count("ACCEPTED"), review: count("REVIEW"), invalid: count("INVALID"), ignored: count("IGNORED"), pending: count("READY") };
+    return { total: rows.reduce((sum, row) => sum + row._count, 0), accepted: count("ACCEPTED"), review: count("REVIEW") + count("DEFERRED"), invalid: count("INVALID"), ignored: count("IGNORED"), pending: count("READY") };
   }
   private async view(tx: PermissionTransaction, row: BootstrapImportPackage): Promise<Record<string, unknown>> {
     const snapshot = row.snapshot ? object<Snapshot>(row.snapshot) : undefined;
@@ -570,18 +611,19 @@ export class BootstrapImportService {
       sheets: snapshot?.sheets.map((sheet) => ({ name: sheet.name, relationId: sheet.relationId, rowCount: sheet.rows.length, columns: sheet.columns })) ?? [], counts: await this.counts(tx, row.id), ...(row.batchId ? { batchId: row.batchId } : {}) };
   }
   private rowView(row: BootstrapImportRow, actor?: Principal): Record<string, unknown> {
-    const mapped = object<MappedRow>(row.mapped); const decision = row.decision ? object<HistoricalDecisionInput & { values: Values; actorId: string }>(row.decision) : undefined; const source = object<SourceRow>(row.payload);
+    const mapped = object<MappedRow>(row.mapped); const decision = row.decision ? object<HistoricalDecisionInput & { values: Values; actorId: string; deferral?: unknown }>(row.decision) : undefined; const source = object<SourceRow>(row.payload);
     const statusResolution = ["REVIEW", "READY"].includes(row.state) ? historicalStatusResolutionReason(mapped.rawStatus ?? null) : null;
     const reasons = [...new Set([...row.reasons, ...(statusResolution ? [statusResolution] : [])])];
     const warnings = BASELINE_OPTIONAL_INFORMATION.filter((field) => !mapped.values[field]?.trim() && !reasons.includes(`FORMULA_REVIEW:${field}`)).map((field) => `BASELINE_INFORMATION_UNKNOWN:${field}`);
     if (reasons.includes("OWNER_MISSING")) warnings.push("OWNER_MISSING"); // Explicit unassigned decision is still required; no arbitrary redistribution.
     const blockingReasons = reasons.filter((reason) => !warnings.includes(reason) && !reason.startsWith("BASELINE_INFORMATION_UNKNOWN:") && !BASELINE_OPTIONAL_INFORMATION.some((field) => reason === `REQUIRED_MAPPING_MISSING:${field}` && warnings.includes(`BASELINE_INFORMATION_UNKNOWN:${field}`)));
     return { id: row.id, sheet: row.sheet, rowNumber: row.rowNumber, fingerprint: row.fingerprint, version: row.version, state: row.state, reasons, warnings, blockingReasons, values: mapped.values, comments: mapped.comments.filter((comment) => comment.text.trim().length > 0),
-      canReopen: row.state === "READY" && !row.leadId && !!actor && decision?.actorId === actor.userId,
+      canReopen: ["READY", "DEFERRED"].includes(row.state) && !row.leadId && !!actor && decision?.actorId === actor.userId,
       sourceOwner: mapped.sourceOwner, replacementOwner: mapped.replacementOwner, annotations: source.annotations ?? [], sourceEvidence: Object.entries(source.cells).map(([column, cell]) => ({ column, reference: `${column}${source.rowNumber}`, text: text(cell), raw: cell.raw, type: cell.type,
         formula: !!cell.formula, ...(cell.formula ? { formulaText: cell.formula.text } : {}), ...(cell.style ? { style: cell.style } : {}) })), sourceEvidenceTruncated: false,
       ...(decision ? { decision: { action: decision.action, reason: decision.reason, ...(decision.targetLeadId ? { targetLeadId: decision.targetLeadId } : {}),
-        overrides: decision.overrides ?? {}, resolvedValues: decision.values, annotations: decision.annotations ?? [], cycle: this.cycleView(decision.cycle, source) } } : {}), ...(row.leadId ? { leadId: row.leadId } : {}) };
+        overrides: decision.overrides ?? {}, resolvedValues: decision.values, annotations: decision.annotations ?? [], cycle: this.cycleView(decision.cycle, source),
+        ...(decision.action === "DEFER" ? { confirmed: true, deferral: decision.deferral, effectsApplied: false } : {}) } } : {}), ...(row.leadId ? { leadId: row.leadId } : {}) };
   }
   private async audit(tx: PermissionTransaction, actor: Principal, row: BootstrapImportPackage, eventType: string, key: string, after: unknown): Promise<void> {
     const current = await currentPrincipal(tx, actor);
