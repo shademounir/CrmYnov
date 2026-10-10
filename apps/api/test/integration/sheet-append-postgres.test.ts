@@ -16,7 +16,7 @@ import { DynamicPermissionService } from "../../src/permissions/dynamic-service.
 import { referenceKey } from "../../src/references/reference.contract.js";
 import { BootstrapImportService } from "../../src/bootstrap-import/bootstrap-import.service.js";
 import { PersistentIngestionService } from "../../src/ingestion/persistent-ingestion.service.js";
-import { ImportMappingService } from "../../src/import-mapping/import-mapping.service.js";
+import { ImportMappingService, type ImportMappingColumnInput } from "../../src/import-mapping/import-mapping.service.js";
 import { SyntheticSheetSource } from "../../src/sheet-import/synthetic-sheet-source.js";
 import { SheetImportAdminService } from "../../src/sheet-import/sheet-import-admin.service.js";
 import { SheetImportExecutor } from "../../src/sheet-import/sheet-import-executor.js";
@@ -25,6 +25,9 @@ import type { SheetValues } from "../../src/sheet-import/google-sheets-adapter.j
 import { APPEND_MODE, APPEND_POLICY, appendHash, appendPositions } from "../../src/sheet-import/sheet-append-contract.js";
 import { appendRows, appendStream } from "../../src/sheet-import/sheet-append-ledger.js";
 import { appendBootstrapProofHash, type SheetAppendQualificationArtifact } from "../../src/sheet-import/sheet-append-qualification.js";
+import { BOUNDED_BOOTSTRAP_POLICY } from "../../src/bootstrap-import/bounded-bootstrap.js";
+import { deferredHistoricalCollision } from "../../src/bootstrap-import/bootstrap-create-guards.js";
+import { DEFERRED_RESERVATION_POLICY } from "../../src/sheet-import/sheet-append-qualification.js";
 import { sheetStreamId } from "../../src/sheet-import/sheet-local-ledger.js";
 import { bytesHash, CHUNK_BYTES, HISTORICAL_SHEETS } from "../../src/bootstrap-import/bootstrap-import.contract.js";
 import { syntheticHistoricalParts, syntheticZip } from "../fixtures/import/historical-workbook.synthetic.js";
@@ -70,15 +73,29 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
       const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`), path = join(directory, `${name}.json`), sha = bytesHash(bytes);
       await writeFile(path, bytes, { flag: "wx" }); process.env[`${environmentKey}_FILE`] = path; process.env[`${environmentKey}_SHA256`] = sha; return sha;
     };
-    const fixture = async (name: string): Promise<{ id: string; packId: string; streamId: string; configuration: SheetConfiguration; source: AppendFixtureSource; admin: SheetImportAdminService; worker: SheetImportExecutor }> => {
-      const bytes = syntheticZip(syntheticHistoricalParts({ workbookExtra: `<definedNames data-append="${tag}-${name}"/>` })), sha256 = bytesHash(bytes);
+    const fixture = async (name: string, bounded = false): Promise<{ id: string; packId: string; streamId: string; configuration: SheetConfiguration; source: AppendFixtureSource; admin: SheetImportAdminService; worker: SheetImportExecutor; deferred?: { id: string; version: number } }> => {
+      const parts = syntheticHistoricalParts({ workbookExtra: `<definedNames data-append="${tag}-${name}"/>` });
+      // Preserve edge whitespace in the source BEFORE seal/DEFER. All three real
+      // worker branches below must reserve the normalized email/name, while an
+      // unmapped raw phone exercises the same PostgreSQL guard directly.
+      const bytes = syntheticZip(bounded ? parts.map(([path, xml]): [string, string] => [path, path.startsWith("xl/worksheets/") ? xml
+        .replaceAll("synthetic@example.invalid", "&#x9;&#xD;&#xA;synthetic@example.invalid&#xA0;")
+        .replaceAll(">Synthétique</t>", ">&#xD;&#xA;Synthétique&#xFEFF;</t>")
+        .replaceAll(">Exemple</t>", ">&#x9;Exemple&#xA0;</t>")
+        .replace("</row></sheetData>", '<c r="L9" t="inlineStr"><is><t>&#xA0;&#xD;&#xA;+212 (6) 98.76-54 32&#x9;</t></is></c><c r="M9" t="inlineStr"><is><t>internal@exa&#x9;mple.invalid</t></is></c><c r="N9" t="inlineStr"><is><t>+21260&#xA0;1234567</t></is></c></row></sheetData>') : xml]) : parts), sha256 = bytesHash(bytes);
       let pack = await bootstrap.create({ fileName: "append-synthetic.xlsx", sizeBytes: bytes.length, sha256, campusId: campus.id, idempotencyKey: `append-${tag}-${name}` }, actor) as { id: string; version: number };
       for (let index = 0, offset = 0; offset < bytes.length; index++, offset += CHUNK_BYTES) { const chunk = bytes.subarray(offset, offset + CHUNK_BYTES); pack = await bootstrap.chunk(pack.id, { index, contentBase64: chunk.toString("base64"), sha256: bytesHash(chunk) }, actor) as typeof pack; }
       pack = await bootstrap.seal(pack.id, { sha256 }, actor) as typeof pack;
       pack = await bootstrap.mapping(pack.id, { expectedVersion: pack.version, mappingVersion: "R8-v1", sheets: HISTORICAL_SHEETS.map((sheet) => ({ name: sheet, campaign: campaign.code,
-        fields: { lastName: "A", firstName: "B", email: "C", educationLevel: "D", program: "E", source: "F", status: "G", owner: "H", temperature: "J" }, commentColumns: ["I"], ownerAliases: {} })) }, actor) as typeof pack;
+        fields: { lastName: "A", firstName: "B", email: bounded ? "K" : "C", educationLevel: "D", program: "E", source: "F", status: "G", owner: "H", temperature: "J" }, commentColumns: ["I"], ownerAliases: {} })) }, actor) as typeof pack;
       const rows = await bootstrap.rows(pack.id, undefined, 50, actor) as { items: Array<{ id: string; version: number }> };
-      for (const row of rows.items) await bootstrap.decide(pack.id, row.id, { expectedVersion: row.version, idempotencyKey: `append-ignore-${row.id}`, action: "IGNORE", reason: "Explicit synthetic-only exclusion to qualify append bootstrap guard" }, actor);
+      let deferred: { id: string; version: number } | undefined;
+      for (const row of rows.items) {
+        const defer = bounded && row.id === rows.items[0]!.id;
+        const changed = await bootstrap.decide(pack.id, row.id, { expectedVersion: row.version, idempotencyKey: `append-${defer ? "defer" : "ignore"}-${row.id}`,
+          action: defer ? "DEFER" : "IGNORE", ...(defer ? { confirmed: true as const } : {}), reason: defer ? "Explicit synthetic unresolved identity; raw contact and exact comments remain deferred" : "Explicit synthetic-only exclusion to qualify append bootstrap guard" }, actor) as { id: string; version: number };
+        if (defer) deferred = changed;
+      }
       await bootstrap.confirm(pack.id, { expectedVersion: pack.version, idempotencyKey: `append-confirm-${tag}-${name}`, confirmed: true, limit: 25 }, actor);
       const columns = [{ sourceColumn: "First", targetField: "firstName" as const, action: "TRIM" as const }, { sourceColumn: "Last", targetField: "lastName" as const, action: "TRIM" as const },
         { sourceColumn: "Email", targetField: "email" as const, action: "LOWERCASE" as const }, { sourceColumn: "Education", targetField: "educationLevel" as const, action: "TRIM" as const },
@@ -94,12 +111,16 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
       await admin.appendBoundary(actor, connector.id, { expectedVersion: 1, confirmed: true });
       const streamId = sheetStreamId(connector.workbookId, 0), stream = await permissions.readTransaction((tx) => appendStream(tx, streamId));
       const report = await permissions.readTransaction((tx) => bootstrap.reportCutoverRuntime(tx, pack.id, delegation, streamId, false));
-      assert.equal((report as { cutoverBlocked: boolean }).cutoverBlocked, false);
-      const qualification: SheetAppendQualificationArtifact = { schemaVersion: 1, mode: APPEND_MODE, policy: APPEND_POLICY,
-        boundaryArtifactSha256: stream!.contract!.artifactSha256, bootstrapPackageId: pack.id, excelSha256: sha256, reportSha256: appendBootstrapProofHash(report),
+      assert.equal((report as { cutoverBlocked: boolean }).cutoverBlocked, bounded);
+      const boundedReport = (report as { boundedReconciliation: { qualified: boolean; inventorySha256: string; deferredOccurrences: number; deferredWithoutUsableContact: number } }).boundedReconciliation;
+      assert.equal(boundedReport.qualified, true);
+      const qualification: SheetAppendQualificationArtifact = { schemaVersion: bounded ? 2 : 1, mode: APPEND_MODE, policy: APPEND_POLICY,
+        boundaryArtifactSha256: stream!.contract!.artifactSha256, bootstrapPackageId: pack.id, excelSha256: sha256, reportSha256: appendBootstrapProofHash(report, bounded ? 2 : 1),
         bindingSha256: stream!.contract!.bindingSha256, evidenceSha256: "a".repeat(64), qualifiedAt: "2026-01-01T00:00:01.000Z", producerCondition: { confirmedAt: "2026-01-01T00:00:00.000Z", evidenceSha256: "b".repeat(64) } };
+      if (bounded) qualification.boundedBootstrap = { policy: BOUNDED_BOOTSTRAP_POLICY, inventorySha256: boundedReport.inventorySha256,
+        deferredOccurrences: boundedReport.deferredOccurrences, deferredWithoutUsableContact: boundedReport.deferredWithoutUsableContact, reservationPolicy: DEFERRED_RESERVATION_POLICY };
       await artifact(`qualification-${name}`, qualification, "CRM_SHEET_APPEND_QUALIFICATION");
-      return { id: connector.id, packId: pack.id, streamId, configuration, source, admin, worker };
+      return { id: connector.id, packId: pack.id, streamId, configuration, source, admin, worker, ...(deferred ? { deferred } : {}) };
     };
     const rowsFor = async (streamId: string): Promise<Awaited<ReturnType<typeof appendRows>>> => permissions.readTransaction((tx) => appendRows(tx, streamId));
     const business = async (): Promise<unknown> => ({ leads: await client.lead.count(), provenance: await client.leadProvenance.count(), batches: await client.ingestionBatch.count(), reports: await client.importReport.count(),
@@ -250,8 +271,107 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
     await assert.rejects(() => rebased.admin.appendBoundary(actor, rebased.id, { expectedVersion: 1, confirmed: true }), (error: unknown) => errorCode(error) === "sheet_append_rebaseline_refused");
     assert.equal(appendPositions(rebased.configuration.source!.range!, rebased.source.raw).lastOccupiedRow, 2);
     assert.match(appendHash(registered), /^[a-f0-9]{64}$/u);
+    // A trusted V2 inventory can keep unresolved identities/comments, without
+    // disguising strict complete or letting Sheets duplicate that portfolio.
+    const bounded = await fixture("bounded", true);
+    const boundedReport = await bootstrap.report(bounded.packId, actor) as { cutoverBlocked: boolean; sourceCoverage: { complete: boolean }; reconciliation: { complete: boolean }; boundedReconciliation: { qualified: boolean; deferredOccurrences: number } };
+    assert.equal(boundedReport.cutoverBlocked, true); assert.equal(boundedReport.reconciliation.complete, false); assert.equal(boundedReport.sourceCoverage.complete, false);
+    assert.equal(boundedReport.boundedReconciliation.qualified, true); assert.equal(boundedReport.boundedReconciliation.deferredOccurrences, 1);
+    await bounded.admin.qualifyAppend(actor, bounded.id, { expectedVersion: 1, confirmed: true });
+    const whitespaceCollision = (email: string | null, phone: string | null): Promise<unknown> => permissions.readTransaction(tx => deferredHistoricalCollision(tx, {
+      campusId: campus.id, email, phone, firstName: "Contradictory", lastName: "Whitespace identity" }));
+    assert.equal(await whitespaceCollision(null, "+212698765432"), "sheet_append_deferred_contact_review", "NBSP/CRLF/tab around an unmapped raw phone use ECMAScript edge trimming");
+    assert.equal(await whitespaceCollision("internal@example.invalid", null), null, "internal email tab is not stripped into a contact");
+    assert.equal(await whitespaceCollision(null, "+212601234567"), null, "internal phone NBSP is not joined into a contact");
+    const beforeBounded = { leads: await client.lead.count(), notes: await client.importedHistoricalNote.count(), provenance: await client.leadProvenance.count() };
+    bounded.source.raw.push(["Contradictory", "Person", "synthetic@example.invalid", "BAC", program.code, ""], ["Exemple", "Synthétique", `other-name-${tag}@example.invalid`, "BAC", program.code, ""], row("bounded-independent"));
+    await bounded.admin.requestRun(actor, bounded.id, 1); await bounded.worker.execute(bounded.id, "MANUAL");
+    const boundedRows = await rowsFor(bounded.streamId);
+    assert.deepEqual(boundedRows.map(value => value.status), ["REVIEW", "REVIEW", "CREATED"]);
+    const boundedReasons = await client.sheetLocalRow.findMany({ where: { streamId: bounded.streamId }, select: { errorCode: true }, orderBy: { rowNumber: "asc" } });
+    assert.equal(boundedReasons[0]!.errorCode, "sheet_append_deferred_contact_review"); assert.equal(boundedReasons[1]!.errorCode, "sheet_append_deferred_name_review");
+    assert.equal(await client.lead.count(), beforeBounded.leads + 1); assert.equal(await client.importedHistoricalNote.count(), beforeBounded.notes);
+    assert.equal(await client.leadProvenance.count(), beforeBounded.provenance + 1); assert.equal(await client.lead.count({ where: { email: "synthetic@example.invalid" } }), 0);
+    const boundedAfter = await business(); await bounded.admin.requestRun(actor, bounded.id, 1); await bounded.worker.execute(bounded.id, "MANUAL"); assert.deepEqual(await business(), boundedAfter);
+    // Exercise BOTH legacy production worker branches against the same actual
+    // DEFERRED ledger, not only the shared SQL query or a mocked processRow.
+    const legacyEffects = async (): Promise<{ leads: number; notes: number; provenance: number; batches: number; reports: number }> => ({
+      leads: await client.lead.count(), notes: await client.importedHistoricalNote.count(), provenance: await client.leadProvenance.count(),
+      batches: await client.ingestionBatch.count(), reports: await client.importReport.count() });
+    const legacyWorkers: Array<{ mode: "LOCAL_ROW" | "EXTERNAL_ID"; id: string; source: AppendFixtureSource; run: () => Promise<void>; held: () => Promise<unknown>; initialHeld: unknown }> = [];
+    for (const mode of ["LOCAL_ROW", "EXTERNAL_ID"] as const) {
+      const local = mode === "LOCAL_ROW", slug = local ? "local" : "external";
+      const columns: ImportMappingColumnInput[] = [
+        { sourceColumn: "First", targetField: "firstName", action: "TRIM", required: true },
+        { sourceColumn: "Last", targetField: "lastName", action: "TRIM", required: true },
+        { sourceColumn: "Email", targetField: "email", action: "LOWERCASE" },
+        { sourceColumn: "Education", targetField: "educationLevel", action: "TRIM", required: true },
+        { sourceColumn: "Program", targetField: "program", action: "TRIM", required: true },
+        ...(!local ? [{ sourceColumn: "Submission ID", targetField: "externalId" as const, action: "TRIM" as const, required: true }] : []),
+      ];
+      const range = local ? "A1:E3" : "A1:F3", externalId = `deferred-${slug}-${tag}`, independentId = `independent-${slug}-${tag}`;
+      const configuration = readSheetConfiguration({ source: { mode: "SIMULATED", identityMode: mode, sheetId: 0, range },
+        mapping: mappings.snapshot({ mappingKey: `deferred-${slug}-${tag}`, name: "Synthetic deferred legacy worker", profile: local ? "CUSTOM" : "FORMINATOR_ZAPIER", expectedVersion: 0, columns }, user.id, new Date().toISOString()),
+        context: { source: "WEB_FORM", technicalSystem: local ? "GOOGLE_SHEETS_LOCAL" : "FORMINATOR_ZAPIER", originalSource: "Synthetic declared channel", campus: campus.code, campaign: campaign.code }, assignment: { strategy: "UNASSIGNED" } });
+      const source = new AppendFixtureSource([columns.map(column => column.sourceColumn),
+        ["Contradictory", `Legacy ${slug}`, "synthetic@example.invalid", "BAC", program.code, ...(!local ? [externalId] : [])],
+        ["Synthetic", `Independent ${slug}`, `legacy-${slug}-${tag}@example.invalid`, "BAC", program.code, ...(!local ? [independentId] : [])]], range);
+      // EXTERNAL_ID's existing manual request contract requires enabled=true;
+      // only this nonce-owned synthetic connector is enabled, never a real source.
+      const connector = await client.sheetImportConnector.create({ data: { campusId: campus.id, workbookId: `synthetic_deferred_${slug}_${tag}`, tab: "SYNTHETIC", enabled: !local,
+        configuration: configuration as unknown as Prisma.InputJsonValue, updatedBy: user.id } });
+      const admin = new SheetImportAdminService(permissions, mappings, source, bootstrap), worker = new SheetImportExecutor(prisma, permissions, mappings, app.get(PersistentIngestionService), source, bootstrap);
+      const run = async (): Promise<void> => { await admin.requestRun(actor, connector.id, 1); await worker.execute(connector.id, "MANUAL"); };
+      const held = (): Promise<unknown> => local
+        ? client.sheetLocalRow.findUniqueOrThrow({ where: { streamId_rowNumber: { streamId: sheetStreamId(connector.workbookId, 0), rowNumber: 2 } }, select: { id: true, status: true, fingerprint: true, batchId: true, errorCode: true } })
+        : client.sheetImportSubmission.findUniqueOrThrow({ where: { connectorId_externalId: { connectorId: connector.id, externalId } }, select: { id: true, outcome: true, fingerprint: true, batchId: true } });
+      const beforeLegacy = await legacyEffects(); await run();
+      assert.deepEqual(await legacyEffects(), { leads: beforeLegacy.leads + 1, notes: beforeLegacy.notes, provenance: beforeLegacy.provenance + 1, batches: beforeLegacy.batches + 1, reports: beforeLegacy.reports + 1 });
+      assert.equal(await client.lead.count({ where: { email: "synthetic@example.invalid" } }), 0, `${mode} must not create the reserved identity`);
+      assert.equal(await client.lead.count({ where: { email: `legacy-${slug}-${tag}@example.invalid`, assignedToId: null } }), 1, `${mode} continues the independent row without assignment`);
+      const initialHeld = await held() as { status?: string; outcome?: string; batchId: string | null; errorCode?: string };
+      assert.equal(local ? initialHeld.status : initialHeld.outcome, "REVIEW"); assert.equal(initialHeld.batchId, null);
+      if (local) assert.equal(initialHeld.errorCode, "sheet_append_deferred_contact_review");
+      assert.equal(await client.sheetImportRunReceipt.count({ where: { run: { connectorId: connector.id }, outcome: "REVIEW", errorCode: "sheet_append_deferred_contact_review" } }), 1);
+      assert.equal(await client.sheetImportRun.count({ where: { connectorId: connector.id, status: "COMPLETED", createdCount: 1, reviewCount: 1 } }), 1);
+      legacyWorkers.push({ mode, id: connector.id, source, run, held, initialHeld });
+    }
+    const readsBeforeReopen = bounded.source.reads, beforeBoundedReopen = await business();
+    await bootstrap.reopen(bounded.packId, bounded.deferred!.id, { expectedVersion: bounded.deferred!.version, idempotencyKey: `bounded-reopen-${tag}`, reason: "Explicit synthetic reopening must invalidate readiness before any new source I/O" }, actor);
+    await assert.rejects(() => bounded.admin.requestRun(actor, bounded.id, 1), (error: unknown) => errorCode(error) === "sheet_append_bootstrap_reconciliation_required");
+    assert.equal(bounded.source.reads, readsBeforeReopen); assert.deepEqual(await business(), beforeBoundedReopen);
+    // A separately qualified connector of the same campus must still respect
+    // the reservation during REVIEW, without relying on the old artifact.
+    const otherBounded = await fixture("bounded-other"); await otherBounded.admin.qualifyAppend(actor, otherBounded.id, { expectedVersion: 1, confirmed: true });
+    otherBounded.source.raw.push(["Another", "Identity", "synthetic@example.invalid", "BAC", program.code, ""]);
+    const beforeOther = { leads: await client.lead.count(), provenance: await client.leadProvenance.count(), batches: await client.ingestionBatch.count() };
+    await otherBounded.admin.requestRun(actor, otherBounded.id, 1); await otherBounded.worker.execute(otherBounded.id, "MANUAL");
+    assert.equal((await rowsFor(otherBounded.streamId))[0]!.status, "REVIEW");
+    assert.deepEqual({ leads: await client.lead.count(), provenance: await client.leadProvenance.count(), batches: await client.ingestionBatch.count() }, beforeOther);
+    // Explicit terminal disposition removes the historical reservation. A held
+    // Sheet REVIEW must nevertheless stay held: resolving history is not a new
+    // authorization to create or link an earlier quarantined submission.
+    const reopenedDeferred = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: bounded.deferred!.id } });
+    await bootstrap.decide(bounded.packId, reopenedDeferred.id, { expectedVersion: reopenedDeferred.version, idempotencyKey: `bounded-terminal-ignore-${tag}`, action: "IGNORE", reason: "Explicit synthetic terminal exclusion; source and prior deferral receipt remain preserved" }, actor);
+    const currentPackage = await client.bootstrapImportPackage.findUniqueOrThrow({ where: { id: bounded.packId } });
+    await bootstrap.confirm(bounded.packId, { expectedVersion: currentPackage.version, idempotencyKey: `bounded-terminal-confirm-${tag}`, confirmed: true, limit: 1 }, actor);
+    assert.equal((await bootstrap.report(bounded.packId, actor) as { cutoverBlocked: boolean }).cutoverBlocked, false);
+    assert.equal(await permissions.readTransaction(tx => deferredHistoricalCollision(tx, { campusId: campus.id, email: "synthetic@example.invalid", phone: null, firstName: "Contradictory", lastName: "Legacy local" })), null, "actual SQL confirms reservation was removed before replay");
+    for (const legacy of legacyWorkers) {
+      const beforeReplay = await legacyEffects(); await legacy.run();
+      assert.deepEqual(await legacyEffects(), beforeReplay, `${legacy.mode} replay cannot create a formerly held identity or duplicate the independent row`);
+      assert.deepEqual(await legacy.held(), legacy.initialHeld, `${legacy.mode} durable REVIEW/fingerprint/null batch stays unchanged`);
+      assert.equal(legacy.source.reads, 2, "both proofs traverse the real worker/source/lease path");
+      assert.equal(await client.sheetImportRun.count({ where: { connectorId: legacy.id, status: "COMPLETED", createdCount: 0, duplicateCount: 1, reviewCount: 1 } }), 1);
+      assert.equal(await client.sheetImportRunReceipt.count({ where: { run: { connectorId: legacy.id }, outcome: "REVIEW", errorCode: legacy.mode === "LOCAL_ROW" ? "sheet_append_deferred_contact_review" : "sheet_append_deferred_review_pending" } }), legacy.mode === "LOCAL_ROW" ? 2 : 1);
+      if (legacy.mode === "EXTERNAL_ID") {
+        assert.equal(await client.sheetImportSubmission.count({ where: { connectorId: legacy.id } }), 2, "one held and one successful stable submission, no replay duplicate");
+        await client.sheetImportConnector.update({ where: { id: legacy.id }, data: { enabled: false } });
+      } else assert.equal(await client.sheetLocalRow.count({ where: { streamId: sheetStreamId(`synthetic_deferred_local_${tag}`, 0) } }), 2);
+    }
+    assert.equal(await client.lead.count({ where: { email: "synthetic@example.invalid" } }), 0);
     console.log(JSON.stringify({ proof: "sheet-append-postgres", syntheticOnly: true, mode: APPEND_MODE, boundaryExcluded: true, producerAttested: false, qualifiedFixtureOnly: true, noRealActivation: true,
-      assertions: ["authenticated-http-four-append-handlers", "http-admin-superadmin-notfound", "http-campus-role-grant-session-revocation", "flags-off-zero-io", "server-boundary-and-no-rebaseline", "missing-qualification-refused", "qualification-replay", "durable-observation-zero-business", "pending-completion", "concurrent-workers", "row-content-isolation", "contact-match-review", "incomplete-resume", "no-duplicate-effects", "simulation-coherence", "conflicting-tail-quarantined", "bootstrap-receipt-corruption-refused", "authority-revoked-after-io", "transaction-fault-durable-resume", "bulk-1000-positions-replay"], backlogDurationMs, privateProofDirectory: directory }));
+      assertions: ["authenticated-http-four-append-handlers", "http-admin-superadmin-notfound", "http-campus-role-grant-session-revocation", "flags-off-zero-io", "server-boundary-and-no-rebaseline", "missing-qualification-refused", "qualification-replay", "durable-observation-zero-business", "pending-completion", "concurrent-workers", "row-content-isolation", "contact-match-review", "incomplete-resume", "no-duplicate-effects", "simulation-coherence", "conflicting-tail-quarantined", "bootstrap-receipt-corruption-refused", "authority-revoked-after-io", "transaction-fault-durable-resume", "bulk-1000-positions-replay", "bounded-v2-preserves-strict-global-guard", "deferred-local-row-real-worker-and-replay", "deferred-external-id-real-worker-and-replay", "terminal-historical-disposition-never-auto-creates-held-sheet-review", "ecmascript-edge-whitespace-reserved-real-workers", "internal-whitespace-never-joined-into-contact"], backlogDurationMs, privateProofDirectory: directory }));
   }
   finally { for (const key of Object.keys(process.env)) if (!(key in original)) delete process.env[key]; Object.assign(process.env, original); await app.close(); }
 });
