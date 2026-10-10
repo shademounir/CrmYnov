@@ -80,7 +80,7 @@ export function historicalReconciliation(input: {
     increment(axes.cycle!, object(decision.cycle).state);
     const cycle = object(decision.cycle);
     increment(axes.cyclePeriod!, typeof cycle.state === "string" ? `${cycle.state}:${typeof cycle.label === "string" ? cycle.label : "UNSPECIFIED"}` : "UNSPECIFIED");
-    if (Object.keys(decision).length) {
+    if (Object.keys(decision).length && decision.action !== "DEFER") {
       increment(axes.resolvedStatus!, resolved.status); increment(axes.resolvedOwner!, resolved.ownerId || "UNASSIGNED");
       increment(axes.resolvedTemperature!, resolved.temperature);
     }

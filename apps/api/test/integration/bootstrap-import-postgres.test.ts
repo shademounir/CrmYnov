@@ -10,6 +10,8 @@ import { createApplication } from "../../src/application.js";
 import { PrismaService } from "../../src/persistence/prisma.service.js";
 import { deriveSecret, digestRecoveryValue } from "../../src/access-recovery/access-recovery.store.js";
 import { BootstrapImportService } from "../../src/bootstrap-import/bootstrap-import.service.js";
+import { appendBootstrapProofHash } from "../../src/sheet-import/sheet-append-qualification.js";
+import { deferredHistoricalCollision } from "../../src/bootstrap-import/bootstrap-create-guards.js";
 import { DynamicPermissionRepository } from "../../src/permissions/dynamic-repository.js";
 import { DynamicPermissionService } from "../../src/permissions/dynamic-service.js";
 import { bytesHash, hash, CHUNK_BYTES, HISTORICAL_SHEETS, type HistoricalMappingInput } from "../../src/bootstrap-import/bootstrap-import.contract.js";
@@ -197,6 +199,75 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
       return { pack: value, rows: (await success<{ items: Row[] }>(await request(`/packages/${value.id}/rows`), 200)).items };
     };
     const decisionFor = (row: Row, tag: string, overrides?: Record<string, string>): unknown => ({ expectedVersion: row.version, idempotencyKey: `resolved-${tag}-${marker}`, action: "CREATE_DOSSIER", reason: "Qualification explicite sans déduction automatique ni fusion de contacts", ...(overrides ? { overrides } : {}) });
+    // Explicit unresolved dispositions are not imported/ignored or auto-ready.
+    // This extends the existing owned synthetic HTTP fixture; no real data.
+    const deferred = await scopedPackage("deferred", `deferred-${marker.toLowerCase()}@example.invalid`, "");
+    const deferredEffects = async (): Promise<unknown> => ({ leads: await client.lead.count(), notes: await client.importedHistoricalNote.count(), provenance: await client.leadProvenance.count(), commits: await client.bootstrapImportReceipt.count({ where: { packageId: deferred.pack.id, operation: "COMMIT_ROW" } }) });
+    const beforeDeferrals = await deferredEffects();
+    const deferInput = (row: Row): Record<string, unknown> => ({ expectedVersion: row.version, idempotencyKey: `defer-${row.id}`, action: "DEFER", confirmed: true, reason: "Statut et identité restent en revue, source et commentaires conservés sans interprétation" });
+    const firstDeferredInput = deferInput(deferred.rows[0]!);
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${deferred.rows[0]!.id}/decision`, "POST", { ...firstDeferredInput, confirmed: false })).status, 400);
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${deferred.rows[0]!.id}/decision`, "POST", { ...firstDeferredInput, overrides: {} })).status, 400);
+    for (const key of [undefined, null, 123, true]) assert.equal((await request(`/packages/${deferred.pack.id}/rows/${deferred.rows[0]!.id}/decision`, "POST", { ...firstDeferredInput, idempotencyKey: key })).status, 400, "missing or non-string key is rejected before any receipt lookup");
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${deferred.rows[0]!.id}/decision`, "POST", firstDeferredInput, outsiderAuth.token)).status, 403);
+    const firstDeferred = await success<Row>(await request(`/packages/${deferred.pack.id}/rows/${deferred.rows[0]!.id}/decision`, "POST", firstDeferredInput));
+    assert.equal(firstDeferred.state, "DEFERRED"); assert.equal(firstDeferred.canReopen, true);
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${deferred.rows[1]!.id}/decision`, "POST", { ...deferInput(deferred.rows[1]!), idempotencyKey: firstDeferredInput.idempotencyKey })).status, 409, "another row cannot reuse the deferral key or cause a TypeError");
+    const receiptCount = await client.bootstrapImportReceipt.count({ where: { packageId: deferred.pack.id, operation: "DEFER_ROW" } });
+    const replayDeferred = await success<Row & { replayed: boolean }>(await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/decision`, "POST", firstDeferredInput));
+    assert.equal(replayDeferred.replayed, true); assert.equal(await client.bootstrapImportReceipt.count({ where: { packageId: deferred.pack.id, operation: "DEFER_ROW" } }), receiptCount);
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/decision`, "POST", firstDeferredInput, secondAuth.token)).status, 409);
+    for (const row of deferred.rows.slice(1)) await success(await request(`/packages/${deferred.pack.id}/rows/${row.id}/decision`, "POST", deferInput(row)));
+    assert.deepEqual(await deferredEffects(), beforeDeferrals);
+    type BoundedReport = { cutoverBlocked: boolean; reconciliation: { complete: boolean; unresolvedOccurrences: number }; boundedReconciliation: { qualified: boolean; deferredOccurrences: number; deferredComments: number; inventorySha256: string } };
+    const deferredReport = await success<BoundedReport>(await request(`/packages/${deferred.pack.id}/report`), 200);
+    assert.equal(deferredReport.cutoverBlocked, true); assert.equal(deferredReport.reconciliation.complete, false); assert.equal(deferredReport.reconciliation.unresolvedOccurrences, 4);
+    assert.equal(deferredReport.boundedReconciliation.qualified, true); assert.equal(deferredReport.boundedReconciliation.deferredOccurrences, 4); assert.equal(deferredReport.boundedReconciliation.deferredComments, 4);
+    const deferredHash = appendBootstrapProofHash(deferredReport, 2);
+    for (const grant of ["import.view", "import.review.resolve"]) {
+      configuration = await permissions.read(principal, target); const previous = configuration.grants;
+      await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "ACCESS_REVIEW", confirmed: true, grants: { ...previous, [grant]: "NONE" } });
+      assert.equal((await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/decision`, "POST", firstDeferredInput)).status, 403, "deferral replay revalidates current persisted authority");
+      configuration = await permissions.read(principal, target); await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "RESTORE_VERSION", confirmed: true, grants: previous });
+    }
+    const reopenDeferred = { expectedVersion: firstDeferred.version, idempotencyKey: `reopen-deferred-${marker}`, reason: "Résoudre explicitement par rattachement vérifié, sans effacer la disposition différée" };
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/reopen`, "POST", reopenDeferred, secondAuth.token)).status, 403);
+    const deferredReopened = await success<Row>(await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/reopen`, "POST", reopenDeferred));
+    const afterDeferredReopen = await success<BoundedReport>(await request(`/packages/${deferred.pack.id}/report`), 200);
+    assert.equal(afterDeferredReopen.boundedReconciliation.qualified, false); assert.notEqual(appendBootstrapProofHash(afterDeferredReopen, 2), deferredHash);
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/decision`, "POST", { ...firstDeferredInput, expectedVersion: deferredReopened.version })).status, 409, "superseded DEFER key never resurrects");
+    await success(await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/decision`, "POST", { expectedVersion: deferredReopened.version, idempotencyKey: `deferred-link-${marker}`, action: "LINK_EXISTING", targetLeadId: leadId, reason: "Rattachement humain explicite après revue, statut et propriétaire actuels préservés" }));
+    const targetBeforeDeferredLink = await client.lead.findUniqueOrThrow({ where: { id: leadId } });
+    const boundedConfirmation = { expectedVersion: deferred.pack.version, idempotencyKey: `bounded-confirm-${marker}`, confirmed: true as const, limit: 1 };
+    await success(await request(`/packages/${deferred.pack.id}/confirm`, "POST", boundedConfirmation));
+    const targetAfterDeferredLink = await client.lead.findUniqueOrThrow({ where: { id: leadId } });
+    assert.equal(targetAfterDeferredLink.status, targetBeforeDeferredLink.status); assert.equal(targetAfterDeferredLink.assignedToId, targetBeforeDeferredLink.assignedToId);
+    const afterBoundedConfirm = await deferredEffects(); await success(await request(`/packages/${deferred.pack.id}/confirm`, "POST", boundedConfirmation)); assert.deepEqual(await deferredEffects(), afterBoundedConfirm);
+    const boundedAfterLink = await success<BoundedReport>(await request(`/packages/${deferred.pack.id}/report`), 200);
+    assert.equal(boundedAfterLink.boundedReconciliation.qualified, true); assert.equal(boundedAfterLink.boundedReconciliation.deferredOccurrences, 3); assert.equal(boundedAfterLink.cutoverBlocked, true);
+    assert.notEqual(appendBootstrapProofHash(boundedAfterLink, 2), deferredHash, "later resolution needs an explicitly renewed qualification");
+    assert.equal((await request(`/packages/${deferred.pack.id}/rows/${firstDeferred.id}/decision`, "POST", { ...firstDeferredInput, idempotencyKey: `cannot-defer-committed-${marker}` })).status, 409);
+    assert.equal(await client.bootstrapImportReceipt.count({ where: { packageId: deferred.pack.id, operation: "DEFER_ROW" } }), 4, "historical deferral receipts remain append-only");
+    // Actual PostgreSQL reservation semantics, not a mocked query result:
+    // raw unmapped literals reserve contacts; cached formulas never do.
+    const rawEmail = `raw-deferred-${marker.toLowerCase()}@example.invalid`, formulaEmail = `formula-deferred-${marker.toLowerCase()}@example.invalid`;
+    const rawFixture = await scopedPackage("raw-deferred", rawEmail, "À contacter", xml => xml.replace('</row></sheetData>', `<c r="K9" t="inlineStr"><is><t>+212 (6) 98.76-54 32</t></is></c><c r="L9" t="str"><f>UNTRUSTED()</f><v>${formulaEmail}</v></c></row></sheetData>`));
+    const rawFirst = rawFixture.rows[0]!;
+    const rawDeferred = await success<Row>(await request(`/packages/${rawFixture.pack.id}/rows/${rawFirst.id}/decision`, "POST", deferInput(rawFirst)));
+    for (const row of rawFixture.rows.slice(1)) await success(await request(`/packages/${rawFixture.pack.id}/rows/${row.id}/decision`, "POST", { expectedVersion: row.version, idempotencyKey: `raw-ignore-${row.id}`, action: "IGNORE", reason: "Exclusion synthétique explicite des autres occurrences de cette fixture de garde" }));
+    await success(await request(`/packages/${rawFixture.pack.id}/confirm`, "POST", { expectedVersion: rawFixture.pack.version, idempotencyKey: `raw-ignore-confirm-${marker}`, confirmed: true, limit: 25 }));
+    const collision = (email: string | null, phone: string | null, campusId = campus.id, firstName = "Other", lastName = "Identity"): Promise<unknown> => new DynamicPermissionRepository(prisma).readTransaction(tx => deferredHistoricalCollision(tx, { campusId, email, phone, firstName, lastName }));
+    assert.equal(await collision(rawEmail.toUpperCase().toLowerCase(), null), "sheet_append_deferred_contact_review", "contact match with a contradictory identity never auto-LINKs");
+    assert.equal(await collision(null, "+212698765432"), "sheet_append_deferred_contact_review", "raw unmapped single phone reserves without country inference");
+    assert.equal(await collision(formulaEmail, null), null, "cached formula is not a contact signal");
+    assert.equal(await collision(rawEmail, null, otherCampus.id), null, "same contact outside canonical campus does not leak scope");
+    const rawStored = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: rawFirst.id } }); const rawValues = (rawStored.mapped as { values: { firstName: string; lastName: string } }).values;
+    assert.equal(await collision(`different-${marker}@example.invalid`, null, campus.id, rawValues.firstName, rawValues.lastName), "sheet_append_deferred_name_review", "exact name alone is a review signal only");
+    await success(await request(`/packages/${rawFixture.pack.id}/rows/${rawFirst.id}/reopen`, "POST", { expectedVersion: rawDeferred.version, idempotencyKey: `raw-reopen-${marker}`, reason: "Réouverture synthétique contrôlée pour prouver la réservation transitoire" }));
+    assert.equal(await collision(rawEmail, null), "sheet_append_deferred_contact_review", "reservation survives REVIEW reopening");
+    const rawReopened = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: rawFirst.id } });
+    await success(await request(`/packages/${rawFixture.pack.id}/rows/${rawFirst.id}/decision`, "POST", { expectedVersion: rawReopened.version, idempotencyKey: `raw-ignore-after-reopen-${marker}`, action: "IGNORE", reason: "Décision synthétique terminale encore READY, aucun effet de confirmation réalisé" }));
+    assert.equal(await collision(rawEmail, null), "sheet_append_deferred_contact_review", "reservation survives READY before terminal commit");
     // Truly absent educational facts remain unknown BASELINE facts. They do
     // not require invented references, and whitespace is source evidence only.
     const unknown = await scopedPackage("baseline-unknown", `unknown-${marker.toLowerCase()}@example.invalid`, "À contacter", (xml) => xml.replace(/<c r="D9"[^>]*>[\s\S]*?<\/c>/g, '<c r="D9"/>').replace(/<c r="E9"[^>]*>[\s\S]*?<\/c>/g, '<c r="E9"/>').replace(/<c r="I9"[^>]*>[\s\S]*?<\/c>/g, '<c r="I9" t="inlineStr"><is><t> \t\n </t></is></c>'));
