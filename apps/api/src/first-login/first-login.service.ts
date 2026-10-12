@@ -1,15 +1,14 @@
 import { ForbiddenException, Inject, Injectable, Optional } from "@nestjs/common";
-import { LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
+import { deriveSecret, LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
 import { AuditService } from "../audit/audit.service.js";
 import { SessionService } from "../auth/session.service.js";
 import { UserService } from "../users/user.service.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { deriveSecret } from "../access-recovery/access-recovery.store.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 
 function isAcceptableSecret(secret: string): boolean {
-  return secret.length >= 14 && secret.length <= 128 && /[a-z]/.test(secret) && /[A-Z]/.test(secret) && /[0-9]/.test(secret) && /[^a-zA-Z0-9]/.test(secret) && !/\s/.test(secret);
+  return secret.length >= 14 && secret.length <= 128 && /[a-z]/.test(secret) && /[A-Z]/.test(secret) && /\d/.test(secret) && /[^a-zA-Z\d]/.test(secret) && !/\s/.test(secret);
 }
 
 @Injectable()
