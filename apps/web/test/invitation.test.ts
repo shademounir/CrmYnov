@@ -12,6 +12,7 @@ test("invitation pages distinguish Gmail acceptance from activation and never ex
   assert.doesNotMatch(page, /code=/);
   const admin = renderToStaticMarkup(createElement(InvitationForm, { collaboratorId: "synthetic-id", email: "synthetic@example.invalid", eligible: true }));
   assert.match(admin, /Confirmer l’envoi ou la réémission/);
+  assert.match(admin, /expire après 72 heures/u);
   assert.match(admin, /réception et l’activation restent à vérifier|Le lien est personnel/u);
 });
 

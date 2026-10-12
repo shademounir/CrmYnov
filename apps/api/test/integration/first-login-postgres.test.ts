@@ -6,6 +6,57 @@ import type { INestApplication } from "@nestjs/common";
 import { createApplication } from "../../src/application.js";
 import { deriveSecret, digestRecoveryValue } from "../../src/access-recovery/access-recovery.store.js";
 import { PrismaService } from "../../src/persistence/prisma.service.js";
+import { GmailInvitationSender } from "../../src/invitations/gmail-invitation.sender.js";
+
+test("CRMY-179 invitation persists 72-hour expiry and completes only once over HTTP/PostgreSQL", { skip: process.env.CRMY28_FIRST_LOGIN_EPHEMERAL_TEST !== "true", timeout: 180000 }, async () => {
+  const url = new URL(process.env.DATABASE_URL ?? "");
+  assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.pathname, "/crmy28_first_login_synthetic");
+  assert.equal(url.username, "postgres"); assert.equal(url.password, "");
+  assert.equal(process.env.SHEETS_ENABLED, "false"); assert.equal(process.env.CRM_BACKGROUND_WORKERS, "external");
+  const nonce = process.env.CRMY28_FIRST_LOGIN_DATABASE_NONCE;
+  assert.match(nonce ?? "", /^[a-f0-9-]{36}$/u);
+  const prisma = new PrismaService(), db = prisma.client!;
+  let app: INestApplication | undefined;
+  try {
+    assert.deepEqual(await db.$queryRaw`SELECT nonce FROM crmy28_first_login_test_identity.marker`, [{ nonce }]);
+    const email = `invitation-admin-${randomUUID()}@example.invalid`, password = `Synthetic!9${randomBytes(20).toString("hex")}`, salt = randomBytes(16).toString("hex");
+    const admin = await db.collaborator.create({ data: { professionalEmail: email, roles: ["SUPER_ADMIN"], active: true, firstLoginRequired: false } });
+    await db.localPasswordHash.create({ data: { collaboratorId: admin.id, identityDigest: digestRecoveryValue(email), passwordSalt: salt, passwordDigest: deriveSecret(password, salt), mustChange: false } });
+    app = await createApplication();
+    const sender = app.get(GmailInvitationSender);
+    sender.configured = (): boolean => true;
+    sender.publicOrigin = (): string => "https://synthetic.example.invalid";
+    let link = "";
+    sender.send = ({ link: sent }): Promise<void> => { link = sent; return Promise.resolve(); };
+    await app.listen(0, "127.0.0.1");
+    const origin = await app.getUrl();
+    const request = (route: string, body: object, token?: string): Promise<Response> => fetch(`${origin}${route}`, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+    const login = await request("/sessions", { email, password }); assert.equal(login.status, 201);
+    const token = (await login.json() as { token: string }).token;
+    const campusResponse = await request("/references", { kind: "CAMPUS", code: `INV-${randomUUID().slice(0, 8)}`, label: "Synthetic invitation campus", scope: "GLOBAL", campusId: null }, token);
+    assert.equal(campusResponse.status, 201);
+    const campusId = (await campusResponse.json() as { id: string }).id;
+    const recipientEmail = `invitation-recipient-${randomUUID()}@example.invalid`;
+    const userResponse = await request("/users", { professionalEmail: recipientEmail, roles: ["ADMISSIONS"], campusId }, token);
+    assert.equal(userResponse.status, 201);
+    const userId = (await userResponse.json() as { id: string }).id;
+    const start = Date.now();
+    assert.equal((await request(`/users/${userId}/invitations`, { confirmed: true }, token)).status, 201);
+    const end = Date.now();
+    const invitation = await db.localAccessInvitation.findFirstOrThrow({ where: { collaboratorId: userId } });
+    assert.equal(invitation.state, "SENT");
+    assert.ok(invitation.expiresAt.getTime() >= start + 72 * 60 * 60_000);
+    assert.ok(invitation.expiresAt.getTime() <= end + 72 * 60 * 60_000);
+    const code = new URLSearchParams(new URL(link).hash.slice(1)).get("code"); assert.ok(code);
+    const completion = { code, nextSecret: `Synthetic-New!9${randomBytes(20).toString("hex")}` };
+    assert.equal((await request("/invitations/completions", completion)).status, 201);
+    assert.equal((await request("/invitations/completions", completion)).status, 409);
+    assert.equal(await db.auditEvent.count({ where: { eventType: "ACCESS_INVITATION_COMPLETED", resourceId: userId } }), 1);
+    assert.equal((await db.localAccessInvitation.findUniqueOrThrow({ where: { id: invitation.id } })).state, "USED");
+    assert.equal((await db.collaborator.findUniqueOrThrow({ where: { id: userId } })).firstLoginRequired, false);
+    assert.equal((await request("/sessions", { email: recipientEmail, password: completion.nextSecret })).status, 201);
+  } finally { if (app) await app.close(); await prisma.onModuleDestroy(); }
+});
 
 test("CRMY-28 first login: durable atomic audit, fresh instance, replay and rollback", { skip: process.env.CRMY28_FIRST_LOGIN_EPHEMERAL_TEST !== "true", timeout: 180000 }, async () => {
   const url = new URL(process.env.DATABASE_URL ?? "");
