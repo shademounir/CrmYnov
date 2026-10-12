@@ -111,7 +111,8 @@ export class UserService implements OnModuleInit {
       if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
       if (!actor?.active || !actor.roles.includes("SUPER_ADMIN")) throw new ForbiddenException({ code: "authorization_change_invalid" });
       const roles = [...new Set(input.roles)] as Role[], campusId = input.campusId ? (await canonicalCampus(tx, input.campusId)).id : null, teamId = input.teamId ?? null;
-      const unchanged = JSON.stringify([...user.roles].sort()) === JSON.stringify([...roles].sort()) && user.campusId === campusId && user.teamId === teamId;
+      const currentRoles = new Set(user.roles);
+      const unchanged = currentRoles.size === roles.length && roles.every((role) => currentRoles.has(role)) && user.campusId === campusId && user.teamId === teamId;
       if (user.active && user.roles.includes("SUPER_ADMIN") && !roles.includes("SUPER_ADMIN") && await tx.collaborator.count({ where: { active: true, roles: { has: "SUPER_ADMIN" } } }) <= 1) throw new ConflictException({ code: "last_super_admin_required" });
       let row = user;
       if (!unchanged) {

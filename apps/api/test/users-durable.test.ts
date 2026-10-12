@@ -6,9 +6,9 @@ import { SessionService } from "../src/auth/session.service.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import type { PrismaService } from "../src/persistence/prisma.service.js";
 
-function fixture(): { service: UserService; calls: string[] } {
+function fixture(roles = ["SUPER_ADMIN"]): { service: UserService; calls: string[] } {
   const calls: string[] = [];
-  const user = { id: "synthetic", professionalEmail: "synthetic@example.invalid", roles: ["SUPER_ADMIN"], active: true, firstLoginRequired: false, authenticationVersion: 1, campusId: null, teamId: null };
+  const user = { id: "synthetic", professionalEmail: "synthetic@example.invalid", roles, active: true, firstLoginRequired: false, authenticationVersion: 1, campusId: null, teamId: null };
   const tx = {
     $queryRaw: (): Promise<unknown[]> => { calls.push("lock"); return Promise.resolve([]); },
     collaborator: { findUnique: (): Promise<typeof user> => Promise.resolve(user), count: (): Promise<number> => Promise.resolve(1), update: (): Promise<never> => { calls.push("unexpected-write"); return Promise.reject(new Error("unexpected-write")); } },
@@ -20,6 +20,14 @@ function fixture(): { service: UserService; calls: string[] } {
 test("persistent governed role change protects the last active Super Admin before any write", async () => {
   const f = fixture();
   await assert.rejects(f.service.updateAuthorizationForApi("synthetic", { roles: ["ADMISSIONS"], reason: "ACCESS_REVIEW", confirmed: true }, "synthetic", "c"), (error: unknown) => error instanceof ConflictException && (error.getResponse() as { code?: string }).code === "last_super_admin_required");
+  assert.deepEqual(f.calls, ["lock"]);
+});
+
+test("persistent authorization replay compares role membership without ordering or duplicate writes", async () => {
+  const f = fixture(["SUPER_ADMIN", "ADMISSIONS"]);
+  const result = await f.service.updateAuthorizationForApi("synthetic", { roles: ["ADMISSIONS", "SUPER_ADMIN", "ADMISSIONS"], reason: "ACCESS_REVIEW", confirmed: true }, "synthetic", "replay");
+  assert.deepEqual(result.roles, ["SUPER_ADMIN", "ADMISSIONS"]);
+  assert.equal(result.authenticationVersion, 1);
   assert.deepEqual(f.calls, ["lock"]);
 });
 
