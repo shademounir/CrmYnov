@@ -12,6 +12,7 @@ module "runtime" {
   billing_account_id             = var.billing_account_id
   operations_alert_email         = var.operations_alert_email
   api_image                      = var.api_image
+  api_memory                     = "1Gi"
   web_image                      = var.web_image
   job_image                      = var.job_image
   deploy_services                = var.deploy_services

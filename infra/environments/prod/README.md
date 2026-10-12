@@ -70,6 +70,33 @@ never outputs or examples. Treat saved plans and state as private credentials.
 
 ## Cost, protection and delivery reserves
 
+### Historical portfolio capacity — CRMY-62
+
+The PROD root explicitly selects 1Gi for the API only. On 12 October the
+512Mi API instance exceeded its memory limit (580Mi observed) while sealing
+the qualified workbook. All uploaded chunks remained recoverable; sealing
+and Lead creation were not successful. This infrastructure change is not an
+import receipt and does not prove that 1Gi is sufficient for every workbook.
+Keep the original package, verify its hash/state and qualify the bounded
+resume after a reviewed saved plan; never start another package blindly.
+
+Web and jobs remain 512Mi; STAGING keeps the module default 512Mi, DEV is
+unchanged. CPU1, zero minimum/two maximum API instances, IAM, timeouts,
+ingestion flags and Scheduler pause are unchanged. An isolated synthetic
+load qualification must cover the selected capacity before real resumption.
+Do not weaken archive bounds or global transaction protections to pass it.
+
+At the published request-billed memory rate of USD0.0000025/GiB-second,
+the additional 0.5Gi is approximately USD0.0045 per active instance-hour,
+or USD6.57 for two instances active continuously for 730 hours, before free
+tier/discounts/tax. This is an incremental memory estimate, not the full
+project cost or a hard cap; verify region/SKU and actual usage before apply.
+Sources: https://cloud.google.com/run/pricing and
+https://docs.cloud.google.com/run/docs/configuring/services/memory-limits .
+Preserve the USD150 alert. Roll back only the new memory setting via a
+reviewed plan after suspending large import operations; 512Mi is known
+insufficient for the observed portfolio seal. Never roll back useful data.
+
 The separately authorized monthly alert is USD150 for THIS target, at
 50/80/100% CURRENT_SPEND and 100% FORECASTED_SPEND, monthly/all credits.
 It does not cap spending. The requested DEV-like pilot profile is PostgreSQL17
