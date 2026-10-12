@@ -310,8 +310,21 @@ internal sealed class MainForm : Form
         connectButton = ActionButton("Connecter", true); connectButton.Click += async (_, _) => await ConnectAsync();
         disconnectButton = ActionButton("Déconnecter", false); disconnectButton.Click += async (_, _) => await DisconnectAsync();
         var quit = ActionButton("Quitter", false); quit.Click += async (_, _) => { allowClose = true; await runtime.StopAsync(); tray.Visible = false; Close(); };
+        var reconcile = ActionButton("Vérifier les demandes en attente", false);
+        reconcile.Click += async (_, _) => {
+            reconcile.Enabled = false;
+            try {
+                var result = await runtime.ReconcileFreeCallsAsync();
+                ShowFeedback(result.Remaining == 0
+                    ? $"Vérification terminée : {result.Resolved} demande(s) rapprochée(s). Aucun appel déclenché par cette vérification."
+                    : $"{result.Remaining} demande(s) restent incertaines. Le journal est conservé ; ne répétez pas la composition.", result.Remaining != 0);
+            }
+            catch (Exception error) { ShowFeedback(HumanError(error), true); }
+            finally { if (!reconcile.IsDisposed) reconcile.Enabled = true; }
+        };
         profileActions.Controls.Add(modify); profileActions.Controls.Add(reassociate); profileActions.Controls.Add(connectButton); profileActions.Controls.Add(disconnectButton); profileActions.Controls.Add(quit);
-        profileStack.Controls.Add(profileActions); profileStack.Controls.Add(feedback); profile.Controls.Add(profileStack); root.Controls.Add(profile);
+        reconcile.Margin = new Padding(0, 10, 0, 0);
+        profileStack.Controls.Add(profileActions); profileStack.Controls.Add(reconcile); profileStack.Controls.Add(feedback); profile.Controls.Add(profileStack); root.Controls.Add(profile);
 
         root.Controls.Add(BuildCallCard());
         var tabs = new TabControl { Dock = DockStyle.Top, Height = 420, Padding = new Point(14, 7), Margin = new Padding(0, 0, 0, 16) };

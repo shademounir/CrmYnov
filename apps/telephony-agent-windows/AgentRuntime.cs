@@ -237,6 +237,36 @@ internal sealed class AgentRuntime : IAsyncDisposable
         finally { commandGate.Release(); }
     }
 
+    public Task<FreeCallReconciliationSummary> ReconcileFreeCallsAsync() => ReconcileFreeCallsAsync(async (current, key) => {
+        using var lookup = new CrmAgentClient(current.ApiBaseUrl, current.AgentToken);
+        return await lookup.ReconcileFreeCallAsync(key, CancellationToken.None).ConfigureAwait(true);
+    });
+
+    // Managed dependency boundary also permits non-emissive orchestration tests.
+    internal async Task<FreeCallReconciliationSummary> ReconcileFreeCallsAsync(Func<AgentSettings, string, Task<FreeCallReconciliationResponse>> lookup)
+    {
+        // Exclusive against pairing, configuration, protocol/manual commands and
+        // poll. No SDK is started and no command is claimed by this operation.
+        using var lease = activity.Maintenance();
+        await lifecycle.WaitAsync().ConfigureAwait(true);
+        try {
+            var currentSettings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
+            var durable = journal ?? new EventJournal(store.JournalPath);
+            lock (engineGate) AgentMaintenancePolicy.RequireIdle(engine?.HasActiveCall == true, durable.Pending.Count);
+            var resolved = 0;
+            foreach (var key in durable.UnresolvedFreeCallKeys) {
+                var receipt = await lookup(currentSettings, key).ConfigureAwait(true);
+                lock (engineGate) {
+                    if (!AgentReconciliationPolicy.CanResolve(receipt, key, currentSettings, engine?.HasActiveCall == true, durable.Pending.Count)) continue;
+                    durable.ResolveFreeCall(key);
+                    resolved++;
+                }
+            }
+            return new(resolved, durable.UnresolvedFreeCallCount);
+        }
+        finally { lifecycle.Release(); }
+    }
+
     private async Task ClaimAndExecuteAsync(Guid commandId)
     {
         if (client is null || journal is null || engine is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");

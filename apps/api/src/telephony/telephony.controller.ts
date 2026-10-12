@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Header, Headers, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { isRole, type AuthenticatedRequest, type Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { TelephonyService, type AssociationCandidate, type CallRecord, type TelephonyBridgeEvent, type TelephonyConfiguration, type TelephonyConfigurationView } from "./telephony.service.js";
@@ -66,6 +66,12 @@ export class TelephonyAgentController {
   @Post("pair") pair(@Body() body: Parameters<TelephonyAgentRepository["pair"]>[0]): Promise<Record<string, unknown>> { return this.agents.pair(body); }
   @Post("status") async status(@Headers("x-telephony-agent-token") token: string | undefined, @Body() body: Parameters<TelephonyAgentRepository["status"]>[1]): Promise<Record<string, unknown>> { return this.agents.status(await this.agents.authenticate(token), body); }
   @Post("poll") async poll(@Headers("x-telephony-agent-token") token: string | undefined): ReturnType<TelephonyAgentRepository["poll"]> { return this.agents.poll(await this.agents.authenticate(token)); }
+  @Post("free-calls/reconciliation") @Header("Cache-Control", "no-store") async reconcileFreeCall(
+    @Headers("x-telephony-agent-token") token: string | undefined,
+    @Body() body: unknown,
+  ): ReturnType<TelephonyAgentRepository["reconcileFreeCall"]> {
+    return this.agents.reconcileFreeCall(await this.agents.authenticate(token), body);
+  }
   @Post("commands/:commandId/claim") async claim(
     @Headers("x-telephony-agent-token") token: string | undefined,
     @Param("commandId") commandId: string,

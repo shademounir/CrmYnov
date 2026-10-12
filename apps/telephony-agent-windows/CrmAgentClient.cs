@@ -24,6 +24,8 @@ internal sealed class CrmAgentClient : IDisposable
         PostAsync($"integrations/telephony/agent/v1/commands/{commandId:D}/claim", null, AgentJsonContext.Default.PollResponse, cancellation);
     public Task<FreeCallResponse> CreateFreeCallAsync(FreeCallRequest body, CancellationToken cancellation) =>
         PostAsync("integrations/telephony/agent/v1/free-calls", JsonContent.Create(body, AgentJsonContext.Default.FreeCallRequest), AgentJsonContext.Default.FreeCallResponse, cancellation);
+    public Task<FreeCallReconciliationResponse> ReconcileFreeCallAsync(string key, CancellationToken cancellation) =>
+        PostAsync("integrations/telephony/agent/v1/free-calls/reconciliation", JsonContent.Create(new FreeCallReconciliationRequest(key), AgentJsonContext.Default.FreeCallReconciliationRequest), AgentJsonContext.Default.FreeCallReconciliationResponse, cancellation);
     public async Task SendStatusAsync(AgentStatus status, CancellationToken cancellation)
     {
         using var request = Authenticated(HttpMethod.Post, "integrations/telephony/agent/v1/status", JsonContent.Create(status, AgentJsonContext.Default.AgentStatus));

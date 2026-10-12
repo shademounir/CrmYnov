@@ -35,10 +35,67 @@ export interface AgentCommandEnvelope {
   hangupRequested: boolean;
 }
 
+export interface AgentFreeCallReconciliation {
+  idempotencyKey: string;
+  workstationId: string;
+  profileId: string;
+  outcome: "UNKNOWN" | "PENDING" | "UNCERTAIN" | "TERMINAL" | "EXPIRED_UNDELIVERED";
+  commandId?: string;
+  callId?: string;
+}
+
 @Injectable()
 export class TelephonyAgentRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
   get enabled(): boolean { return Boolean(this.prisma.client); }
+
+  /** Observation only: an absent receipt is never evidence that a call was not sent. */
+  async reconcileFreeCall(identity: AgentIdentity, input: unknown): Promise<AgentFreeCallReconciliation> {
+    if (!input || typeof input !== "object" || Array.isArray(input)
+      || Object.keys(input).length !== 1 || !("idempotencyKey" in input)
+      || typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{8,128}$/u.test(input.idempotencyKey)) {
+      throw new BadRequestException({ code: "telephony_reconciliation_invalid" });
+    }
+    const idempotencyKey = input.idempotencyKey;
+    return this.requiredClient().$transaction(async (tx) => {
+      // Same order as claim/poll/revocation. Recheck token generation and current
+      // permission inside the fence, not just the pre-transaction authentication.
+      await acquirePermissionFence(tx, "read-audited");
+      await this.lockedIdentity(tx, identity);
+      await this.assertCommandPermission(tx, identity, { createdBy: identity.userId, leadId: null, direction: "OUTBOUND", provider: "LINPHONE" });
+      const result: AgentFreeCallReconciliation = { idempotencyKey, workstationId: identity.workstationId, profileId: identity.profileId, outcome: "UNKNOWN" };
+      const receipt = await tx.telephonyCallEvent.findFirst({
+        where: { idempotencyKey, eventType: "STATE", state: "REQUESTED", actorId: identity.userId,
+          call: { createdBy: identity.userId, provider: "LINPHONE", direction: "OUTBOUND", leadId: null,
+            purposeCode: { in: ["PROSPECT_CALLBACK", "PARTNER", "OTHER_AUTHORIZED"] },
+            agentCommand: { workstationId: identity.workstationId } } },
+        select: { call: { select: { id: true, externalId: true, state: true,
+          agentCommand: { select: { workstationId: true, state: true, claimedAt: true, terminalAt: true } } } } },
+      });
+      const command = receipt?.call.agentCommand;
+      if (receipt && command?.workstationId === identity.workstationId) {
+        result.commandId = receipt.call.externalId;
+        result.callId = receipt.call.id;
+        // A wall-clock expiry alone, a terminal call alone, or delivery with an
+        // unknown result must never unlock a durable local intent.
+        result.outcome = "UNCERTAIN";
+        if (command.state === "TERMINAL" && command.terminalAt && terminalStates.has(receipt.call.state)) result.outcome = "TERMINAL";
+        else if (command.state === "EXPIRED" && command.terminalAt && command.claimedAt === null) result.outcome = "EXPIRED_UNDELIVERED";
+        else if (command.state === "PENDING" && !command.terminalAt && command.claimedAt === null) result.outcome = "PENDING";
+      }
+      // One immutable audit per observed outcome and identity/key. Do not copy
+      // the destination, token, or user-supplied idempotency key into the audit.
+      const digest = this.digest(JSON.stringify([identity.profileId, identity.workstationId, idempotencyKey, result.outcome]));
+      const auditKey = `telephony-reconcile:${digest}`;
+      await tx.auditEvent.upsert({ where: { idempotencyKey: auditKey }, update: {}, create: {
+        id: randomUUID(), campusId: identity.campusId ?? null, resourceType: "TELEPHONY_PROFILE", resourceId: identity.profileId,
+        eventType: "TELEPHONY_INTENT_RECONCILED", actorId: identity.userId, actorRoles: identity.roles,
+        correlationId: `reconcile:${digest.slice(0, 48)}`, result: "SUCCESS", idempotencyKey: auditKey,
+        after: { workstationId: identity.workstationId, outcome: result.outcome },
+      } });
+      return result;
+    }, { isolationLevel: "ReadCommitted", timeout: 30_000, maxWait: 5_000 });
+  }
 
   async listProvisioning(principal: Principal): Promise<Record<string, unknown>> {
     this.assertAdmin(principal);

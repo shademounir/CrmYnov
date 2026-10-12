@@ -12,6 +12,7 @@ internal sealed class EventJournal
     public bool HasSeen(string commandId) => seenCommands.Contains(commandId);
     public IReadOnlyCollection<AgentEvent> Pending => pending.Values;
     public int UnresolvedFreeCallCount => unresolvedFreeCalls.Count;
+    public IReadOnlyCollection<string> UnresolvedFreeCallKeys => unresolvedFreeCalls.ToArray();
     public void BeginFreeCall(string key) {
         Append(new("FREE_CALL_INTENT", key, null, null, null, DateTimeOffset.UtcNow, false));
         unresolvedFreeCalls.Add(key);

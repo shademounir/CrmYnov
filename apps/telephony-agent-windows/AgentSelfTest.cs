@@ -97,6 +97,7 @@ internal static class AgentSelfTest
             Require(new EventJournal(store.JournalPath).UnresolvedFreeCallCount == 0, "FREE_CALL_RECEIPT_NOT_RESOLVED");
             maintenanceRuntime.DisposeAsync().AsTask().GetAwaiter().GetResult();
             store.Save(expected);
+            ReconciliationTestAsync(store, expected).GetAwaiter().GetResult();
             ActivityFenceTestAsync().GetAwaiter().GetResult();
             var mutexName = $"Local\\CRM-Ynov-Test-{Guid.NewGuid():N}";
             using (var instance = AgentInstanceGuard.Acquire(mutexName)) {
@@ -118,7 +119,7 @@ internal static class AgentSelfTest
             Require(!ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000?token=secret", out _), "PROTOCOL_QUERY_ACCEPTED");
 
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "case-sensitive-gateway-isolation", "maintenance-call-and-event-guards", "persisted-event-maintenance-fence", "protocol-and-free-call-maintenance-fence", "async-profile-mutation-lease", "inflight-command-maintenance-fence", "uncertain-free-call-durable-intent", "exclusive-cli-gui-instance", "honest-uncertain-operation-messages", "opaque-protocol-contract" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "case-sensitive-gateway-isolation", "maintenance-call-and-event-guards", "persisted-event-maintenance-fence", "protocol-and-free-call-maintenance-fence", "async-profile-mutation-lease", "inflight-command-maintenance-fence", "uncertain-free-call-durable-intent", "exclusive-cli-gui-instance", "honest-uncertain-operation-messages", "opaque-protocol-contract", "receipt-reconciliation-identity-and-terminal-policy", "managed-runtime-reconciliation-no-sdk-and-exclusive-lease" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;
@@ -168,6 +169,60 @@ internal static class AgentSelfTest
             RequireCode(fence.AssertMayStart, "PROFILE_MAINTENANCE_IN_PROGRESS");
         }
         using var next = fence.Command();
+    }
+    private static async Task ReconciliationTestAsync(DpapiStore store, AgentSettings expected)
+    {
+        const string key = "synthetic-reconciliation-key";
+        var terminal = new FreeCallReconciliationResponse(key, expected.WorkstationId, expected.ProfileId, "TERMINAL", Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        foreach (var outcome in new[] { "UNKNOWN", "PENDING", "DELIVERED", "UNCERTAIN", "UNRECOGNIZED" })
+            Require(!AgentReconciliationPolicy.CanResolve(terminal with { Outcome = outcome }, key, expected, false, 0), "UNPROVEN_RECEIPT_ACCEPTED");
+        Require(!AgentReconciliationPolicy.CanResolve(terminal, key, expected, true, 0), "ACTIVE_CALL_RECEIPT_ACCEPTED");
+        Require(!AgentReconciliationPolicy.CanResolve(terminal, key, expected, false, 1), "PENDING_EVENT_RECEIPT_ACCEPTED");
+        Require(AgentReconciliationPolicy.CanResolve(terminal with { Outcome = "EXPIRED_UNDELIVERED" }, key, expected, false, 0), "EXPIRED_UNDELIVERED_REFUSED");
+        RequireCode(() => AgentReconciliationPolicy.CanResolve(terminal with { WorkstationId = Guid.NewGuid().ToString() }, key, expected, false, 0), "FREE_CALL_RECEIPT_IDENTITY_MISMATCH");
+        RequireCode(() => AgentReconciliationPolicy.CanResolve(terminal with { ProfileId = Guid.NewGuid().ToString() }, key, expected, false, 0), "FREE_CALL_RECEIPT_IDENTITY_MISMATCH");
+        RequireCode(() => AgentReconciliationPolicy.CanResolve(terminal with { IdempotencyKey = "other-key" }, key, expected, false, 0), "FREE_CALL_RECEIPT_IDENTITY_MISMATCH");
+        RequireCode(() => AgentReconciliationPolicy.CanResolve(terminal with { CommandId = null }, key, expected, false, 0), "FREE_CALL_RECEIPT_INVALID");
+        RequireCode(() => AgentReconciliationPolicy.CanResolve(terminal with { CallId = Guid.Empty.ToString() }, key, expected, false, 0), "FREE_CALL_RECEIPT_INVALID");
+
+        // Exercise the actual runtime orchestration while keeping SDK construction
+        // impossible (no Start call; an empty synthetic SIP secret as extra guard).
+        store.Save(expected with { SipPassword = "" });
+        var durable = new EventJournal(store.JournalPath);
+        durable.BeginFreeCall(key);
+        await using var runtime = new AgentRuntime(store);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = runtime.ReconcileFreeCallsAsync(async (_, requested) => {
+            Require(requested == key, "RECONCILIATION_KEY_CHANGED");
+            entered.SetResult(); await release.Task;
+            return terminal with { Outcome = "UNKNOWN" };
+        });
+        await entered.Task;
+        Task? stopWaiting = null;
+        try {
+            RequireCode(() => runtime.StartAsync().GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            RequireCode(() => runtime.StartFreeCallAsync("+212600000000", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            RequireCode(() => runtime.HandleProtocolCommandAsync(Guid.NewGuid()).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            RequireCode(() => runtime.WithProfileMaintenanceAsync(() => Task.CompletedTask).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            stopWaiting = runtime.StopAsync();
+            Require(!stopWaiting.IsCompleted, "STOP_DISPOSED_DURING_RECEIPT_LOOKUP");
+        } finally { release.SetResult(); }
+        Require(await operation == new FreeCallReconciliationSummary(0, 1), "UNKNOWN_RECEIPT_CLEARED");
+        if (stopWaiting is not null) await stopWaiting;
+        RequireCode(() => runtime.ReconcileFreeCallsAsync((_, _) => Task.FromResult(terminal with { WorkstationId = Guid.NewGuid().ToString() })).GetAwaiter().GetResult(), "FREE_CALL_RECEIPT_IDENTITY_MISMATCH");
+        Require(new EventJournal(store.JournalPath).UnresolvedFreeCallCount == 1, "WRONG_IDENTITY_INTENT_CLEARED");
+        try {
+            await runtime.ReconcileFreeCallsAsync((_, _) => Task.FromException<FreeCallReconciliationResponse>(new TaskCanceledException()));
+            throw new InvalidOperationException("RECONCILIATION_TIMEOUT_SWALLOWED");
+        } catch (TaskCanceledException) { }
+        Require(new EventJournal(store.JournalPath).UnresolvedFreeCallCount == 1, "TIMEOUT_INTENT_NOT_DURABLE");
+        var resolved = await runtime.ReconcileFreeCallsAsync((_, _) => Task.FromResult(terminal));
+        Require(resolved == new FreeCallReconciliationSummary(1, 0), "TERMINAL_RECEIPT_NOT_RESOLVED");
+        Require(new EventJournal(store.JournalPath).UnresolvedFreeCallCount == 0, "RESOLUTION_NOT_DURABLE");
+        Require(!runtime.Running && !runtime.Snapshot.SdkLoaded, "RECONCILIATION_STARTED_SDK");
+        Require(store.Load() == expected with { SipPassword = "" }, "RECONCILIATION_CHANGED_PROFILE");
+        store.Save(expected);
     }
     private static void RequireThrows(Action action, string code) { try { action(); } catch (InvalidOperationException) { return; } throw new InvalidOperationException(code); }
     private static string SafeCode(Exception error) => System.Text.RegularExpressions.Regex.IsMatch(error.Message, "^[A-Z0-9_]{3,80}$") ? error.Message : "SELF_TEST_FAILED";

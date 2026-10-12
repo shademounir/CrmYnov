@@ -106,8 +106,17 @@ Avant la création d'un appel manuel, le journal conserve une intention opaque
 refus HTTP déterministe. Un timeout, une réponse invalide ou un résultat serveur
 incertain conserve cette intention après redémarrage et bloque nouvelle demande
 et modification du profil : le reçu doit être rapproché avant déblocage, sans
-rejeu automatique ni effacement du journal. Ce lot n'ajoute pas encore l'écran
-de résolution de cette réserve. Ne pas revenir à un agent antérieur qui ignore
+rejeu automatique ni effacement du journal. « Vérifier les demandes en attente »
+consulte le reçu via la passerelle HTTPS sans connecter le SDK, réclamer une
+commande ou composer. Seul un reçu du même acteur/poste/profil, dont la commande
+est terminale avec appel terminal, ou expirée sans avoir été livrée, peut résoudre
+l'intention locale. Absence, livraison ou résultat incertain restent bloquants.
+La vérification refuse un appel actif ou des événements non acquittés ; elle
+exclut les changements de profil et nouvelles compositions pendant sa durée.
+Une expiration non livrée peut laisser le dossier serveur REQUESTED : résoudre
+l'intention ne termine pas ce dossier et ne lève pas la garde serveur de retrait.
+Le jeton courant est revalidé ; le reçu n'atteste pas une génération historique
+de commande, absente du modèle actuel. Ne pas revenir à un agent antérieur qui ignore
 ces intentions pendant qu'une telle incertitude existe.
 
 Les commandes CLI utilisant le profil acquièrent la même exclusion d'instance
