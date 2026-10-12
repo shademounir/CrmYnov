@@ -24,6 +24,7 @@ type Snapshot = { sheets: SnapshotSheet[]; formulaCount: number; workbookPropert
 type Values = Record<string, string | null>;
 type MappedRow = { values: Values; comments: Array<{ column: string; text: string }>; sourceOwner: string | null; replacementOwner: string | null; rawStatus: string | null; originalSource: string | null; reasons: string[]; receivedDateEvidence?: { column: string; reference: string; cell: Cell; date1904: boolean } };
 type SourceCoverage = { name: string; sourceCandidates: number; sourceRows: number; ledgerRows: number; literalCells: number; commentCells: number; formulaCells: number; nativeAnnotations: number; unmappedCells: number; excludedCells: number; quarantinedAnnotations: number };
+type MetadataQuarantine = { key: string; sheet: string; relationId: string; sourceSha256: string; annotation: Annotation; disposition: "HEADER_METADATA_QUARANTINE"; reason: string };
 const statuses = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
 const sources = ["OTHER", "WEBSITE", "WEB_FORM", "PHONE_CALL", "PHYSICAL_VISIT", "REFERRAL", "SOCIAL_MEDIA", "FACEBOOK", "INSTAGRAM", "GOOGLE", "PARTNER", "EVENT", "YNOV_COM", "YNOV_MA_LEGACY", "JOBINTECH", "LEGACY_RELAUNCH"];
 const educationLevels = ["Bac", "Bac+1", "Bac+2", "Bac+3", "Bac+4", "Bac+5", "B1", "B2", "B3", "M1", "M2", "Terminale"];
@@ -75,11 +76,28 @@ export function mapHistoricalRow(row: SourceRow, mapping: HistoricalSheetMapping
   return { values, comments, sourceOwner, replacementOwner, rawStatus, originalSource, reasons: [...new Set(reasons)], ...(dateColumn && dateCell ? { receivedDateEvidence: { column: dateColumn, reference: `${dateColumn}${row.rowNumber}`, cell: dateCell, date1904: row.date1904 ?? false } } : {}) };
 }
 
+function annotationRow(annotation: Annotation): number {
+  const match = /^([A-Z]{1,2})([1-9]\d*)$/.exec(annotation.reference); if (!match) refuse("bootstrap_annotation_coordinate_invalid");
+  const rowNumber = Number(match[2]); if (rowNumber > 50000) refuse("bootstrap_annotation_row_review_required");
+  return rowNumber;
+}
+
+/** Header annotations are source documents, never candidate Leads or interactions.
+ * Keep their exact payload and stable identity in a separate, explicit quarantine. */
+export function historicalMetadataQuarantine(sheet: SnapshotSheet, sourceSha256: string): MetadataQuarantine[] {
+  return (sheet.annotations ?? []).filter((annotation) => annotationRow(annotation) <= 6).map((annotation) => ({
+    key: hash([sourceSha256, sheet.relationId, annotation.annotationId, annotation.relationshipId, annotation.reference]),
+    sheet: sheet.name, relationId: sheet.relationId, sourceSha256, annotation,
+    disposition: "HEADER_METADATA_QUARANTINE" as const,
+    reason: "Annotation d’en-tête conservée hors population Lead ; aucune interaction importée.",
+  }));
+}
+
 function sourceRows(sheet: SnapshotSheet): SourceRow[] {
   const rows = new Map(sheet.rows.map((row) => [row.rowNumber, { ...row, annotations: [] as Annotation[] }]));
   for (const annotation of sheet.annotations ?? []) {
-    const match = /^([A-Z]{1,2})([1-9]\d*)$/.exec(annotation.reference); if (!match) refuse("bootstrap_annotation_coordinate_invalid");
-    const rowNumber = Number(match[2]); if (rowNumber <= 6 || rowNumber > 50000) refuse("bootstrap_annotation_row_review_required");
+    const rowNumber = annotationRow(annotation);
+    if (rowNumber <= 6) continue; // Preserved separately by historicalMetadataQuarantine, never discarded.
     if (!rows.has(rowNumber)) rows.set(rowNumber, { rowNumber, cells: {}, annotations: [] });
     rows.get(rowNumber)!.annotations.push(annotation);
     if (rows.get(rowNumber)!.annotations.length > 100) refuse("bootstrap_row_annotation_limit");
@@ -192,7 +210,8 @@ export class BootstrapImportService {
       const snapshot = object<Snapshot>(row.snapshot); if (!snapshot?.sheets) this.conflict("bootstrap_snapshot_missing");
       const batch = await tx.ingestionBatch.create({ data: { idempotencyKey: `bootstrap:${row.id}`, profile: "LEGACY_CRM_R8", assignmentMode: "HISTORICAL_EXPLICIT", actorId: actor.userId, fingerprint, totalCount: 0, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
       const coverage = snapshot.sheets.map((sheet) => historicalSourceCoverage(sheet, input.sheets.find((item) => item.name === sheet.name)!));
-      const plan = await tx.bootstrapImportPlan.create({ data: { packageId: id, version: 1, mappingVersion: input.mappingVersion, fingerprint, configuration: json({ ...input, sourceCoverage: coverage }) } });
+      const metadataQuarantine = snapshot.sheets.flatMap((sheet) => historicalMetadataQuarantine(sheet, row.sha256));
+      const plan = await tx.bootstrapImportPlan.create({ data: { packageId: id, version: 1, mappingVersion: input.mappingVersion, fingerprint, configuration: json({ ...input, sourceCoverage: coverage, metadataQuarantine }) } });
       let count = 0;
       const pendingRows: Prisma.BootstrapImportRowCreateManyInput[] = [];
       for (const sheet of snapshot.sheets) {
@@ -220,7 +239,7 @@ export class BootstrapImportService {
       if (pendingRows.length) await tx.bootstrapImportRow.createMany({ data: pendingRows });
       await tx.ingestionBatch.update({ where: { id: batch.id }, data: { totalCount: count, reviewCount: count } });
       const changed = await tx.bootstrapImportPackage.update({ where: { id, version: row.version }, data: { state: "MAPPED", batchId: batch.id, version: { increment: 1 } } });
-      await this.audit(tx, actor, row, "BOOTSTRAP_MAPPING_SAVED", `mapping:${row.id}`, { planId: plan.id, fingerprint, total: count });
+      await this.audit(tx, actor, row, "BOOTSTRAP_MAPPING_SAVED", `mapping:${row.id}`, { planId: plan.id, fingerprint, total: count, metadataQuarantineCount: metadataQuarantine.length });
       return this.view(tx, changed);
     });
   }
@@ -392,11 +411,13 @@ export class BootstrapImportService {
       });
       const plan = await tx.bootstrapImportPlan.findFirst({ where: { packageId: id }, orderBy: { version: "desc" } });
       const coverage = plan ? object<{ sourceCoverage?: SourceCoverage[] }>(plan.configuration).sourceCoverage : undefined;
+      // Derive from the immutable snapshot as well for already sealed packages.
+      const metadataQuarantine = object<Snapshot | null>(row.snapshot)?.sheets.flatMap((sheet) => historicalMetadataQuarantine(sheet, row.sha256)) ?? [];
       const ledgers = await tx.bootstrapImportRow.findMany({ where: { packageId: id }, select: { sheet: true, state: true, reasons: true, decision: true } });
       const effectiveCoverage = (coverage ?? []).map((sheet) => ({ ...sheet,
         remainingUnmappedCells: ledgers.filter((item) => item.sheet === sheet.name && item.state !== "IGNORED").reduce((total, item) => total + item.reasons.filter((reason) => reason.startsWith("UNMAPPED_SOURCE_CELL_REVIEW:")).length, 0),
         remainingQuarantinedAnnotations: ledgers.filter((item) => item.sheet === sheet.name && item.state !== "IGNORED" && item.reasons.includes("NATIVE_ANNOTATION_QUARANTINE") && !object<HistoricalDecisionInput | null>(item.decision)?.annotations?.length).length }));
-      const complete = !!coverage && effectiveCoverage.every((sheet) => !sheet.remainingUnmappedCells && !sheet.remainingQuarantinedAnnotations) && coverage.reduce((total, sheet) => total + sheet.ledgerRows, 0) === bySheet.reduce((total, sheet) => total + sheet.total, 0);
+      const complete = !!coverage && !metadataQuarantine.length && effectiveCoverage.every((sheet) => !sheet.remainingUnmappedCells && !sheet.remainingQuarantinedAnnotations) && coverage.reduce((total, sheet) => total + sheet.ledgerRows, 0) === bySheet.reduce((total, sheet) => total + sheet.total, 0);
       const reconciliationRows = await tx.bootstrapImportRow.findMany({ where: { packageId: id }, take: 10001,
         select: { id: true, sheet: true, relationId: true, rowNumber: true, sourceKey: true, fingerprint: true, payload: true, mapped: true, decision: true, decisionFingerprint: true, decisionKey: true, planId: true, version: true, reasons: true, state: true, leadId: true } });
       const notes = await tx.importedHistoricalNote.findMany({ where: { row: { packageId: id } }, take: 100001,
@@ -439,7 +460,7 @@ export class BootstrapImportService {
         && ledgers.filter(item => !["IGNORED", "DEFERRED"].includes(item.state)).every(item => !item.reasons.some(reason => reason.startsWith("UNMAPPED_SOURCE_CELL_REVIEW:"))
           && !(item.reasons.includes("NATIVE_ANNOTATION_QUARANTINE") && !object<HistoricalDecisionInput | null>(item.decision)?.annotations?.length));
       const boundedReconciliation = boundedBootstrapReconciliation({ ...reconciliationInput, deferralReceipts: deferralReceipts.slice(0, 10000), coverageQualified });
-      return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage }, reconciliation, boundedReconciliation,
+      return { package: await this.view(tx, row), bySheet, sourceCoverage: { complete, bySheet: effectiveCoverage, metadataQuarantine }, reconciliation, boundedReconciliation,
         cutoverBlocked: !complete || !reconciliation.complete || bySheet.some((sheet) => sheet.review || sheet.invalid), historicalAcquisitionsExcluded: true };
   }
 

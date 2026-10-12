@@ -171,7 +171,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     // Native mirrors and replies remain distinct source occurrences until an explicit decision.
     const nativeParts = syntheticHistoricalParts({ workbookExtra: '<workbookPr date1904="1"/>', extra: [
       ["xl/worksheets/_rels/sheet1.xml.rels", '<Relationships><Relationship Id="legacy" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments/comment1.xml"/><Relationship Id="thread" Type="http://schemas.microsoft.com/office/2017/10/relationships/threadedComment" Target="../threadedComments/threadedComment1.xml"/></Relationships>'],
-      ["xl/comments/comment1.xml", '<comments><authors><author>Auteur source</author></authors><commentList><comment ref="I9" authorId="0"><text><t>Intention synthétique 2027-2028</t></text></comment></commentList></comments>'],
+      ["xl/comments/comment1.xml", '<comments><authors><author>Auteur source</author></authors><commentList><comment ref="U6" authorId="0"><text><t>  En-tête documentaire exact  </t></text></comment><comment ref="I9" authorId="0"><text><t>Intention synthétique 2027-2028</t></text></comment></commentList></comments>'],
       ["xl/threadedComments/threadedComment1.xml", '<ThreadedComments><threadedComment ref="I9" id="thread-1" personId="person-1" dT="2025-07-02T09:30:00Z"><text>Intention synthétique 2027-2028</text></threadedComment><threadedComment ref="I9" id="thread-2" parentId="thread-1" personId="person-1"><text>Réponse distincte</text></threadedComment></ThreadedComments>'],
       ["xl/persons/person.xml", '<personList><person id="person-1" displayName="Auteur source" providerId="SOURCE" userId="source@example.invalid"/></personList>'],
     ] });
@@ -180,7 +180,26 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     let nativePack = await success<Package>(await request("/packages", "POST", { fileName: "native-synthetic.xlsx", sizeBytes: nativeBytes.length, sha256: nativeSha, campusId: campus.id, idempotencyKey: `native-${marker}` }));
     for (let offset = 0, index = 0; offset < nativeBytes.length; offset += CHUNK_BYTES, index++) { const chunk = nativeBytes.subarray(offset, offset + CHUNK_BYTES); await success(await request(`/packages/${nativePack.id}/chunks`, "POST", { index, contentBase64: chunk.toString("base64"), sha256: bytesHash(chunk) })); }
     nativePack = await success<Package>(await request(`/packages/${nativePack.id}/seal`, "POST", { sha256: nativeSha }));
-    nativePack = await success<Package>(await request(`/packages/${nativePack.id}/mappings`, "POST", { ...mapping, expectedVersion: nativePack.version, sheets: mapping.sheets.map((sheet) => ({ ...sheet, fields: { ...sheet.fields, receivedDate: "K" } })) }));
+    const nativeMapping = { ...mapping, expectedVersion: nativePack.version, sheets: mapping.sheets.map((sheet) => ({ ...sheet, fields: { ...sheet.fields, receivedDate: "K" } })) };
+    const mappingEffects = async (): Promise<unknown> => ({
+      package: await client.bootstrapImportPackage.findUniqueOrThrow({ where: { id: nativePack.id } }),
+      plans: await client.bootstrapImportPlan.count({ where: { packageId: nativePack.id } }),
+      rows: await client.bootstrapImportRow.count({ where: { packageId: nativePack.id } }),
+      batches: await client.ingestionBatch.count(), audit: await client.auditEvent.count(),
+    });
+    const beforeMapping = await mappingEffects();
+    // A later reference failure must roll back the batch, metadata, plan and ledger together.
+    assert.equal((await request(`/packages/${nativePack.id}/mappings`, "POST", { ...nativeMapping, sheets: nativeMapping.sheets.map((sheet) => ({ ...sheet, campaign: "UNKNOWN-SYNTHETIC-HEADER" })) })).status, 422);
+    assert.deepEqual(await mappingEffects(), beforeMapping);
+    nativePack = await success<Package>(await request(`/packages/${nativePack.id}/mappings`, "POST", nativeMapping));
+    assert.equal(nativePack.counts.review, 4, "header does not become a fifth Lead occurrence");
+    const afterMapping = await mappingEffects();
+    const mappingReplay = await success<Package & { replayed: boolean }>(await request(`/packages/${nativePack.id}/mappings`, "POST", nativeMapping));
+    assert.equal(mappingReplay.replayed, true); assert.deepEqual(await mappingEffects(), afterMapping);
+    const headerPlan = await client.bootstrapImportPlan.findFirstOrThrow({ where: { packageId: nativePack.id } });
+    const headerMetadata = (headerPlan.configuration as { metadataQuarantine: Array<{ key: string; annotation: { reference: string; text: string } }> }).metadataQuarantine;
+    assert.equal(headerMetadata.length, 1); assert.equal(headerMetadata[0]!.annotation.reference, "U6");
+    assert.equal(headerMetadata[0]!.annotation.text, "  En-tête documentaire exact  ");
     type NativeRow = Row & { annotations: Array<{ annotationId: string; reference: string; relationshipId: string; format: string }>; sourceEvidence: Array<{ reference: string; text: string }>; decision?: { resolvedValues: Record<string, string | null>; cycle: { label: string }; annotations: unknown[] } };
     const nativeRows = await success<{ items: NativeRow[] }>(await request(`/packages/${nativePack.id}/rows`), 200);
     const nativeRow = nativeRows.items.find((row) => row.sheet === HISTORICAL_SHEETS[0])!; assert.equal(nativeRow.annotations.length, 3); assert.ok(nativeRow.sourceEvidence.some((cell) => cell.reference === "K9" && cell.text === "45123"));
@@ -197,7 +216,11 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     const savedNative = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: nativeRow.id } }); const nativeNotes = await client.importedHistoricalNote.findMany({ where: { leadId: savedNative.leadId! } });
     assert.equal(nativeNotes.length, 3); assert.equal(new Set(nativeNotes.map((item) => item.cellKey)).size, 3); assert.equal(nativeNotes.filter((item) => item.author === "Auteur source").length, 2); assert.ok(nativeNotes.every((item) => item.occurredAt === null));
     const nativeBeforeReplay = await effectCounts(); await success(await request(`/packages/${nativePack.id}/confirm`, "POST", nativeConfirm)); assert.deepEqual(await effectCounts(), nativeBeforeReplay);
-    const nativeReport = await success<{ cutoverBlocked: boolean; sourceCoverage: { complete: boolean }; reconciliation: { complete: boolean; effects: { exactNotes: number; exactRowReceipts: number; exactProvenance: number }; axes: { cycle: Record<string, number>; currentDossierOwner: Record<string, number> } } }>(await request(`/packages/${nativePack.id}/report`), 200); assert.equal(nativeReport.cutoverBlocked, false); assert.equal(nativeReport.sourceCoverage.complete, true);
+    const nativeReport = await success<{ cutoverBlocked: boolean; sourceCoverage: { complete: boolean; metadataQuarantine: typeof headerMetadata }; boundedReconciliation: { qualified: boolean }; reconciliation: { complete: boolean; effects: { exactNotes: number; exactRowReceipts: number; exactProvenance: number }; axes: { cycle: Record<string, number>; currentDossierOwner: Record<string, number> } } }>(await request(`/packages/${nativePack.id}/report`), 200);
+    assert.equal(nativeReport.cutoverBlocked, true); assert.equal(nativeReport.sourceCoverage.complete, false);
+    assert.deepEqual(nativeReport.sourceCoverage.metadataQuarantine, headerMetadata);
+    assert.equal(nativeReport.boundedReconciliation.qualified, true, "document quarantine does not alter qualified Lead effects");
+    assert.equal(await client.importedHistoricalNote.count({ where: { text: "  En-tête documentaire exact  " } }), 0);
     assert.equal(nativeReport.reconciliation.complete, true); assert.equal(nativeReport.reconciliation.effects.exactNotes, 3); assert.equal(nativeReport.reconciliation.effects.exactRowReceipts, 4); assert.equal(nativeReport.reconciliation.effects.exactProvenance, 1);
     assert.equal(nativeReport.reconciliation.axes.cycle.CONFIRMED_TARGET, 1); assert.equal(nativeReport.reconciliation.axes.currentDossierOwner[adviser.id], 1);
     const nativeProvenance = await success<{ provenance: Array<{ cycleLabel: string; receivedDateEvidence: { date1904: boolean; cell: { raw: string; style: string } } }>; items: Array<{ sourceDate: string | null }> }>(await request(`/leads/${savedNative.leadId!}/notes`), 200);

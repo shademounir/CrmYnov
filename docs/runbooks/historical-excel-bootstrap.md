@@ -133,6 +133,28 @@ pour combler ces preuves DEV/STAGING.
 
 ## Histoire, température et indicateurs
 
+Les annotations natives situées sur les lignes 1 à 6 sont des métadonnées
+d'en-tête, hors population Lead. Le mapping conserve leur texte exact, identité,
+cellule, feuille et empreinte source dans `metadataQuarantine`, avec une clé
+déterministe. Le rapport et l'interface présentent cette quarantaine séparément :
+elle ne crée ni occurrence Lead ni note historique. Le snapshot scellé reste
+inchangé ; ne pas retirer l'en-tête du fichier ni retransférer un paquet pour
+éviter le contrôle. Les annotations des lignes métier ou orphelines suivent
+toujours leurs décisions existantes. Les coordonnées invalides restent refusées.
+
+Une quarantaine documentaire ouverte conserve `sourceCoverage.complete=false`
+et bloque la qualification globale de bascule. La réconciliation bornée des
+seules occurrences métier résolues peut néanmoins être qualifiée. Elle ne ferme
+pas cette réserve documentaire et n'active aucun connecteur. Après un refus
+d'analyse, relire la version du même paquet avant de reprendre ; batch, plan,
+ledger et audit doivent avoir été annulés ensemble par la transaction.
+
+Ce correctif ne comporte aucune migration. Déployer le couple API/Web compatible
+après les contrôles du SHA publié. Pour un retour applicatif, conserver snapshot,
+configuration, notes et reçus ; l'ancienne API refuse l'analyse des en-têtes et
+ne constitue pas une solution de reprise. Suspendre les nouvelles analyses si
+nécessaire et privilégier un correctif en avant, sans restaurer la base.
+
 Le texte des commentaires non vides est conservé exactement, notamment espaces
 significatifs, multilignes et valeurs numériques. Une cellule contenant
 uniquement des espaces reste dans le snapshot et son inventaire, mais ne crée

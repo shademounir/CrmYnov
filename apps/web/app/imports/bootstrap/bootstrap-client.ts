@@ -36,12 +36,16 @@ export interface BootstrapRow {
   decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string; canReopen?: boolean;
 }
 export interface BootstrapRows { items: BootstrapRow[]; nextAfter: string | null }
+export interface BootstrapMetadataQuarantine {
+  key: string; sheet: string; relationId: string; sourceSha256: string;
+  annotation: BootstrapNativeAnnotation; disposition: "HEADER_METADATA_QUARANTINE"; reason: string;
+}
 export interface BootstrapReport {
   package: BootstrapPackage;
   bySheet: Array<{ name: string; total: number; accepted: number; review: number; invalid: number; ignored: number }>;
   cutoverBlocked: boolean;
   reconciliation?: BootstrapReconciliation;
-  sourceCoverage?: { complete: boolean; bySheet: Array<{ name: string; sourceCandidates: number; sourceRows: number; ledgerRows: number; literalCells: number; commentCells: number; formulaCells: number; nativeAnnotations: number; unmappedCells: number; excludedCells: number; quarantinedAnnotations: number }> };
+  sourceCoverage?: { complete: boolean; metadataQuarantine?: BootstrapMetadataQuarantine[]; bySheet: Array<{ name: string; sourceCandidates: number; sourceRows: number; ledgerRows: number; literalCells: number; commentCells: number; formulaCells: number; nativeAnnotations: number; unmappedCells: number; excludedCells: number; quarantinedAnnotations: number }> };
 }
 export interface BootstrapReconciliation {
   complete: boolean; truncated: boolean; totalOccurrences: number; unresolvedOccurrences: number;
