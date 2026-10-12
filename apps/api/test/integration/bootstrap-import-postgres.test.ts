@@ -221,9 +221,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     assert.deepEqual(nativeReport.sourceCoverage.metadataQuarantine, headerMetadata);
     assert.equal(nativeReport.boundedReconciliation.qualified, true, "document quarantine does not alter qualified Lead effects");
     assert.equal(await client.importedHistoricalNote.count({ where: { text: "  En-tête documentaire exact  " } }), 0);
-    assert.equal(nativeReport.reconciliation.complete, true); assert.equal(nativeReport.reconciliation.effects.exactNotes, 3); assert.equal(nativeReport.reconciliation.effects.exactRowReceipts, 4); assert.equal(nativeReport.reconciliation.effects.exactProvenance, 1);
-    assert.equal(nativeReport.reconciliation.axes.cycle.CONFIRMED_TARGET, 1); assert.equal(nativeReport.reconciliation.axes.currentDossierOwner[adviser.id], 1);
-    const nativeProvenance = await success<{ provenance: Array<{ cycleLabel: string; receivedDateEvidence: { date1904: boolean; cell: { raw: string; style: string } } }>; items: Array<{ sourceDate: string | null }> }>(await request(`/leads/${savedNative.leadId!}/notes`), 200);
+    assert.equal(nativeReport.reconciliation.complete, true); assert.equal(nativeReport.reconciliation.effect…135 tokens truncated…> }>(await request(`/leads/${savedNative.leadId!}/notes`), 200);
     assert.equal(nativeProvenance.provenance[0]!.cycleLabel, "Candidature 2027-2028"); assert.equal(nativeProvenance.provenance[0]!.receivedDateEvidence.date1904, true); assert.equal(nativeProvenance.provenance[0]!.receivedDateEvidence.cell.raw, "45123"); assert.ok(nativeProvenance.items.some((item) => item.sourceDate === "2025-07-02T09:30:00Z"));
     // CRMY-62: source statuses stay unresolved; contact checks use the same real
     // permission transaction at decision, commit and authenticated replay.
