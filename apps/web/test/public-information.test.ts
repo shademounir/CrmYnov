@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -33,4 +34,26 @@ test("information navigation interlinks all notices without exposing API links",
   for (const path of publicInformationPaths) assert.ok(layout.includes(`href="${path}"`));
   assert.ok(layout.includes('href="/"'));
   assert.ok(!layout.includes("/api/"));
+});
+
+test("public layout renders accessible navigation, secure login and unchanged child content", async () => {
+  const cssUrl = new URL("../app/(information)/information.module.css", import.meta.url).href;
+  const hooks = registerHooks({
+    load(url, context, nextLoad) {
+      if (url === cssUrl) return { format: "module", source: 'export default {page:"information-page",header:"information-header",brand:"information-brand"};', shortCircuit: true };
+      return nextLoad(url, context);
+    },
+  });
+  try {
+    const { default: InformationLayout } = await import("../app/(information)/layout.js");
+    const html = renderToStaticMarkup(createElement(InformationLayout, { children: createElement("h1", null, "Notice publique") }));
+    assert.match(html, /<nav aria-label="Informations publiques">/u);
+    assert.match(html, /<main id="information-content"><h1>Notice publique<\/h1><\/main>/u);
+    for (const path of publicInformationPaths) assert.ok(html.includes(`href="${path}"`));
+    assert.match(html, /href="\/">Connexion sécurisée/u);
+    assert.match(html, /mailto:casablancaynovcampus@gmail\.com/u);
+    assert.doesNotMatch(html, /\/api\/|<form|<script|access_token|refresh_token/u);
+  } finally {
+    hooks.deregister();
+  }
 });
