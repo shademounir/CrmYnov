@@ -26,6 +26,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { apiString, resourceObjects, type ApiValue } from "./connected-resource";
+import { publicInformationPaths } from "./public-information";
 
 export type SearchState =
   | { kind: "closed"; items: never[] }
@@ -191,7 +192,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   const mobileMenuRef = useRef<HTMLButtonElement>(null);
   const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
-  const isAuthPath = authPaths.has(pathname);
+  const isAuthPath = authPaths.has(pathname) || publicInformationPaths.has(pathname);
 
   useEffect(() => {
     if (isAuthPath) return;

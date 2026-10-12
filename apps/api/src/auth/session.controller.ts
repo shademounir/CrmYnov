@@ -46,6 +46,10 @@ export class SessionController {
     }
     if (scopes.length === 0) throw new ForbiddenException({ code: "identity_scope_missing" });
     const mustChangeSecret = verified.mustChange || user.firstLoginRequired === true;
+    if (this.prisma?.client) {
+      const created = await this.sessions.createForApi(user.id, user.roles, scopes, mustChangeSecret, user.authenticationVersion, request.header("x-correlation-id") ?? "generated", request.ip);
+      return { ...created, mustChangeSecret };
+    }
     const created = this.sessions.create(user.id, user.roles, scopes, 3_600_000, mustChangeSecret, user.authenticationVersion);
     await this.sessions.flush();
     this.audit.record({ eventType: "SESSION_CREATED", actorId: user.id, actorRoles: user.roles, sessionId: created.sessionId, correlationId: request.header("x-correlation-id") ?? "generated", result: "SUCCESS", idempotencyKey: `session-created:${created.sessionId}`, ip: request.ip });

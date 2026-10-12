@@ -83,6 +83,8 @@ if (!process.env.NODE_V8_COVERAGE) throw Error("coverage_instrumentation_require
 if (process.env.DATABASE_URL) throw Error("coverage_must_not_inherit_database");
 npm(["test"]);
 await postgresProofs();
+// The same nonce-bound real HTTP security proof also contributes native coverage.
+run(process.execPath, ["scripts/ci/first-login-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/assignment-flow-postgres.mjs"]);
 // Measure the same isolated reporting proof as the integration job. Child
 // runtimes inherit NODE_V8_COVERAGE; its source maps are remapped by c8.
