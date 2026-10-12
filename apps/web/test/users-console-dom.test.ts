@@ -2,6 +2,63 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 
+test("authorization preserves all roles and requires an explicit confirmed nonempty scoped selection", async (t) => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/admin/users" });
+  const prior = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true })) { prior.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, value }); }
+  const { act, createElement } = await import("react"); const { createRoot } = await import("react-dom/client"); const { UsersConsole } = await import("../app/admin/users/users-console.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  t.after(() => { act(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+  let user = { id: "user-a", professionalEmail: "synthetic@example.invalid", roles: ["SUPER_ADMIN", "ADMISSIONS"], campusId: "campus-a", active: true };
+  let refused = true;
+  const patches: Record<string, unknown>[] = [];
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const path = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (path.startsWith("/api/crm/references?")) return Promise.resolve(Response.json({ items: [{ id: "campus-a", label: "Campus A", code: "A", state: "ACTIVE" }] }));
+    if (path === "/api/crm/users/user-a/authorization") {
+      assert.equal(typeof init?.body, "string");
+      const body = JSON.parse(init!.body as string) as Record<string, unknown>; patches.push(body);
+      if (refused) return Promise.resolve(new Response(null, { status: 403 }));
+      user = { ...user, roles: body.roles as string[] };
+      return Promise.resolve(Response.json(user));
+    }
+    if (path === "/api/crm/users") return Promise.resolve(Response.json({ users: [user] }));
+    return Promise.resolve(new Response(null, { status: 404 }));
+  });
+  const click = async (element: HTMLElement): Promise<void> => { await act(async () => { element.click(); await new Promise<void>((resolve) => setImmediate(resolve)); }); };
+  await act(async () => { root.render(createElement(UsersConsole)); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  await click(dom.window.document.querySelector<HTMLButtonElement>(".users-list button")!);
+  const boxes = (): HTMLInputElement[] => [...dom.window.document.querySelectorAll<HTMLInputElement>('fieldset input[type="checkbox"]')];
+  const save = (): HTMLButtonElement => [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Enregistrer les droits")!;
+  const confirm = (): HTMLInputElement => dom.window.document.querySelector('.users-confirm input')!;
+  assert.deepEqual(boxes().map((box) => box.checked), [true, false, false, true, false]);
+  assert.equal(save().disabled, true);
+  await click(confirm()); await click(save());
+  assert.deepEqual(patches[0], { roles: ["SUPER_ADMIN", "ADMISSIONS"], campusId: "campus-a", reason: "ACCESS_REVIEW", confirmed: true });
+  assert.match(dom.window.document.body.textContent ?? "", /Accès refusé/u);
+  assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Droits enregistrés/u);
+  await click(boxes()[2]!); // Add Manager explicitly, keeping both existing roles.
+  assert.equal(confirm().checked, false);
+  assert.equal(save().disabled, true);
+  refused = false;
+  await click(confirm()); await click(save());
+  assert.deepEqual(patches[1]?.roles, ["SUPER_ADMIN", "ADMISSIONS", "MANAGER"]);
+  assert.match(dom.window.document.body.textContent ?? "", /Droits enregistrés et relus ; sessions révoquées/u);
+  const campusSelect = dom.window.document.querySelector<HTMLSelectElement>(".users-fields select")!;
+  act(() => { campusSelect.value = ""; campusSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+  await click(confirm());
+  assert.equal(save().disabled, true, "a mixed Super Admin/Commercial selection still requires a campus");
+  await click(save()); assert.equal(patches.length, 2);
+  await click(boxes()[2]!); await click(boxes()[3]!);
+  await click(confirm());
+  assert.equal(save().disabled, false, "only the Super Admin-only selection can remain global");
+  await click(save());
+  assert.deepEqual(patches[2], { roles: ["SUPER_ADMIN"], reason: "ACCESS_REVIEW", confirmed: true });
+  for (const box of boxes().filter((box) => box.checked)) await click(box);
+  await click(confirm()); assert.equal(save().disabled, true);
+  await click(save()); assert.equal(patches.length, 3);
+});
+
 test("administration creates and rereads a scoped user, retaining input on refusal", async (t) => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/admin/users" });
   const prior = new Map<string, PropertyDescriptor | undefined>();

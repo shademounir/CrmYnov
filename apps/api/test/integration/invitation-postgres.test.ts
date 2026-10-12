@@ -44,7 +44,9 @@ test("CRMY-161 HTTP/PostgreSQL invitation activates one synthetic Commercial and
     const restricted = await temporaryLogin.json() as { token: string; mustChangeSecret: boolean };
     assert.equal(restricted.mustChangeSecret, true);
     assert.equal((await request("/leads", "GET", undefined, restricted.token)).status, 403);
+    const issuedAfter = Date.now();
     const invitationResponse = await request(`/users/${user.id}/invitations`, "POST", { confirmed: true }, administratorToken);
+    const issuedBefore = Date.now();
     assert.equal(invitationResponse.status, 201);
     assert.deepEqual(await invitationResponse.json(), { state: "ACCEPTED_BY_GMAIL" });
     const code = new URLSearchParams(new URL(deliveredLink).hash.slice(1)).get("code");
@@ -52,6 +54,9 @@ test("CRMY-161 HTTP/PostgreSQL invitation activates one synthetic Commercial and
     const before = await client.localAccessInvitation.findFirstOrThrow({ where: { collaboratorId: user.id } });
     assert.equal(before.state, "SENT", "GET link has no consuming endpoint");
     assert.notEqual(before.linkDigest, code);
+    const expiresAt = before.expiresAt.getTime();
+    assert.ok(expiresAt >= issuedAfter + 72 * 60 * 60_000);
+    assert.ok(expiresAt <= issuedBefore + 72 * 60 * 60_000);
     const nextSecret = "Synthetic-Commercial-2026!";
     const completion = await request("/invitations/completions", "POST", { code, nextSecret });
     assert.equal(completion.status, 201);
