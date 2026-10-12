@@ -3,19 +3,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import type { PrismaService } from "../src/persistence/prisma.service.js";
-import { TelephonyAgentRepository, type AgentIdentity } from "../src/telephony/telephony-agent.repository.js";
+import { TelephonyAgentRepository, type AgentIdentity, type AgentFreeCallReconciliation } from "../src/telephony/telephony-agent.repository.js";
 import { TelephonyAgentController } from "../src/telephony/telephony.controller.js";
 import type { TelephonyService } from "../src/telephony/telephony.service.js";
 import type { DynamicPermissionRepository } from "../src/permissions/dynamic-repository.js";
+import { defaultConfiguration, evaluatePermission } from "../src/permissions/dynamic-evaluator.js";
+import { configurationKey, type ConfigurationSnapshot } from "../src/permissions/dynamic-contract.js";
 
 const key = "synthetic-free-intent-176";
 const token = "synthetic-reconciliation-machine-token-176";
 const identity: AgentIdentity = { workstationId: "workstation-176", profileId: "profile-176", userId: "synthetic-owner-176", roles: ["SUPER_ADMIN"], tokenDigest: createHash("sha256").update(token).digest("hex"), authenticationVersion: 3 };
 const code = (value: string) => (error: unknown): boolean => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes(value);
 
+interface TestUser { active: boolean; firstLoginRequired: boolean; authenticationVersion: number; campusId: string | null; roles: string[] }
+interface TestProfile { id: string; userId: string; enabled: boolean; serverProfileId: string; user: TestUser; serverProfile: { enabled: boolean; campusId: string | null } }
+interface TestWorkstation { id: string; userProfileId: string; active: boolean; tokenDigest: string; userProfile: TestProfile }
+interface TestCommand { workstationId: string; state: string; claimedAt: Date | null; terminalAt: Date | null }
+interface TestCall { id: string; externalId: string; state: string; createdBy: string; provider: string; direction: string; leadId: string | null; purposeCode: string; agentCommand: TestCommand | null }
+interface TestReceipt { idempotencyKey: string; eventType: string; state: string; actorId: string; call: TestCall }
+type Hook = (() => void | Promise<void>) | undefined;
+interface Fixture {
+  repository: TelephonyAgentRepository; reconcile(): Promise<AgentFreeCallReconciliation>;
+  user: TestUser; profile: TestProfile; workstation: TestWorkstation; command: TestCommand; call: TestCall; receipt: TestReceipt;
+  audits: Map<string, unknown>; order: string[]; query(): unknown; absent(): void; failAudit(): void;
+  beforeProfileLock(fn: Hook): void; beforeReceipt(fn: Hook): void;
+}
+
 // Deliberately in-memory boundary double: no PostgreSQL, network, SIP, or SDK.
 // All production auth/lock/permission/classification code runs unchanged.
-function fixture() {
+function fixture(): Fixture {
   const order: string[] = [];
   const audits = new Map<string, unknown>();
   const user = { active: true, firstLoginRequired: false, authenticationVersion: 3, campusId: null as string | null, roles: ["SUPER_ADMIN"] };
@@ -30,38 +46,38 @@ function fixture() {
   let auditFailure = false;
   let lastQuery: unknown;
   const tx = {
-    $executeRaw: async (parts: TemplateStringsArray) => { order.push(parts.join("?")); return 1; },
-    $queryRaw: async (parts: TemplateStringsArray) => { const sql = parts.join("?"); order.push(sql); if (sql.includes("telephony_user_profiles")) await beforeProfileLock?.(); return []; },
-    telephonyUserProfile: { findUnique: async () => ({ serverProfileId: profile.serverProfileId }) },
-    telephonyWorkstation: { findUnique: async (query: { where: { id?: string; tokenDigest?: string } }) => {
+    $executeRaw: (parts: TemplateStringsArray): Promise<number> => { order.push(parts.join("?")); return Promise.resolve(1); },
+    $queryRaw: async (parts: TemplateStringsArray): Promise<unknown[]> => { const sql = parts.join("?"); order.push(sql); if (sql.includes("telephony_user_profiles")) await beforeProfileLock?.(); return []; },
+    telephonyUserProfile: { findUnique: (): Promise<{ serverProfileId: string }> => Promise.resolve({ serverProfileId: profile.serverProfileId }) },
+    telephonyWorkstation: { findUnique: (query: { where: { id?: string; tokenDigest?: string } }): Promise<TestWorkstation | null> => {
       order.push("identity");
-      return query.where.tokenDigest && query.where.tokenDigest !== workstation.tokenDigest ? null : workstation;
+      return Promise.resolve(query.where.tokenDigest && query.where.tokenDigest !== workstation.tokenDigest ? null : workstation);
     } },
-    collaborator: { findUnique: async () => user },
-    crmReference: { findUnique: async () => ({ id: user.campusId, kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC", label: "Synthetic" }) },
-    crmReferenceKey: { findMany: async () => [] },
-    rolePermissionConfiguration: { findMany: async () => { order.push("permissions"); return []; } },
-    telephonyCallEvent: { findFirst: async (query: { where: { idempotencyKey: string; eventType: string; state: string; actorId: string; call: { createdBy: string; provider: string; direction: string; leadId: null; purposeCode: { in: string[] }; agentCommand: { workstationId: string } } } }) => {
+    collaborator: { findUnique: (): Promise<TestUser> => Promise.resolve(user) },
+    crmReference: { findUnique: (): Promise<{ id: string | null; kind: string; state: string; code: string; label: string }> => Promise.resolve({ id: user.campusId, kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC", label: "Synthetic" }) },
+    crmReferenceKey: { findMany: (): Promise<unknown[]> => Promise.resolve([]) },
+    rolePermissionConfiguration: { findMany: (): Promise<unknown[]> => { order.push("permissions"); return Promise.resolve([]); } },
+    telephonyCallEvent: { findFirst: async (query: { where: { idempotencyKey: string; eventType: string; state: string; actorId: string; call: { createdBy: string; provider: string; direction: string; leadId: null; purposeCode: { in: string[] }; agentCommand: { workstationId: string } } } }): Promise<{ call: TestCall } | null> => {
       order.push("receipt"); lastQuery = query; await beforeReceipt?.();
       const w = query.where; const c = w.call;
       return exists && receipt.idempotencyKey === w.idempotencyKey && receipt.eventType === w.eventType && receipt.state === w.state && receipt.actorId === w.actorId
         && call.createdBy === c.createdBy && call.provider === c.provider && call.direction === c.direction && call.leadId === c.leadId
         && c.purposeCode.in.includes(call.purposeCode) && call.agentCommand?.workstationId === c.agentCommand.workstationId ? { call: structuredClone(call) } : null;
     } },
-    auditEvent: { upsert: async (query: { where: { idempotencyKey: string }; update: object; create: unknown }) => { order.push("audit"); if (auditFailure) throw new Error("synthetic-audit-unavailable"); assert.deepEqual(query.update, {}); if (!audits.has(query.where.idempotencyKey)) audits.set(query.where.idempotencyKey, query.create); return {}; } },
+    auditEvent: { upsert: (query: { where: { idempotencyKey: string }; update: object; create: unknown }): Promise<Record<string, never>> => { order.push("audit"); if (auditFailure) throw new Error("synthetic-audit-unavailable"); assert.deepEqual(query.update, {}); if (!audits.has(query.where.idempotencyKey)) audits.set(query.where.idempotencyKey, query.create); return Promise.resolve({}); } },
   };
-  const client = { ...tx, $transaction: async (action: (transaction: typeof tx) => Promise<unknown>, options: unknown) => { assert.deepEqual(options, { isolationLevel: "ReadCommitted", timeout: 30_000, maxWait: 5_000 }); return action(tx); } };
+  const client = { ...tx, $transaction: (action: (transaction: typeof tx) => Promise<unknown>, options: unknown): Promise<unknown> => { assert.deepEqual(options, { isolationLevel: "ReadCommitted", timeout: 30_000, maxWait: 5_000 }); return action(tx); } };
   const repository = new TelephonyAgentRepository({ client } as unknown as PrismaService);
-  const reconcile = () => repository.reconcileFreeCall({ ...identity, roles: [...user.roles], ...(user.campusId ? { campusId: user.campusId } : {}) }, { idempotencyKey: key });
+  const reconcile = (): Promise<AgentFreeCallReconciliation> => repository.reconcileFreeCall({ ...identity, roles: [...user.roles], ...(user.campusId ? { campusId: user.campusId } : {}) }, { idempotencyKey: key });
   return { repository, reconcile, user, profile, workstation, command, call, receipt, audits, order, query: () => lastQuery,
-    absent: () => { exists = false; }, failAudit: () => { auditFailure = true; }, beforeProfileLock: (fn: typeof beforeProfileLock) => { beforeProfileLock = fn; }, beforeReceipt: (fn: typeof beforeReceipt) => { beforeReceipt = fn; } };
+    absent: (): void => { exists = false; }, failAudit: (): void => { auditFailure = true; }, beforeProfileLock: (fn: typeof beforeProfileLock): void => { beforeProfileLock = fn; }, beforeReceipt: (fn: typeof beforeReceipt): void => { beforeReceipt = fn; } };
 }
 
 test("reconciliation machine route authenticates before reading and has no dispatch dependency", async () => {
   const f = fixture();
   const controller = new TelephonyAgentController(f.repository, {} as TelephonyService, {} as DynamicPermissionRepository);
-  assert.equal(Reflect.getMetadata("path", controller.reconcileFreeCall), "free-calls/reconciliation");
-  assert.deepEqual(Reflect.getMetadata("__headers__", controller.reconcileFreeCall), [{ name: "Cache-Control", value: "no-store" }]);
+  assert.equal(Reflect.getMetadata("path", Reflect.get(controller, "reconcileFreeCall") as object), "free-calls/reconciliation");
+  assert.deepEqual(Reflect.getMetadata("__headers__", Reflect.get(controller, "reconcileFreeCall") as object), [{ name: "Cache-Control", value: "no-store" }]);
   await assert.rejects(controller.reconcileFreeCall(undefined, { idempotencyKey: key }), code("telephony_agent_authentication_refused"));
   await assert.rejects(controller.reconcileFreeCall("invalid-machine-token-xxxxxxxxxxxxxxxxxxx", { idempotencyKey: key }), code("telephony_agent_authentication_refused"));
   assert.equal(f.query(), undefined);
@@ -78,7 +94,7 @@ test("strict request rejects extra authority fields, invalid keys and non-object
 
 test("permission fence precedes profile lock, generation revalidation, permission and receipt", async () => {
   const f = fixture(); await f.reconcile();
-  const index = (text: string) => f.order.findIndex(value => value.includes(text));
+  const index = (text: string): number => f.order.findIndex(value => value.includes(text));
   assert.ok(index("pg_advisory_xact_lock_shared") < index("telephony_server_profiles"));
   assert.ok(index("telephony_server_profiles") < index("telephony_user_profiles"));
   assert.ok(index("telephony_user_profiles") < index("identity"));
@@ -89,18 +105,18 @@ test("permission fence precedes profile lock, generation revalidation, permissio
 });
 
 test("revocation and credential/role/campus generations changed while waiting are refused", async () => {
-  const changes = [
-    (f: ReturnType<typeof fixture>) => { f.workstation.active = false; },
-    (f: ReturnType<typeof fixture>) => { f.workstation.tokenDigest = "new-generation"; },
-    (f: ReturnType<typeof fixture>) => { f.user.authenticationVersion++; },
-    (f: ReturnType<typeof fixture>) => { f.user.roles = ["ADMIN"]; },
-    (f: ReturnType<typeof fixture>) => { f.user.campusId = "different-campus"; },
-    (f: ReturnType<typeof fixture>) => { f.user.firstLoginRequired = true; },
-    (f: ReturnType<typeof fixture>) => { f.user.active = false; },
-    (f: ReturnType<typeof fixture>) => { f.profile.enabled = false; },
-    (f: ReturnType<typeof fixture>) => { f.profile.serverProfile.enabled = false; },
-    (f: ReturnType<typeof fixture>) => { f.workstation.userProfileId = "other-profile"; },
-    (f: ReturnType<typeof fixture>) => { f.profile.userId = "other-owner"; },
+  const changes: ((f: Fixture) => void)[] = [
+    (f: ReturnType<typeof fixture>): void => { f.workstation.active = false; },
+    (f: ReturnType<typeof fixture>): void => { f.workstation.tokenDigest = "new-generation"; },
+    (f: ReturnType<typeof fixture>): void => { f.user.authenticationVersion++; },
+    (f: ReturnType<typeof fixture>): void => { f.user.roles = ["ADMIN"]; },
+    (f: ReturnType<typeof fixture>): void => { f.user.campusId = "different-campus"; },
+    (f: ReturnType<typeof fixture>): void => { f.user.firstLoginRequired = true; },
+    (f: ReturnType<typeof fixture>): void => { f.user.active = false; },
+    (f: ReturnType<typeof fixture>): void => { f.profile.enabled = false; },
+    (f: ReturnType<typeof fixture>): void => { f.profile.serverProfile.enabled = false; },
+    (f: ReturnType<typeof fixture>): void => { f.workstation.userProfileId = "other-profile"; },
+    (f: ReturnType<typeof fixture>): void => { f.profile.userId = "other-owner"; },
   ];
   for (const change of changes) {
     const f = fixture(); f.beforeProfileLock(() => change(f));
@@ -115,19 +131,31 @@ test("valid machine identity without free-call permission cannot inspect any rec
   assert.equal(f.query(), undefined); assert.equal(f.audits.size, 0);
 });
 
+test("a campus override cannot elevate the global Commercial source grant", () => {
+  const principal = { userId: identity.userId, roles: ["ADMISSIONS" as const], scopes: [{ kind: "CAMPUS" as const, id: "synthetic-campus" }], sessionId: "synthetic-agent" };
+  const context = { campus: "synthetic-campus", active: true, own: true, team: false, campusAllowed: true, globalAllowed: false };
+  const target = { kind: "ROLE" as const, role: "ADMISSIONS" as const, campus: context.campus };
+  const campus: ConfigurationSnapshot = { ...target, id: configurationKey(target), version: 1, grants: { ...defaultConfiguration(target), "telephony.free-call.create": "CAMPUS" } };
+  assert.equal(evaluatePermission(principal, "telephony.free-call.create", [campus], context).allowed, false);
+  const globalTarget = { ...target, campus: "GLOBAL" };
+  const source: ConfigurationSnapshot = { ...globalTarget, id: configurationKey(globalTarget), version: 1, grants: { ...defaultConfiguration(globalTarget), "telephony.free-call.create": "CAMPUS" } };
+  assert.equal(evaluatePermission(principal, "telephony.free-call.create", [source, campus], context).allowed, true);
+  assert.equal(evaluatePermission(principal, "telephony.free-call.create", [source, { ...campus, grants: { ...campus.grants, "telephony.free-call.create": "NONE" } }], context).allowed, false);
+});
+
 test("absence, another actor/poste, lead calls and non-request events disclose no call IDs", async () => {
-  const changes = [
-    (f: ReturnType<typeof fixture>) => f.absent(),
-    (f: ReturnType<typeof fixture>) => { f.receipt.actorId = "other"; },
-    (f: ReturnType<typeof fixture>) => { f.call.createdBy = "other"; },
-    (f: ReturnType<typeof fixture>) => { f.command.workstationId = "other"; },
-    (f: ReturnType<typeof fixture>) => { f.call.leadId = "lead"; },
-    (f: ReturnType<typeof fixture>) => { f.call.provider = "MOCK"; },
-    (f: ReturnType<typeof fixture>) => { f.call.direction = "INBOUND"; },
-    (f: ReturnType<typeof fixture>) => { f.call.purposeCode = ""; },
-    (f: ReturnType<typeof fixture>) => { f.receipt.state = "ENDED"; },
-    (f: ReturnType<typeof fixture>) => { f.receipt.eventType = "COMPENSATION"; },
-    (f: ReturnType<typeof fixture>) => { f.call.agentCommand = null; },
+  const changes: ((f: Fixture) => void)[] = [
+    (f: ReturnType<typeof fixture>): void => f.absent(),
+    (f: ReturnType<typeof fixture>): void => { f.receipt.actorId = "other"; },
+    (f: ReturnType<typeof fixture>): void => { f.call.createdBy = "other"; },
+    (f: ReturnType<typeof fixture>): void => { f.command.workstationId = "other"; },
+    (f: ReturnType<typeof fixture>): void => { f.call.leadId = "lead"; },
+    (f: ReturnType<typeof fixture>): void => { f.call.provider = "MOCK"; },
+    (f: ReturnType<typeof fixture>): void => { f.call.direction = "INBOUND"; },
+    (f: ReturnType<typeof fixture>): void => { f.call.purposeCode = ""; },
+    (f: ReturnType<typeof fixture>): void => { f.receipt.state = "ENDED"; },
+    (f: ReturnType<typeof fixture>): void => { f.receipt.eventType = "COMPENSATION"; },
+    (f: ReturnType<typeof fixture>): void => { f.call.agentCommand = null; },
   ];
   for (const change of changes) {
     const f = fixture(); change(f);

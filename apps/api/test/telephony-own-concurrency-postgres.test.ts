@@ -2,13 +2,14 @@ import "reflect-metadata";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
+import type { TelephonyCall, TelephonyCallEvent, TelephonyAgentCommand } from "@prisma/client";
 import type { Principal } from "../src/auth/auth.types.js";
 import { PrismaService } from "../src/persistence/prisma.service.js";
 import { TelephonyAgentRepository } from "../src/telephony/telephony-agent.repository.js";
 import { callStates } from "../src/telephony/telephony.service.js";
 import { acquirePermissionFence } from "../src/permissions/permission-fence.js";
 import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
-import { configurationKey } from "../src/permissions/dynamic-contract.js";
+import { configurationKey, type Grants } from "../src/permissions/dynamic-contract.js";
 import { ownTelephonyFixture } from "./fixtures/telephony-own-fixture.js";
 
 const code = (expected: string): ((error: unknown) => boolean) => (error: unknown): boolean => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.()).includes(expected);
@@ -117,6 +118,7 @@ test("CRMY-176 two database connections serialize pairing, revocation, stale tok
 test("CRMY-176 reconciliation reads durable own receipts without delivery and serializes revocation", options, async () => {
   const f = await ownTelephonyFixture(); const otherPrisma = new PrismaService();
   const first = new TelephonyAgentRepository(f.prisma), second = new TelephonyAgentRepository(otherPrisma);
+  let restoreSource: (() => Promise<void>) | undefined;
   try {
     const admin = await f.db.collaborator.create({ data: { professionalEmail: `reconcile-admin-${f.suffix.toLowerCase()}@example.invalid`, professionalDisplayName: "Synthetic reconciliation administrator", roles: ["SUPER_ADMIN"], active: true, firstLoginRequired: false } });
     // Disposable, nonce-verified database only. No agent, SDK, poll or claim is run.
@@ -135,6 +137,30 @@ test("CRMY-176 reconciliation reads durable own receipts without delivery and se
     await assert.rejects(() => first.reconcileFreeCall(identity, { idempotencyKey: key }), code("telephony_agent_command_scope_forbidden"));
     const target = { kind: "ROLE" as const, role: "ADMISSIONS" as const, campus: f.firstCampus.id };
     const grants = { ...defaultConfiguration(target), "telephony.free-call.create": "CAMPUS" };
+    // Campus grants restrict an existing global role delegation; they cannot
+    // elevate the default ADMISSIONS source NONE. Preserve and version both.
+    const sourceTarget = { ...target, campus: "GLOBAL" };
+    let previousSource: Grants = defaultConfiguration(sourceTarget);
+    await f.db.$transaction(async (tx) => {
+      await acquirePermissionFence(tx, "write");
+      const current = await tx.rolePermissionConfiguration.findUnique({ where: { id: configurationKey(sourceTarget) }, include: { versions: { include: { grants: true } } } });
+      if (current) {
+        const latest = current.versions.find(version => version.number === current.version);
+        assert.ok(latest);
+        previousSource = Object.fromEntries(latest.grants.map(grant => [grant.permission, grant.scope])) as Grants;
+      }
+      const version = (current?.version ?? 0) + 1;
+      const next = { ...previousSource, "telephony.free-call.create": "CAMPUS" };
+      const versions = { create: { number: version, grants: { create: Object.entries(next).map(([permission, scope]) => ({ permission, scope })) } } };
+      await tx.rolePermissionConfiguration.upsert({ where: { id: configurationKey(sourceTarget) },
+        create: { id: configurationKey(sourceTarget), ...sourceTarget, version, versions }, update: { version, versions } });
+    });
+    restoreSource = (): Promise<void> => f.db.$transaction(async (tx) => {
+      await acquirePermissionFence(tx, "write");
+      const current = await tx.rolePermissionConfiguration.findUniqueOrThrow({ where: { id: configurationKey(sourceTarget) } });
+      await tx.rolePermissionConfiguration.update({ where: { id: current.id, version: current.version }, data: { version: current.version + 1,
+        versions: { create: { number: current.version + 1, grants: { create: Object.entries(previousSource).map(([permission, scope]) => ({ permission, scope })) } } } } });
+    });
     await f.db.$transaction(async (tx) => {
       await acquirePermissionFence(tx, "write");
       await tx.rolePermissionConfiguration.create({ data: { id: configurationKey(target), ...target, version: 1,
@@ -143,7 +169,7 @@ test("CRMY-176 reconciliation reads durable own receipts without delivery and se
     const unknown = { idempotencyKey: key, workstationId: workstation.id, profileId: f.profile.id, outcome: "UNKNOWN" };
     assert.deepEqual(await first.reconcileFreeCall(identity, { idempotencyKey: key }), unknown);
     assert.equal(await f.db.telephonyAgentCommand.count({ where: { workstationId: workstation.id } }), 0);
-    const makeCall = (receiptKey: string, owner: string, station: string) => f.db.telephonyCall.create({ data: {
+    const makeCall = (receiptKey: string, owner: string, station: string): Promise<TelephonyCall> => f.db.telephonyCall.create({ data: {
       provider: "LINPHONE", externalId: randomUUID(), direction: "OUTBOUND", state: "REQUESTED", createdBy: owner,
       purposeCode: "PARTNER", phoneFingerprint: "0".repeat(64), maskedPhone: "***000", requestedAt: new Date(),
       events: { create: { idempotencyKey: receiptKey, eventType: "STATE", state: "REQUESTED", actorId: owner, occurredAt: new Date() } },
@@ -156,7 +182,7 @@ test("CRMY-176 reconciliation reads durable own receipts without delivery and se
       assert.deepEqual(await first.reconcileFreeCall(identity, { idempotencyKey: foreignKey }), { ...unknown, idempotencyKey: foreignKey });
     }
     // The expired timestamp alone does not mutate or classify the command EXPIRED.
-    const state = async () => ({
+    const state = async (): Promise<{ calls: TelephonyCall[]; events: TelephonyCallEvent[]; commands: TelephonyAgentCommand[] }> => ({
       calls: await f.db.telephonyCall.findMany({ where: { id: { in: [call.id, foreignCall.id, otherPosteCall.id] } }, orderBy: { id: "asc" } }),
       events: await f.db.telephonyCallEvent.findMany({ where: { callId: { in: [call.id, foreignCall.id, otherPosteCall.id] } }, orderBy: { id: "asc" } }),
       commands: await f.db.telephonyAgentCommand.findMany({ where: { callId: { in: [call.id, foreignCall.id, otherPosteCall.id] } }, orderBy: { id: "asc" } }),
@@ -182,7 +208,7 @@ test("CRMY-176 reconciliation reads durable own receipts without delivery and se
     await f.db.telephonyAgentCommand.update({ where: { callId: call.id }, data: { claimedAt: new Date() } });
     await observe("UNCERTAIN");
     // Withdrawing the effective permission prevents even a previously safe lookup.
-    const changeGrant = (scope: "NONE" | "CAMPUS") => f.db.$transaction(async (tx) => {
+    const changeGrant = (scope: "NONE" | "CAMPUS"): Promise<void> => f.db.$transaction(async (tx) => {
       await acquirePermissionFence(tx, "write");
       const previous = await tx.rolePermissionConfiguration.findUniqueOrThrow({ where: { id: configurationKey(target) } });
       await tx.rolePermissionConfiguration.update({ where: { id: previous.id }, data: { version: previous.version + 1,
@@ -198,12 +224,15 @@ test("CRMY-176 reconciliation reads durable own receipts without delivery and se
       first.revokeWorkstation(workstation.id, principal),
       second.reconcileFreeCall(identity, { idempotencyKey: key }),
     ]);
-    assert.equal(race[0]!.status, "fulfilled");
-    if (race[1]!.status === "fulfilled") assert.equal(race[1]!.value.outcome, "TERMINAL");
-    else assert.ok(code("telephony_agent_authentication_refused")(race[1]!.reason));
+    assert.equal(race[0].status, "fulfilled");
+    if (race[1].status === "fulfilled") assert.equal(race[1].value.outcome, "TERMINAL");
+    else assert.ok(code("telephony_agent_authentication_refused")(race[1].reason));
     await assert.rejects(() => second.reconcileFreeCall(identity, { idempotencyKey: key }), code("telephony_agent_authentication_refused"));
     await assert.rejects(() => second.authenticate(token), code("telephony_agent_authentication_refused"));
     const audits = await f.db.auditEvent.findMany({ where: { resourceId: f.profile.id, eventType: "TELEPHONY_INTENT_RECONCILED" } });
     for (const audit of audits) for (const excluded of [key, token, "destinationCiphertext", "phoneFingerprint"]) assert.equal(JSON.stringify(audit).includes(excluded), false);
-  } finally { await otherPrisma.onModuleDestroy(); await f.prisma.onModuleDestroy(); }
+  } finally {
+    try { await restoreSource?.(); }
+    finally { await otherPrisma.onModuleDestroy(); await f.prisma.onModuleDestroy(); }
+  }
 });
