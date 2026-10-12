@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BootstrapWizard } from "../app/imports/bootstrap/bootstrap-wizard.js";
 import { BootstrapMapping } from "../app/imports/bootstrap/bootstrap-mapping.js";
+import { BootstrapMetadataQuarantineView } from "../app/imports/bootstrap/bootstrap-metadata-quarantine.js";
 import { BootstrapRowReview } from "../app/imports/bootstrap/bootstrap-row-review.js";
 import { HistoricalNotesList } from "../app/imports/bootstrap/historical-notes.js";
 import { LeadProfileView, type LeadProfileRecord } from "../app/leads/[leadId]/lead-profile.js";
@@ -14,6 +15,15 @@ const campusId = "00000000-0000-4000-8000-000000000061";
 const source: BootstrapPackage = { id: "00000000-0000-4000-8000-000000000062", fileName: "synthetic.xlsx", sizeBytes: 100, sha256: "a".repeat(64), campusId, state: "MAPPED", version: 3, receivedChunks: 1, expectedChunks: 1,
   sheets: [{ name: "VISITES ET APPELS", relationId: "rId1", rowCount: 2, columns: [{ letter: "A", name: "Nom" }] }], counts: { total: 2, accepted: 0, review: 1, invalid: 0, ignored: 0, pending: 1 } };
 const context: BootstrapContext = { campuses: [{ id: campusId, label: "Campus synthétique", code: "SYNTHETIC", canUpload: true, canMap: true, canDecide: true, canConfirm: true }], owners: [], programs: [], campaigns: [], educationLevels: ["B1"], sources: ["OTHER"], statuses: ["PROSPECT", "ENROLLED"], canUpload: true, canMap: true, canDecide: true, canConfirm: true };
+
+test("header metadata quarantine is escaped, visibly separate from Leads, and offers no import decision", () => {
+  assert.equal(renderToStaticMarkup(createElement(BootstrapMetadataQuarantineView, { items: [] })), "");
+  const html = renderToStaticMarkup(createElement(BootstrapMetadataQuarantineView, { items: [{ key: "b".repeat(64), sourceSha256: "a".repeat(64), sheet: "LEADS YNOV.MA", relationId: "rId3", disposition: "HEADER_METADATA_QUARANTINE", reason: "Métadonnée conservée sans interaction", annotation: { annotationId: "header1", relationshipId: "legacy", reference: "U6", text: "  Texte exact\n<script>ne_pas_exécuter</script>  ", author: null } }] }));
+  assert.match(html, /Hors population Lead/u); assert.match(html, /quarantaine documentaire reste ouverte/u);
+  assert.match(html, /cellule U6/u); assert.match(html, /auteur source inconnu/u); assert.match(html, /date source inconnue/u);
+  assert.ok(html.includes("  Texte exact\n&lt;script&gt;ne_pas_exécuter&lt;/script&gt;  "));
+  assert.doesNotMatch(html, /<script>|<button|<input/u);
+});
 
 test("bootstrap narrow header gives the readable secondary action its own full-width row without hiding overflow", () => {
   const css = readFileSync(new URL("../app/imports/bootstrap/bootstrap.css", import.meta.url), "utf8");
