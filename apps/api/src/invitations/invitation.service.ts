@@ -9,8 +9,8 @@ import { DynamicPermissionRepository } from "../permissions/dynamic-repository.j
 import { currentPrincipal, campusContext, permissionDenied } from "../permissions/dynamic-context.js";
 import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { GLOBAL_CAMPUS } from "../permissions/dynamic-contract.js";
+import { INVITATION_LIFETIME_MS } from "./invitation-policy.js";
 
-const LIFETIME_MS = 20 * 60_000;
 const MAX_PER_HOUR = 3;
 const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
 const acceptable = (value: string): boolean => value.length >= 14 && value.length <= 128 && /[a-z]/.test(value) && /[A-Z]/.test(value) && /[0-9]/.test(value) && /[^a-zA-Z0-9]/.test(value) && !/\s/.test(value);
@@ -36,7 +36,7 @@ export class InvitationService {
       const recent = await tx.localAccessInvitation.count({ where: { collaboratorId, createdAt: { gt: new Date(now.getTime() - 3_600_000) } } });
       if (recent >= MAX_PER_HOUR) throw new ConflictException({ code: "invitation_rate_limited" });
       await tx.localAccessInvitation.updateMany({ where: { collaboratorId, state: { in: ["PENDING", "SENT", "SEND_UNCONFIRMED"] } }, data: { state: "REVOKED" } });
-      const created = await tx.localAccessInvitation.create({ data: { collaboratorId, linkDigest: digest(raw), state: "PENDING", expiresAt: new Date(now.getTime() + LIFETIME_MS) } });
+      const created = await tx.localAccessInvitation.create({ data: { collaboratorId, linkDigest: digest(raw), state: "PENDING", expiresAt: new Date(now.getTime() + INVITATION_LIFETIME_MS) } });
       await tx.auditEvent.create({ data: { eventType: "ACCESS_INVITATION_REQUESTED", actorId: current.userId, actorRoles: current.roles, resourceType: "COLLABORATOR", resourceId: collaboratorId, correlationId: created.id, result: "SUCCESS", idempotencyKey: `access-invitation-requested:${created.id}`, after: { invitationId: created.id } } });
       return { id: created.id, recipient: user.professionalEmail };
     });
