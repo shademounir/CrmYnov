@@ -38,26 +38,31 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
   const campus = await reference("CAMPUS", `SYNTHETIC61-${marker}`); const otherCampus = await reference("CAMPUS", `OTHER61-${marker}`);
   const program = await reference("PROGRAM", `PROGRAM61-${marker}`); const campaign = await reference("CAMPAIGN", `CAMPAIGN61-${marker}`);
   await client.crmProgramAvailability.create({ data: { programId: program.id, campusId: campus.id } });
-  const account = async (role: string, campusId: string): Promise<{ id: string; email: string; password: string }> => {
+  const account = async (role: string, campusId: string, firstLoginRequired = false): Promise<{ id: string; email: string; password: string }> => {
     const password = `Synthetic61!${randomBytes(12).toString("hex")}`; const email = `${role.toLowerCase()}-${marker.toLowerCase()}-${randomUUID().slice(0, 6)}@example.invalid`; const salt = randomBytes(16).toString("hex");
-    const user = await client.collaborator.create({ data: { professionalEmail: email, professionalDisplayName: `Recette ${role}`, roles: [role], campusId, active: true, firstLoginRequired: false } });
-    await client.localPasswordHash.create({ data: { collaboratorId: user.id, identityDigest: digestRecoveryValue(email), passwordSalt: salt, passwordDigest: deriveSecret(password, salt), mustChange: false } });
+    const user = await client.collaborator.create({ data: { professionalEmail: email, professionalDisplayName: `Recette ${role}`, roles: [role], campusId, active: true, firstLoginRequired } });
+    await client.localPasswordHash.create({ data: { collaboratorId: user.id, identityDigest: digestRecoveryValue(email), passwordSalt: salt, passwordDigest: deriveSecret(password, salt), mustChange: firstLoginRequired } });
     return { id: user.id, email, password };
   };
-  const admin = await account("SUPER_ADMIN", campus.id); const adviser = await account("ADMISSIONS", campus.id); const outsider = await account("ADMIN", otherCampus.id); const secondAdmin = await account("ADMIN", campus.id);
+  const admin = await account("SUPER_ADMIN", campus.id); const adviser = await account("ADMISSIONS", campus.id, true); const outsider = await account("ADMIN", otherCampus.id); const secondAdmin = await account("ADMIN", campus.id);
+  const inactiveOwner = await account("ADMISSIONS", campus.id, true); await client.collaborator.update({ where: { id: inactiveOwner.id }, data: { active: false } });
+  const readerOwner = await account("AUDITOR", campus.id, true);
   const app = await createApplication(); await app.listen(0, "127.0.0.1");
   try {
     const origin = await app.getUrl();
-    const login = async (user: { email: string; password: string }): Promise<{ token: string; sessionId: string }> => {
+    const login = async (user: { email: string; password: string }, mustChangeSecret = false): Promise<{ token: string; sessionId: string }> => {
       const response = await fetch(`${origin}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(user) });
-      assert.equal(response.status, 201); const data = await response.json() as { token: string; sessionId: string; mustChangeSecret: boolean }; assert.equal(data.mustChangeSecret, false); return data;
+      assert.equal(response.status, 201); const data = await response.json() as { token: string; sessionId: string; mustChangeSecret: boolean }; assert.equal(data.mustChangeSecret, mustChangeSecret); return data;
     };
-    const auth = await login(admin); const adviserAuth = await login(adviser); const outsiderAuth = await login(outsider); const secondAuth = await login(secondAdmin);
+    const auth = await login(admin); let adviserAuth = await login(adviser, true); const outsiderAuth = await login(outsider); const secondAuth = await login(secondAdmin);
     const request = async (path: string, method = "GET", body?: unknown, token = auth.token): Promise<Response> => fetch(`${origin}/lead-import/bootstrap${path}`, {
       method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const success = async <T>(response: Response, expected = 201): Promise<T> => { assert.equal(response.status, expected, `unexpected HTTP status ${response.status}`); return response.json() as Promise<T>; };
-    const context = await success<{ campuses: Array<{ id: string }>; owners: Array<{ id: string }> }>(await request("/context"), 200);
+    const context = await success<{ campuses: Array<{ id: string }>; owners: Array<{ id: string; label: string; firstLoginRequired: boolean }> }>(await request("/context"), 200);
     assert.ok(context.campuses.some((row) => row.id === campus.id)); assert.ok(context.owners.some((row) => row.id === adviser.id));
+    assert.equal(context.owners.find((row) => row.id === adviser.id)!.firstLoginRequired, true);
+    assert.match(context.owners.find((row) => row.id === adviser.id)!.label, /premier accès en attente/u);
+    assert.ok(!context.owners.some((row) => [inactiveOwner.id, readerOwner.id].includes(row.id)));
     const swagger = await fetch(`${origin}/docs-json`); assert.equal(swagger.status, 200); const documented = await swagger.json() as { paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } };
     assert.equal(Object.keys(documented.paths).filter((path) => path.startsWith("/lead-import/bootstrap/")).length, 12); assert.ok(documented.components.schemas.BootstrapDecision); assert.ok(documented.components.schemas.BootstrapReopen);
     const parts = syntheticHistoricalParts(); for (const part of parts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code);
@@ -80,6 +85,9 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     const first = rows.items[0]!; const second = rows.items[1]!; const third = rows.items[2]!; const fourth = rows.items[3]!;
     const decide = async (row: Row, action: string, targetLeadId?: string): Promise<Row> => success<Row>(await request(`/packages/${pack.id}/rows/${row.id}/decision`, "POST", {
       expectedVersion: row.version, idempotencyKey: `decision-${marker}-${row.id}`, action, reason: "Résolution explicite du dossier synthétique", ...(targetLeadId ? { targetLeadId } : {}) }));
+    for (const ownerId of [inactiveOwner.id, readerOwner.id, outsider.id]) {
+      assert.equal((await request(`/packages/${pack.id}/rows/${first.id}/decision`, "POST", { expectedVersion: first.version, idempotencyKey: `invalid-owner-${marker}-${ownerId}`, action: "CREATE_DOSSIER", reason: "Interdire une affectation désactivée ou hors périmètre", overrides: { ownerId } })).status, 403);
+    }
     await decide(first, "CREATE_DOSSIER");
     const ownedReady = await success<{ items: Row[] }>(await request(`/packages/${pack.id}/rows`), 200); assert.equal(ownedReady.items.find((item) => item.id === first.id)!.canReopen, true);
     const foreignReady = await success<{ items: Row[] }>(await request(`/packages/${pack.id}/rows`, "GET", undefined, secondAuth.token), 200); assert.equal(foreignReady.items.find((item) => item.id === first.id)!.canReopen, false);
@@ -112,6 +120,15 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     pack = await success<Package>(await request(`/packages/${pack.id}`), 200); assert.equal(pack.counts.accepted, 1);
     const committed = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: first.id } }); assert.ok(committed.leadId);
     const leadId = committed.leadId; const lead = await client.lead.findUniqueOrThrow({ where: { id: leadId } });
+    assert.equal(lead.assignedToId, adviser.id, "portfolio assigned before first activation");
+    assert.equal((await client.collaborator.findUniqueOrThrow({ where: { id: adviser.id } })).firstLoginRequired, true);
+    assert.equal(await client.localAccessInvitation.count({ where: { collaboratorId: adviser.id } }), 0, "import sends no invitation");
+    assert.equal((await request(`/leads/${leadId}/notes`, "GET", undefined, adviserAuth.token)).status, 403);
+    const changedPassword = `Synthetic-New!9${randomBytes(20).toString("hex")}`;
+    const activation = await fetch(`${origin}/first-login/change-secret`, { method: "POST", headers: { authorization: `Bearer ${adviserAuth.token}`, "content-type": "application/json" }, body: JSON.stringify({ currentSecret: adviser.password, nextSecret: changedPassword }) });
+    assert.equal(activation.status, 201);
+    adviserAuth = await login({ email: adviser.email, password: changedPassword });
+    assert.equal((await client.lead.findUniqueOrThrow({ where: { id: leadId } })).assignedToId, adviser.id);
     const existingCollision = await request(`/packages/${pack.id}/rows/${third.id}/decision`, "POST", { expectedVersion: third.version, idempotencyKey: `existing-contact-${marker}`, action: "CREATE_DOSSIER", reason: "Contact présent ne signifie pas fusion automatique du dossier" });
     assert.equal(existingCollision.status, 422); assert.deepEqual(await existingCollision.json(), { code: "bootstrap_contact_reconciliation_required" });
     assert.equal(lead.acquisitionKind, "BASELINE"); assert.equal(lead.baselineTemperature, "COLD"); assert.equal(lead.assignedToId, adviser.id);
