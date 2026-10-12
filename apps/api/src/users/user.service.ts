@@ -75,7 +75,7 @@ export class UserService implements OnModuleInit {
   create(input: CreateCollaborator, actorId: string, correlationId: string): Collaborator {
     const { displayName, email } = validateCreation(input);
     if ([...this.users.values()].some((user) => user.professionalEmail === email)) throw new ConflictException({ code: "professional_email_exists" });
-    const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles, campusId: input.campusId, teamId: input.teamId, active: true, authenticationVersion: 1, firstLoginRequired: true };
+    const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles as Role[], campusId: input.campusId, teamId: input.teamId, active: true, authenticationVersion: 1, firstLoginRequired: true };
     this.users.set(user.id, user);
     this.sessions.updateIdentityState(user.id, true, user.authenticationVersion);
     const client = this.prisma?.client;
