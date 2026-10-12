@@ -293,7 +293,7 @@ resource "google_cloud_run_v2_service" "api" {
       image = var.api_image
       ports { container_port = 3001 }
       resources {
-        limits   = { cpu = "1", memory = "512Mi" }
+        limits   = { cpu = "1", memory = var.api_memory }
         cpu_idle = true
       }
       dynamic "env" {

@@ -33,6 +33,15 @@ variable "api_image" {
     error_message = "API images must be immutable; tags are forbidden."
   }
 }
+variable "api_memory" {
+  description = "Reviewed API memory tier only; Web/jobs and scaling bounds remain unchanged."
+  type        = string
+  default     = "512Mi"
+  validation {
+    condition     = contains(["512Mi", "1Gi"], var.api_memory)
+    error_message = "Only the bounded pilot API tiers 512Mi and 1Gi are supported."
+  }
+}
 variable "web_image" {
   type    = string
   default = ""
