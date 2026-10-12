@@ -78,6 +78,25 @@ test("reissue revokes the older invitation and the new one can be used", async (
   assert.deepEqual(await state.service.complete(state.code(), "Synthetic-Password-2026!"), { completed: true });
 });
 
+test("invitations remain usable until 72 hours, with an exclusive expiry boundary", async (t) => {
+  const now = new Date("2026-10-12T12:00:00.000Z");
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const valid = fixture();
+  const expired = fixture();
+  await valid.service.issue(userId, actor);
+  await expired.service.issue(userId, actor);
+  assert.equal(valid.rows[0]!.expiresAt.toISOString(), "2026-10-15T12:00:00.000Z");
+  t.mock.timers.tick(72 * 60 * 60_000 - 1);
+  assert.deepEqual(await valid.service.complete(valid.code(), "Synthetic-Password-2026!"), { completed: true });
+  t.mock.timers.tick(1);
+  await assert.rejects(expired.service.complete(expired.code(), "Synthetic-Password-2026!"), (error: ConflictException) => {
+    assert.equal((error.getResponse() as { code: string }).code, "invitation_expired");
+    return true;
+  });
+  assert.equal(expired.passwordUpdates, 0);
+  assert.equal(expired.user.firstLoginRequired, true);
+});
+
 test("expired and failed-delivery invitations never activate a user", async () => {
   const expired = fixture();
   await expired.service.issue(userId, actor);

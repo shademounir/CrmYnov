@@ -19,7 +19,7 @@ export function InvitationForm({ collaboratorId, email, eligible }: Readonly<{ c
 
   return <section className="users-card" aria-labelledby="invitation-title">
     <h2 id="invitation-title">Invitation par e-mail</h2>
-    <p>Le lien est personnel, à usage unique et expire après 20 minutes. Ouvrir le message ne l’utilise pas.</p>
+    <p>Le lien est personnel, à usage unique et expire après 72 heures. Ouvrir le message ne l’utilise pas.</p>
     <p>Destinataire : <strong>{email || "Sélectionnez un compte"}</strong></p>
     {collaboratorId && !eligible ? <p role="note">Ce compte est désactivé ou son premier accès est déjà terminé. Aucune invitation n’est envoyée.</p> : null}
     <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> Confirmer l’envoi ou la réémission à cette adresse.</label>
