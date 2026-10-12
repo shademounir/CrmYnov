@@ -84,6 +84,52 @@ SDK ; elle n'est pas certifiée par l'opérateur.
 
 ## Paquet pilote, mise à jour et retour arrière
 
+### Maintenance du profil — lot de protection
+
+La passerelle configurée est conservée à l'identique (origine, port et chemin).
+L'interface affiche son URL HTTPS, sans classer tous les hôtes Cloud Run comme
+DEV. Une autre casse du chemin de passerelle compte comme une autre destination :
+elle ne reprend pas silencieusement les credentials. Le client refuse les URL
+avec identifiants, paramètres ou fragment et ne suit pas les redirections HTTP.
+
+Réassocier le poste ou modifier son secret refuse l'opération pendant un appel
+SDK actif. Les événements non acquittés dans le journal bloquent également la
+maintenance, y compris après redémarrage. Le profil et le journal sont conservés.
+Une commande déjà reçue durant l'arrêt de maintenance n'est pas composée ; son
+refus est journalisé. Reconnecter ensuite le poste demeure une action explicite.
+La garde couvre toute la mutation asynchrone (association incluse) ; Connecter,
+le protocole et une seconde mutation ne peuvent pas la lever. Une demande CRM
+déjà en vol fait refuser la maintenance sans interrompre sa requête.
+
+Avant la création d'un appel manuel, le journal conserve une intention opaque
+(sans numéro ni secret). Elle est résolue après reçu/traitement de la commande ou
+refus HTTP déterministe. Un timeout, une réponse invalide ou un résultat serveur
+incertain conserve cette intention après redémarrage et bloque nouvelle demande
+et modification du profil : le reçu doit être rapproché avant déblocage, sans
+rejeu automatique ni effacement du journal. Ce lot n'ajoute pas encore l'écran
+de résolution de cette réserve. Ne pas revenir à un agent antérieur qui ignore
+ces intentions pendant qu'une telle incertitude existe.
+
+Les commandes CLI utilisant le profil acquièrent la même exclusion d'instance
+que l'interface. `pair` et `configure-secret` refusent aussi un journal non
+acquitté ; elles ne constituent pas un contournement de l'interface ouverte.
+
+Ce lot ne supprime pas encore le profil SIP et ne constitue pas une révocation
+serveur. Le retrait complet exige un reçu serveur sûr, idempotent, lié au poste
+et à sa génération, puis une désinscription SDK confirmée avant retrait des seuls
+credentials locaux. Un simple HTTP 401/403 ou une panne réseau ne prouve pas cette
+révocation. Ne pas effacer manuellement le journal pour contourner la garde.
+
+Les extensions internes et l'autorisation d'appels internationaux hors Maroc
+restent hors de ce correctif. Elles requièrent un contrat de destination typé et
+des permissions serveur : aucun élargissement implicite de la validation actuelle.
+
+`scripts/telephony-agent/test-maintenance-policy.ps1` compile les politiques
+managed et les teste sans SDK, réseau, profil réel ou microphone. Le `self-test`
+du binaire teste aussi le refus réel de maintenance sur journal synthétique et
+le blocage du protocole/composer pendant maintenance. Ces preuves ne certifient
+ni la désinscription SIP, ni l'audio, ni l'installateur non signé.
+
 `scripts/telephony-agent/package-windows-agent.ps1` produit un paquet autonome
 `win-x64`, son manifeste SHA-256 et une archive des sources de l’agent. Le
 paquet reste utilisable en mode portable : extraire chaque version dans un

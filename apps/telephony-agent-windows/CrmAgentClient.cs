@@ -9,9 +9,9 @@ internal sealed class CrmAgentClient : IDisposable
     private string? token;
     public CrmAgentClient(string apiBaseUrl, string? token = null)
     {
-        var endpoint = new Uri(apiBaseUrl.EndsWith('/') ? apiBaseUrl : apiBaseUrl + "/");
-        if (endpoint.Scheme != Uri.UriSchemeHttps && !(endpoint.Scheme == Uri.UriSchemeHttp && (endpoint.IsLoopback || endpoint.Host == "host.docker.internal"))) throw new InvalidOperationException("API_TLS_REQUIRED");
-        http = new HttpClient { BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(10) }; this.token = token;
+        var endpoint = new Uri(AgentEndpointPolicy.Normalize(apiBaseUrl));
+        // Never forward the agent token across a redirect to a different origin.
+        http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(10) }; this.token = token;
     }
     public async Task<PairResponse> PairAsync(PairRequest request, CancellationToken cancellation)
     {

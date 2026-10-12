@@ -186,8 +186,9 @@ internal sealed class MainForm : Form
         pairingCode = Field(""); pairingCode.UseSystemPasswordChar = true; pairingCode.AccessibleName = "Code d’association temporaire";
         workstationName = Field(Environment.MachineName); workstationName.AccessibleName = "Nom du poste";
         var form = FormStack();
-        form.Controls.Add(SectionTitle("Associer mon compte CRM", "Vérifiez l’adresse de l’environnement puis saisissez le code temporaire fourni dans l’administration Téléphonie."));
-        form.Controls.Add(Labeled("Adresse du CRM", crmAddress));
+        form.Controls.Add(SectionTitle("Associer mon compte CRM", "Depuis Mon compte · Téléphonie, relevez la passerelle HTTPS et générez votre code personnel temporaire. Votre extension reste attribuée par l’administration."));
+        form.Controls.Add(Labeled("Passerelle HTTPS de l’agent (URL complète)", crmAddress));
+        form.Controls.Add(InfoBox("Adresse exacte", "Recopiez la passerelle affichée par le CRM, y compris /agent/ lorsqu’il est présent. Aucun environnement n’est déduit du nom de domaine et aucun basculement automatique n’est effectué."));
         form.Controls.Add(InfoBox("Changement d’environnement", "Une autre origine exige une nouvelle association. Le jeton, le secret SIP et les périphériques de l’ancien profil ne sont jamais transférés automatiquement."));
         form.Controls.Add(Labeled("Code d’association", pairingCode));
         form.Controls.Add(Labeled("Nom de ce poste", workstationName));
@@ -302,7 +303,10 @@ internal sealed class MainForm : Form
         profileStack.Controls.Add(SummaryRow("Sortie", DeviceLabel(snapshot.OutputDeviceId, false)));
         var profileActions = ButtonRow();
         var modify = ActionButton("Modifier", false); modify.Click += async (_, _) => { wizardVisible = true; wizardStep = 3; Render(); await EnsureAudioForViewAsync(); };
-        var reassociate = ActionButton("Réassocier", false); reassociate.Click += async (_, _) => { await runtime.StopAsync(); wizardVisible = true; wizardStep = 0; Render(); };
+        var reassociate = ActionButton("Réassocier", false); reassociate.Click += async (_, _) => {
+            try { await runtime.StopForMaintenanceAsync(); wizardVisible = true; wizardStep = 0; Render(); }
+            catch (Exception error) { ShowFeedback(HumanError(error), true); }
+        };
         connectButton = ActionButton("Connecter", true); connectButton.Click += async (_, _) => await ConnectAsync();
         disconnectButton = ActionButton("Déconnecter", false); disconnectButton.Click += async (_, _) => await DisconnectAsync();
         var quit = ActionButton("Quitter", false); quit.Click += async (_, _) => { allowClose = true; await runtime.StopAsync(); tray.Visible = false; Close(); };
@@ -411,8 +415,9 @@ internal sealed class MainForm : Form
         if (crmAddress is null || pairingCode is null || workstationName is null || string.IsNullOrWhiteSpace(crmAddress.Text) || string.IsNullOrWhiteSpace(pairingCode.Text) || string.IsNullOrWhiteSpace(workstationName.Text)) { ShowFeedback("Renseignez l’adresse CRM, le code d’association et le nom du poste.", true); return; }
         try
         {
-            await runtime.StopAsync();
-            await setup.PairAsync(crmAddress.Text, pairingCode.Text, workstationName.Text, CancellationToken.None);
+            await runtime.WithProfileMaintenanceAsync(async () => {
+                await setup.PairAsync(crmAddress.Text, pairingCode.Text, workstationName.Text, CancellationToken.None);
+            });
             pairingCode.Clear(); wizardStep = 1; ShowFeedback("Poste associé. Vérifiez maintenant le profil attribué.", false); Render();
         }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
@@ -423,7 +428,11 @@ internal sealed class MainForm : Form
         try
         {
             if (sipPassword is null) return;
-            setup.ConfigureSecret(sipPassword.Text); sipPassword.Clear();
+            await runtime.WithProfileMaintenanceAsync(() => {
+                setup.ConfigureSecret(sipPassword.Text);
+                return Task.CompletedTask;
+            });
+            sipPassword.Clear();
             await runtime.ResetAudioAsync(); wizardStep = 3;
             ShowFeedback("Mot de passe téléphonique protégé par Windows sur ce poste.", false); Render();
         }
@@ -592,14 +601,20 @@ internal sealed class MainForm : Form
     private void RestoreWindow() { Show(); WindowState = FormWindowState.Normal; Activate(); }
     private void ShowFeedback(string message, bool error) { feedback.Text = message; feedback.ForeColor = error ? Danger : Success; }
 
-    private static string HumanError(Exception error) => error switch {
+    internal static string HumanError(Exception error) => error switch {
         HttpRequestException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden } => "Le code ou l’autorisation du poste a été refusé. Demandez un nouveau code à l’administration.",
         HttpRequestException { StatusCode: HttpStatusCode.Conflict } => "Ce profil est déjà associé à un autre poste actif. L’administration doit d’abord vérifier cette association.",
+        HttpRequestException http when http.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int?)http.StatusCode >= 500 => "Le résultat CRM est incertain. Ne répétez pas la demande ; faites rapprocher son reçu et conservez le journal local.",
         HttpRequestException http when http.StatusCode is not null => "Le CRM a refusé la demande. Vérifiez les informations saisies avant de recommencer.",
-        HttpRequestException => "Le CRM est momentanément injoignable. La configuration locale est conservée.",
+        HttpRequestException or TaskCanceledException or System.Text.Json.JsonException => "La réponse CRM n’a pas pu être confirmée. Ne répétez pas la demande ; la configuration et le journal locaux sont conservés pour vérification.",
         InvalidOperationException invalid when invalid.Message == "AGENT_NOT_PAIRED" => "Associez d’abord ce poste au CRM.",
         InvalidOperationException invalid when invalid.Message == "SIP_SECRET_MISSING" => "Enregistrez d’abord le mot de passe téléphonique sur ce poste.",
         InvalidOperationException invalid when invalid.Message == "SIP_SECRET_EMPTY" => "Le mot de passe téléphonique ne peut pas être vide.",
+        InvalidOperationException invalid when invalid.Message == "PROFILE_MAINTENANCE_CALL_ACTIVE" => "Terminez l’appel avant de modifier ou réassocier le profil. L’appel en cours est conservé.",
+        InvalidOperationException invalid when invalid.Message == "PROFILE_MAINTENANCE_PENDING_EVENTS" => "Attendez la confirmation des événements CRM avant de modifier le profil. Le journal est conservé.",
+        InvalidOperationException invalid when invalid.Message == "PROFILE_MAINTENANCE_IN_PROGRESS" => "La configuration du profil est en cours. Reconnectez explicitement le poste une fois terminée.",
+        InvalidOperationException invalid when invalid.Message == "PROFILE_MAINTENANCE_COMMAND_PENDING" => "Une commande CRM est en cours de vérification. Attendez son résultat avant de modifier le profil.",
+        InvalidOperationException invalid when invalid.Message is "FREE_CALL_RESULT_UNCERTAIN" or "AGENT_COMMAND_INVALID" or "AGENT_COMMAND_MISSING" => "Le résultat d’une demande précédente reste incertain. La nouvelle demande est bloquée ; faites rapprocher le reçu par le support sans effacer le journal. La lecture du reçu seule ne débloque pas le poste.",
         InvalidOperationException invalid when invalid.Message == "CRM_ADDRESS_INVALID" => "L’adresse CRM doit être une URL complète, sans identifiant, paramètre ni fragment.",
         InvalidOperationException invalid when invalid.Message == "API_TLS_REQUIRED" => "Utilisez une adresse HTTPS. HTTP est autorisé uniquement pour une recette locale sur ce PC.",
         InvalidOperationException invalid when invalid.Message is "AUDIO_DEVICE_UNAVAILABLE" or "AUDIO_INPUT_UNAVAILABLE" or "AUDIO_OUTPUT_UNAVAILABLE" => "Le périphérique sélectionné n’est plus disponible. Actualisez la liste et choisissez un périphérique connecté.",
@@ -612,7 +627,7 @@ internal sealed class MainForm : Form
         InvalidOperationException invalid when invalid.Message == "AUDIO_CAPTURE_RESTART_REQUIRED" => "Windows n’a pas libéré le microphone en toute sécurité. Quittez puis relancez l’agent avant un nouvel essai ou appel.",
         InvalidOperationException invalid when invalid.Message.StartsWith("AUDIO_CAPTURE_", StringComparison.Ordinal) => "Le niveau du microphone ne peut pas être mesuré sur ce périphérique. Actualisez la liste, sélectionnez explicitement le micro puis réessayez.",
         InvalidOperationException invalid when invalid.Message is "AUDIO_PLAYER_UNAVAILABLE" or "AUDIO_TEST_FILE_MISSING" => "Le son de test n’a pas pu être envoyé vers la sortie choisie. Actualisez les périphériques puis réessayez.",
-        _ => "L’opération n’a pas pu être confirmée. Aucun appel n’a été lancé.",
+        _ => "L’opération n’a pas pu être confirmée. Vérifiez l’état du poste et du CRM avant toute nouvelle action ; aucun résultat téléphonique n’est déduit de cette erreur.",
     };
 
     private static string ReadinessExplanation(AgentRuntimeSnapshot state)

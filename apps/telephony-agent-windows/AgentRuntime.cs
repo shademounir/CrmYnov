@@ -18,6 +18,8 @@ internal sealed class AgentRuntime : IAsyncDisposable
     private bool crmConnected;
     private string authorizationState = "À vérifier";
     private string statusCode = "ARRÊTÉ";
+    private bool maintenanceRequested;
+    private readonly AgentActivityFence activity = new();
 
     public AgentRuntime(DpapiStore store) { this.store = store; }
     public event Action<AgentRuntimeSnapshot>? SnapshotChanged;
@@ -26,6 +28,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public async Task EnsureAudioAsync()
     {
+        using var lease = activity.Command();
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
@@ -55,10 +58,13 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public async Task StartAsync()
     {
+        using var lease = activity.Command();
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
+            activity.AssertMayStart();
             if (Running) return;
+            maintenanceRequested = false;
             settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
             if (settings.SipPassword.Length == 0) throw new InvalidOperationException("SIP_SECRET_MISSING");
             store.RemoveLegacyCoreConfig();
@@ -85,24 +91,54 @@ internal sealed class AgentRuntime : IAsyncDisposable
         finally { lifecycle.Release(); }
     }
 
-    public async Task StopAsync()
+    public Task StopAsync() => StopCoreAsync(false);
+
+    public Task StopForMaintenanceAsync() => WithProfileMaintenanceAsync(() => Task.CompletedTask);
+
+    public async Task WithProfileMaintenanceAsync(Func<Task> mutateProfile)
+    {
+        using var lease = activity.Maintenance();
+        await StopCoreAsync(true).ConfigureAwait(true);
+        await mutateProfile().ConfigureAwait(true);
+    }
+
+    private async Task StopCoreAsync(bool maintenance)
     {
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
+            if (maintenance) {
+                lock (engineGate) {
+                    AgentMaintenancePolicy.RequireIdle(engine?.HasActiveCall == true, OutstandingEventCount());
+                    maintenanceRequested = true;
+                }
+            }
             cancellation?.Cancel();
             if (loop is not null)
             {
                 try { await loop.ConfigureAwait(true); }
                 catch (OperationCanceledException) { }
             }
-            await DisposeRuntimeAsync().ConfigureAwait(true);
+            await commandGate.WaitAsync().ConfigureAwait(true);
+            var pendingMaintenanceEvents = false;
+            try {
+                pendingMaintenanceEvents = maintenance && OutstandingEventCount() > 0;
+                await DisposeRuntimeAsync().ConfigureAwait(true);
+            }
+            finally { commandGate.Release(); }
             statusCode = "ARRÊTÉ";
             crmConnected = false;
             authorizationState = "À vérifier";
             Publish();
+            if (pendingMaintenanceEvents) throw new InvalidOperationException("PROFILE_MAINTENANCE_PENDING_EVENTS");
         }
         finally { lifecycle.Release(); }
+    }
+
+    private int OutstandingEventCount()
+    {
+        var durable = journal ?? new EventJournal(store.JournalPath);
+        return durable.Pending.Count + durable.UnresolvedFreeCallCount;
     }
 
     public void TickAudio()
@@ -117,6 +153,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public void ApplyDevices(string? inputId, string? outputId)
     {
+        using var lease = activity.Command();
         settings ??= store.Load();
         if (settings is null) throw new InvalidOperationException("AGENT_NOT_PAIRED");
         settings = settings with { InputDeviceId = inputId, OutputDeviceId = outputId };
@@ -157,6 +194,8 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public async Task HandleProtocolCommandAsync(Guid commandId)
     {
+        using var lease = activity.Command();
+        if (maintenanceRequested) throw new InvalidOperationException("PROFILE_MAINTENANCE_IN_PROGRESS");
         if (!Running) await StartAsync().ConfigureAwait(true);
         var readyDeadline = DateTimeOffset.UtcNow.AddSeconds(12);
         while (!AgentReadiness.IsReady(BuildSnapshot()) && DateTimeOffset.UtcNow < readyDeadline)
@@ -165,12 +204,8 @@ internal sealed class AgentRuntime : IAsyncDisposable
         await commandGate.WaitAsync().ConfigureAwait(true);
         try
         {
-            if (client is null || journal is null || engine is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");
-            var response = await client.ClaimAsync(commandId, CancellationToken.None).ConfigureAwait(true);
-            MarkCrmSuccess();
-            RefreshProfileIdentity(response.Profile);
-            if (response.Command is null) throw new InvalidOperationException("AGENT_COMMAND_MISSING");
-            await ExecuteCommandAsync(response.Command, CancellationToken.None).ConfigureAwait(true);
+            if (maintenanceRequested) throw new InvalidOperationException("PROFILE_MAINTENANCE_IN_PROGRESS");
+            await ClaimAndExecuteAsync(commandId).ConfigureAwait(true);
         }
         catch (HttpRequestException error) { HandleTransportError(error); throw; }
         finally { commandGate.Release(); }
@@ -178,12 +213,38 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public async Task StartFreeCallAsync(string phone, string purposeCode, string? comment)
     {
-        if (!Running || !AgentReadiness.IsReady(BuildSnapshot())) throw new InvalidOperationException("AGENT_NOT_READY");
-        if (client is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");
-        var idempotencyKey = $"free-{Guid.NewGuid():N}";
-        var created = await client.CreateFreeCallAsync(new FreeCallRequest(phone, purposeCode, string.IsNullOrWhiteSpace(comment) ? null : comment.Trim(), idempotencyKey), CancellationToken.None).ConfigureAwait(true);
-        if (!Guid.TryParse(created.ExternalId, out var commandId)) throw new InvalidOperationException("AGENT_COMMAND_INVALID");
-        await HandleProtocolCommandAsync(commandId).ConfigureAwait(true);
+        using var lease = activity.Command();
+        if (maintenanceRequested) throw new InvalidOperationException("PROFILE_MAINTENANCE_IN_PROGRESS");
+        await commandGate.WaitAsync().ConfigureAwait(true);
+        try {
+            if (!Running || !AgentReadiness.IsReady(BuildSnapshot())) throw new InvalidOperationException("AGENT_NOT_READY");
+            if (client is null || journal is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");
+            if (journal.UnresolvedFreeCallCount != 0) throw new InvalidOperationException("FREE_CALL_RESULT_UNCERTAIN");
+            var idempotencyKey = $"free-{Guid.NewGuid():N}";
+            journal.BeginFreeCall(idempotencyKey);
+            FreeCallResponse created;
+            try {
+                created = await client.CreateFreeCallAsync(new FreeCallRequest(phone, purposeCode, string.IsNullOrWhiteSpace(comment) ? null : comment.Trim(), idempotencyKey), CancellationToken.None).ConfigureAwait(true);
+            } catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity) {
+                journal.ResolveFreeCall(idempotencyKey);
+                throw;
+            }
+            if (!Guid.TryParse(created.ExternalId, out var commandId)) throw new InvalidOperationException("AGENT_COMMAND_INVALID");
+            await ClaimAndExecuteAsync(commandId).ConfigureAwait(true);
+            journal.ResolveFreeCall(idempotencyKey);
+        }
+        catch (HttpRequestException error) { HandleTransportError(error); throw; }
+        finally { commandGate.Release(); }
+    }
+
+    private async Task ClaimAndExecuteAsync(Guid commandId)
+    {
+        if (client is null || journal is null || engine is null) throw new InvalidOperationException("AGENT_NOT_CONNECTED");
+        var response = await client.ClaimAsync(commandId, CancellationToken.None).ConfigureAwait(true);
+        MarkCrmSuccess();
+        RefreshProfileIdentity(response.Profile);
+        if (response.Command is null) throw new InvalidOperationException("AGENT_COMMAND_MISSING");
+        await ExecuteCommandAsync(response.Command, CancellationToken.None).ConfigureAwait(true);
     }
 
     private LinphoneEngine CreateEngine(AgentSettings current)
@@ -269,22 +330,29 @@ internal sealed class AgentRuntime : IAsyncDisposable
         if (client is null || journal is null || engine is null) return;
         try
         {
+            using var lease = activity.Command();
             var response = await client.PollAsync(token).ConfigureAwait(true);
             MarkCrmSuccess();
             RefreshProfileIdentity(response.Profile);
             if (response.Command is not null) await ExecuteCommandAsync(response.Command, token).ConfigureAwait(true);
         }
         catch (HttpRequestException error) { HandleTransportError(error); }
+        catch (InvalidOperationException error) when (error.Message == "PROFILE_MAINTENANCE_IN_PROGRESS") { /* maintenance owns shutdown */ }
     }
 
     private async Task ExecuteCommandAsync(AgentCommand command, CancellationToken token)
     {
         if (journal is null || engine is null) return;
+        if (journal.HasSeen(command.CommandId) && !command.HangupRequested) return;
         if (command.HangupRequested) { lock (engineGate) engine.Hangup(); return; }
+        if (maintenanceRequested) {
+            journal.MarkCommand(command.CommandId);
+            await RejectAsync(command, "PROFILE_MAINTENANCE_IN_PROGRESS", token).ConfigureAwait(true);
+            return;
+        }
         if (command.ExpiresAt <= DateTimeOffset.UtcNow) { await RejectAsync(command, "COMMAND_EXPIRED", token).ConfigureAwait(true); return; }
         // Polling and protocol activation may legitimately deliver the same
         // command. The local journal is the final no-redial guard.
-        if (journal.HasSeen(command.CommandId)) return;
         journal.MarkCommand(command.CommandId);
         try { lock (engineGate) engine.StartCall(command); }
         catch (InvalidOperationException error) { await RejectAsync(command, SafeCode(error), token).ConfigureAwait(true); }
