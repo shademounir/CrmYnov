@@ -102,7 +102,7 @@ jobs:
           for root in infra/bootstrap/foundation infra/bootstrap/phase0 \
             infra/bootstrap/state infra/bootstrap/wif \
             infra/bootstrap/dev-runtime-state infra/environments/dev \
-            infra/environments/staging infra/environments/prod; do
+            infra/environments/staging infra/environments/prod infra/environments/prod-edge; do
             terraform -chdir="$root" init \
               -backend=false \
               -input=false \
