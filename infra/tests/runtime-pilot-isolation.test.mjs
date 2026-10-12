@@ -85,6 +85,20 @@ test("no connector or load balancer is silently added to the DEV-like profile", 
   assert.equal([...main.matchAll(/min_instance_count\s*=\s*0/g)].length, 2);
 });
 
+test("PROD import capacity is explicit and bounded without changing other consumers", () => {
+  assert.match(variables, /contains\(\["512Mi", "1Gi"\], var\.api_memory\)/);
+  assert.match(variables, /variable "api_memory"[\s\S]*?default\s*=\s*"512Mi"/);
+  assert.match(read("environments/prod/main.tf"), /api_memory\s*=\s*"1Gi"/);
+  assert.doesNotMatch(read("environments/staging/main.tf"), /api_memory/);
+  const api = block(main, "google_cloud_run_v2_service", "api");
+  assert.match(api, /memory = var\.api_memory/);
+  assert.match(api, /max_instance_count\s*=\s*2/);
+  for (const [type, name] of [["google_cloud_run_v2_service", "web"], ["google_cloud_run_v2_job", "runtime"]]) {
+    assert.match(block(main, type, name), /memory = "512Mi"/);
+    assert.doesNotMatch(block(main, type, name), /var\.api_memory/);
+  }
+});
+
 test("migration identity alone reads its secret; runtime identities are separate", () => {
   const migration = block(main, "google_secret_manager_secret_iam_member", "migration_database");
   const runtime = block(main, "google_secret_manager_secret_iam_member", "runtime_database");

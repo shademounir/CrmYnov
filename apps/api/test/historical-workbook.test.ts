@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHistoricalWorkbook } from "../src/bootstrap-import/historical-workbook.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, HISTORICAL_SHEETS } from "../src/bootstrap-import/bootstrap-import.contract.js";
-import { historicalSourceCoverage, mapHistoricalRow } from "../src/bootstrap-import/bootstrap-import.service.js";
+import { historicalMetadataQuarantine, historicalSourceCoverage, mapHistoricalRow } from "../src/bootstrap-import/bootstrap-import.service.js";
 import { syntheticHistoricalParts, syntheticHistoricalWorkbook, syntheticZip } from "./fixtures/import/historical-workbook.synthetic.js";
 
 test("historical profile keeps four sheets, physical row9, exact notes, raw dates and epoch metadata", () => {
@@ -110,6 +110,38 @@ test("source coverage counts unmapped formulas and native annotations, never sil
   const mapping = { name: sheet.name, campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D", program: "E", source: "F", status: "G", owner: "H" }, commentColumns: ["I"], ownerAliases: {} };
   const coverage = historicalSourceCoverage(sheet, mapping); assert.equal(coverage.sourceCandidates, 1); assert.equal(coverage.formulaCells, 1); assert.equal(coverage.unmappedCells, 1); assert.equal(coverage.ledgerRows, 1);
   const excluded = historicalSourceCoverage(sheet, { ...mapping, excludedColumns: [{ column: "J", reason: "Température calculée non retenue" }] }); assert.equal(excluded.unmappedCells, 0); assert.equal(excluded.excludedCells, 1);
+});
+
+test("header annotations remain exact quarantined metadata, outside Lead rows, with stable replay keys", () => {
+  const sheet = parseHistoricalWorkbook(syntheticHistoricalWorkbook()).sheets[0]!;
+  const annotation = { annotationId: "header-synthetic", reference: "U6", relationshipId: "legacy", text: "  En-tête exact\n<script>source</script>  ", author: null, format: "LEGACY" as const, sourceDate: null };
+  sheet.annotations.push(annotation);
+  const source = JSON.stringify(sheet), sourceSha = "a".repeat(64);
+  const mapping = { name: sheet.name, campaign: "SYNTHETIC", fields: { firstName: "B", lastName: "A", email: "C", educationLevel: "D", program: "E", source: "F", status: "G", owner: "H" }, commentColumns: ["I"], ownerAliases: {} };
+  const quarantine = historicalMetadataQuarantine(sheet, sourceSha);
+  assert.equal(quarantine.length, 1); assert.deepEqual(quarantine[0]!.annotation, annotation);
+  assert.equal(quarantine[0]!.disposition, "HEADER_METADATA_QUARANTINE");
+  assert.deepEqual(historicalMetadataQuarantine(sheet, sourceSha), quarantine);
+  assert.notEqual(historicalMetadataQuarantine(sheet, "b".repeat(64))[0]!.key, quarantine[0]!.key);
+  const coverage = historicalSourceCoverage(sheet, mapping);
+  assert.equal(coverage.nativeAnnotations, 1); assert.equal(coverage.quarantinedAnnotations, 1);
+  assert.equal(coverage.sourceRows, 1); assert.equal(coverage.sourceCandidates, 1); assert.equal(coverage.ledgerRows, 1); assert.equal(coverage.commentCells, 1);
+  assert.equal(JSON.stringify(sheet), source, "classification cannot mutate the sealed source");
+  sheet.annotations.push({ ...annotation, annotationId: "row-synthetic", reference: "N474" });
+  assert.equal(historicalMetadataQuarantine(sheet, sourceSha).length, 1);
+  const withOrphan = historicalSourceCoverage(sheet, mapping);
+  assert.equal(withOrphan.sourceRows, 2); assert.equal(withOrphan.sourceCandidates, 1); assert.equal(withOrphan.ledgerRows, 2);
+  sheet.rows[0]!.cells.I!.value = " \t\n ";
+  assert.equal(historicalSourceCoverage(sheet, mapping).commentCells, 0, "whitespace is not a historical interaction");
+});
+
+test("header partition retains invalid coordinate and upper row limit guards", () => {
+  for (const reference of ["U0", "U01", "../U6", "U50001", "AAA6"]) {
+    const sheet = parseHistoricalWorkbook(syntheticHistoricalWorkbook()).sheets[0]!;
+    sheet.annotations.push({ annotationId: "invalid", relationshipId: "legacy", reference, text: "Source", author: null, format: "LEGACY", sourceDate: null });
+    assert.throws(() => historicalMetadataQuarantine(sheet, "a".repeat(64)));
+    assert.throws(() => historicalSourceCoverage(sheet, { name: sheet.name, campaign: "SYNTHETIC", fields: {}, commentColumns: [], ownerAliases: {} }));
+  }
 });
 test("OPC relative sibling customXml stays in archive root; escape and duplicate ignored relationship IDs refuse", () => {
   const parts = syntheticHistoricalParts(); parts[1]![1] = parts[1]![1].replace("</Relationships>", '<Relationship Id="custom" Type="customXml" Target="../customXml/item1.xml"/></Relationships>');

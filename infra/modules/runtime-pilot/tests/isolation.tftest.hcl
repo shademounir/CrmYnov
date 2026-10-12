@@ -59,6 +59,29 @@ run "reject_dev_target" {
   variables { environment = "dev" }
   expect_failures = [var.environment]
 }
+run "prod_bounded_api_capacity" {
+  command = plan
+  variables {
+    environment     = "prod"
+    deploy_services = true
+    api_memory      = "1Gi"
+    api_image       = "europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    web_image       = "europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.api[0].template[0].containers[0].resources[0].limits.memory == "1Gi" && google_cloud_run_v2_service.web[0].template[0].containers[0].resources[0].limits.memory == "512Mi"
+    error_message = "Only the API receives the explicit capacity tier."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.api[0].template[0].scaling[0].min_instance_count == 0 && google_cloud_run_v2_service.api[0].template[0].scaling[0].max_instance_count == 2 && google_cloud_scheduler_job.follow_up_due[0].paused
+    error_message = "Capacity does not change instance bounds or activate Scheduler."
+  }
+}
+run "reject_unreviewed_api_capacity" {
+  command = plan
+  variables { api_memory = "2Gi" }
+  expect_failures = [var.api_memory]
+}
 run "reject_mutable_image" {
   command = plan
   variables { api_image = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/api:latest" }
