@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Principal, Role, Scope } from "./auth.types.js";
 import { isRole } from "./auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { minimizeIp } from "../audit/audit.service.js";
 
 interface SessionRecord extends Principal {
   tokenDigest: string;
@@ -91,6 +92,21 @@ export class SessionService implements OnModuleInit {
     if (this.activeUsers.get(session.userId) === false) return undefined;
     if ((this.authenticationVersions.get(session.userId) ?? session.authenticationVersion) !== session.authenticationVersion) return undefined;
     return { userId: session.userId, roles: [...session.roles], scopes: [...session.scopes], sessionId: session.sessionId, mustChangeSecret: session.mustChangeSecret };
+  }
+
+  /** A login is not successful until its session and security audit both commit. */
+  async createForApi(userId: string, roles: Role[], scopes: Scope[], mustChangeSecret: boolean, authenticationVersion: number, correlationId: string, ip?: string): Promise<{ token: string; sessionId: string }> {
+    const client = this.prisma?.client;
+    if (!client) throw new Error("persistent_session_store_required");
+    const sessionId = randomUUID(), token = randomBytes(32).toString("base64url");
+    await client.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM collaborators WHERE id = ${userId}::uuid FOR UPDATE`;
+      const user = await tx.collaborator.findUnique({ where: { id: userId }, include: { passwordHash: true } });
+      if (!user?.active || user.authenticationVersion !== authenticationVersion || JSON.stringify(user.roles) !== JSON.stringify(roles) || (user.firstLoginRequired || user.passwordHash?.mustChange === true) !== mustChangeSecret) throw new Error("identity_changed_during_login");
+      await tx.localSession.create({ data: { id: sessionId, collaboratorId: userId, tokenDigest: digestToken(token), roles, scopes, authenticationVersion, active: true, expiresAt: new Date(Date.now() + 3_600_000) } });
+      await tx.auditEvent.create({ data: { eventType: "SESSION_CREATED", actorId: userId, actorRoles: roles, campusId: user.campusId, resourceType: "COLLABORATOR", resourceId: userId, sessionId, correlationId, result: "SUCCESS", minimizedIp: minimizeIp(ip) ?? null, idempotencyKey: `session-created:${sessionId}` } });
+    }, { isolationLevel: "Serializable" });
+    return { token, sessionId };
   }
 
   /** Persistent sessions must work on every API instance and never use stale identity. */
