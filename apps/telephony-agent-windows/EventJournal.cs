@@ -7,9 +7,20 @@ internal sealed class EventJournal
     private readonly string path;
     private readonly HashSet<string> seenCommands = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AgentEvent> pending = new(StringComparer.Ordinal);
+    private readonly HashSet<string> unresolvedFreeCalls = new(StringComparer.Ordinal);
     public EventJournal(string path) { this.path = path; Load(); }
     public bool HasSeen(string commandId) => seenCommands.Contains(commandId);
     public IReadOnlyCollection<AgentEvent> Pending => pending.Values;
+    public int UnresolvedFreeCallCount => unresolvedFreeCalls.Count;
+    public IReadOnlyCollection<string> UnresolvedFreeCallKeys => unresolvedFreeCalls.ToArray();
+    public void BeginFreeCall(string key) {
+        Append(new("FREE_CALL_INTENT", key, null, null, null, DateTimeOffset.UtcNow, false));
+        unresolvedFreeCalls.Add(key);
+    }
+    public void ResolveFreeCall(string key) {
+        Append(new("FREE_CALL_RESOLVED", key, null, null, null, DateTimeOffset.UtcNow, true));
+        unresolvedFreeCalls.Remove(key);
+    }
     public void MarkCommand(string commandId) { if (seenCommands.Add(commandId)) Append(new("COMMAND", commandId, null, null, null, DateTimeOffset.UtcNow, null)); }
     public void Add(AgentEvent item) { pending[item.EventId] = item; Append(new("EVENT", item.CommandId, item.EventId, item.CallId, item.State, item.OccurredAt, false, item.ReasonCode)); }
     public void Acknowledge(AgentEvent item) { if (pending.Remove(item.EventId)) Append(new("ACK", item.CommandId, item.EventId, item.CallId, item.State, DateTimeOffset.UtcNow, true, item.ReasonCode)); }
@@ -22,6 +33,8 @@ internal sealed class EventJournal
             {
                 var record = JsonSerializer.Deserialize(line, AgentJsonContext.Default.JournalRecord); if (record is null) continue;
                 if (record.Kind == "COMMAND") seenCommands.Add(record.CommandId);
+                if (record.Kind == "FREE_CALL_INTENT") unresolvedFreeCalls.Add(record.CommandId);
+                if (record.Kind == "FREE_CALL_RESOLVED") unresolvedFreeCalls.Remove(record.CommandId);
                 if (record.Kind == "EVENT" && record.EventId is not null && record.CallId is not null && record.State is not null) pending[record.EventId] = new("1", record.CommandId, record.CallId, record.EventId, record.State, record.At, record.ReasonCode);
                 if (record.Kind == "ACK" && record.EventId is not null) pending.Remove(record.EventId);
             }

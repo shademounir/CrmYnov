@@ -28,6 +28,7 @@ internal sealed class LinphoneEngine : IDisposable
     public bool SdkLoaded { get; private set; }
     public bool SipRegistered { get; private set; }
     public string? CurrentCallState => lastState;
+    public bool HasActiveCall => activeCall is not null;
     public int? CallDurationSeconds => answeredAt is null ? lastDurationSeconds : Math.Max(0, (int)(DateTimeOffset.UtcNow - answeredAt.Value).TotalSeconds);
     public bool Muted => muted;
     public bool AudioTestActive => peakMeter.IsRunning || samplePlayer.IsPlaying;

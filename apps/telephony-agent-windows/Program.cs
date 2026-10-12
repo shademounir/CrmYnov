@@ -26,7 +26,12 @@ internal static class Program
             // Loading the official SDK must remain a read-only diagnostic: it must
             // not create a local profile or touch a user's protected SIP state.
             if (command == "native-check") return NativeCheck();
+            using var instance = AgentInstanceGuard.Acquire();
             var store = new DpapiStore(); store.EnsureDirectory();
+            if (command is "pair" or "configure-secret") {
+                var journal = new EventJournal(store.JournalPath);
+                AgentMaintenancePolicy.RequireIdle(false, journal.Pending.Count + journal.UnresolvedFreeCallCount);
+            }
             return command switch {
                 "audio-check" => AudioCheck(store, args.Skip(1).FirstOrDefault()),
                 "audio-probe" => AudioProbe(store, args.Skip(1).FirstOrDefault()),
@@ -41,7 +46,7 @@ internal static class Program
 
     private static async Task<int> RunGuiAsync(ProtocolRequest? request)
     {
-        using var singleInstance = new Mutex(true, "Local\\CRM-Ynov-Telephony-Agent", out var createdNew);
+        using var singleInstance = new Mutex(true, AgentInstanceGuard.Name, out var createdNew);
         if (!createdNew) {
             if (!await ProtocolBroker.SendAsync(request ?? ProtocolRequest.Open))
                 MessageBox.Show("L’agent est déjà ouvert mais n’a pas pu être réactivé. Ouvrez-le depuis la zone de notification.", "CRM Ynov", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -58,9 +63,7 @@ internal static class Program
         Console.Write("URL API CRM (HTTPS, ou loopback HTTP en recette) : "); var api = Console.ReadLine()?.Trim() ?? "";
         Console.Write("Code d’association temporaire : "); var code = ReadSecret();
         Console.Write("Nom de ce poste : "); var name = Console.ReadLine()?.Trim() ?? Environment.MachineName;
-        var publicId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Environment.UserDomainName}|{Environment.UserName}|{Environment.MachineName}"))).ToLowerInvariant()[..32];
-        using var client = new CrmAgentClient(api); var paired = await client.PairAsync(new(code, publicId, name, Version, SdkVersion), CancellationToken.None);
-        store.Save(new(api, paired.Token, paired.WorkstationId, paired.Profile.Id, paired.Profile.SipAddress, paired.Profile.AuthUsername, paired.Profile.Server.SipDomain, paired.Profile.Server.ProxyUri, paired.Profile.Server.Transport, "", null, null));
+        await new AgentSetup(store).PairAsync(api, code, name, CancellationToken.None);
         Console.WriteLine("Poste associé. Le mot de passe SIP reste à configurer localement."); return 0;
     }
     private static int ConfigureSecret(DpapiStore store)

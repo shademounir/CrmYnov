@@ -27,6 +27,9 @@ internal sealed record PollResponse(AgentProfile Profile, AgentCommand? Command)
 internal sealed record AgentCommand(string CommandId, string CallId, string Destination, DateTimeOffset ExpiresAt, int MaxDurationSeconds, bool HangupRequested);
 internal sealed record FreeCallRequest(string Phone, string PurposeCode, string? Comment, string IdempotencyKey);
 internal sealed record FreeCallResponse(string Id, string ExternalId, string State, string DispatchState, string MaskedPhone);
+internal sealed record FreeCallReconciliationRequest(string IdempotencyKey);
+internal sealed record FreeCallReconciliationResponse(string IdempotencyKey, string WorkstationId, string ProfileId, string Outcome, string? CommandId = null, string? CallId = null);
+internal sealed record FreeCallReconciliationSummary(int Resolved, int Remaining);
 internal sealed record AgentStatus(string ConnectionState, bool SdkLoaded, bool SipRegistered, string? InputDeviceId, string? OutputDeviceId, string? ErrorCode);
 internal sealed record AgentEvent(string SchemaVersion, string CommandId, string CallId, string EventId, string State, DateTimeOffset OccurredAt, string? ReasonCode);
 internal sealed record JournalRecord(string Kind, string CommandId, string? EventId, string? CallId, string? State, DateTimeOffset At, bool? Acknowledged, string? ReasonCode = null);
@@ -102,5 +105,7 @@ internal static class DialPadEditor
 [JsonSerializable(typeof(AgentEvent))]
 [JsonSerializable(typeof(FreeCallRequest))]
 [JsonSerializable(typeof(FreeCallResponse))]
+[JsonSerializable(typeof(FreeCallReconciliationRequest))]
+[JsonSerializable(typeof(FreeCallReconciliationResponse))]
 [JsonSerializable(typeof(JournalRecord))]
 internal partial class AgentJsonContext : JsonSerializerContext;
