@@ -124,9 +124,11 @@ export class BootstrapImportService {
       if (!campuses.length) permissionDenied();
       const ids = campuses.map((row) => row.id);
       const availablePrograms = await tx.crmProgramAvailability.findMany({ where: { campusId: { in: ids }, active: true }, select: { campusId: true, programId: true } });
-      const owners = await tx.collaborator.findMany({ where: { active: true, firstLoginRequired: false, campusId: { in: ids } }, select: { id: true, professionalDisplayName: true, campusId: true, roles: true } });
+      // Historical ownership can be prepared before activation. This does not
+      // authorize the recipient to sign in or use a restricted first-login session.
+      const owners = await tx.collaborator.findMany({ where: { active: true, campusId: { in: ids } }, select: { id: true, professionalDisplayName: true, campusId: true, roles: true, firstLoginRequired: true } });
       const eligible = owners.filter((owner) => assignmentCandidateCapability(owner.roles as Principal["roles"], snapshots, { campus: owner.campusId!, active: true, own: true, team: false, campusAllowed: true, globalAllowed: false }));
-      return { campuses, owners: eligible.map((owner) => ({ id: owner.id, label: owner.professionalDisplayName?.trim() || owner.id, campusId: owner.campusId })),
+      return { campuses, owners: eligible.map((owner) => ({ id: owner.id, label: `${owner.professionalDisplayName?.trim() || owner.id}${owner.firstLoginRequired ? " — premier accès en attente" : ""}`, campusId: owner.campusId, firstLoginRequired: owner.firstLoginRequired })),
         programs: availablePrograms.flatMap((availability) => { const ref = references.find((item) => item.id === availability.programId && item.kind === "PROGRAM" && (!item.campusId || item.campusId === availability.campusId)); return ref ? [{ code: ref.code, label: ref.label, campusId: availability.campusId }] : []; }),
         campaigns: references.filter((ref) => ref.kind === "CAMPAIGN" && (!ref.campusId || ids.includes(ref.campusId))).map((ref) => ({ code: ref.code, label: ref.label, campusId: ref.campusId })),
         educationLevels, sources, statuses, canUpload: campuses.some((row) => row.canUpload), canMap: campuses.some((row) => row.canMap), canDecide: campuses.some((row) => row.canDecide), canConfirm: campuses.some((row) => row.canConfirm) };
@@ -540,7 +542,7 @@ export class BootstrapImportService {
       await this.authorize(tx, actor, packageRow.campusId, ["lead.assign"]);
       if (!UUID.test(values.ownerId)) refuse("bootstrap_owner_invalid");
       const owner = await tx.collaborator.findUnique({ where: { id: values.ownerId } });
-      if (!owner?.active || owner.firstLoginRequired || !owner.campusId || !campus.keys.includes(owner.campusId)) permissionDenied();
+      if (!owner?.active || !owner.campusId || !campus.keys.includes(owner.campusId)) permissionDenied();
       const context = await resourceEvaluationContext(tx, await currentPrincipal(tx, actor), { scope: "CAMPUS", campusKeys: campus.keys, active: true, ownerId: owner.id });
       if (!assignmentCandidateCapability(owner.roles as Principal["roles"], await this.permissions.snapshots(tx), context)) permissionDenied();
     }
