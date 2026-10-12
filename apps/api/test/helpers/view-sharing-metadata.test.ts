@@ -15,9 +15,12 @@ export async function assertViewMetadata(client: PrismaClient, bases: string[], 
     return response.json() as Promise<T>;
   }
   const name = "Responsable synthétique Métadonnées";
-  const input = { professionalEmail: "metadata-name@example.invalid", professionalDisplayName: `  ${name}  `, roles: ["ADMIN"], campusId: "SYNTHETIC" };
+  // Reuse the active canonical campus created by this isolated fixture. An
+  // arbitrary label is not a valid campus for governed identity creation.
+  const input = { professionalEmail: "metadata-name@example.invalid", professionalDisplayName: `  ${name}  `, roles: ["ADMIN"], campusId: f.campusA };
   const created = await ok<{ id: string }>(f.superAdmin, "/users", "POST", input);
   assert.equal((await client.collaborator.findUniqueOrThrow({ where: { id: created.id } })).professionalDisplayName, name);
+  assert.equal((await client.collaborator.findUniqueOrThrow({ where: { id: created.id } })).campusId, f.campusA);
   assert.equal(JSON.stringify(created).includes(name), false, "user creation response must not expose the display name");
   for (const [index, value] of [undefined, null, "   "].entries()) {
     const user = await ok<{ id: string }>(f.superAdmin, "/users", "POST", { ...input, professionalEmail: `metadata-null-${index}@example.invalid`, professionalDisplayName: value });
