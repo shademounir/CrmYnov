@@ -6,6 +6,7 @@ import type { TelephonyCall, TelephonyCallEvent, TelephonyAgentCommand } from "@
 import type { Principal } from "../src/auth/auth.types.js";
 import { PrismaService } from "../src/persistence/prisma.service.js";
 import { TelephonyAgentRepository } from "../src/telephony/telephony-agent.repository.js";
+import { TelephonyPersistenceRepository } from "../src/telephony/telephony-persistence.repository.js";
 import { callStates } from "../src/telephony/telephony.service.js";
 import { acquirePermissionFence } from "../src/permissions/permission-fence.js";
 import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
@@ -172,12 +173,22 @@ test("CRMY-176 reconciliation reads durable own receipts without delivery and se
     const makeCall = (receiptKey: string, owner: string, station: string): Promise<TelephonyCall> => f.db.telephonyCall.create({ data: {
       provider: "LINPHONE", externalId: randomUUID(), direction: "OUTBOUND", state: "REQUESTED", createdBy: owner,
       purposeCode: "PARTNER", phoneFingerprint: "0".repeat(64), maskedPhone: "***000", requestedAt: new Date(),
+      // Every persisted call must carry the metadata envelope even when audio
+      // recording is unavailable. Shared-database HTTP startup hydrates all calls.
+      recording: { create: { provider: "LINPHONE", state: "UNAVAILABLE", authorizedRoles: ["SUPER_ADMIN"] } },
       events: { create: { idempotencyKey: receiptKey, eventType: "STATE", state: "REQUESTED", actorId: owner, occurredAt: new Date() } },
       agentCommand: { create: { workstationId: station, destinationCiphertext: "synthetic-non-deliverable", destinationIv: "synthetic", destinationTag: "synthetic", expiresAt: new Date(0) } },
     } });
     const call = await makeCall(key, f.commercial.id, workstation.id);
     const foreignCall = await makeCall(`${key}-foreign`, f.manager.id, workstation.id);
     const otherPosteCall = await makeCall(`${key}-other-poste`, f.commercial.id, otherWorkstation.id);
+    const persisted = await new TelephonyPersistenceRepository(f.prisma).snapshot();
+    for (const id of [call.id, foreignCall.id, otherPosteCall.id]) {
+      const hydrated = persisted.calls.find(row => row.id === id);
+      assert.ok(hydrated);
+      assert.equal(hydrated.recording.state, "UNAVAILABLE");
+      assert.equal(hydrated.recording.storageReference, undefined);
+    }
     for (const foreignKey of [`${key}-foreign`, `${key}-other-poste`]) {
       assert.deepEqual(await first.reconcileFreeCall(identity, { idempotencyKey: foreignKey }), { ...unknown, idempotencyKey: foreignKey });
     }

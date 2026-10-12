@@ -18,7 +18,7 @@ test("agent reconciliation gateway forwards only a machine credential, never a b
   let observed: RequestInit | undefined;
   let url = "";
   const proxy = createAgentProxy({ apiOrigin: () => "https://api.example.test", randomId: () => "receipt-query", fetch: (input, init) => {
-    url = input.toString(); observed = init;
+    url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url; observed = init;
     return Promise.resolve(Response.json({ outcome: "UNKNOWN" }));
   } });
   const body = JSON.stringify({ idempotencyKey: "free-synthetic-key" });
