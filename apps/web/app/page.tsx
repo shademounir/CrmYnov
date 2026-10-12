@@ -1,5 +1,6 @@
 import { LoginForm } from "./_components/login-form";
 import Image from "next/image";
+import Link from "next/link";
 
 export default function Home(): React.JSX.Element {
   return <main className="login-page">
@@ -17,6 +18,7 @@ export default function Home(): React.JSX.Element {
         <p className="muted">Connectez-vous à votre CRM Admissions.</p>
         <LoginForm />
         <p className="security-note">Vos identifiants sont transmis uniquement au service sécurisé du CRM.</p>
+        <p><Link href="/about">À propos du CRM</Link> · <Link href="/privacy">Confidentialité</Link> · <Link href="/terms">Conditions d’utilisation</Link></p>
       </div>
     </section>
   </main>;
