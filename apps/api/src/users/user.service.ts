@@ -7,6 +7,7 @@ import { SessionService } from "../auth/session.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { digestRecoveryValue, LocalCredentialAdapter } from "../access-recovery/access-recovery.store.js";
 import { professionalDisplayName } from "./professional-display-name.js";
+import { canonicalCampus } from "../permissions/dynamic-resources.js";
 
 export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean; authenticationVersion: number; firstLoginRequired?: boolean }
 export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; professionalDisplayName?: string | null; roles: string[]; campusId?: string; teamId?: string }
@@ -20,6 +21,22 @@ function isEmail(value: string): boolean {
   const at = value.indexOf("@");
   const dot = value.indexOf(".", at + 2);
   return at > 0 && at === value.lastIndexOf("@") && dot > at + 1 && dot < value.length - 1 && !/\s/.test(value);
+}
+
+function validateScopes(input: { campusId?: string; teamId?: string }): void {
+  if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
+}
+
+function validateCreation(input: CreateCollaborator): { displayName: string | null; email: string } {
+  const displayName = professionalDisplayName(input.professionalDisplayName), email = input.professionalEmail.trim().toLowerCase();
+  if (!isEmail(email) || (input.secondaryEmail && !isEmail(input.secondaryEmail)) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "collaborator_invalid" });
+  validateScopes(input);
+  return { displayName, email };
+}
+
+function validateAuthorization(input: UpdateAuthorization): void {
+  if (!input.confirmed || !["RESPONSIBILITY_CHANGE", "TEAM_CHANGE", "CAMPUS_CHANGE", "ACCESS_REVIEW"].includes(input.reason) || !input.roles.length || !input.roles.every(isRole)) throw new ForbiddenException({ code: "authorization_change_invalid" });
+  validateScopes(input);
 }
 
 @Injectable()
@@ -56,18 +73,55 @@ export class UserService implements OnModuleInit {
   }
 
   create(input: CreateCollaborator, actorId: string, correlationId: string): Collaborator {
-    const displayName = professionalDisplayName(input.professionalDisplayName);
-    const email = input.professionalEmail.trim().toLowerCase();
-    if (!isEmail(email) || (input.secondaryEmail && !isEmail(input.secondaryEmail)) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "collaborator_invalid" });
-    if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
+    const { displayName, email } = validateCreation(input);
     if ([...this.users.values()].some((user) => user.professionalEmail === email)) throw new ConflictException({ code: "professional_email_exists" });
-    const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles, campusId: input.campusId, teamId: input.teamId, active: true, authenticationVersion: 1, firstLoginRequired: true };
+    const user: Collaborator = { id: randomUUID(), professionalEmail: email, secondaryEmail: input.secondaryEmail?.toLowerCase(), roles: input.roles as Role[], campusId: input.campusId, teamId: input.teamId, active: true, authenticationVersion: 1, firstLoginRequired: true };
     this.users.set(user.id, user);
     this.sessions.updateIdentityState(user.id, true, user.authenticationVersion);
     const client = this.prisma?.client;
     if (client) this.enqueue(client.collaborator.create({ data: { id: user.id, professionalEmail: user.professionalEmail, professionalDisplayName: displayName, secondaryEmail: user.secondaryEmail ?? null, roles: user.roles, campusId: user.campusId ?? null, teamId: user.teamId ?? null, active: true, firstLoginRequired: true, authenticationVersion: 1 } }));
     this.audit.record({ eventType: "COLLABORATOR_CREATED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, after: { subjectId: user.id, roles: user.roles, campusId: user.campusId, teamId: user.teamId, displayNameProvided: displayName !== null }, result: "SUCCESS", idempotencyKey: `collaborator-created:${user.id}` });
     return { ...user, roles: [...user.roles] };
+  }
+
+  /** Governed HTTP creation commits the identity and its audit together. */
+  async createForApi(input: CreateCollaborator, actorId: string, correlationId: string): Promise<Collaborator> {
+    const client = this.prisma?.client;
+    if (!client) { const user = this.create(input, actorId, correlationId); await this.flush(); return user; }
+    const { displayName, email } = validateCreation(input);
+    return client.$transaction(async (tx) => {
+      if (await tx.collaborator.findUnique({ where: { professionalEmail: email } })) throw new ConflictException({ code: "professional_email_exists" });
+      const actor = await tx.collaborator.findUnique({ where: { id: actorId } });
+      if (!actor?.active || !actor.roles.includes("SUPER_ADMIN")) throw new ForbiddenException({ code: "authorization_change_invalid" });
+      const campusId = input.campusId ? (await canonicalCampus(tx, input.campusId)).id : null;
+      const row = await tx.collaborator.create({ data: { professionalEmail: email, professionalDisplayName: displayName, secondaryEmail: input.secondaryEmail?.toLowerCase() ?? null, roles: input.roles as Role[], campusId, teamId: input.teamId ?? null, active: true, firstLoginRequired: true, authenticationVersion: 1 } });
+      await tx.auditEvent.create({ data: { eventType: "COLLABORATOR_CREATED", actorId, actorRoles: actor.roles, campusId: row.campusId, resourceType: "COLLABORATOR", resourceId: row.id, correlationId, result: "SUCCESS", idempotencyKey: `collaborator-created:${row.id}`, after: { subjectId: row.id, roles: row.roles, campusId: row.campusId, teamId: row.teamId, displayNameProvided: displayName !== null } } });
+      return { id: row.id, professionalEmail: row.professionalEmail, secondaryEmail: row.secondaryEmail ?? undefined, roles: row.roles as Role[], campusId: row.campusId ?? undefined, teamId: row.teamId ?? undefined, active: row.active, authenticationVersion: row.authenticationVersion, firstLoginRequired: row.firstLoginRequired };
+    }, { isolationLevel: "Serializable" });
+  }
+
+  /** No role/version/session change may survive a failed durable audit. */
+  async updateAuthorizationForApi(id: string, input: UpdateAuthorization, actorId: string, correlationId: string): Promise<Collaborator> {
+    const client = this.prisma?.client;
+    if (!client) { const user = this.updateAuthorization(id, input, actorId, correlationId); await this.flush(); return user; }
+    validateAuthorization(input);
+    return client.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM collaborators WHERE id = ${id}::uuid FOR UPDATE`;
+      const user = await tx.collaborator.findUnique({ where: { id } }), actor = await tx.collaborator.findUnique({ where: { id: actorId } });
+      if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
+      if (!actor?.active || !actor.roles.includes("SUPER_ADMIN")) throw new ForbiddenException({ code: "authorization_change_invalid" });
+      const roles = [...new Set(input.roles)] as Role[], campusId = input.campusId ? (await canonicalCampus(tx, input.campusId)).id : null, teamId = input.teamId ?? null;
+      const currentRoles = new Set(user.roles);
+      const unchanged = currentRoles.size === roles.length && roles.every((role) => currentRoles.has(role)) && user.campusId === campusId && user.teamId === teamId;
+      if (user.active && user.roles.includes("SUPER_ADMIN") && !roles.includes("SUPER_ADMIN") && await tx.collaborator.count({ where: { active: true, roles: { has: "SUPER_ADMIN" } } }) <= 1) throw new ConflictException({ code: "last_super_admin_required" });
+      let row = user;
+      if (!unchanged) {
+        row = await tx.collaborator.update({ where: { id }, data: { roles, campusId, teamId, authenticationVersion: { increment: 1 } } });
+        const revoked = await tx.localSession.updateMany({ where: { collaboratorId: id, active: true }, data: { active: false, revokedAt: new Date() } });
+        await tx.auditEvent.create({ data: { eventType: "COLLABORATOR_AUTHORIZATION_CHANGED", actorId, actorRoles: actor.roles, campusId, resourceType: "COLLABORATOR", resourceId: id, correlationId, result: "SUCCESS", idempotencyKey: `collaborator-authorization:${id}:v${user.authenticationVersion}`, before: { roles: user.roles, campusId: user.campusId, teamId: user.teamId }, after: { subjectId: id, roles, campusId, teamId, reason: input.reason, revokedSessions: revoked.count, authenticationVersion: row.authenticationVersion } } });
+      }
+      return { id: row.id, professionalEmail: row.professionalEmail, secondaryEmail: row.secondaryEmail ?? undefined, roles: row.roles as Role[], campusId: row.campusId ?? undefined, teamId: row.teamId ?? undefined, active: row.active, authenticationVersion: row.authenticationVersion, firstLoginRequired: row.firstLoginRequired };
+    }, { isolationLevel: "Serializable" });
   }
 
   list(filters: { active?: boolean | undefined; campusId?: string | undefined; teamId?: string | undefined } = {}): Collaborator[] {
@@ -93,9 +147,7 @@ export class UserService implements OnModuleInit {
   updateAuthorization(id: string, input: UpdateAuthorization, actorId: string, correlationId: string): Collaborator {
     const user = this.users.get(id);
     if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
-    const reasons = ["RESPONSIBILITY_CHANGE", "TEAM_CHANGE", "CAMPUS_CHANGE", "ACCESS_REVIEW"];
-    if (!input.confirmed || !reasons.includes(input.reason) || input.roles.length === 0 || !input.roles.every(isRole)) throw new ForbiddenException({ code: "authorization_change_invalid" });
-    if ([input.campusId, input.teamId].some((value) => value && !IDENTIFIER.test(value))) throw new ForbiddenException({ code: "scope_invalid" });
+    validateAuthorization(input);
     const removesSuperAdmin = user.roles.includes("SUPER_ADMIN") && !input.roles.includes("SUPER_ADMIN");
     if (user.active && removesSuperAdmin && this.list({ active: true }).filter((candidate) => candidate.roles.includes("SUPER_ADMIN")).length <= 1) throw new ConflictException({ code: "last_super_admin_required" });
     const before = { roles: [...user.roles], campusId: user.campusId, teamId: user.teamId };
