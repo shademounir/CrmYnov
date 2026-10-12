@@ -80,3 +80,61 @@ test("CRMY-28 first login: durable atomic audit, fresh instance, replay and roll
     console.log("CRMY28_FIRST_LOGIN_ASSERTIONS", JSON.stringify({ durableAuditUnique: true, newInstanceRead: true, oldSessionRevoked: true, oldFixtureSecretRefused: true, replayNoDuplicate: true, firstLoginAuditFailureAtomic: true, loginAuditFailureAtomic: true, retryAfterRollback: true, expiredActiveSessionRefused: true, historicalAccountUntouched: true }));
   } finally { for (const app of apps.reverse()) await app.close(); await prisma.onModuleDestroy(); }
 });
+
+test("CRMY-28 governed identities: durable create/role audit, replay and failure atomicity", { skip: process.env.CRMY28_FIRST_LOGIN_EPHEMERAL_TEST !== "true", timeout: 180000 }, async () => {
+  const url = new URL(process.env.DATABASE_URL ?? "");
+  assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.pathname, "/crmy28_first_login_synthetic");
+  assert.equal(url.username, "postgres"); assert.equal(url.password, ""); assert.equal(process.env.SHEETS_ENABLED, "false");
+  const prisma = new PrismaService(), db = prisma.client!;
+  let app: INestApplication | undefined;
+  try {
+    assert.deepEqual(await db.$queryRaw`SELECT nonce FROM crmy28_first_login_test_identity.marker`, [{ nonce: process.env.CRMY28_FIRST_LOGIN_DATABASE_NONCE }]);
+    const email = `governed-admin-${randomUUID()}@example.invalid`, secret = `Synthetic-Admin!9${randomBytes(20).toString("hex")}`, salt = randomBytes(16).toString("hex");
+    const admin = await db.collaborator.create({ data: { professionalEmail: email, roles: ["SUPER_ADMIN"], active: true, firstLoginRequired: false } });
+    await db.localPasswordHash.create({ data: { collaboratorId: admin.id, identityDigest: digestRecoveryValue(email), passwordSalt: salt, passwordDigest: deriveSecret(secret, salt), mustChange: false } });
+    const campus = await db.crmReference.create({ data: { kind: "CAMPUS", code: `SYNTHETIC-${randomUUID()}`, label: "Synthetic governed campus", scope: "GLOBAL", scopeKey: "GLOBAL" } });
+    app = await createApplication(); await app.listen(0, "127.0.0.1"); const origin = await app.getUrl();
+    const login = await fetch(`${origin}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: secret }) }); assert.equal(login.status, 201);
+    const session = await login.json() as { token: string; sessionId: string };
+    const request = (method: string, path: string, body: object, token = session.token): Promise<Response> => fetch(`${origin}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    const create = { professionalEmail: `governed-commercial-${randomUUID()}@example.invalid`, roles: ["ADMISSIONS"], campusId: campus.id };
+    assert.equal((await request("POST", "/users", { ...create, campusId: randomUUID() })).status, 403);
+    const created = await request("POST", "/users", create); assert.equal(created.status, 201);
+    const target = await created.json() as { id: string };
+    assert.equal(await db.auditEvent.count({ where: { eventType: "COLLABORATOR_CREATED", resourceId: target.id } }), 1);
+    assert.equal((await request("POST", "/users", create)).status, 409);
+    assert.equal(await db.collaborator.count({ where: { professionalEmail: create.professionalEmail } }), 1);
+    const targetSession = await db.localSession.create({ data: { id: randomUUID(), collaboratorId: target.id, tokenDigest: randomBytes(32).toString("hex"), roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: campus.id }], expiresAt: new Date(Date.now() + 60000), authenticationVersion: 1 } });
+    const change = { roles: ["SUPER_ADMIN", "ADMISSIONS"], campusId: campus.id, reason: "RESPONSIBILITY_CHANGE", confirmed: true };
+    assert.equal((await request("PATCH", `/users/${target.id}/authorization`, { ...change, campusId: randomUUID() })).status, 403);
+    assert.equal((await request("PATCH", `/users/${target.id}/authorization`, change)).status, 200);
+    const persisted = await db.collaborator.findUniqueOrThrow({ where: { id: target.id } });
+    assert.deepEqual(persisted.roles, change.roles); assert.equal(persisted.campusId, campus.id); assert.equal(persisted.authenticationVersion, 2);
+    assert.equal((await db.localSession.findUniqueOrThrow({ where: { id: targetSession.id } })).active, false);
+    assert.equal(await db.auditEvent.count({ where: { eventType: "COLLABORATOR_AUTHORIZATION_CHANGED", resourceId: target.id } }), 1);
+    assert.equal((await request("PATCH", `/users/${target.id}/authorization`, { ...change, roles: [...change.roles].reverse() })).status, 200);
+    assert.equal((await db.collaborator.findUniqueOrThrow({ where: { id: target.id } })).authenticationVersion, 2);
+    assert.equal(await db.auditEvent.count({ where: { eventType: "COLLABORATOR_AUTHORIZATION_CHANGED", resourceId: target.id } }), 1);
+    const state = async (): Promise<unknown> => ({ user: await db.collaborator.findUnique({ where: { id: target.id } }), sessions: await db.localSession.findMany({ where: { collaboratorId: target.id } }), audits: await db.auditEvent.count({ where: { eventType: "COLLABORATOR_AUTHORIZATION_CHANGED", resourceId: target.id } }) });
+    const before = await state(); assert.match(target.id, /^[a-f0-9-]{36}$/u);
+    await db.$executeRawUnsafe(`ALTER TABLE audit_events ADD CONSTRAINT crmy28_reject_role_success CHECK (NOT (event_type = 'COLLABORATOR_AUTHORIZATION_CHANGED' AND resource_id = '${target.id}')) NOT VALID`);
+    const correction = { ...change, roles: ["ADMISSIONS"] };
+    try { assert.equal((await request("PATCH", `/users/${target.id}/authorization`, correction)).status, 503); assert.deepEqual(await state(), before); }
+    finally { await db.$executeRawUnsafe("ALTER TABLE audit_events DROP CONSTRAINT crmy28_reject_role_success"); }
+    assert.equal((await request("PATCH", `/users/${target.id}/authorization`, correction)).status, 200);
+    await db.$executeRawUnsafe("ALTER TABLE audit_events ADD CONSTRAINT crmy28_reject_creation_success CHECK (event_type <> 'COLLABORATOR_CREATED') NOT VALID");
+    const failedEmail = `governed-create-rollback-${randomUUID()}@example.invalid`;
+    try { assert.equal((await request("POST", "/users", { ...create, professionalEmail: failedEmail })).status, 503); assert.equal(await db.collaborator.count({ where: { professionalEmail: failedEmail } }), 0); }
+    finally { await db.$executeRawUnsafe("ALTER TABLE audit_events DROP CONSTRAINT crmy28_reject_creation_success"); }
+    assert.equal((await request("POST", "/users", { ...create, professionalEmail: failedEmail })).status, 201);
+    // A real active Commercial session cannot use the governed Super Admin routes.
+    const commercialSecret = `Synthetic-Commercial!9${randomBytes(20).toString("hex")}`, commercialSalt = randomBytes(16).toString("hex");
+    await db.collaborator.update({ where: { id: target.id }, data: { firstLoginRequired: false } });
+    await db.localPasswordHash.create({ data: { collaboratorId: target.id, identityDigest: digestRecoveryValue(create.professionalEmail), passwordSalt: commercialSalt, passwordDigest: deriveSecret(commercialSecret, commercialSalt), mustChange: false } });
+    const commercialLogin = await request("POST", "/sessions", { email: create.professionalEmail, password: commercialSecret }); assert.equal(commercialLogin.status, 201);
+    const commercial = await commercialLogin.json() as { token: string };
+    assert.equal((await request("PATCH", `/users/${target.id}/authorization`, change, commercial.token)).status, 403);
+    assert.equal((await request("POST", "/users", { ...create, professionalEmail: `refused-${randomUUID()}@example.invalid` }, commercial.token)).status, 403);
+    console.log("CRMY28_GOVERNED_IDENTITY_ASSERTIONS", JSON.stringify({ creationAuditUnique: true, creationReplayNoDuplicate: true, twoRolesPersisted: true, sessionsRevoked: true, authorizationAuditUnique: true, semanticReplayNoAdditionalEffect: true, authorizationFailureAtomic: true, creationFailureAtomic: true, retryAfterRollback: true, commercialDenied: true, realIdentitiesUntouched: true }));
+  } finally { await app?.close(); await prisma.onModuleDestroy(); }
+});
