@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { OAuth2Client } from "google-auth-library";
+import { INVITATION_LIFETIME_HOURS } from "./invitation-policy.js";
 
 export interface InvitationDelivery { recipient: string; link: string; purpose?: "INVITATION" | "RECOVERY"; signal?: AbortSignal }
 
@@ -75,7 +76,8 @@ export class GmailInvitationSender {
       signal?.throwIfAborted();
       const subject = purpose === "RECOVERY" ? "Recuperer votre acces CRM Ynov" : "Votre acces CRM Ynov";
       const instruction = purpose === "RECOVERY" ? "Pour remplacer votre mot de passe, ouvrez ce lien personnel :" : "Pour definir votre mot de passe, ouvrez ce lien personnel :";
-      const mime = `From: ${from}\r\nTo: ${recipient}\r\nSubject: ${subject}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${instruction}\r\n${link}\r\n\r\nCe lien expire rapidement et ne doit pas etre partage.\r\n`;
+      const expiry = purpose === "RECOVERY" ? "Ce lien expire rapidement" : `Ce lien expire apres ${INVITATION_LIFETIME_HOURS} heures`;
+      const mime = `From: ${from}\r\nTo: ${recipient}\r\nSubject: ${subject}\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${instruction}\r\n${link}\r\n\r\n${expiry} et ne doit pas etre partage.\r\n`;
       const response = await withinSignal(this.postMessage(token, Buffer.from(mime, "utf8").toString("base64url"), signal), signal);
       if (!response.ok) throw new Error("gmail_send_unconfirmed");
       const result = await withinSignal(response.json(), signal) as { id?: unknown };

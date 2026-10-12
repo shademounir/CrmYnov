@@ -105,12 +105,14 @@ test("Gmail sender reports acceptance only after a message ID and never exposes 
     assert.match(message, /To: recipient@example\.invalid/u);
     assert.match(message, /#code=synthetic-code/u);
     assert.match(message, /Subject: Votre acces CRM Ynov/u);
+    assert.match(message, /expire apres 72 heures/u);
     const signal = new AbortController().signal;
     await sender.send({ recipient: "recipient@example.invalid", link: "https://crm-dev.example.invalid/access-recovery/complete#token=synthetic-token", purpose: "RECOVERY", signal });
     const recoveryMessage = Buffer.from(sender.sent[1]!.raw, "base64url").toString("utf8");
     assert.match(recoveryMessage, /Subject: Recuperer votre acces CRM Ynov/u);
     assert.match(recoveryMessage, /Pour remplacer votre mot de passe/u);
     assert.match(recoveryMessage, /#token=synthetic-token/u);
+    assert.doesNotMatch(recoveryMessage, /72 heures/u);
     assert.equal(sender.sent[1]!.signal, signal);
     const aborted = new AbortController(); aborted.abort();
     await assert.rejects(sender.send({ recipient: "recipient@example.invalid", link: "https://crm-dev.example.invalid/access-recovery/complete#token=synthetic-token", purpose: "RECOVERY", signal: aborted.signal }), /gmail_send_unconfirmed/u);
