@@ -127,10 +127,12 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Run integration tests
         run: npm run test:integration
-      - name: Prove first-login security audit atomicity on isolated PostgreSQL
-        run: node scripts/ci/first-login-postgres.mjs
       - name: Prove Admissions reservation on isolated PostgreSQL
         run: node scripts/ci/admissions-postgres.mjs
+      # Admissions acquires the official PostgreSQL image; later bounded proof
+      # runners pin that local content ID and refuse an implicit pull.
+      - name: Prove first-login security audit atomicity on isolated PostgreSQL
+        run: node scripts/ci/first-login-postgres.mjs
       - name: Prove personal telephony authorization and pairing concurrency on isolated PostgreSQL
         run: node scripts/ci/personal-telephony-postgres.mjs
       - name: Prove new Lead assignment and distinct reassignment decisions on isolated PostgreSQL
