@@ -44,9 +44,19 @@ test("authorization preserves all roles and requires an explicit confirmed nonem
   await click(confirm()); await click(save());
   assert.deepEqual(patches[1]?.roles, ["SUPER_ADMIN", "ADMISSIONS", "MANAGER"]);
   assert.match(dom.window.document.body.textContent ?? "", /Droits enregistrés et relus ; sessions révoquées/u);
+  const campusSelect = dom.window.document.querySelector<HTMLSelectElement>(".users-fields select")!;
+  act(() => { campusSelect.value = ""; campusSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+  await click(confirm());
+  assert.equal(save().disabled, true, "a mixed Super Admin/Commercial selection still requires a campus");
+  await click(save()); assert.equal(patches.length, 2);
+  await click(boxes()[2]!); await click(boxes()[3]!);
+  await click(confirm());
+  assert.equal(save().disabled, false, "only the Super Admin-only selection can remain global");
+  await click(save());
+  assert.deepEqual(patches[2], { roles: ["SUPER_ADMIN"], reason: "ACCESS_REVIEW", confirmed: true });
   for (const box of boxes().filter((box) => box.checked)) await click(box);
   await click(confirm()); assert.equal(save().disabled, true);
-  await click(save()); assert.equal(patches.length, 2);
+  await click(save()); assert.equal(patches.length, 3);
 });
 
 test("administration creates and rereads a scoped user, retaining input on refusal", async (t) => {
