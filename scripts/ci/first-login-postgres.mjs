@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve,join } from 'node:path';
 import { compilePostgresProof,createPostgresDocker } from './postgres-proof-runtime.mjs';
 import { waitForPostgres } from './postgres-readiness.mjs';
-if(process.env.DATABASE_URL)throw Error('first_login_must_not_inherit_database');
+if(process.env.DATABASE_URL)throw new Error('first_login_must_not_inherit_database');
 const repository=resolve('.'),root=resolve(process.env.CRMY28_FIRST_LOGIN_PROOF_ROOT??process.env.RUNNER_TEMP??tmpdir());
 mkdirSync(root,{recursive:true});
 const proofDirectory=mkdtempSync(join(root,'crmy28-first-login-'));
