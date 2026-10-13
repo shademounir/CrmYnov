@@ -1,6 +1,7 @@
 import { open, readdir, readFile, lstat, unlink } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
 import { operatorHash, validateOperatorPlan, decideOperatorBlock } from './bootstrap-operator.mjs';
+import { compareCanonicalStrings } from '../canonical-order.mjs';
 
 // The caller supplies a pre-existing private directory. No automatic stale-lock
 // recovery: a crash must be reconciled before another writer can acquire it.
@@ -17,7 +18,7 @@ export async function withOperatorJournal(directory, packageId, run) {
   const lock = await open(lockPath, 'wx', 0o600);
   try {
     await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })); await lock.sync();
-    const names = (await readdir(root)).filter(name => name.startsWith(prefix) && name.endsWith('.json')).sort();
+    const names = (await readdir(root)).filter(name => name.startsWith(prefix) && name.endsWith('.json')).sort(compareCanonicalStrings);
     let sequence = 0, previousHash = null, journal = null;
     for (const name of names) {
       const expected = `${prefix}${String(sequence + 1).padStart(6, '0')}.json`;

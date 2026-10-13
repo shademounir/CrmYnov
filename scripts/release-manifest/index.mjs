@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { compareCanonicalStrings } from "../canonical-order.mjs";
 
 export {
   fetchAllCheckRuns,
@@ -29,7 +30,7 @@ function normalizedTickets(tickets, projectKey) {
   const pattern = new RegExp(`^${escapedProject}-\\d+$`);
   const values = [...new Set(tickets.map((ticket) => ticket.trim().toUpperCase()))]
     .filter(Boolean)
-    .sort();
+    .sort(compareCanonicalStrings);
   if (values.length === 0 || values.some((ticket) => !pattern.test(ticket))) {
     throw new Error(`Manifest tickets must use ${projectKey}-<number>.`);
   }
