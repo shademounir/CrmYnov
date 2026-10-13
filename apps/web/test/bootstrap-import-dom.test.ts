@@ -49,6 +49,7 @@ test("continuous portfolio UI confirms once then executes successive bounded blo
   const current = (): BootstrapPackage => ({ ...source, version, state: "PARTIAL", counts: { ...source.counts, total: 26, review: ledger.filter(item => item.state === "REVIEW").length, pending: 0 } });
   const report = (): object => ({ package: current(), bySheet: [], cutoverBlocked: true, reconciliation: { complete: false, truncated: false, totalOccurrences: 26, unresolvedOccurrences: 26, effects: {}, contacts: { email: { groups: 0, occurrences: 0 }, phone: { groups: 0, occurrences: 0 }, overlappingGroupsNotUniquePeople: true }, currentDossierAxes: { visible: 0, withheld: 0 }, axes: {}, discrepancies: [] } });
   t.mock.method(globalThis, "fetch", async (path: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    await Promise.resolve();
     const url = requestPath(path);
     if (url.endsWith("/context")) return Response.json(context);
     if (url.endsWith(`/packages/${id}`)) return Response.json(current());
@@ -56,7 +57,8 @@ test("continuous portfolio UI confirms once then executes successive bounded blo
     if (url.endsWith("/report")) return Response.json(report());
     if (url.endsWith("/execute-block")) {
       assert.match(url, /^\/api\/crm\/lead-import\/bootstrap\//);
-      const body = JSON.parse(String(init?.body)) as { expectedVersion: number; confirmed: boolean; items: Array<{ rowId: string }> };
+      assert.equal(typeof init?.body, "string");
+      const body = JSON.parse(init?.body as string) as { expectedVersion: number; confirmed: boolean; items: Array<{ rowId: string }> };
       assert.equal(body.confirmed, true); assert.equal(body.expectedVersion, version);
       sizes.push(body.items.length); version++;
       for (const item of body.items) ledger.find(value => value.id === item.rowId)!.state = "DEFERRED";

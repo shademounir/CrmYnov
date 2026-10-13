@@ -443,14 +443,16 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
       decision: { expectedVersion: row.version, idempotencyKey: `operator-row-${row.id}`, action: "CREATE_DOSSIER", reason: "Dossier synthétique unique, propriétaire et provenance source confirmés" } });
     const block: BootstrapBlockInput = { expectedVersion: operator.pack.version, sha256: operator.pack.sha256, idempotencyKey: `operator-block-${marker}`, confirmed: true, items: operator.rows.slice(0, 2).map(blockItem) };
     const endpoint = `/packages/${operator.pack.id}/execute-block`;
-    const beforeBlock = await effectCounts();
     assert.equal((await request(endpoint, "POST", block, "invalid-synthetic-session")).status, 401);
     assert.equal((await request(endpoint, "POST", block, outsiderAuth.token)).status, 403);
     assert.equal((await request(endpoint, "POST", { ...block, items: Array.from({ length: 26 }, () => block.items[0]) })).status, 400);
     assert.equal((await request(endpoint, "POST", { ...block, expectedVersion: block.expectedVersion + 1 })).status, 409);
     assert.equal((await request(endpoint, "POST", { ...block, items: [{ ...block.items[0]!, fingerprint: "0".repeat(64) }] })).status, 409);
+    const beforeBlock = await effectCounts();
     const invalidBlock = { ...block, items: [block.items[0], { ...block.items[1]!, decision: { ...block.items[1]!.decision, overrides: { educationLevel: "INVALID_SYNTHETIC_LEVEL" } } }] };
-    assert.equal((await request(endpoint, "POST", invalidBlock)).status, 422);
+    const invalidBlockResponse = await request(endpoint, "POST", invalidBlock);
+    assert.equal(invalidBlockResponse.status, 400);
+    assert.deepEqual(await invalidBlockResponse.json(), { code: "bootstrap_lead_domain_invalid" });
     assert.deepEqual(await effectCounts(), beforeBlock, "second-row refusal must roll back first decision, audit and all effects");
     assert.equal(await client.bootstrapImportRow.count({ where: { packageId: operator.pack.id, state: "REVIEW" } }), 4);
     await interrupt("before_commit", { packageId: operator.pack.id, input: block });
