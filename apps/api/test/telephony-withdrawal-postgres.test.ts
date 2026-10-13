@@ -4,12 +4,22 @@ import test from "node:test";
 import type { Principal } from "../src/auth/auth.types.js";
 import { PrismaService } from "../src/persistence/prisma.service.js";
 import { TelephonyAgentRepository } from "../src/telephony/telephony-agent.repository.js";
+import type { WithdrawalRequest } from "../src/telephony/telephony-withdrawal.contract.js";
 import { ownTelephonyFixture } from "./fixtures/telephony-own-fixture.js";
 
 const options = { skip: process.env.CRMY176_EPHEMERAL_TEST !== "true", timeout: 90_000 };
 const code = (expected: string) => (error: unknown): boolean => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.()).includes(expected);
 
-async function pairedFixture() {
+type WithdrawalFixture = Awaited<ReturnType<typeof ownTelephonyFixture>> & {
+  repository: TelephonyAgentRepository;
+  principal: Principal;
+  paired: { token: string; workstationId: string };
+  publicId: string;
+  request: WithdrawalRequest;
+  receiptCount: () => Promise<number>;
+};
+
+async function pairedFixture(): Promise<WithdrawalFixture> {
   const f = await ownTelephonyFixture();
   const repository = new TelephonyAgentRepository(f.prisma);
   const principal: Principal = { userId: f.commercial.id, roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: f.firstCampus.id }], sessionId: randomUUID() };
@@ -19,7 +29,7 @@ async function pairedFixture() {
   const workstation = await f.db.telephonyWorkstation.findUniqueOrThrow({ where: { id: paired.workstationId } });
   assert.ok(workstation.associationId);
   const request = { requestId: randomUUID(), associationId: workstation.associationId, workstationId: workstation.id, profileId: f.profile.id };
-  const receiptCount = () => f.db.auditEvent.count({ where: { resourceId: f.profile.id, eventType: "TELEPHONY_PROFILE_WITHDRAWN_V1" } });
+  const receiptCount = (): Promise<number> => f.db.auditEvent.count({ where: { resourceId: f.profile.id, eventType: "TELEPHONY_PROFILE_WITHDRAWN_V1" } });
   return { ...f, repository, principal, paired, publicId, request, receiptCount };
 }
 
