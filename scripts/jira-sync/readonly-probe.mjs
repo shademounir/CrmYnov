@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { loadConfig, safeConfigSummary } from "./config.mjs";
+import { compareCanonicalStrings } from "../canonical-order.mjs";
 
 const EXPECTED_ORIGIN = "https://mounirbaali-1778581315657.atlassian.net";
 const SCOPED_ORIGIN = "https://api.atlassian.com";
@@ -194,7 +195,7 @@ function blockerKeys(issue) {
     const inward = String(link?.type?.inward ?? "").trim().toLowerCase();
     const key = String(link?.inwardIssue?.key ?? "").trim().toUpperCase();
     return inward === "is blocked by" && key ? [key] : [];
-  }))].sort();
+  }))].sort(compareCanonicalStrings);
 }
 
 async function readBlockers({ keys, get }) {

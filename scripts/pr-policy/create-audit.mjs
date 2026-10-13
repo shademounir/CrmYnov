@@ -1,3 +1,5 @@
+import { compareCanonicalStrings } from "../canonical-order.mjs";
+
 function required(name) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required.`);
@@ -8,7 +10,7 @@ const labels = required("PR_POLICY_TICKET_LABELS")
   .split(",")
   .map((label) => label.trim())
   .filter(Boolean)
-  .sort();
+  .sort(compareCanonicalStrings);
 const audit = {
   schemaVersion: 1,
   headSha: required("PR_POLICY_HEAD_SHA"),
