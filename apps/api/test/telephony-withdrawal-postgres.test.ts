@@ -1,6 +1,9 @@
+import "reflect-metadata";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import type { AddressInfo } from "node:net";
+import { createApplication } from "../src/application.js";
 import type { Principal } from "../src/auth/auth.types.js";
 import { PrismaService } from "../src/persistence/prisma.service.js";
 import { TelephonyAgentRepository } from "../src/telephony/telephony-agent.repository.js";
@@ -132,4 +135,38 @@ test("CRMY-176 concurrent retirement requests produce at most one commit and no 
     assert.equal(await f.receiptCount(), 1);
     assert.equal((await f.db.telephonyWorkstation.findUniqueOrThrow({ where: { id: f.request.workstationId } })).active, false);
   } finally { await other.client?.$disconnect(); await f.db.$disconnect(); }
+});
+
+test("CRMY-176 actual HTTP withdrawal requires the machine credential and returns only its no-store receipt", options, async () => {
+  const f = await pairedFixture(); let app: Awaited<ReturnType<typeof createApplication>> | undefined;
+  try {
+    app = await createApplication(); await app.listen(0, "127.0.0.1");
+    const endpoint = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}/integrations/telephony/agent/v1`;
+    const post = async (route: string, token: string | undefined, body: unknown): Promise<{ status: number; body: unknown; cache: string | null }> => {
+      const response = await fetch(`${endpoint}/${route}`, {
+        method: "POST", signal: AbortSignal.timeout(15_000),
+        headers: { "content-type": "application/json", "x-correlation-id": "synthetic-withdrawal-http", ...(token ? { "x-telephony-agent-token": token } : {}) },
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, body: await response.json(), cache: response.headers.get("cache-control") };
+    };
+    assert.equal((await post("profile-withdrawals", undefined, f.request)).status, 401);
+    assert.equal((await post("profile-withdrawals", "x".repeat(64), f.request)).status, 401);
+    assert.equal((await post("profile-withdrawals", f.paired.token, { ...f.request, profileId: f.managerProfile.id })).status, 403);
+    assert.equal((await post("profile-withdrawals", f.paired.token, { ...f.request, extra: true })).status, 400);
+    assert.equal((await post("profile-withdrawals/receipt", f.paired.token, f.request)).status, 404);
+    assert.equal(await f.receiptCount(), 0);
+    const committed = await post("profile-withdrawals", f.paired.token, f.request);
+    assert.equal(committed.status, 201); assert.equal(committed.cache, "no-store");
+    const auditCount = await f.db.auditEvent.count();
+    const replay = await post("profile-withdrawals/receipt", f.paired.token, f.request);
+    assert.equal(replay.status, 201); assert.equal(replay.cache, "no-store"); assert.deepEqual(replay.body, committed.body);
+    assert.equal((await post("profile-withdrawals/receipt", "x".repeat(64), f.request)).status, 404);
+    assert.equal(await f.db.auditEvent.count(), auditCount);
+    assert.equal((await post("poll", f.paired.token, {})).status, 401);
+    assert.equal(await f.receiptCount(), 1);
+    const exposed = JSON.stringify(replay.body);
+    for (const privateValue of [f.paired.token, "tokenDigest", "sipPassword", "sip.example.invalid", "authUsername"])
+      assert.equal(exposed.includes(privateValue), false);
+  } finally { await app?.close(); await f.db.$disconnect(); }
 });
