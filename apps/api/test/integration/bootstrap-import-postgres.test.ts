@@ -499,7 +499,14 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     const smallEndpoint = `/packages/${small.pack.id}/execute-block`;
     const firstSmallBlock: BootstrapBlockInput = { expectedVersion: small.pack.version, sha256: small.pack.sha256,
       idempotencyKey: `small-first-${marker}`, confirmed: true, items: small.rows.slice(0, 5).map(blockItem) };
-    await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
+    const blockRepository = app.get(DynamicPermissionRepository);
+    const readSnapshots = blockRepository.snapshots.bind(blockRepository);
+    let blockSnapshotReads = 0;
+    blockRepository.snapshots = async tx => { blockSnapshotReads++; return readSnapshots(tx); };
+    try {
+      await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
+      assert.equal(blockSnapshotReads, 1, "five rows share one grant snapshot only inside their fenced transaction");
+    } finally { blockRepository.snapshots = readSnapshots; }
     const smallEffects = await effectCounts();
     const firstSmallReplay = await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
     assert.equal(firstSmallReplay.replayed, true); assert.deepEqual(await effectCounts(), smallEffects);
@@ -514,6 +521,13 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     assert.equal(await client.lead.count({ where: { importBatchId: small.pack.batchId, assignedToId: adviser.id } }), 8);
     const allSmallEffects = await effectCounts();
     await success(await request(smallEndpoint, "POST", lastSmallBlock)); assert.deepEqual(await effectCounts(), allSmallEffects);
+    configuration = await permissions.read(principal, target); const smallPreviousGrants = configuration.grants;
+    await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "ACCESS_REVIEW", confirmed: true, grants: { ...smallPreviousGrants, "import.confirm": "NONE" } });
+    assert.equal((await request(smallEndpoint, "POST", lastSmallBlock)).status, 403, "memoized prior block never authorizes a new transaction after revocation");
+    configuration = await permissions.read(principal, target);
+    await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "RESTORE_VERSION", confirmed: true, grants: smallPreviousGrants });
+    await success(await request(smallEndpoint, "POST", lastSmallBlock));
+    assert.equal(await client.lead.count({ where: { importBatchId: small.pack.batchId } }), 8);
     if (process.env.CRMY61_UI_FIXTURE_DIR) {
       const directory = resolve(process.env.CRMY61_UI_FIXTURE_DIR); await mkdir(directory, { recursive: true }); const fixturePath = resolve(directory, "bootstrap-ui-synthetic.xlsx");
       const uiParts = syntheticHistoricalParts(); for (const part of uiParts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code).replaceAll("synthetic@example.invalid", `ui-${marker.toLowerCase()}@example.invalid`);
@@ -522,6 +536,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     }
     await client.localSession.update({ where: { id: auth.sessionId }, data: { active: false, revokedAt: new Date() } });
     assert.equal((await request(`/packages/${pack.id}`)).status, 401);
+    assert.equal((await request(smallEndpoint, "POST", lastSmallBlock)).status, 401, "block replay retains current session validation");
     await assert.rejects(() => restart.confirm(pack.id, confirm, principal));
   } finally { await app.close(); await prisma.onModuleDestroy(); }
 });

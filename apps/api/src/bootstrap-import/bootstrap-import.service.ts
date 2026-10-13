@@ -13,6 +13,7 @@ import { historicalStatusResolutionReason, normalizeHistoricalEmail, normalizeHi
 import { historicalReconciliation } from "./historical-reconciliation.js";
 import { boundedBootstrapReconciliation, deferralBinding, deferralReceiptResponse, isDeferralInput, validDeferral } from "./bounded-bootstrap.js";
 import { baselineOptionalValues, BASELINE_OPTIONAL_INFORMATION } from "./baseline-unknown-fields.js";
+import { BlockReadMemo } from "./block-read-memo.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, hash, HISTORICAL_SHEETS, IMPORT_FIELDS, KEY, MAX_PACKAGE_BYTES, refuse, SHA, UUID,
   record, COLUMN, type BootstrapBlockInput, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
 
@@ -127,7 +128,15 @@ export function historicalSourceCoverage(sheet: SnapshotSheet, mapping: Historic
  * fence. Replay first revalidates the current session, grants and campus. */
 @Injectable()
 export class BootstrapImportService {
+  private readonly blockReads = new BlockReadMemo<PermissionTransaction>();
   constructor(@Inject(DynamicPermissionRepository) private readonly permissions: DynamicPermissionRepository) {}
+
+  private blockSnapshots(tx: PermissionTransaction): ReturnType<DynamicPermissionRepository["snapshots"]> {
+    return this.blockReads.read(tx, "permission-snapshots", () => this.permissions.snapshots(tx));
+  }
+  private blockCampus(tx: PermissionTransaction, key: string): ReturnType<typeof canonicalCampus> {
+    return this.blockReads.read(tx, `canonical-campus:${key}`, () => canonicalCampus(tx, key));
+  }
 
   async context(actor: Principal): Promise<unknown> {
     return this.permissions.readTransaction(async (tx) => {
@@ -398,7 +407,9 @@ export class BootstrapImportService {
       || input.items.some((item) => !record(item) || Object.keys(item).some((key) => !["rowId", "fingerprint", "decision"].includes(key)) || typeof item.rowId !== "string" || !UUID.test(item.rowId)
         || typeof item.fingerprint !== "string" || !SHA.test(item.fingerprint) || !record(item.decision))
       || new Set(input.items.map((item) => item.rowId)).size !== input.items.length) refuse("bootstrap_block_invalid");
-    return this.permissions.transaction(async (tx) => {
+    return this.permissions.transaction((tx) => this.blockReads.run(tx, async () => {
+      // executeBlock never changes identities, grants or references. The outer
+      // permission fence prevents concurrent changes; sessions remain re-read.
       const pack = await this.package(tx, id, actor, ["import.execute", "import.confirm", "import.review.resolve", "import.view"]);
       if (pack.sha256 !== input.sha256) this.conflict("bootstrap_block_source_changed");
       const fingerprint = hash(input);
@@ -435,12 +446,12 @@ export class BootstrapImportService {
       await tx.bootstrapImportReceipt.create({ data: { packageId: id, operation: "EXECUTE_BLOCK", key: input.idempotencyKey, actorId: actor.userId, fingerprint, response: json(result) } });
       await this.audit(tx, actor, pack, "BOOTSTRAP_BLOCK_COMMITTED", `block:${hash([id, input.idempotencyKey])}`, result);
       return { replayed: false, block: result, report };
-    });
+    }));
   }
 
   async report(id: string, actor: Principal): Promise<unknown> {
     return this.permissions.readTransaction(async (tx) => {
-      const row = await this.package(tx, id, actor, ["import.view"]), principal = await currentPrincipal(tx, actor), snapshots = await this.permissions.snapshots(tx);
+      const row = await this.package(tx, id, actor, ["import.view"]), principal = await currentPrincipal(tx, actor), snapshots = await this.blockSnapshots(tx);
       return this.reportCore(tx, row, [principal], (identity, context) => evaluatePermission(principal, "lead.view", snapshots, context).allowed);
     });
   }
@@ -544,7 +555,7 @@ export class BootstrapImportService {
     if (decision.action === "CREATE_DOSSIER") {
       const values = baselineOptionalValues(decision.values, mapped.values, mapped.reasons);
       await this.validateCreate(tx, actor, packageRow, row, values, decision);
-      const campus = await canonicalCampus(tx, packageRow.campusId);
+      const campus = await this.blockCampus(tx, packageRow.campusId);
       const reference = await validateLeadReferences(tx, { campus: campus.keys[1]!, campaign: values.campaign!, program: values.program! }, undefined, { allowMissingBaselineProgram: true });
       leadId = randomUUID();
       await tx.lead.create({ data: { id: leadId, leadCode: `LD-${new Date().getUTCFullYear()}-${leadId.slice(0, 8).toUpperCase()}`, acquisitionKind: "BASELINE", firstName: values.firstName!.trim(), lastName: values.lastName!.trim(),
@@ -584,7 +595,7 @@ export class BootstrapImportService {
       await this.validateCreate(tx, actor, packageRow, row, decision.values, decision);
       if (!row.leadId) this.conflict("bootstrap_receipt_integrity_invalid");
       const principal = await currentPrincipal(tx, actor); const context = await resourceEvaluationContext(tx, principal, await leadResource(tx, row.leadId));
-      if (!evaluatePermission(principal, "lead.view", await this.permissions.snapshots(tx), context).allowed) permissionDenied();
+      if (!evaluatePermission(principal, "lead.view", await this.blockSnapshots(tx), context).allowed) permissionDenied();
     } else if (decision.action === "LINK_EXISTING") await this.authorizeLinkedLead(tx, actor, packageRow, decision.targetLeadId!);
   }
 
@@ -608,7 +619,7 @@ export class BootstrapImportService {
     if (["ENROLLED", "CLOSED_LOST"].includes(values.status!) && !decision.overrides?.status) throw new UnprocessableEntityException({ code: "bootstrap_terminal_status_explicit_resolution_required" });
     if (["ENROLLED", "CLOSED_LOST"].includes(values.status!) && (mapped.values.status !== values.status || mapped.reasons.includes("FORMULA_REVIEW:status"))
       && !(values.status === "ENROLLED" && decision.cycle?.state === "HISTORICAL_ENROLMENT" && decision.cycle.sourceColumns.length)) throw new UnprocessableEntityException({ code: "bootstrap_terminal_source_evidence_required" });
-    const campus = await canonicalCampus(tx, packageRow.campusId);
+    const campus = await this.blockCampus(tx, packageRow.campusId);
     await validateLeadReferences(tx, { campus: campus.keys[1]!, program: values.program!, campaign: values.campaign! }, undefined, { allowMissingBaselineProgram: true });
     if (mapped.reasons.includes("OWNER_UNKNOWN") && !Object.hasOwn(decision.overrides ?? {}, "ownerId")) throw new UnprocessableEntityException({ code: "bootstrap_owner_review_required" });
     if (!values.ownerId && decision.overrides?.ownerId !== "") throw new UnprocessableEntityException({ code: "bootstrap_unassigned_explicit_resolution_required" });
@@ -618,7 +629,7 @@ export class BootstrapImportService {
       const owner = await tx.collaborator.findUnique({ where: { id: values.ownerId } });
       if (!owner?.active || !owner.campusId || !campus.keys.includes(owner.campusId)) permissionDenied();
       const context = await resourceEvaluationContext(tx, await currentPrincipal(tx, actor), { scope: "CAMPUS", campusKeys: campus.keys, active: true, ownerId: owner.id });
-      if (!assignmentCandidateCapability(owner.roles as Principal["roles"], await this.permissions.snapshots(tx), context)) permissionDenied();
+      if (!assignmentCandidateCapability(owner.roles as Principal["roles"], await this.blockSnapshots(tx), context)) permissionDenied();
     }
     // A committed receipt replay has no CREATE effect. Later legitimate
     // dossiers sharing this contact cannot invalidate the historical receipt.
@@ -627,9 +638,9 @@ export class BootstrapImportService {
   }
 
   private async authorizeLinkedLead(tx: PermissionTransaction, actor: Principal, packageRow: BootstrapImportPackage, id: string): Promise<void> {
-    const principal = await currentPrincipal(tx, actor); const resource = await leadResource(tx, id); const campus = await canonicalCampus(tx, packageRow.campusId);
+    const principal = await currentPrincipal(tx, actor); const resource = await leadResource(tx, id); const campus = await this.blockCampus(tx, packageRow.campusId);
     if (!resource.campusKeys.includes(campus.id)) permissionDenied();
-    const context = await resourceEvaluationContext(tx, principal, resource); const snapshots = await this.permissions.snapshots(tx);
+    const context = await resourceEvaluationContext(tx, principal, resource); const snapshots = await this.blockSnapshots(tx);
     if (!["lead.view", "lead.edit"].every((key) => evaluatePermission(principal, key, snapshots, context).allowed)) permissionDenied();
   }
   private async rowReceipt(tx: PermissionTransaction, packageRow: BootstrapImportPackage, row: BootstrapImportRow, actor: Principal, leadId: string | null): Promise<void> {
@@ -672,8 +683,8 @@ export class BootstrapImportService {
     await this.authorize(tx, actor, row.campusId, keys); return row;
   }
   private async authorize(tx: PermissionTransaction, actor: Principal, campusId: string, keys: string[]): Promise<void> {
-    const principal = await currentPrincipal(tx, actor); const campus = await canonicalCampus(tx, campusId);
-    const context = await resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true }); const snapshots = await this.permissions.snapshots(tx);
+    const principal = await currentPrincipal(tx, actor); const campus = await this.blockCampus(tx, campusId);
+    const context = await resourceEvaluationContext(tx, principal, { scope: "CAMPUS", campusKeys: campus.keys, active: true }); const snapshots = await this.blockSnapshots(tx);
     if (!keys.every((key) => evaluatePermission(principal, key, snapshots, context).allowed)) permissionDenied();
   }
   private async counts(tx: PermissionTransaction, id: string): Promise<{ total: number; accepted: number; review: number; invalid: number; ignored: number; pending: number }> {
