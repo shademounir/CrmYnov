@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BootstrapApiError, type BootstrapPackage, type BootstrapRow, type BootstrapReport } from "../app/imports/bootstrap/bootstrap-client.js";
-import { parseBatchPlan, runBatchPlan, type BatchPlan } from "../app/imports/bootstrap/bootstrap-batch.js";
+import { batchSize, parseBatchPlan, runBatchPlan, type BatchPlan } from "../app/imports/bootstrap/bootstrap-batch.js";
 
 const id = "00000000-0000-4000-8000-000000000061";
 const source = { id, sha256: "a".repeat(64), version: 3, state: "MAPPED" } as BootstrapPackage;
@@ -33,6 +33,7 @@ test("plan binds exact package/fingerprints, distinct rows and explicit motives"
 });
 test("continues beyond 25 with current versions then reload skips exact persisted row keys", async () => {
   const { plan, rows } = fixture(57); const fake = runtime(rows);
+  plan.maxBlockSize = 25;
   const done = await runBatchPlan(plan, fake.request, () => {}, () => false);
   assert.equal(done.committed, 57); assert.deepEqual(fake.writes.map(body => body.items.length), [25, 25, 7]); assert.equal(fake.getVersion(), 6);
   const replay = await runBatchPlan(plan, fake.request, () => {}, () => false); assert.equal(replay.committed, 0); assert.equal(replay.alreadyPersisted, 57); assert.equal(fake.writes.length, 3);
@@ -71,7 +72,29 @@ test("uncertain response reuses exact body once; auth and concurrency refuse con
 });
 test("stop takes effect only between completed blocks; changed source and foreign decisions stop", async () => {
   const { plan, rows } = fixture(26); const fake = runtime(rows); let stop = false;
+  plan.maxBlockSize = 25;
   const done = await runBatchPlan(plan, fake.request, progress => { if (progress.committed) stop = true; }, () => stop); assert.equal(done.committed, 25); assert.equal(fake.writes.length, 1);
   rows[25]!.fingerprint = "c".repeat(64); await assert.rejects(runBatchPlan(plan, fake.request, () => {}, () => false), /source_changed/);
   rows[25]!.fingerprint = "b".repeat(64); rows[25]!.state = "DEFERRED"; await assert.rejects(runBatchPlan(plan, fake.request, () => {}, () => false), /other_decision_present/);
+});
+
+test("small default continues the entire portfolio and preserves row keys across size changes", async () => {
+  const { plan, rows } = fixture(57); const fake = runtime(rows);
+  const done = await runBatchPlan(plan, fake.request, () => {}, () => false);
+  assert.equal(done.committed, 57);
+  assert.deepEqual(fake.writes.map(body => body.items.length), [...Array<number>(11).fill(5), 2]);
+  const replay = await runBatchPlan({ ...plan, maxBlockSize: 25 }, fake.request, () => {}, () => false);
+  assert.equal(replay.alreadyPersisted, 57); assert.equal(replay.committed, 0); assert.equal(fake.writes.length, 12);
+});
+
+test("block sizes are bounded before any server access, without coercion", async () => {
+  assert.equal(batchSize({}), 5);
+  for (const size of [1, 5, 10, 25]) assert.equal(batchSize({ maxBlockSize: size }), size);
+  for (const size of [0, 26, -1, 1.5, "5", true, null, {}, []]) {
+    const { plan, rows } = fixture(1); const fake = runtime(rows);
+    assert.throws(() => parseBatchPlan(JSON.stringify({ ...plan, maxBlockSize: size }), source), /block_size_invalid/);
+    let reads = 0;
+    await assert.rejects(runBatchPlan({ ...plan, maxBlockSize: size } as BatchPlan, async <T>(url: string, init?: RequestInit): Promise<T> => { reads++; return fake.request(url, init); }, () => {}, () => false), /block_size_invalid/);
+    assert.equal(reads, 0); assert.equal(fake.writes.length, 0);
+  }
 });

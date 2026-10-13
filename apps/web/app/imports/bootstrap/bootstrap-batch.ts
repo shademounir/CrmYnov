@@ -2,7 +2,7 @@ import { BootstrapApiError, bootstrapHash, type BootstrapPackage, type Bootstrap
 import type { BootstrapRowDecision } from "./bootstrap-row-review";
 
 export type BatchDecision = Omit<BootstrapRowDecision, "expectedVersion" | "idempotencyKey"> | { action: "DEFER"; reason: string; confirmed: true };
-export interface BatchPlan { schemaVersion: 1; packageId: string; sha256: string; items: Array<{ rowId: string; fingerprint: string; expectedVersion: number; decision: BatchDecision }> }
+export interface BatchPlan { schemaVersion: 1; packageId: string; sha256: string; maxBlockSize?: number; items: Array<{ rowId: string; fingerprint: string; expectedVersion: number; decision: BatchDecision }> }
 export interface BatchProgress { checked: number; committed: number; deferred: number; alreadyPersisted: number; failures: Array<{ rowId: string; code: string }>; report?: BootstrapReport }
 type Request = <T>(path: string, init?: RequestInit) => Promise<T>;
 const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i, sha = /^[a-f0-9]{64}$/;
@@ -23,6 +23,11 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 const digest = (value: unknown): Promise<string> => bootstrapHash(new TextEncoder().encode(canonical(value)).buffer);
+export function batchSize(plan: { maxBlockSize?: unknown }): number {
+  const size = plan.maxBlockSize === undefined ? 5 : plan.maxBlockSize;
+  if (!Number.isInteger(size) || Number(size) < 1 || Number(size) > 25) throw new Error("bootstrap_block_size_invalid");
+  return Number(size);
+}
 export function parseBatchPlan(text: string, source: BootstrapPackage): BatchPlan {
   if (new TextEncoder().encode(text).byteLength > 8 * 1024 * 1024) throw new Error("bootstrap_plan_too_large");
   const plan: unknown = JSON.parse(text);
@@ -35,6 +40,7 @@ export function parseBatchPlan(text: string, source: BootstrapPackage): BatchPla
       || "idempotencyKey" in item.decision || "expectedVersion" in item.decision
       || (item.decision.action === "DEFER" && item.decision.confirmed !== true))
     || new Set(plan.items.map((item: unknown) => record(item) ? item.rowId : null)).size !== plan.items.length) throw new Error("bootstrap_plan_invalid_or_wrong_package");
+  batchSize(plan);
   return plan as unknown as BatchPlan;
 }
 export async function readBatchRows(id: string, request: Request): Promise<BootstrapRow[]> {
@@ -50,6 +56,7 @@ export async function readBatchRows(id: string, request: Request): Promise<Boots
  * A reload resumes from durable row keys; an uncertain response retries the
  * identical body once. Auth/version/unknown failures stop, never auto-DEFER. */
 export async function runBatchPlan(plan: BatchPlan, request: Request, onProgress: (progress: BatchProgress) => void, stopped: () => boolean): Promise<BatchProgress> {
+  const size = batchSize(plan); // Validate before reading or mutating the server.
   const progress: BatchProgress = { checked: 0, committed: 0, deferred: 0, alreadyPersisted: 0, failures: [] };
   const root = `/packages/${plan.packageId}`;
   const rows = new Map((await readBatchRows(plan.packageId, request)).map(row => [row.id, row]));
@@ -97,6 +104,9 @@ export async function runBatchPlan(plan: BatchPlan, request: Request, onProgress
   }
   // 25 is the maximum transaction size, not the total target. Stop is observed
   // between transactions, never by aborting an in-flight database operation.
-  for (let index = 0; index < pending.length && !stopped(); index += 25) await execute(pending.slice(index, index + 25));
+  // A small default respects the unchanged server transaction deadline on a
+  // shared pilot database. Size never enters row keys: already committed rows
+  // remain recognizable when resuming a plan with a different block size.
+  for (let index = 0; index < pending.length && !stopped(); index += size) await execute(pending.slice(index, index + size));
   progress.report = await request<BootstrapReport>(`${root}/report`); onProgress({ ...progress }); return progress;
 }
