@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "migration": "20261013090000_telephony_association_generation",
+  "migrationSha256": "83eba88ffcee9c0b3784b93869da395cd5a61853fa5de21820962e436e6cbe5b",
+  "markers": ["additive", "ephemeral-only", "rollback-documented"]
+}

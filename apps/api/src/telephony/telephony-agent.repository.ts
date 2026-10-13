@@ -9,6 +9,7 @@ import { DynamicPermissionRepository } from "../permissions/dynamic-repository.j
 import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { ownTelephonyContext, leadResource } from "../permissions/dynamic-resources.js";
 import { resourceEvaluationContext } from "../permissions/dynamic-context.js";
+import { isWithdrawalToken, parseWithdrawalRequest, parseWithdrawalReceipt, withdrawalReceiptKey, type WithdrawalReceipt } from "./telephony-withdrawal.contract.js";
 
 const terminalStates = new Set(["ENDED", "FAILED", "MISSED", "CANCELLED"]);
 const observedStates = new Set(["DIALING", "RINGING", "ANSWERED", ...terminalStates]);
@@ -48,6 +49,62 @@ export interface AgentFreeCallReconciliation {
 export class TelephonyAgentRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
   get enabled(): boolean { return Boolean(this.prisma.client); }
+
+  /** First withdrawal requires a live association and current own-profile permission. */
+  async withdrawProfile(rawToken: string | undefined, input: unknown, correlationId: string): Promise<WithdrawalReceipt> {
+    const request = parseWithdrawalRequest(input);
+    if (!request) throw new BadRequestException({ code: "telephony_withdrawal_invalid" });
+    if (!isWithdrawalToken(rawToken)) throw new UnauthorizedException({ code: "telephony_agent_authentication_refused" });
+    const identity = await this.authenticate(rawToken);
+    if (identity.workstationId !== request.workstationId || identity.profileId !== request.profileId) throw new ForbiddenException({ code: "telephony_withdrawal_scope_forbidden" });
+    return this.requiredClient().$transaction(async (tx) => {
+      // Excludes in-flight permission/campus mutations and command creation before
+      // taking the shared server / exclusive individual profile locks.
+      await acquirePermissionFence(tx, "write");
+      await this.lockedIdentity(tx, identity);
+      const workstation = await tx.telephonyWorkstation.findUniqueOrThrow({ where: { id: identity.workstationId }, include: { userProfile: true } });
+      if (!workstation.associationId || workstation.associationId !== request.associationId) throw new ConflictException({ code: "telephony_withdrawal_association_mismatch" });
+      const principal = this.machinePrincipal(identity);
+      if (!evaluatePermission(principal, "interaction.create", await new DynamicPermissionRepository(this.prisma).snapshots(tx), await ownTelephonyContext(tx, principal)).allowed) {
+        throw new ForbiddenException({ code: "telephony_withdrawal_permission_refused" });
+      }
+      if (await tx.telephonyWorkstation.count({ where: { userProfileId: identity.profileId, active: true, id: { not: identity.workstationId } } })) {
+        throw new ConflictException({ code: "telephony_workstation_ambiguous" });
+      }
+      await this.assertNoWithdrawalActivity(tx, identity.userId, identity.profileId);
+      const now = new Date();
+      const revoked = await tx.telephonyWorkstation.update({ where: { id: workstation.id }, data: {
+        active: false, connectionState: "OFFLINE", sipRegistered: false, sdkLoaded: false, revokedAt: now, version: { increment: 1 },
+      } });
+      const profile = await tx.telephonyUserProfile.update({ where: { id: identity.profileId }, data: {
+        enabled: false, state: "DISABLED", version: { increment: 1 }, updatedBy: identity.userId,
+      } });
+      await tx.telephonyPairingCode.updateMany({ where: { userProfileId: identity.profileId, usedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
+      const receipt: WithdrawalReceipt = { ...request, schemaVersion: 1, outcome: "WITHDRAWN", withdrawnAt: now.toISOString(), workstationVersion: revoked.version, profileVersion: profile.version };
+      await this.audit(tx, principal, { campusId: identity.campusId ?? null, eventType: "TELEPHONY_PROFILE_WITHDRAWN_V1",
+        resourceId: identity.profileId, idempotencyKey: withdrawalReceiptKey(rawToken, request), correlationId, after: { ...receipt } });
+      return receipt;
+    }, { isolationLevel: "ReadCommitted", timeout: 30_000, maxWait: 5_000 });
+  }
+
+  /** Historical receipt only. Revoked tokens gain no current authorization here. */
+  async getWithdrawalReceipt(rawToken: string | undefined, input: unknown): Promise<WithdrawalReceipt> {
+    const request = parseWithdrawalRequest(input);
+    if (!request) throw new BadRequestException({ code: "telephony_withdrawal_invalid" });
+    if (!isWithdrawalToken(rawToken)) throw new UnauthorizedException({ code: "telephony_agent_authentication_refused" });
+    return this.requiredClient().$transaction(async (tx) => {
+      // Deliberately no authenticate(), profile read, lock, current permission
+      // lookup, or audit append: the only authority is this exact prior receipt.
+      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+      const event = await tx.auditEvent.findUnique({ where: { idempotencyKey: withdrawalReceiptKey(rawToken, request) },
+        select: { resourceType: true, resourceId: true, eventType: true, result: true, after: true } });
+      const receipt = event?.resourceType === "TELEPHONY_PROFILE" && event.resourceId === request.profileId
+        && event.eventType === "TELEPHONY_PROFILE_WITHDRAWN_V1" && event.result === "SUCCESS"
+        ? parseWithdrawalReceipt(event.after, request) : null;
+      if (!receipt) throw new NotFoundException({ code: "telephony_withdrawal_receipt_not_found" });
+      return receipt;
+    }, { isolationLevel: "ReadCommitted", timeout: 10_000, maxWait: 5_000 });
+  }
 
   /** Observation only: an absent receipt is never evidence that a call was not sent. */
   async reconcileFreeCall(identity: AgentIdentity, input: unknown): Promise<AgentFreeCallReconciliation> {
@@ -230,6 +287,7 @@ export class TelephonyAgentRepository {
     const sdkVersion = this.version(input.sdkVersion, "telephony_sdk_version_invalid");
     const client = this.requiredClient();
     const rawToken = randomBytes(48).toString("base64url");
+    const associationId = randomUUID();
     return client.$transaction(async (tx) => {
       await acquirePermissionFence(tx, "write");
       const candidate = await tx.telephonyPairingCode.findUnique({ where: { codeDigest: this.digest(code) }, select: { userProfileId: true } });
@@ -253,15 +311,15 @@ export class TelephonyAgentRepository {
       if (previous && previous.userProfileId !== profile.id) throw new ConflictException({ code: "telephony_workstation_identity_conflict" });
       const workstation = previous
         ? await tx.telephonyWorkstation.update({ where: { id: previous.id }, data: {
-            displayName, tokenDigest: this.digest(rawToken), active: true, connectionState: "OFFLINE", sipRegistered: false, sdkLoaded: false,
+            displayName, tokenDigest: this.digest(rawToken), associationId, active: true, connectionState: "OFFLINE", sipRegistered: false, sdkLoaded: false,
             agentVersion, sdkVersion, inputDeviceId: null, outputDeviceId: null, lastErrorCode: null, lastSeenAt: null,
             pairedAt: new Date(), revokedAt: null, version: { increment: 1 },
           } })
-        : await tx.telephonyWorkstation.create({ data: { id: randomUUID(), userProfileId: profile.id, publicId, displayName, tokenDigest: this.digest(rawToken), agentVersion, sdkVersion } });
+        : await tx.telephonyWorkstation.create({ data: { id: randomUUID(), userProfileId: profile.id, publicId, displayName, tokenDigest: this.digest(rawToken), associationId, agentVersion, sdkVersion } });
       await tx.telephonyPairingCode.updateMany({ where: { userProfileId: profile.id, usedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
       await tx.telephonyUserProfile.update({ where: { id: profile.id }, data: { state: "LOCAL_CONFIGURATION_REQUIRED", version: { increment: 1 } } });
       await this.audit(tx, { userId: profile.userId, roles: profile.user.roles.filter(isRole), scopes: [], sessionId: "" }, { campusId: profile.user.campusId, eventType: "TELEPHONY_WORKSTATION_PAIRED", resourceId: workstation.id, idempotencyKey: `telephony-paired:${pairing.id}`, correlationId: "telephony-agent-pair", after: { profileId: profile.id, workstationId: workstation.id, version: workstation.version } });
-      return { token: rawToken, workstationId: workstation.id, profile: this.agentProfile(profile, workstation.id) };
+      return { token: rawToken, workstationId: workstation.id, associationId, profile: this.agentProfile(profile, workstation.id, associationId) };
     });
   }
 
@@ -331,14 +389,14 @@ export class TelephonyAgentRepository {
       const hangup = await tx.telephonyAgentCommand.findFirst({ where: { workstationId: identity.workstationId, state: "DELIVERED", hangupRequestedAt: { not: null }, hangupDeliveredAt: null }, include: { call: true }, orderBy: { hangupRequestedAt: "asc" } });
       if (hangup) {
         await tx.telephonyAgentCommand.update({ where: { id: hangup.id }, data: { hangupDeliveredAt: now } });
-        return { profile: this.agentProfile(workstation.userProfile, workstation.id), command: { commandId: hangup.call.externalId, callId: hangup.callId, destination: "", expiresAt: hangup.expiresAt.toISOString(), maxDurationSeconds: 0, hangupRequested: true } };
+        return { profile: this.agentProfile(workstation.userProfile, workstation.id, workstation.associationId), command: { commandId: hangup.call.externalId, callId: hangup.callId, destination: "", expiresAt: hangup.expiresAt.toISOString(), maxDurationSeconds: 0, hangupRequested: true } };
       }
       const pending = await tx.telephonyAgentCommand.findFirst({ where: { workstationId: identity.workstationId, state: "PENDING", expiresAt: { gt: now } }, include: { call: true }, orderBy: { createdAt: "asc" } });
-      if (!pending) return { profile: this.agentProfile(workstation.userProfile, workstation.id), command: null };
+      if (!pending) return { profile: this.agentProfile(workstation.userProfile, workstation.id, workstation.associationId), command: null };
       await this.assertCommandPermission(tx, identity, pending.call);
       const claimed = await tx.telephonyAgentCommand.updateMany({ where: { id: pending.id, state: "PENDING" }, data: { state: "DELIVERED", claimedAt: now } });
-      if (claimed.count !== 1) return { profile: this.agentProfile(workstation.userProfile, workstation.id), command: null };
-      return { profile: this.agentProfile(workstation.userProfile, workstation.id), command: { commandId: pending.call.externalId, callId: pending.callId, destination: this.decrypt(pending.destinationCiphertext, pending.destinationIv, pending.destinationTag), expiresAt: pending.expiresAt.toISOString(), maxDurationSeconds: 7200, hangupRequested: false } };
+      if (claimed.count !== 1) return { profile: this.agentProfile(workstation.userProfile, workstation.id, workstation.associationId), command: null };
+      return { profile: this.agentProfile(workstation.userProfile, workstation.id, workstation.associationId), command: { commandId: pending.call.externalId, callId: pending.callId, destination: this.decrypt(pending.destinationCiphertext, pending.destinationIv, pending.destinationTag), expiresAt: pending.expiresAt.toISOString(), maxDurationSeconds: 7200, hangupRequested: false } };
     });
   }
 
@@ -385,7 +443,7 @@ export class TelephonyAgentRepository {
         if (claimed.count !== 1) throw new ConflictException({ code: "telephony_agent_command_claim_conflict" });
       }
       return {
-        profile: this.agentProfile(workstation.userProfile, workstation.id),
+        profile: this.agentProfile(workstation.userProfile, workstation.id, workstation.associationId),
         command: {
           commandId: command.call.externalId,
           callId: command.callId,
@@ -521,6 +579,18 @@ export class TelephonyAgentRepository {
     ]);
     if (command || call) throw new ConflictException({ code: "telephony_workstation_busy" });
   }
+  private async assertNoWithdrawalActivity(tx: Prisma.TransactionClient, userId: string, profileId: string): Promise<void> {
+    const [command, call] = await Promise.all([
+      // UNCERTAIN with terminalAt still blocks. Only proved terminal, or expired
+      // without any delivery, can be ignored; unknown future states fail closed.
+      tx.telephonyAgentCommand.findFirst({ where: { workstation: { userProfileId: profileId }, NOT: { OR: [
+        { state: "TERMINAL", terminalAt: { not: null }, call: { state: { in: [...terminalStates] } } },
+        { state: "EXPIRED", terminalAt: { not: null }, claimedAt: null },
+      ] } }, select: { id: true } }),
+      tx.telephonyCall.findFirst({ where: { createdBy: userId, provider: "LINPHONE", state: { notIn: [...terminalStates] } }, select: { id: true } }),
+    ]);
+    if (command || call) throw new ConflictException({ code: "telephony_workstation_busy" });
+  }
   private async lockedIdentity(tx: Prisma.TransactionClient, identity: AgentIdentity): Promise<void> {
     await this.lockProfile(tx, identity.profileId);
     const workstation = await tx.telephonyWorkstation.findUnique({ where: { id: identity.workstationId }, include: { userProfile: { include: { user: true, serverProfile: true } } } });
@@ -587,5 +657,5 @@ export class TelephonyAgentRepository {
   private version(value: string | undefined, code: string): string { const text = value?.trim() ?? ""; if (!/^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/u.test(text)) throw new BadRequestException({ code }); return text; }
   private publicUserProfile(row: { id: string; userId: string; serverProfileId: string; sipAddress: string; authUsername: string | null; enabled: boolean; state: string; version: number }): Record<string, unknown> { return { id: row.id, userId: row.userId, serverProfileId: row.serverProfileId, sipAddress: row.sipAddress, authUsername: row.authUsername, enabled: row.enabled, state: row.state, version: row.version }; }
   private publicWorkstation(row: { id: string; publicId: string; displayName: string; active: boolean; connectionState: string; sipRegistered: boolean; sdkLoaded: boolean; agentVersion: string; sdkVersion: string; inputDeviceId: string | null; outputDeviceId: string | null; lastErrorCode: string | null; lastSeenAt: Date | null; pairedAt: Date; revokedAt: Date | null; version: number }): Record<string, unknown> { return { id: row.id, publicId: row.publicId, displayName: row.displayName, active: row.active, connectionState: row.connectionState, sipRegistered: row.sipRegistered, sdkLoaded: row.sdkLoaded, agentVersion: row.agentVersion, sdkVersion: row.sdkVersion, inputDeviceId: row.inputDeviceId, outputDeviceId: row.outputDeviceId, lastErrorCode: row.lastErrorCode, lastSeenAt: row.lastSeenAt?.toISOString() ?? null, pairedAt: row.pairedAt.toISOString(), revokedAt: row.revokedAt?.toISOString() ?? null, version: row.version }; }
-  private agentProfile(profile: { id: string; sipAddress: string; authUsername: string | null; user?: { professionalDisplayName?: string | null; professionalEmail?: string | null }; serverProfile: { sipDomain: string; proxyUri: string | null; transport: string } }, workstationId: string): Record<string, unknown> { return { id: profile.id, workstationId, sipAddress: profile.sipAddress, authUsername: profile.authUsername, server: { sipDomain: profile.serverProfile.sipDomain, proxyUri: profile.serverProfile.proxyUri, transport: profile.serverProfile.transport }, inboundEnabled: false, recordingEnabled: false, crmDisplayName: profile.user?.professionalDisplayName ?? null, crmEmail: profile.user?.professionalEmail ?? null }; }
+  private agentProfile(profile: { id: string; sipAddress: string; authUsername: string | null; user?: { professionalDisplayName?: string | null; professionalEmail?: string | null }; serverProfile: { sipDomain: string; proxyUri: string | null; transport: string } }, workstationId: string, associationId: string | null = null): Record<string, unknown> { return { id: profile.id, workstationId, associationId, sipAddress: profile.sipAddress, authUsername: profile.authUsername, server: { sipDomain: profile.serverProfile.sipDomain, proxyUri: profile.serverProfile.proxyUri, transport: profile.serverProfile.transport }, inboundEnabled: false, recordingEnabled: false, crmDisplayName: profile.user?.professionalDisplayName ?? null, crmEmail: profile.user?.professionalEmail ?? null }; }
 }
