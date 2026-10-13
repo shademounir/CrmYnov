@@ -7,7 +7,21 @@ export interface BatchProgress { checked: number; committed: number; deferred: n
 type Request = <T>(path: string, init?: RequestInit) => Promise<T>;
 const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i, sha = /^[a-f0-9]{64}$/;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
-function canonical(value: unknown): string { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (record(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; return JSON.stringify(value); }
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonical).join(",")}]`;
+  }
+  if (record(value)) {
+    // Idempotency requires a locale-independent UTF-16 order, not a display sort.
+    const keys = Object.keys(value).sort((left, right) => {
+      if (left < right) return -1;
+      return left === right ? 0 : 1;
+    });
+    const fields = keys.map(key => JSON.stringify(key) + ":" + canonical(value[key]));
+    return `{${fields.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 const digest = (value: unknown): Promise<string> => bootstrapHash(new TextEncoder().encode(canonical(value)).buffer);
 export function parseBatchPlan(text: string, source: BootstrapPackage): BatchPlan {
   if (new TextEncoder().encode(text).byteLength > 8 * 1024 * 1024) throw new Error("bootstrap_plan_too_large");

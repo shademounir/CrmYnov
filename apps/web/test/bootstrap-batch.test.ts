@@ -37,6 +37,20 @@ test("continues beyond 25 with current versions then reload skips exact persiste
   assert.equal(done.committed, 57); assert.deepEqual(fake.writes.map(body => body.items.length), [25, 25, 7]); assert.equal(fake.getVersion(), 6);
   const replay = await runBatchPlan(plan, fake.request, () => {}, () => false); assert.equal(replay.committed, 0); assert.equal(replay.alreadyPersisted, 57); assert.equal(fake.writes.length, 3);
 });
+
+test("durable keys ignore object insertion order and locale-dependent display sorting", async () => {
+  const { plan, rows } = fixture(1); const fake = runtime(rows);
+  await runBatchPlan(plan, fake.request, () => {}, () => false);
+  const item = plan.items[0]!;
+  const reordered: BatchPlan = { ...plan, items: [{ decision: { reason: item.decision.reason, action: "CREATE_DOSSIER" },
+    expectedVersion: item.expectedVersion, fingerprint: item.fingerprint, rowId: item.rowId }] };
+  const original = String.prototype.localeCompare;
+  String.prototype.localeCompare = () => { throw new Error("locale_sort_forbidden_for_receipt_identity"); };
+  try {
+    const replay = await runBatchPlan(reordered, fake.request, () => {}, () => false);
+    assert.equal(replay.alreadyPersisted, 1); assert.equal(fake.writes.length, 1);
+  } finally { String.prototype.localeCompare = original; }
+});
 test("definitive refusal is isolated; other admissible rows continue without automatic DEFER", async () => {
   const { plan, rows } = fixture(6); const fake = runtime(rows, rows[2]!.id);
   const done = await runBatchPlan(plan, fake.request, () => {}, () => false);
