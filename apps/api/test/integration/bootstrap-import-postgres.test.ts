@@ -106,7 +106,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
         const timeout = setTimeout(() => { child.kill(); reject(new Error(`synthetic_child_stage_timeout:${stage}`)); }, 15000);
         child.once("message", (message) => { clearTimeout(timeout); assert.equal((message as { stage: string }).stage, stage); resolveStage(); });
         child.once("error", (error) => { clearTimeout(timeout); reject(error); });
-        child.once("exit", (code) => { clearTimeout(timeout); if (code !== null) reject(new Error(`synthetic_child_failed:${code}:${failure}`)); });
+        child.once("exit", (code) => { clearTimeout(timeout); if (code !== null) reject(new Error(`synthetic_child_failed:${block ? "execute-block" : "confirm"}:${stage}:${code}:${failure}`)); });
       });
       assert.equal(child.kill(), true); await exited;
     };

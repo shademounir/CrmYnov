@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { HttpException } from "@nestjs/common";
 import { BootstrapImportService } from "../../../src/bootstrap-import/bootstrap-import.service.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "../../../src/permissions/dynamic-repository.js";
 import type { PermissionTransactionMode } from "../../../src/permissions/permission-fence.js";
@@ -37,4 +38,8 @@ else await service.confirm(instruction.packageId, instruction.input, instruction
 // Deliberately do not return an application acknowledgement to the parent.
 process.send({ stage: "after_commit" }); await new Promise<never>(() => {});
 }
-if (process.env.CRMY61_CRASH_CHILD === "true") void crashChildEntrypoint().catch(() => { process.stderr.write("synthetic_crash_child_failed\n"); process.exitCode = 1; });
+if (process.env.CRMY61_CRASH_CHILD === "true") void crashChildEntrypoint().catch((error: unknown) => {
+  const response = error instanceof HttpException ? error.getResponse() : null;
+  const code = response && typeof response === "object" && "code" in response && typeof response.code === "string" && /^[a-z_]{1,100}$/.test(response.code) ? response.code : "unclassified";
+  process.stderr.write(`synthetic_crash_child_failed:${code}\n`); process.exitCode = 1;
+});
