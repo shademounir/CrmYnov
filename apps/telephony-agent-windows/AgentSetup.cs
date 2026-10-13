@@ -20,30 +20,13 @@ internal sealed class AgentSetup
 
     public AgentSettings? Settings => store.Load();
 
-    public static string NormalizeApiBaseUrl(string value)
-    {
-        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var endpoint)
-            || (!string.IsNullOrEmpty(endpoint.UserInfo))
-            || (!string.IsNullOrEmpty(endpoint.Query))
-            || (!string.IsNullOrEmpty(endpoint.Fragment)))
-            throw new InvalidOperationException("CRM_ADDRESS_INVALID");
-        if (endpoint.Scheme != Uri.UriSchemeHttps
-            && !(endpoint.Scheme == Uri.UriSchemeHttp && (endpoint.IsLoopback || endpoint.Host == "host.docker.internal")))
-            throw new InvalidOperationException("API_TLS_REQUIRED");
-        return endpoint.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/";
-    }
+    public static string NormalizeApiBaseUrl(string value) => AgentEndpointPolicy.Normalize(value);
 
-    public static string EnvironmentLabel(string value)
-    {
-        var endpoint = new Uri(NormalizeApiBaseUrl(value));
-        if (endpoint.IsLoopback || endpoint.Host == "host.docker.internal") return $"Local · {endpoint.Host}:{endpoint.Port}";
-        if (endpoint.Host.EndsWith(".a.run.app", StringComparison.OrdinalIgnoreCase)) return $"DEV Cloud · {endpoint.Host}";
-        return $"HTTPS · {endpoint.Host}";
-    }
+    public static string EnvironmentLabel(string value) => AgentEndpointPolicy.Label(value);
 
     internal static bool CanPreserveLocalProfile(AgentSettings? existing, string apiBaseUrl, PairResponse paired) =>
         existing is not null
-        && string.Equals(NormalizeApiBaseUrl(existing.ApiBaseUrl), apiBaseUrl, StringComparison.OrdinalIgnoreCase)
+        && AgentEndpointPolicy.SameEndpoint(existing.ApiBaseUrl, apiBaseUrl)
         && string.Equals(existing.ProfileId, paired.Profile.Id, StringComparison.Ordinal)
         && string.Equals(existing.SipAddress, paired.Profile.SipAddress, StringComparison.OrdinalIgnoreCase);
 

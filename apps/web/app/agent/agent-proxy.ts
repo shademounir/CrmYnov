@@ -16,7 +16,7 @@ export function agentApiPath(parts: string[]): string {
   const prefix = "integrations/telephony/agent/v1/";
   const suffix = relative.startsWith(prefix) ? relative.slice(prefix.length) : "";
   const segments = suffix.split("/");
-  const allowed = SIMPLE_AGENT_ACTIONS.has(suffix) || (
+  const allowed = SIMPLE_AGENT_ACTIONS.has(suffix) || suffix === "free-calls/reconciliation" || (
     segments.length === 3 && segments[0] === "commands" && COMMAND_ID.test(segments[1] ?? "") && segments[2] === "claim"
   );
   if (!allowed) {

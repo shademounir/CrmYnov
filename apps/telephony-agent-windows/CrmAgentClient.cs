@@ -9,9 +9,9 @@ internal sealed class CrmAgentClient : IDisposable
     private string? token;
     public CrmAgentClient(string apiBaseUrl, string? token = null)
     {
-        var endpoint = new Uri(apiBaseUrl.EndsWith('/') ? apiBaseUrl : apiBaseUrl + "/");
-        if (endpoint.Scheme != Uri.UriSchemeHttps && !(endpoint.Scheme == Uri.UriSchemeHttp && (endpoint.IsLoopback || endpoint.Host == "host.docker.internal"))) throw new InvalidOperationException("API_TLS_REQUIRED");
-        http = new HttpClient { BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(10) }; this.token = token;
+        var endpoint = new Uri(AgentEndpointPolicy.Normalize(apiBaseUrl));
+        // Never forward the agent token across a redirect to a different origin.
+        http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { BaseAddress = endpoint, Timeout = TimeSpan.FromSeconds(10) }; this.token = token;
     }
     public async Task<PairResponse> PairAsync(PairRequest request, CancellationToken cancellation)
     {
@@ -24,6 +24,8 @@ internal sealed class CrmAgentClient : IDisposable
         PostAsync($"integrations/telephony/agent/v1/commands/{commandId:D}/claim", null, AgentJsonContext.Default.PollResponse, cancellation);
     public Task<FreeCallResponse> CreateFreeCallAsync(FreeCallRequest body, CancellationToken cancellation) =>
         PostAsync("integrations/telephony/agent/v1/free-calls", JsonContent.Create(body, AgentJsonContext.Default.FreeCallRequest), AgentJsonContext.Default.FreeCallResponse, cancellation);
+    public Task<FreeCallReconciliationResponse> ReconcileFreeCallAsync(string key, CancellationToken cancellation) =>
+        PostAsync("integrations/telephony/agent/v1/free-calls/reconciliation", JsonContent.Create(new FreeCallReconciliationRequest(key), AgentJsonContext.Default.FreeCallReconciliationRequest), AgentJsonContext.Default.FreeCallReconciliationResponse, cancellation);
     public async Task SendStatusAsync(AgentStatus status, CancellationToken cancellation)
     {
         using var request = Authenticated(HttpMethod.Post, "integrations/telephony/agent/v1/status", JsonContent.Create(status, AgentJsonContext.Default.AgentStatus));
