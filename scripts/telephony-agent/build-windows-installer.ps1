@@ -34,6 +34,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "INSTALLER_PUBLISH_FAILED: $LASTEXITCODE" }
     $built = Join-Path $publish 'CrmYnov.TelephonyAgent.Installer.exe'
     if (-not (Test-Path -LiteralPath $built -PathType Leaf)) { throw 'INSTALLER_EXECUTABLE_MISSING' }
+    $builtVersion = (Get-Item -LiteralPath $built).VersionInfo.ProductVersion
+    if ($builtVersion -ne $Version -and -not $builtVersion.StartsWith("$Version+", [System.StringComparison]::Ordinal)) {
+        throw 'INSTALLER_EXECUTABLE_VERSION_MISMATCH'
+    }
     Move-Item -LiteralPath $built -Destination $target
     [pscustomobject]@{
         installer = $target
@@ -41,6 +45,7 @@ try {
         sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
         packageSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         signed = $false
+        executableProductVersion = $builtVersion
     } | ConvertTo-Json
 }
 finally {
