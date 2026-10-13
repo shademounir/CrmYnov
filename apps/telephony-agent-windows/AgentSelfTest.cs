@@ -73,6 +73,7 @@ internal static class AgentSelfTest
             Require(AgentEndpointPolicy.SameEndpoint("https://CRM.example.test:443/agent", "https://crm.example.test/agent/"), "CANONICAL_ENDPOINT_REFUSED");
             AgentMaintenancePolicy.RequireIdle(false, 0);
             SdkShutdownSelfTest.Run();
+            WithdrawalContractSelfTest.RunAsync().GetAwaiter().GetResult();
             RequireThrows(() => AgentMaintenancePolicy.RequireIdle(true, 0), "ACTIVE_CALL_MAINTENANCE_ACCEPTED");
             RequireThrows(() => AgentMaintenancePolicy.RequireIdle(false, 1), "PENDING_EVENT_MAINTENANCE_ACCEPTED");
             // Exercise the real runtime boundary without constructing a SDK Core.

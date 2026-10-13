@@ -129,6 +129,23 @@ et à sa génération, puis une désinscription SDK confirmée avant retrait des
 credentials locaux. Un simple HTTP 401/403 ou une panne réseau ne prouve pas cette
 révocation. Ne pas effacer manuellement le journal pour contourner la garde.
 
+La fondation native du reçu de retrait ajoute une génération `associationId`
+optionnelle au profil protégé. Elle est reprise uniquement depuis un appairage
+cohérent ; un ancien profil sans génération reste utilisable mais ne peut pas
+demander le retrait. Les méthodes dédiées du client valident le reçu versionné,
+les quatre identités et la date UTC, et refusent les champs inconnus ou dupliqués.
+Elles ne réessaient pas une mutation après perte de réponse. Cette fondation ne
+branche aucun bouton, n'efface aucun fichier ni credential et ne constitue pas
+encore un parcours de retrait : l'exclusion de maintenance, l'arrêt SDK attesté,
+la persistance de la demande et la vérification du profil courant avant effacement
+restent à raccorder et qualifier séparément.
+
+`apps/telephony-agent-windows/tests/WithdrawalContract.Managed.csproj` teste cette
+fondation avec JSON source-generated et transport HTTP simulé en mémoire, sans
+SDK, réseau, audio ou accès au profil DPAPI. Il n'a aucune dépendance NuGet externe
+et reste exclu de la compilation du paquet Windows. Cette preuve ne qualifie ni
+la connexion à l'API réelle, ni l'installateur, ni la suppression complète.
+
 Les extensions internes et l'autorisation d'appels internationaux hors Maroc
 restent hors de ce correctif. Elles requièrent un contrat de destination typé et
 des permissions serveur : aucun élargissement implicite de la validation actuelle.

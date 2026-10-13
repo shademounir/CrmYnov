@@ -23,6 +23,10 @@
   <ItemGroup Condition="Exists('$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs')">
     <Compile Include="$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs" Link="Generated\LinphoneWrapper.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Isolated managed harness has its own source generation/assembly metadata. -->
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
 
   <Target Name="VerifyLiblinphoneSdk" BeforeTargets="BeforeBuild">
     <Error Condition="!Exists('$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs')" Text="Set LIBLINPHONE_SDK_ROOT to the extracted official win64 SDK root." />

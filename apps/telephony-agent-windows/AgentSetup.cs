@@ -37,6 +37,7 @@ internal sealed class AgentSetup
         var publicId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Environment.UserDomainName}|{Environment.UserName}|{Environment.MachineName}"))).ToLowerInvariant()[..32];
         using var client = new CrmAgentClient(apiBaseUrl);
         var paired = await client.PairAsync(new(pairingCode.Trim(), publicId, displayName.Trim(), Version, SdkVersion), cancellation);
+        var associationId = AgentWithdrawalPolicy.AssociationFromPair(paired);
         var preserveSecret = CanPreserveLocalProfile(existing, apiBaseUrl, paired);
         var settings = new AgentSettings(
             apiBaseUrl.Trim(), paired.Token, paired.WorkstationId, paired.Profile.Id,
@@ -47,7 +48,8 @@ internal sealed class AgentSetup
             preserveSecret ? existing!.OutputDeviceId : null,
             paired.Profile.CrmDisplayName,
             paired.Profile.CrmEmail,
-            displayName.Trim());
+            displayName.Trim(),
+            associationId);
         store.Save(settings);
         return settings;
     }
