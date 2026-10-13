@@ -6,13 +6,23 @@ import type { PermissionTransactionMode } from "../../../src/permissions/permiss
 import { PrismaService } from "../../../src/persistence/prisma.service.js";
 import type { Principal } from "../../../src/auth/auth.types.js";
 import type { BootstrapBlockInput, BootstrapConfirmInput } from "../../../src/bootstrap-import/bootstrap-import.contract.js";
+import type { Prisma } from "@prisma/client";
 
 export async function crashChildEntrypoint(): Promise<void> {
 const instruction = JSON.parse(process.env.CRMY61_CRASH_INSTRUCTION ?? "null") as { stage: "before_commit" | "after_commit"; operation?: "execute-block"; packageId: string; input: BootstrapConfirmInput | BootstrapBlockInput; actor: Principal } | null;
 if (process.env.CRMY61_EPHEMERAL_TEST !== "true" || !instruction || !process.send) throw new Error("synthetic_child_not_authorized");
 const database = new URL(process.env.DATABASE_URL ?? "");
 if (!["127.0.0.1", "localhost"].includes(database.hostname) || database.pathname !== "/crmy61_bootstrap_synthetic") throw new Error("synthetic_child_database_refused");
-const prisma = new PrismaService();
+class DiagnosticPrisma extends PrismaService {
+  override withTransaction<T>(tx: Prisma.TransactionClient, operation: () => Promise<T>): Promise<T> {
+    return super.withTransaction(tx, operation).catch((error: unknown) => {
+      // Synthetic-only call sites, never the error message, payload or credentials.
+      if (error instanceof Error) process.stderr.write(`${error.name}\n${error.stack?.split("\n").slice(1).filter(line => line.trim().startsWith("at ")).join("\n")}\n`);
+      throw error;
+    });
+  }
+}
+const prisma = new DiagnosticPrisma();
 const markers = await prisma.client!.$queryRaw<Array<{ nonce: string }>>`SELECT nonce FROM crmy61_test_identity.marker WHERE purpose='historical-bootstrap-synthetic-qualification'`;
 if (!process.env.CRMY61_DATABASE_NONCE || !markers.some((row) => row.nonce === process.env.CRMY61_DATABASE_NONCE)) throw new Error("synthetic_child_nonce_refused");
 class InterruptedRepository extends DynamicPermissionRepository {
