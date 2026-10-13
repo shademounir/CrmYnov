@@ -42,6 +42,40 @@ function button(dom: JSDOM, label: string): HTMLButtonElement { const value = Ar
 function requestPath(value: string | URL | Request): string { return typeof value === "string" ? value : value instanceof URL ? value.href : value.url; }
 function control<T extends Element>(dom: JSDOM, label: string): T { const value = Array.from(dom.window.document.querySelectorAll("label")).find((item) => item.textContent?.startsWith(label))?.querySelector("input,textarea,select"); assert.ok(value, `control ${label}`); return value as T; }
 
+test("continuous portfolio UI confirms once then executes successive bounded blocks through the official BFF", async (t) => {
+  const items = Array.from({ length: 26 }, (_, index) => ({ rowId: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`, fingerprint: "b".repeat(64), expectedVersion: 1, decision: { action: "DEFER", confirmed: true, reason: "Conflit synthétique documenté à rapprocher" } }));
+  const ledger = items.map(item => ({ ...row, id: item.rowId, version: 1, state: "REVIEW", decision: undefined }));
+  let version = 3; const sizes: number[] = [];
+  const current = (): BootstrapPackage => ({ ...source, version, state: "PARTIAL", counts: { ...source.counts, total: 26, review: ledger.filter(item => item.state === "REVIEW").length, pending: 0 } });
+  const report = (): object => ({ package: current(), bySheet: [], cutoverBlocked: true, reconciliation: { complete: false, truncated: false, totalOccurrences: 26, unresolvedOccurrences: 26, effects: {}, contacts: { email: { groups: 0, occurrences: 0 }, phone: { groups: 0, occurrences: 0 }, overlappingGroupsNotUniquePeople: true }, currentDossierAxes: { visible: 0, withheld: 0 }, axes: {}, discrepancies: [] } });
+  t.mock.method(globalThis, "fetch", async (path: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = requestPath(path);
+    if (url.endsWith("/context")) return Response.json(context);
+    if (url.endsWith(`/packages/${id}`)) return Response.json(current());
+    if (url.includes("/rows?")) return Response.json({ items: ledger, nextAfter: null });
+    if (url.endsWith("/report")) return Response.json(report());
+    if (url.endsWith("/execute-block")) {
+      assert.match(url, /^\/api\/crm\/lead-import\/bootstrap\//);
+      const body = JSON.parse(String(init?.body)) as { expectedVersion: number; confirmed: boolean; items: Array<{ rowId: string }> };
+      assert.equal(body.confirmed, true); assert.equal(body.expectedVersion, version);
+      sizes.push(body.items.length); version++;
+      for (const item of body.items) ledger.find(value => value.id === item.rowId)!.state = "DEFERRED";
+      return Response.json({ report: report(), block: { rowIds: [], deferredRowIds: body.items.map(item => item.rowId) } });
+    }
+    return new Response(null, { status: 404 });
+  });
+  const { dom, render, edit, click, flush } = await setup(t); await render(id);
+  await edit(control<HTMLTextAreaElement>(dom, "Plan de décisions JSON"), JSON.stringify({ schemaVersion: 1, packageId: id, sha256: source.sha256, items }));
+  await click(button(dom, "Vérifier le plan préparé"));
+  assert.equal(button(dom, "Importer le plan par blocs successifs").disabled, true);
+  await click(control<HTMLInputElement>(dom, "J’autorise les décisions explicites"));
+  await click(button(dom, "Importer le plan par blocs successifs"));
+  for (let attempt = 0; attempt < 20 && sizes.length < 2; attempt++) await flush();
+  assert.deepEqual(sizes, [25, 1]);
+  assert.match(dom.window.document.body.textContent ?? "", /26 différés persistés/u);
+  assert.equal(dom.window.localStorage.length, 0);
+});
+
 test("bootstrap shows no upload, mapping or decision forms when initial context is forbidden", async (t) => {
   t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(Response.json({ code: "permission_denied" }, { status: 403 })));
   const { dom, render } = await setup(t); await render();
