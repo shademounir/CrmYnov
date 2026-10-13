@@ -44,12 +44,12 @@ test("durable keys ignore object insertion order and locale-dependent display so
   const item = plan.items[0]!;
   const reordered: BatchPlan = { ...plan, items: [{ decision: { reason: item.decision.reason, action: "CREATE_DOSSIER" },
     expectedVersion: item.expectedVersion, fingerprint: item.fingerprint, rowId: item.rowId }] };
-  const original = String.prototype.localeCompare;
-  String.prototype.localeCompare = () => { throw new Error("locale_sort_forbidden_for_receipt_identity"); };
-  try {
-    const replay = await runBatchPlan(reordered, fake.request, () => {}, () => false);
-    assert.equal(replay.alreadyPersisted, 1); assert.equal(fake.writes.length, 1);
-  } finally { String.prototype.localeCompare = original; }
+  // Pinned independently from the original UTF-16 canonical representation:
+  // changing to locale/display ordering must not invalidate durable receipts.
+  assert.equal(fake.writes[0]!.items[0]!.decision.idempotencyKey,
+    "operator-row-0d12f2d4faaccd890fe0a08ba5dd74639f51a7f40ae710180dcff08205a2fc63");
+  const replay = await runBatchPlan(reordered, fake.request, () => {}, () => false);
+  assert.equal(replay.alreadyPersisted, 1); assert.equal(fake.writes.length, 1);
 });
 test("definitive refusal is isolated; other admissible rows continue without automatic DEFER", async () => {
   const { plan, rows } = fixture(6); const fake = runtime(rows, rows[2]!.id);
