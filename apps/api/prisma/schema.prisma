@@ -784,6 +784,7 @@ model TelephonyWorkstation {
   publicId        String    @unique @map("public_id") @db.VarChar(80)
   displayName     String    @map("display_name") @db.VarChar(120)
   tokenDigest     String    @unique @map("token_digest") @db.VarChar(64)
+  associationId   String?   @map("association_id") @db.Uuid
   active          Boolean   @default(true)
   connectionState String    @default("OFFLINE") @map("connection_state") @db.VarChar(24)
   sipRegistered   Boolean   @default(false) @map("sip_registered")

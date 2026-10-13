@@ -1,6 +1,6 @@
 import { MAX_BODY_BYTES, safePath } from "../api/crm/proxy-policy";
 
-const SIMPLE_AGENT_ACTIONS = new Set(["pair", "status", "poll", "events", "free-calls"]);
+const SIMPLE_AGENT_ACTIONS = new Set(["pair", "status", "poll", "events", "free-calls", "profile-withdrawals"]);
 const COMMAND_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const RESPONSE_LIMIT_BYTES = 1_048_576;
 
@@ -16,7 +16,7 @@ export function agentApiPath(parts: string[]): string {
   const prefix = "integrations/telephony/agent/v1/";
   const suffix = relative.startsWith(prefix) ? relative.slice(prefix.length) : "";
   const segments = suffix.split("/");
-  const allowed = SIMPLE_AGENT_ACTIONS.has(suffix) || suffix === "free-calls/reconciliation" || (
+  const allowed = SIMPLE_AGENT_ACTIONS.has(suffix) || suffix === "free-calls/reconciliation" || suffix === "profile-withdrawals/receipt" || (
     segments.length === 3 && segments[0] === "commands" && COMMAND_ID.test(segments[1] ?? "") && segments[2] === "claim"
   );
   if (!allowed) {

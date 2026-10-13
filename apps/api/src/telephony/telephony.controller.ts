@@ -64,6 +64,15 @@ export class TelephonyAgentController {
     @Inject(DynamicPermissionRepository) private readonly permissions: DynamicPermissionRepository,
   ) {}
   @Post("pair") pair(@Body() body: Parameters<TelephonyAgentRepository["pair"]>[0]): Promise<Record<string, unknown>> { return this.agents.pair(body); }
+  @Post("profile-withdrawals") @Header("Cache-Control", "no-store") withdrawProfile(
+    @Headers("x-telephony-agent-token") token: string | undefined,
+    @Body() body: unknown,
+    @Headers("x-correlation-id") correlationId: string | undefined,
+  ): ReturnType<TelephonyAgentRepository["withdrawProfile"]> { return this.agents.withdrawProfile(token, body, correlationId ?? "telephony-agent-withdrawal"); }
+  @Post("profile-withdrawals/receipt") @Header("Cache-Control", "no-store") withdrawalReceipt(
+    @Headers("x-telephony-agent-token") token: string | undefined,
+    @Body() body: unknown,
+  ): ReturnType<TelephonyAgentRepository["getWithdrawalReceipt"]> { return this.agents.getWithdrawalReceipt(token, body); }
   @Post("status") async status(@Headers("x-telephony-agent-token") token: string | undefined, @Body() body: Parameters<TelephonyAgentRepository["status"]>[1]): Promise<Record<string, unknown>> { return this.agents.status(await this.agents.authenticate(token), body); }
   @Post("poll") async poll(@Headers("x-telephony-agent-token") token: string | undefined): ReturnType<TelephonyAgentRepository["poll"]> { return this.agents.poll(await this.agents.authenticate(token)); }
   @Post("free-calls/reconciliation") @Header("Cache-Control", "no-store") async reconcileFreeCall(
