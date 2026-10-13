@@ -25,9 +25,18 @@ internal static class Program
             if (command == "self-test") return AgentSelfTest.Run(args.Skip(1).FirstOrDefault());
             // Loading the official SDK must remain a read-only diagnostic: it must
             // not create a local profile or touch a user's protected SIP state.
-            if (command == "native-check") return NativeCheck();
+            if (command == "native-check") {
+                var diagnosticStore = new DpapiStore();
+                if (Directory.Exists(diagnosticStore.DataDirectory) && new AgentWithdrawalStateStore(diagnosticStore.DataDirectory).Load() is not null)
+                    throw new InvalidOperationException("WITHDRAWAL_PENDING");
+                return NativeCheck();
+            }
             using var instance = AgentInstanceGuard.Acquire();
             var store = new DpapiStore(); store.EnsureDirectory();
+            // Every CLI path that could start SDK/network or change a profile is
+            // blocked by durable uncertainty, including after process restart.
+            if (new AgentWithdrawalStateStore(store.DataDirectory).Load() is not null)
+                throw new InvalidOperationException("WITHDRAWAL_PENDING");
             if (command is "pair" or "configure-secret") {
                 var journal = new EventJournal(store.JournalPath);
                 AgentMaintenancePolicy.RequireIdle(false, journal.Pending.Count + journal.UnresolvedFreeCallCount);

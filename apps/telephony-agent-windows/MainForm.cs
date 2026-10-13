@@ -53,6 +53,11 @@ internal sealed class MainForm : Form
     private bool wizardVisible;
     private int wizardStep;
     private bool allowClose;
+    private volatile bool closing;
+    private bool closeCompleted;
+    private bool withdrawalBusy;
+    private Task? withdrawalTask;
+    private CancellationTokenSource? withdrawalCancellation;
 
     public MainForm(DpapiStore store, ProtocolRequest? startupRequest = null)
     {
@@ -90,6 +95,7 @@ internal sealed class MainForm : Form
 
     private async Task InitializeViewAsync()
     {
+        if (runtime.WithdrawalPending) { Render(); ShowFeedback("Un retrait reste à vérifier. Seule la consultation du même reçu est autorisée ; le profil et le journal sont conservés.", true); return; }
         var settings = setup.Settings;
         if (settings is null) { wizardVisible = true; wizardStep = 0; }
         else if (settings.SipPassword.Length == 0) { wizardVisible = true; wizardStep = 1; }
@@ -107,9 +113,10 @@ internal sealed class MainForm : Form
 
     private Task HandleBrokerRequestAsync(ProtocolRequest request)
     {
-        if (IsDisposed) return Task.CompletedTask;
+        if (closing || IsDisposed) return Task.CompletedTask;
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         BeginInvoke(async () => {
+            if (closing || IsDisposed) { completion.TrySetResult(); return; }
             try { await HandleProtocolRequestAsync(request); completion.SetResult(); }
             catch (Exception error) { completion.SetException(error); }
         });
@@ -118,7 +125,9 @@ internal sealed class MainForm : Form
 
     private async Task HandleProtocolRequestAsync(ProtocolRequest request)
     {
+        if (closing || IsDisposed) return;
         RestoreWindow();
+        if (withdrawalBusy || runtime.WithdrawalPending) { Render(); ShowFeedback("Retrait en attente : aucune commande d’appel ni nouvelle connexion n’est autorisée.", true); return; }
         if (request.CommandId is not Guid commandId) {
             ShowFeedback("Agent ouvert. Connectez le poste avant de confirmer un appel dans le CRM.", false);
             return;
@@ -140,7 +149,8 @@ internal sealed class MainForm : Form
         finishButton = null; readinessLabel = null; crmStatus = null; authorizationStatus = null; sipStatus = null; audioStatus = null;
         callValue = null; durationValue = null; connectButton = null; disconnectButton = null;
         accountDisplayValue = null;
-        var view = wizardVisible ? BuildWizard() : BuildDashboard();
+        freeCallPhone = null; freeCallComment = null; freeCallPurpose = null; freeCallButton = null; freeCallClearButton = null;
+        var view = withdrawalBusy || runtime.WithdrawalPending ? BuildWithdrawalPending() : wizardVisible ? BuildWizard() : BuildDashboard();
         contentHost.Controls.Add(view);
         contentHost.ResumeLayout(true);
         UpdateVisibleState();
@@ -160,7 +170,43 @@ internal sealed class MainForm : Form
             _ => BuildAvailabilityStep(),
         });
         root.Controls.Add(card);
+        if (setup.Settings is not null) { var withdraw = ActionButton("Retirer mon profil", false); withdraw.Click += async (_, _) => await WithdrawAsync(false); root.Controls.Add(withdraw); }
         return root;
+    }
+
+    private Control BuildWithdrawalPending()
+    {
+        var root = Page();
+        root.Controls.Add(BuildBrandHeader("Retrait du profil", "Le compte CRM, les historiques, le journal local et les préférences de démarrage sont conservés."));
+        var card = Card(); var form = FormStack();
+        form.Controls.Add(SectionTitle(withdrawalBusy ? "Vérification en cours" : "Résultat à vérifier", "Aucune nouvelle demande de retrait ne sera envoyée. Une réponse absente ou un reçu introuvable ne prouvent pas un échec : le profil est conservé jusqu’au reçu validé."));
+        var actions = ButtonRow();
+        var verify = ActionButton("Vérifier le reçu", true); verify.Enabled = !withdrawalBusy; verify.Click += async (_, _) => await WithdrawAsync(true);
+        var quit = ActionButton("Quitter", false); quit.Click += (_, _) => { allowClose = true; Close(); };
+        actions.Controls.Add(verify); actions.Controls.Add(quit); form.Controls.Add(actions); form.Controls.Add(feedback); card.Controls.Add(form); root.Controls.Add(card);
+        return root;
+    }
+
+    private async Task WithdrawAsync(bool resumeOnly)
+    {
+        if (withdrawalBusy || closing) return;
+        if (!resumeOnly && MessageBox.Show(this,
+            "Retirer uniquement le profil téléphonique protégé de ce poste après confirmation du CRM ? Le compte CRM, les Leads, les historiques, le journal local et vos préférences de démarrage seront conservés. Aucun appel ne sera lancé.",
+            "Retirer mon profil", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        withdrawalBusy = true;
+        withdrawalCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Render();
+        try {
+            withdrawalTask = runtime.WithdrawProfileAsync(resumeOnly, withdrawalCancellation.Token);
+            await withdrawalTask;
+            wizardVisible = true; wizardStep = 0;
+            ShowFeedback("Retrait confirmé et profil local retiré. Les historiques sont conservés. Vous pouvez utiliser le parcours officiel d’association.", false);
+        } catch (Exception error) { ShowFeedback(WithdrawalError(error), true); }
+        finally {
+            withdrawalBusy = false;
+            withdrawalCancellation.Dispose(); withdrawalCancellation = null;
+            if (!closing && !IsDisposed) Render();
+        }
     }
 
     private Control BuildStepIndicator()
@@ -309,7 +355,8 @@ internal sealed class MainForm : Form
         };
         connectButton = ActionButton("Connecter", true); connectButton.Click += async (_, _) => await ConnectAsync();
         disconnectButton = ActionButton("Déconnecter", false); disconnectButton.Click += async (_, _) => await DisconnectAsync();
-        var quit = ActionButton("Quitter", false); quit.Click += async (_, _) => { allowClose = true; await runtime.StopAsync(); tray.Visible = false; Close(); };
+        var quit = ActionButton("Quitter", false); quit.Click += (_, _) => { allowClose = true; Close(); };
+        var withdraw = ActionButton("Retirer mon profil", false); withdraw.Click += async (_, _) => await WithdrawAsync(false);
         var reconcile = ActionButton("Vérifier les demandes en attente", false);
         reconcile.Click += async (_, _) => {
             reconcile.Enabled = false;
@@ -322,7 +369,7 @@ internal sealed class MainForm : Form
             catch (Exception error) { ShowFeedback(HumanError(error), true); }
             finally { if (!reconcile.IsDisposed) reconcile.Enabled = true; }
         };
-        profileActions.Controls.Add(modify); profileActions.Controls.Add(reassociate); profileActions.Controls.Add(connectButton); profileActions.Controls.Add(disconnectButton); profileActions.Controls.Add(quit);
+        profileActions.Controls.Add(modify); profileActions.Controls.Add(reassociate); profileActions.Controls.Add(connectButton); profileActions.Controls.Add(disconnectButton); profileActions.Controls.Add(withdraw); profileActions.Controls.Add(quit);
         reconcile.Margin = new Padding(0, 10, 0, 0);
         profileStack.Controls.Add(profileActions); profileStack.Controls.Add(reconcile); profileStack.Controls.Add(feedback); profile.Controls.Add(profileStack); root.Controls.Add(profile);
 
@@ -512,12 +559,14 @@ internal sealed class MainForm : Form
 
     private async Task ConnectAsync()
     {
+        if (closing || withdrawalBusy || runtime.WithdrawalPending) { ShowFeedback("Retrait en attente : connexion bloquée. Vérifiez uniquement le reçu.", true); return; }
         try { await runtime.StartAsync(); ShowFeedback("Connexion en cours. Le poste sera prêt lorsque les quatre contrôles seront confirmés.", false); }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
     }
 
     private async Task DisconnectAsync()
     {
+        if (closing || withdrawalBusy || runtime.WithdrawalPending) return;
         try { await runtime.StopAsync(); await runtime.EnsureAudioAsync(); ShowFeedback("Poste déconnecté. La configuration reste enregistrée.", false); }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
     }
@@ -597,8 +646,17 @@ internal sealed class MainForm : Form
 
     private async void OnFormClosing(object? sender, FormClosingEventArgs eventArgs)
     {
-        if (!allowClose && eventArgs.CloseReason == CloseReason.UserClosing) { eventArgs.Cancel = true; Hide(); tray.ShowBalloonTip(1500, "CRM Ynov", "L’agent reste accessible dans la zone de notification.", ToolTipIcon.Info); return; }
-        audioTimer.Stop(); tray.Visible = false; await protocolBroker.DisposeAsync(); await runtime.DisposeAsync();
+        if (closeCompleted) return;
+        if (!allowClose && !withdrawalBusy && !runtime.WithdrawalPending && eventArgs.CloseReason == CloseReason.UserClosing) { eventArgs.Cancel = true; Hide(); tray.ShowBalloonTip(1500, "CRM Ynov", "L’agent reste accessible dans la zone de notification.", ToolTipIcon.Info); return; }
+        eventArgs.Cancel = true;
+        if (closing) return;
+        closing = true; audioTimer.Stop(); contentHost.Enabled = false;
+        try {
+            withdrawalCancellation?.Cancel();
+            if (withdrawalTask is not null) { try { await withdrawalTask; } catch { /* Durable state stays pending. */ } }
+            await protocolBroker.DisposeAsync(); await runtime.DisposeAsync();
+            closeCompleted = true; tray.Visible = false; Close();
+        } catch (Exception error) { closing = false; contentHost.Enabled = true; ShowFeedback(HumanError(error), true); }
     }
 
     private ContextMenuStrip BuildTrayMenu()
@@ -607,14 +665,26 @@ internal sealed class MainForm : Form
         menu.Items.Add("Ouvrir", null, (_, _) => RestoreWindow());
         menu.Items.Add("Connecter", null, async (_, _) => await ConnectAsync());
         menu.Items.Add("Déconnecter", null, async (_, _) => await DisconnectAsync());
-        menu.Items.Add("Quitter", null, async (_, _) => { allowClose = true; await runtime.StopAsync(); tray.Visible = false; Close(); });
+        menu.Items.Add("Quitter", null, (_, _) => { allowClose = true; Close(); });
+        menu.Opening += (_, _) => { var available = !closing && !withdrawalBusy && !runtime.WithdrawalPending; menu.Items[1].Enabled = available; menu.Items[2].Enabled = available; };
         return menu;
     }
 
     private void RestoreWindow() { Show(); WindowState = FormWindowState.Normal; Activate(); }
     private void ShowFeedback(string message, bool error) { feedback.Text = message; feedback.ForeColor = error ? Danger : Success; }
 
+    internal static string WithdrawalError(Exception error) => error switch {
+        HttpRequestException { StatusCode: HttpStatusCode.NotFound } => "Le reçu n’est pas disponible. Le résultat reste incertain : profil et journal conservés, aucune nouvelle demande automatique.",
+        OperationCanceledException => "La vérification a été interrompue ou a expiré. L’état durable reste conservé ; reprenez uniquement la consultation du reçu.",
+        _ => HumanError(error),
+    };
+
     internal static string HumanError(Exception error) => error switch {
+        InvalidOperationException invalid when invalid.Message == "WITHDRAWAL_SDK_STOP_UNPROVEN" => "L’arrêt sûr du SDK n’est pas prouvé. Aucun retrait envoyé. Ne reconnectez pas le poste pour fabriquer cette preuve ; faites vérifier l’état par le support.",
+        InvalidOperationException invalid when invalid.Message == "PROFILE_WITHDRAWAL_LEGACY_ASSOCIATION" => "Cette association ancienne ne fournit pas la génération requise. Aucun profil supprimé ; utilisez le parcours officiel avec l’administration.",
+        InvalidOperationException invalid when invalid.Message == "WITHDRAWAL_PROFILE_CHANGED" => "Le profil a changé depuis la demande. Retrait local refusé : configuration et reçu conservés pour vérification.",
+        InvalidOperationException invalid when invalid.Message.StartsWith("WITHDRAWAL_", StringComparison.Ordinal) => "Un retrait reste à vérifier. Conservez le profil et le journal ; consultez le même reçu sans renvoyer la demande.",
+        IOException io when io.Message.StartsWith("WITHDRAWAL_", StringComparison.Ordinal) => "L’état durable du retrait n’a pas pu être vérifié. Toute connexion est bloquée ; conservez les fichiers pour le support.",
         HttpRequestException { StatusCode: HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden } => "Le code ou l’autorisation du poste a été refusé. Demandez un nouveau code à l’administration.",
         HttpRequestException { StatusCode: HttpStatusCode.Conflict } => "Ce profil est déjà associé à un autre poste actif. L’administration doit d’abord vérifier cette association.",
         HttpRequestException http when http.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int?)http.StatusCode >= 500 => "Le résultat CRM est incertain. Ne répétez pas la demande ; faites rapprocher son reçu et conservez le journal local.",

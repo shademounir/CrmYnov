@@ -17,11 +17,12 @@ internal sealed record AgentSettings(
     string? OutputDeviceId,
     string? CrmDisplayName = null,
     string? CrmEmail = null,
-    string? WorkstationDisplayName = null);
+    string? WorkstationDisplayName = null,
+    string? AssociationId = null);
 
 internal sealed record PairRequest(string Code, string PublicId, string DisplayName, string AgentVersion, string SdkVersion);
-internal sealed record PairResponse(string Token, string WorkstationId, AgentProfile Profile);
-internal sealed record AgentProfile(string Id, string WorkstationId, string SipAddress, string? AuthUsername, AgentServer Server, bool InboundEnabled, bool RecordingEnabled, string? CrmDisplayName = null, string? CrmEmail = null);
+internal sealed record PairResponse(string Token, string WorkstationId, AgentProfile Profile, string? AssociationId = null);
+internal sealed record AgentProfile(string Id, string WorkstationId, string SipAddress, string? AuthUsername, AgentServer Server, bool InboundEnabled, bool RecordingEnabled, string? CrmDisplayName = null, string? CrmEmail = null, string? AssociationId = null);
 internal sealed record AgentServer(string SipDomain, string? ProxyUri, string Transport);
 internal sealed record PollResponse(AgentProfile Profile, AgentCommand? Command);
 internal sealed record AgentCommand(string CommandId, string CallId, string Destination, DateTimeOffset ExpiresAt, int MaxDurationSeconds, bool HangupRequested);
@@ -107,5 +108,7 @@ internal static class DialPadEditor
 [JsonSerializable(typeof(FreeCallResponse))]
 [JsonSerializable(typeof(FreeCallReconciliationRequest))]
 [JsonSerializable(typeof(FreeCallReconciliationResponse))]
+[JsonSerializable(typeof(ProfileWithdrawalRequest))]
+[JsonSerializable(typeof(ProfileWithdrawalReceipt))]
 [JsonSerializable(typeof(JournalRecord))]
 internal partial class AgentJsonContext : JsonSerializerContext;
