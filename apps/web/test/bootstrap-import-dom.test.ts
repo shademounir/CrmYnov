@@ -72,8 +72,8 @@ test("continuous portfolio UI confirms once then executes successive bounded blo
   assert.equal(button(dom, "Importer le plan par blocs successifs").disabled, true);
   await click(control<HTMLInputElement>(dom, "J’autorise les décisions explicites"));
   await click(button(dom, "Importer le plan par blocs successifs"));
-  for (let attempt = 0; attempt < 20 && sizes.length < 2; attempt++) await flush();
-  assert.deepEqual(sizes, [25, 1]);
+  for (let attempt = 0; attempt < 20 && sizes.length < 6; attempt++) await flush();
+  assert.deepEqual(sizes, [5, 5, 5, 5, 5, 1]);
   assert.match(dom.window.document.body.textContent ?? "", /26 différés persistés/u);
   assert.equal(dom.window.localStorage.length, 0);
 });

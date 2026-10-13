@@ -481,6 +481,39 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "ACCESS_REVIEW", confirmed: true, grants: { ...beforeOperatorRevocation, "import.confirm": "NONE" } });
     assert.equal((await request(endpoint, "POST", block)).status, 403, "receipt replay never bypasses current grants");
     configuration = await permissions.read(principal, target); await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "RESTORE_VERSION", confirmed: true, grants: beforeOperatorRevocation });
+    // Pilot-sized transactions use the unchanged real HTTP/PostgreSQL contract.
+    // Eight unique occurrences exercise 5 + 3, a lost-response replay, restart
+    // from fresh versions, exact notes/provenance and pre-activation ownership.
+    let smallSheet = 0;
+    const smallEmail = `small-${marker.toLowerCase()}@example.invalid`;
+    const small = await scopedPackage("small-blocks", smallEmail, "À contacter", xml => {
+      const sheet = ++smallSheet;
+      const sourceRow = xml.match(/<row r="9">[\s\S]*?<\/row>/u)?.[0];
+      assert.ok(sourceRow);
+      const firstRow = sourceRow.replaceAll(smallEmail, `small-${sheet}-9-${marker.toLowerCase()}@example.invalid`);
+      const secondRow = sourceRow.replaceAll('r="9"', 'r="10"').replace(/r="([A-Z]+)9"/gu, (_match, column: string) => `r="${column}10"`)
+        .replaceAll(smallEmail, `small-${sheet}-10-${marker.toLowerCase()}@example.invalid`);
+      return xml.replace(sourceRow, firstRow + secondRow);
+    });
+    assert.equal(small.rows.length, 8);
+    const smallEndpoint = `/packages/${small.pack.id}/execute-block`;
+    const firstSmallBlock: BootstrapBlockInput = { expectedVersion: small.pack.version, sha256: small.pack.sha256,
+      idempotencyKey: `small-first-${marker}`, confirmed: true, items: small.rows.slice(0, 5).map(blockItem) };
+    await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
+    const smallEffects = await effectCounts();
+    const firstSmallReplay = await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
+    assert.equal(firstSmallReplay.replayed, true); assert.deepEqual(await effectCounts(), smallEffects);
+    const resumedSmall = await success<Package>(await request(`/packages/${small.pack.id}`), 200);
+    assert.equal(resumedSmall.counts.accepted, 5);
+    const lastSmallBlock: BootstrapBlockInput = { ...firstSmallBlock, expectedVersion: resumedSmall.version,
+      idempotencyKey: `small-last-${marker}`, items: small.rows.slice(5).map(blockItem) };
+    const lastSmall = await success<BlockResult>(await request(smallEndpoint, "POST", lastSmallBlock));
+    assert.equal(lastSmall.report.package.counts.accepted, 8);
+    assert.deepEqual(lastSmall.report.reconciliation.discrepancies, []);
+    for (const field of ["expectedNotes", "persistedNotes", "exactNotes", "expectedRowReceipts", "persistedRowReceipts", "exactRowReceipts", "expectedProvenance", "persistedProvenance", "exactProvenance"]) assert.equal(lastSmall.report.reconciliation.effects[field], 8);
+    assert.equal(await client.lead.count({ where: { importBatchId: small.pack.batchId, assignedToId: adviser.id } }), 8);
+    const allSmallEffects = await effectCounts();
+    await success(await request(smallEndpoint, "POST", lastSmallBlock)); assert.deepEqual(await effectCounts(), allSmallEffects);
     if (process.env.CRMY61_UI_FIXTURE_DIR) {
       const directory = resolve(process.env.CRMY61_UI_FIXTURE_DIR); await mkdir(directory, { recursive: true }); const fixturePath = resolve(directory, "bootstrap-ui-synthetic.xlsx");
       const uiParts = syntheticHistoricalParts(); for (const part of uiParts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code).replaceAll("synthetic@example.invalid", `ui-${marker.toLowerCase()}@example.invalid`);
