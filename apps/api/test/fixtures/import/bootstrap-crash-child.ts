@@ -4,10 +4,10 @@ import { DynamicPermissionRepository, type PermissionTransaction } from "../../.
 import type { PermissionTransactionMode } from "../../../src/permissions/permission-fence.js";
 import { PrismaService } from "../../../src/persistence/prisma.service.js";
 import type { Principal } from "../../../src/auth/auth.types.js";
-import type { BootstrapConfirmInput } from "../../../src/bootstrap-import/bootstrap-import.contract.js";
+import type { BootstrapBlockInput, BootstrapConfirmInput } from "../../../src/bootstrap-import/bootstrap-import.contract.js";
 
 export async function crashChildEntrypoint(): Promise<void> {
-const instruction = JSON.parse(process.env.CRMY61_CRASH_INSTRUCTION ?? "null") as { stage: "before_commit" | "after_commit"; packageId: string; input: BootstrapConfirmInput; actor: Principal } | null;
+const instruction = JSON.parse(process.env.CRMY61_CRASH_INSTRUCTION ?? "null") as { stage: "before_commit" | "after_commit"; operation?: "execute-block"; packageId: string; input: BootstrapConfirmInput | BootstrapBlockInput; actor: Principal } | null;
 if (process.env.CRMY61_EPHEMERAL_TEST !== "true" || !instruction || !process.send) throw new Error("synthetic_child_not_authorized");
 const database = new URL(process.env.DATABASE_URL ?? "");
 if (!["127.0.0.1", "localhost"].includes(database.hostname) || database.pathname !== "/crmy61_bootstrap_synthetic") throw new Error("synthetic_child_database_refused");
@@ -31,7 +31,9 @@ class InterruptedRepository extends DynamicPermissionRepository {
   }
 }
 const repository = instruction.stage === "before_commit" ? new InterruptedRepository(prisma) : new DynamicPermissionRepository(prisma);
-await new BootstrapImportService(repository).confirm(instruction.packageId, instruction.input, instruction.actor);
+const service = new BootstrapImportService(repository);
+if (instruction.operation === "execute-block") await service.executeBlock(instruction.packageId, instruction.input as BootstrapBlockInput, instruction.actor);
+else await service.confirm(instruction.packageId, instruction.input as BootstrapConfirmInput, instruction.actor);
 // Deliberately do not return an application acknowledgement to the parent.
 process.send({ stage: "after_commit" }); await new Promise<never>(() => {});
 }

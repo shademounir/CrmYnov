@@ -14,15 +14,15 @@ import { appendBootstrapProofHash } from "../../src/sheet-import/sheet-append-qu
 import { deferredHistoricalCollision } from "../../src/bootstrap-import/bootstrap-create-guards.js";
 import { DynamicPermissionRepository } from "../../src/permissions/dynamic-repository.js";
 import { DynamicPermissionService } from "../../src/permissions/dynamic-service.js";
-import { bytesHash, hash, CHUNK_BYTES, HISTORICAL_SHEETS, type HistoricalMappingInput } from "../../src/bootstrap-import/bootstrap-import.contract.js";
+import { bytesHash, hash, CHUNK_BYTES, HISTORICAL_SHEETS, type BootstrapBlockInput, type HistoricalMappingInput } from "../../src/bootstrap-import/bootstrap-import.contract.js";
 import { referenceKey } from "../../src/references/reference.contract.js";
 import { syntheticHistoricalParts, syntheticZip } from "../fixtures/import/historical-workbook.synthetic.js";
 import type { Principal } from "../../src/auth/auth.types.js";
 import { crashChildEntrypoint } from "../fixtures/import/bootstrap-crash-child.js";
 void crashChildEntrypoint; // Compile the owned child fixture into the same qualified artifact tree.
 
-type Package = { id: string; version: number; state: string; batchId: string; counts: { accepted: number; review: number; ignored: number; pending: number } };
-type Row = { id: string; version: number; state: string; leadId?: string; sheet: string; canReopen: boolean };
+type Package = { id: string; sha256: string; version: number; state: string; batchId: string; counts: { accepted: number; review: number; ignored: number; pending: number } };
+type Row = { id: string; fingerprint: string; version: number; state: string; leadId?: string; sheet: string; canReopen: boolean };
 const enabled = process.env.CRMY61_EPHEMERAL_TEST === "true";
 
 test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receipt, replay and revoked/campus grants", { skip: !enabled, timeout: 120000 }, async () => {
@@ -64,7 +64,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     assert.match(context.owners.find((row) => row.id === adviser.id)!.label, /premier accès en attente/u);
     assert.ok(!context.owners.some((row) => [inactiveOwner.id, readerOwner.id].includes(row.id)));
     const swagger = await fetch(`${origin}/docs-json`); assert.equal(swagger.status, 200); const documented = await swagger.json() as { paths: Record<string, unknown>; components: { schemas: Record<string, unknown> } };
-    assert.equal(Object.keys(documented.paths).filter((path) => path.startsWith("/lead-import/bootstrap/")).length, 12); assert.ok(documented.components.schemas.BootstrapDecision); assert.ok(documented.components.schemas.BootstrapReopen);
+    assert.equal(Object.keys(documented.paths).filter((path) => path.startsWith("/lead-import/bootstrap/")).length, 13); assert.ok(documented.components.schemas.BootstrapDecision); assert.ok(documented.components.schemas.BootstrapBlock);
     const parts = syntheticHistoricalParts(); for (const part of parts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code);
     const bytes = syntheticZip(parts); const sha256 = bytesHash(bytes);
     let pack = await success<Package>(await request("/packages", "POST", { fileName: "bootstrap-synthetic.xlsx", sizeBytes: bytes.length, sha256, campusId: campus.id, idempotencyKey: `create-${marker}` }));
@@ -97,9 +97,9 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     const confirm = { expectedVersion: pack.version, idempotencyKey: `confirm-first-${marker}`, confirmed: true as const, limit: 1 };
     const principal: Principal = { userId: admin.id, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: auth.sessionId };
     const effectCounts = async (): Promise<unknown> => ({ leads: await client.lead.count(), notes: await client.importedHistoricalNote.count(), provenance: await client.leadProvenance.count(), receipts: await client.bootstrapImportReceipt.count(), audit: await client.auditEvent.count() });
-    const interrupt = async (stage: "before_commit" | "after_commit"): Promise<void> => {
+    const interrupt = async (stage: "before_commit" | "after_commit", block?: { packageId: string; input: BootstrapBlockInput }): Promise<void> => {
       const compiledChild = resolve(process.cwd(), "compiled/test/fixtures/import/bootstrap-crash-child.js");
-      const child = spawn(process.execPath, existsSync(compiledChild) ? [compiledChild] : ["--import", "tsx", "test/fixtures/import/bootstrap-crash-child.ts"], { cwd: process.cwd(), env: { ...process.env, CRMY61_CRASH_CHILD: "true", CRMY61_CRASH_INSTRUCTION: JSON.stringify({ stage, packageId: pack.id, input: confirm, actor: principal }) }, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+      const child = spawn(process.execPath, existsSync(compiledChild) ? [compiledChild] : ["--import", "tsx", "test/fixtures/import/bootstrap-crash-child.ts"], { cwd: process.cwd(), env: { ...process.env, CRMY61_CRASH_CHILD: "true", CRMY61_CRASH_INSTRUCTION: JSON.stringify({ stage, packageId: block?.packageId ?? pack.id, input: block?.input ?? confirm, ...(block ? { operation: "execute-block" } : {}), actor: principal }) }, stdio: ["ignore", "ignore", "pipe", "ipc"] });
       let failure = ""; child.stderr!.on("data", (data: Buffer) => { failure += data.toString(); });
       const exited = new Promise<void>((resolveExit) => { child.once("exit", () => resolveExit()); });
       await new Promise<void>((resolveStage, reject) => {
@@ -435,6 +435,50 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     assert.deepEqual(withheldReport.reconciliation.axes.currentDossierOwner, {}); assert.deepEqual(withheldReport.reconciliation.axes.currentDossierStatus, {});
     configuration = await permissions.read(principal, target);
     await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "RESTORE_VERSION", confirmed: true, grants: grantsBeforeWithhold });
+    // Full operator pipeline on actual HTTP/PostgreSQL. Unique synthetic
+    // contacts isolate this block from the intentional collisions above.
+    let blockSheet = 0;
+    const operator = await scopedPackage("operator", `operator-${marker.toLowerCase()}@example.invalid`, "À contacter", xml => xml.replaceAll(`operator-${marker.toLowerCase()}@example.invalid`, `operator-${++blockSheet}-${marker.toLowerCase()}@example.invalid`));
+    const blockItem = (row: Row): BootstrapBlockInput["items"][number] => ({ rowId: row.id, fingerprint: row.fingerprint,
+      decision: { expectedVersion: row.version, idempotencyKey: `operator-row-${row.id}`, action: "CREATE_DOSSIER", reason: "Dossier synthétique unique, propriétaire et provenance source confirmés" } });
+    const block: BootstrapBlockInput = { expectedVersion: operator.pack.version, sha256: operator.pack.sha256, idempotencyKey: `operator-block-${marker}`, confirmed: true, items: operator.rows.slice(0, 2).map(blockItem) };
+    const endpoint = `/packages/${operator.pack.id}/execute-block`;
+    const beforeBlock = await effectCounts();
+    assert.equal((await request(endpoint, "POST", block, "invalid-synthetic-session")).status, 401);
+    assert.equal((await request(endpoint, "POST", block, outsiderAuth.token)).status, 403);
+    assert.equal((await request(endpoint, "POST", { ...block, items: Array.from({ length: 26 }, () => block.items[0]) })).status, 400);
+    assert.equal((await request(endpoint, "POST", { ...block, expectedVersion: block.expectedVersion + 1 })).status, 409);
+    assert.equal((await request(endpoint, "POST", { ...block, items: [{ ...block.items[0]!, fingerprint: "0".repeat(64) }] })).status, 409);
+    const invalidBlock = { ...block, items: [block.items[0], { ...block.items[1]!, decision: { ...block.items[1]!.decision, overrides: { educationLevel: "INVALID_SYNTHETIC_LEVEL" } } }] };
+    assert.equal((await request(endpoint, "POST", invalidBlock)).status, 422);
+    assert.deepEqual(await effectCounts(), beforeBlock, "second-row refusal must roll back first decision, audit and all effects");
+    assert.equal(await client.bootstrapImportRow.count({ where: { packageId: operator.pack.id, state: "REVIEW" } }), 4);
+    await interrupt("before_commit", { packageId: operator.pack.id, input: block });
+    assert.deepEqual(await effectCounts(), beforeBlock, "physical interruption rolls back decisions and import together");
+    await interrupt("after_commit", { packageId: operator.pack.id, input: block });
+    const committedBlock = await effectCounts();
+    type BlockResult = { replayed: boolean; report: { package: Package; reconciliation: { discrepancies: unknown[]; effects: Record<string, number> } } };
+    const blockReplay = await success<BlockResult>(await request(endpoint, "POST", block));
+    assert.equal(blockReplay.replayed, true); assert.deepEqual(await effectCounts(), committedBlock);
+    assert.equal(blockReplay.report.package.counts.accepted, 2); assert.equal(blockReplay.report.package.version, block.expectedVersion + 1);
+    assert.deepEqual(blockReplay.report.reconciliation.discrepancies, []);
+    for (const field of ["expectedNotes", "persistedNotes", "exactNotes", "expectedRowReceipts", "persistedRowReceipts", "exactRowReceipts", "expectedProvenance", "persistedProvenance", "exactProvenance"]) assert.equal(blockReplay.report.reconciliation.effects[field], 2);
+    assert.equal(await client.lead.count({ where: { importBatchId: operator.pack.batchId, assignedToId: adviser.id } }), 2, "pending first login does not prevent explicit historical assignment");
+    const nextBlock: BootstrapBlockInput = { ...block, expectedVersion: blockReplay.report.package.version, idempotencyKey: `operator-next-${marker}`, items: [blockItem(operator.rows[2]!)] };
+    const racing = await Promise.all([request(endpoint, "POST", nextBlock), request(endpoint, "POST", nextBlock)]);
+    assert.ok(racing.some(response => response.status === 201)); assert.ok(racing.every(response => [201, 409].includes(response.status)));
+    const afterRace = await effectCounts(); const nextReplay = await success<BlockResult>(await request(endpoint, "POST", nextBlock));
+    assert.equal(nextReplay.report.package.counts.accepted, 3); assert.deepEqual(await effectCounts(), afterRace);
+    const deferredBlock: BootstrapBlockInput = { ...block, expectedVersion: nextReplay.report.package.version, idempotencyKey: `operator-deferred-${marker}`, items: [{ ...blockItem(operator.rows[3]!), decision: { expectedVersion: operator.rows[3]!.version, idempotencyKey: `operator-defer-${marker}`, action: "DEFER", confirmed: true, reason: "Exception synthétique explicitement conservée pour revue, aucun import demandé" } }] };
+    const deferredResult = await success<BlockResult>(await request(endpoint, "POST", deferredBlock));
+    assert.equal(deferredResult.report.package.counts.accepted, 3); assert.equal(deferredResult.report.package.counts.review, 1);
+    assert.deepEqual(deferredResult.report.reconciliation.discrepancies, []);
+    const afterDeferred = await effectCounts(); await success(await request(endpoint, "POST", deferredBlock)); assert.deepEqual(await effectCounts(), afterDeferred);
+    assert.equal(await client.bootstrapImportReceipt.count({ where: { packageId: operator.pack.id, operation: "EXECUTE_BLOCK" } }), 3);
+    configuration = await permissions.read(principal, target); const beforeOperatorRevocation = configuration.grants;
+    await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "ACCESS_REVIEW", confirmed: true, grants: { ...beforeOperatorRevocation, "import.confirm": "NONE" } });
+    assert.equal((await request(endpoint, "POST", block)).status, 403, "receipt replay never bypasses current grants");
+    configuration = await permissions.read(principal, target); await permissions.save(principal, { ...target, expectedVersion: configuration.version, reason: "RESTORE_VERSION", confirmed: true, grants: beforeOperatorRevocation });
     if (process.env.CRMY61_UI_FIXTURE_DIR) {
       const directory = resolve(process.env.CRMY61_UI_FIXTURE_DIR); await mkdir(directory, { recursive: true }); const fixturePath = resolve(directory, "bootstrap-ui-synthetic.xlsx");
       const uiParts = syntheticHistoricalParts(); for (const part of uiParts) part[1] = part[1].replaceAll("PROGRAM_SYNTHETIC", program.code).replaceAll("synthetic@example.invalid", `ui-${marker.toLowerCase()}@example.invalid`);
