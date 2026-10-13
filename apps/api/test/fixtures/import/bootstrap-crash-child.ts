@@ -33,7 +33,7 @@ class InterruptedRepository extends DynamicPermissionRepository {
 const repository = instruction.stage === "before_commit" ? new InterruptedRepository(prisma) : new DynamicPermissionRepository(prisma);
 const service = new BootstrapImportService(repository);
 if (instruction.operation === "execute-block") await service.executeBlock(instruction.packageId, instruction.input as BootstrapBlockInput, instruction.actor);
-else await service.confirm(instruction.packageId, instruction.input as BootstrapConfirmInput, instruction.actor);
+else await service.confirm(instruction.packageId, instruction.input, instruction.actor);
 // Deliberately do not return an application acknowledgement to the parent.
 process.send({ stage: "after_commit" }); await new Promise<never>(() => {});
 }

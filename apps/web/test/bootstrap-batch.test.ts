@@ -16,10 +16,11 @@ function runtime(rows: BootstrapRow[], refuseId?: string): { request: <T>(path: 
   const report = (): BootstrapReport => ({ package: { ...source, version }, bySheet: [], cutoverBlocked: true,
     reconciliation: { complete: false, truncated: false, totalOccurrences: rows.length, unresolvedOccurrences: rows.filter(row => row.state === "REVIEW").length, effects: {}, contacts: { email: { groups: 0, occurrences: 0 }, phone: { groups: 0, occurrences: 0 }, overlappingGroupsNotUniquePeople: true }, currentDossierAxes: { visible: 0, withheld: 0 }, axes: {}, discrepancies: [] } });
   const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    await Promise.resolve();
     if (path.includes("/rows?")) return { items: rows, nextAfter: null } as T;
     if (path.endsWith("/report")) return report() as T;
     if (!init) return { ...source, version } as T;
-    const body = JSON.parse(String(init.body)) as Body; writes.push(body); assert.equal(body.expectedVersion, version); assert.ok(body.items.length <= 25);
+    assert.equal(typeof init.body, "string"); const body = JSON.parse(init.body as string) as Body; writes.push(body); assert.equal(body.expectedVersion, version); assert.ok(body.items.length <= 25);
     if (body.items.some(item => item.rowId === refuseId)) throw new BootstrapApiError(422, "bootstrap_contact_reconciliation_required");
     for (const item of body.items) { const row = rows.find(row => row.id === item.rowId)!; assert.equal(row.state, "REVIEW"); row.state = "ACCEPTED"; row.version += 2; row.decision = { action: "CREATE_DOSSIER", reason: "Fixture", idempotencyKey: item.decision.idempotencyKey }; }
     version++; return { report: report(), block: { rowIds: body.items.map(item => item.rowId), deferredRowIds: [] } } as T;
@@ -49,7 +50,7 @@ test("uncertain response reuses exact body once; auth and concurrency refuse con
   const { plan, rows } = fixture(1); const fake = runtime(rows); let body = "", response: unknown, count = 0;
   const done = await runBatchPlan(plan, async <T>(path: string, init?: RequestInit): Promise<T> => {
     if (!init) return fake.request(path);
-    count++; if (count === 1) { body = String(init.body); response = await fake.request(path, init); throw new TypeError("response_lost"); }
+    count++; if (count === 1) { assert.equal(typeof init.body, "string"); body = init.body as string; response = await fake.request(path, init); throw new TypeError("response_lost"); }
     assert.equal(init.body, body); return response as T;
   }, () => {}, () => false);
   assert.equal(count, 2); assert.equal(fake.writes.length, 1); assert.equal(done.committed, 1);

@@ -20,7 +20,7 @@ export function parseBatchPlan(text: string, source: BootstrapPackage): BatchPla
       || typeof item.decision.reason !== "string" || item.decision.reason.trim().length < 8 || item.decision.reason.length > 1000
       || "idempotencyKey" in item.decision || "expectedVersion" in item.decision
       || (item.decision.action === "DEFER" && item.decision.confirmed !== true))
-    || new Set(plan.items.map(item => item.rowId)).size !== plan.items.length) throw new Error("bootstrap_plan_invalid_or_wrong_package");
+    || new Set(plan.items.map((item: unknown) => record(item) ? item.rowId : null)).size !== plan.items.length) throw new Error("bootstrap_plan_invalid_or_wrong_package");
   return plan as unknown as BatchPlan;
 }
 export async function readBatchRows(id: string, request: Request): Promise<BootstrapRow[]> {

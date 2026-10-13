@@ -409,7 +409,7 @@ export class BootstrapImportService {
           const row = await tx.bootstrapImportRow.findFirst({ where: { id: item.rowId, packageId: id } });
           if (!row || row.fingerprint !== item.fingerprint || row.decisionKey !== item.decision.idempotencyKey) this.conflict("bootstrap_block_receipt_changed");
           if (row.state === "DEFERRED") {
-            const receipts = await tx.bootstrapImportReceipt.findMany({ where: { packageId: id, operation: "DEFER_ROW", key: row.decisionKey! } });
+            const receipts = await tx.bootstrapImportReceipt.findMany({ where: { packageId: id, operation: "DEFER_ROW", key: row.decisionKey } });
             if (!validDeferral(pack.sha256, row, receipts)) this.conflict("bootstrap_deferral_integrity_conflict");
           } else {
             if (!["ACCEPTED", "IGNORED"].includes(row.state)) this.conflict("bootstrap_block_receipt_changed");
