@@ -129,6 +129,36 @@ et à sa génération, puis une désinscription SDK confirmée avant retrait des
 credentials locaux. Un simple HTTP 401/403 ou une panne réseau ne prouve pas cette
 révocation. Ne pas effacer manuellement le journal pour contourner la garde.
 
+Le protocole du reçu de retrait ajoute une génération `associationId`
+optionnelle au profil protégé. Elle est reprise uniquement depuis un appairage
+cohérent ; un ancien profil sans génération reste utilisable mais ne peut pas
+demander le retrait. Les méthodes dédiées du client valident le reçu versionné,
+les quatre identités et la date UTC, et refusent les champs inconnus ou dupliqués.
+Elles ne réessaient pas une mutation après perte de réponse. L'action explicite
+« Retirer mon profil » conserve une exclusion de maintenance pendant l'arrêt SDK
+attesté, la demande et le retrait local. Une intention DPAPI `ATTEMPTED` est publiée
+avant le POST ; après interruption, seule la consultation du même reçu est permise.
+Un reçu validé est conservé avant le retrait de `settings.dpapi`, par comparaison
+de l'empreinte, des identités et de la génération sur le fichier ouvert exclusif.
+Le compte CRM, le journal, les historiques, le SDK et le démarrage automatique
+restent intacts. Un reçu absent, une corruption, une nouvelle génération ou une
+preuve SDK insuffisante bloque l'opération ; aucune reconnexion n'est fabriquée
+pour obtenir une preuve. Les anciens agents ignorant cet état ne sont pas un
+rollback sûr pendant un retrait incertain.
+
+`apps/telephony-agent-windows/tests/WithdrawalContract.Managed.csproj` teste cette
+fondation avec JSON source-generated et transport HTTP simulé en mémoire, sans
+SDK, réseau, audio ou accès au profil DPAPI. Il n'a aucune dépendance NuGet externe
+et reste exclu de la compilation du paquet Windows. Les projets voisins
+`WithdrawalStorage.Managed.csproj` (fichiers DPAPI synthétiques Windows) et
+`WithdrawalFlow.Managed.csproj` (orchestration simulée) qualifient les gardes et la
+reprise sans SDK ni réseau réel. Ces preuves ne qualifient ni l'interface native,
+ni un cycle SDK/SIP réel, ni l'installateur ou un retrait de profil réel.
+La version source `0.4.12-pilot` n'est pas une preuve de distribution : l'API et
+la passerelle compatibles avec `associationId` et les reçus doivent être déployées
+avant toute diffusion du nouvel agent. Un ancien API reste utilisable pour les
+parcours antérieurs ; l'absence de génération interdit alors le retrait.
+
 Les extensions internes et l'autorisation d'appels internationaux hors Maroc
 restent hors de ce correctif. Elles requièrent un contrat de destination typé et
 des permissions serveur : aucun élargissement implicite de la validation actuelle.

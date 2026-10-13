@@ -145,6 +145,17 @@ jobs:
         run: node scripts/ci/access-recovery-postgres.mjs
       - name: Prove historical bootstrap decisions, atomic notes, crash restart and replay on isolated PostgreSQL
         run: node scripts/ci/bootstrap-import-postgres.mjs
+      - name: Preserve isolated bootstrap failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: bootstrap-synthetic-failure-${{ github.event.pull_request.number }}
+          path: |
+            ${{ runner.temp }}/crmy61-bootstrap-*/postgres-test.*.log
+            ${{ runner.temp }}/crmy61-bootstrap-*/run-result.json
+            ${{ runner.temp }}/crmy61-bootstrap-*/compile-failure.log
+          if-no-files-found: ignore
+          retention-days: 3
       - name: Prove durable cutover preparation, source boundary and replay on isolated PostgreSQL
         run: node scripts/ci/cutover-postgres.mjs
       - name: Prove append-only N0 reception, incomplete rows, revocation and replay on isolated PostgreSQL

@@ -11,17 +11,21 @@
     <NoWarn>$(NoWarn);CS0612;CS0618;CS8600;CS8601;CS8602;CS8603;CS8618;CS8625;CS8765</NoWarn>
     <AssemblyName>CrmYnov.TelephonyAgent</AssemblyName>
     <RootNamespace>CrmYnov.TelephonyAgent</RootNamespace>
-    <AgentVersion>0.4.11-pilot</AgentVersion>
-    <Version>0.4.11</Version>
-    <AssemblyVersion>0.4.11.0</AssemblyVersion>
-    <FileVersion>0.4.11.0</FileVersion>
-    <InformationalVersion>0.4.11-pilot</InformationalVersion>
+    <AgentVersion>0.4.12-pilot</AgentVersion>
+    <Version>0.4.12</Version>
+    <AssemblyVersion>0.4.12.0</AssemblyVersion>
+    <FileVersion>0.4.12.0</FileVersion>
+    <InformationalVersion>0.4.12-pilot</InformationalVersion>
     <ApplicationIcon>Assets\agent-icon.ico</ApplicationIcon>
     <LiblinphoneSdkRoot Condition="'$(LiblinphoneSdkRoot)' == ''">$(LIBLINPHONE_SDK_ROOT)</LiblinphoneSdkRoot>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs')">
     <Compile Include="$(LiblinphoneSdkRoot)\share\linphonecs\LinphoneWrapper.cs" Link="Generated\LinphoneWrapper.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Isolated managed harness has its own source generation/assembly metadata. -->
+    <Compile Remove="tests\**\*.cs" />
   </ItemGroup>
 
   <Target Name="VerifyLiblinphoneSdk" BeforeTargets="BeforeBuild">
@@ -31,7 +35,9 @@
 
   <Target Name="CopyLiblinphoneRuntime" AfterTargets="Build">
     <ItemGroup>
-      <LiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*" />
+      <!-- SDK debug symbols remain in the canonical SDK, not runtime packages. -->
+      <LiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*"
+                          Exclude="$(LiblinphoneSdkRoot)\bin\**\*.pdb" />
       <!-- The OpenH264 plugin requires a separately distributed Cisco binary
            which is neither needed nor licensed for this audio-only pilot. -->
       <LiblinphonePlugins Include="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\**\*"
@@ -49,7 +55,8 @@
 
   <Target Name="CopyLiblinphoneRuntimeToPublish" AfterTargets="Publish">
     <ItemGroup>
-      <PublishedLiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*" />
+      <PublishedLiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*"
+                                   Exclude="$(LiblinphoneSdkRoot)\bin\**\*.pdb" />
       <PublishedLiblinphonePlugins Include="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\**\*"
                                    Exclude="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\libmsopenh264.*" />
       <PublishedLiblinphoneSounds Include="$(LiblinphoneSdkRoot)\share\sounds\**\*" />

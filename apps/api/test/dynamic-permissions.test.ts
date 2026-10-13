@@ -100,6 +100,8 @@ test("CRMY-169 provider errors deny without returning legacy defaults", async ()
 });
 test("CRMY-169 route permission registry denies unknown controllers and handlers", () => {
   assert.equal(routePermissions("UnknownController", "create"), null);
+  assert.deepEqual(routePermissions("BootstrapImportController", "executeBlock"), []);
+  assert.equal(routePermissions("BootstrapImportController", "unknownBlock"), null);
   assert.equal(routePermissions("LeadController", "delete"), null);
   assert.deepEqual(routePermissions("LeadController", "update"), ["lead.edit"]);
   assert.deepEqual(routePermissions("ReassignmentController", "decide"), ["lead.reassign.approve"]);

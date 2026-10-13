@@ -197,6 +197,41 @@ les compteurs ; ne pas comparer sans distinction stock et nouvelles acquisitions
 
 ## Sécurité, concurrence et persistance
 
+### Exécution continue d'un paquet conservé
+
+Le panneau « Traitement continu du portefeuille » utilise la session officielle
+du BFF CRM, sans extraction de cookie ni jeton CLI. Lire les occurrences et les
+références autorisées depuis ce panneau, puis préparer un plan privé JSON
+`schemaVersion: 1`, lié au `packageId`, au SHA-256 du classeur et, pour chaque
+occurrence, à son UUID, son empreinte et sa version. Chaque décision porte son
+motif et les valeurs métier résolues ; les données inconnues restent inconnues.
+L'export et le plan ne doivent pas être publiés dans Git ou les rapports publics.
+
+La confirmation explicite du plan lance des blocs successifs de 25 maximum.
+`POST /imports/bootstrap/packages/{id}/execute-block` persiste les décisions,
+confirme seulement les UUID du bloc, importe et réconcilie dans la même transaction
+sérialisable. Le serveur réévalue les permissions, propriétaires et références.
+La version du paquet est relue avant chaque bloc ; les versions de lignes et les
+empreintes restent liées au plan. Aucun autre READY préexistant n'est embarqué.
+
+Après une réponse incertaine, l'interface rejoue une fois le corps strictement
+identique afin de récupérer le reçu durable. Une reconnexion ou reprise du même
+plan reconnaît les seules décisions possédant la même clé. Un refus d'autorisation,
+un conflit de version ou une réponse encore incertaine arrête la progression.
+Un refus métier certain 400/422 isole la ligne par subdivision du bloc et permet
+aux autres lignes de continuer ; il ne produit jamais automatiquement DEFER.
+Les véritables exceptions exigent une décision DEFER motivée et restent exclues
+des compteurs importés. L'arrêt demandé attend le bloc en cours ; ne pas tuer une
+transaction pour interrompre le parcours.
+
+Le rapport serveur vérifie les effets après chaque bloc. Une divergence ou une
+troncature arrête la chaîne. Le bilan final distingue créations, rapprochements,
+notes exactes, affectations, refus et différés ; 25 décisions ne signifient jamais
+que le portefeuille est terminé. Conserver le plan privé et les reçus pour la
+reprise, sans nouveau transfert ni nouveau paquet. Le rollback applicatif conserve
+les données BASELINE et DEFER et suspend l'exécuteur ; aucune restauration globale
+ni suppression des effets métier ultérieurs n'est autorisée par ce parcours.
+
 Les lectures, mutations et rejeux réévaluent la session serveur, le campus et
 les permissions effectives. Les créations et rattachements vérifient aussi les
 droits du dossier et les propriétaires réellement éligibles. Le premier lot

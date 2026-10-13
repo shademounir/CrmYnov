@@ -39,8 +39,8 @@ internal sealed class DpapiStore
         if (File.Exists(legacyPath)) File.Delete(legacyPath);
     }
 
-    private static byte[] Protect(byte[] clear) => Transform(clear, true);
-    private static byte[] Unprotect(byte[] encrypted) => Transform(encrypted, false);
+    internal static byte[] Protect(byte[] clear) => Transform(clear, true);
+    internal static byte[] Unprotect(byte[] encrypted) => Transform(encrypted, false);
 
     private static byte[] Transform(byte[] input, bool protect)
     {

@@ -1,17 +1,28 @@
 import "reflect-metadata";
+import { HttpException } from "@nestjs/common";
 import { BootstrapImportService } from "../../../src/bootstrap-import/bootstrap-import.service.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "../../../src/permissions/dynamic-repository.js";
 import type { PermissionTransactionMode } from "../../../src/permissions/permission-fence.js";
 import { PrismaService } from "../../../src/persistence/prisma.service.js";
 import type { Principal } from "../../../src/auth/auth.types.js";
-import type { BootstrapConfirmInput } from "../../../src/bootstrap-import/bootstrap-import.contract.js";
+import type { BootstrapBlockInput, BootstrapConfirmInput } from "../../../src/bootstrap-import/bootstrap-import.contract.js";
+import type { Prisma } from "@prisma/client";
 
 export async function crashChildEntrypoint(): Promise<void> {
-const instruction = JSON.parse(process.env.CRMY61_CRASH_INSTRUCTION ?? "null") as { stage: "before_commit" | "after_commit"; packageId: string; input: BootstrapConfirmInput; actor: Principal } | null;
+const instruction = JSON.parse(process.env.CRMY61_CRASH_INSTRUCTION ?? "null") as { stage: "before_commit" | "after_commit"; operation?: "execute-block"; packageId: string; input: BootstrapConfirmInput | BootstrapBlockInput; actor: Principal } | null;
 if (process.env.CRMY61_EPHEMERAL_TEST !== "true" || !instruction || !process.send) throw new Error("synthetic_child_not_authorized");
 const database = new URL(process.env.DATABASE_URL ?? "");
 if (!["127.0.0.1", "localhost"].includes(database.hostname) || database.pathname !== "/crmy61_bootstrap_synthetic") throw new Error("synthetic_child_database_refused");
-const prisma = new PrismaService();
+class DiagnosticPrisma extends PrismaService {
+  override withTransaction<T>(tx: Prisma.TransactionClient, operation: () => Promise<T>): Promise<T> {
+    return super.withTransaction(tx, operation).catch((error: unknown) => {
+      // Synthetic-only call sites, never the error message, payload or credentials.
+      if (error instanceof Error) process.stderr.write(`${error.name}\n${error.stack?.split("\n").slice(1).filter(line => line.trim().startsWith("at ")).join("\n")}\n`);
+      throw error;
+    });
+  }
+}
+const prisma = new DiagnosticPrisma();
 const markers = await prisma.client!.$queryRaw<Array<{ nonce: string }>>`SELECT nonce FROM crmy61_test_identity.marker WHERE purpose='historical-bootstrap-synthetic-qualification'`;
 if (!process.env.CRMY61_DATABASE_NONCE || !markers.some((row) => row.nonce === process.env.CRMY61_DATABASE_NONCE)) throw new Error("synthetic_child_nonce_refused");
 class InterruptedRepository extends DynamicPermissionRepository {
@@ -31,8 +42,14 @@ class InterruptedRepository extends DynamicPermissionRepository {
   }
 }
 const repository = instruction.stage === "before_commit" ? new InterruptedRepository(prisma) : new DynamicPermissionRepository(prisma);
-await new BootstrapImportService(repository).confirm(instruction.packageId, instruction.input, instruction.actor);
+const service = new BootstrapImportService(repository);
+if (instruction.operation === "execute-block") await service.executeBlock(instruction.packageId, instruction.input as BootstrapBlockInput, instruction.actor);
+else await service.confirm(instruction.packageId, instruction.input, instruction.actor);
 // Deliberately do not return an application acknowledgement to the parent.
 process.send({ stage: "after_commit" }); await new Promise<never>(() => {});
 }
-if (process.env.CRMY61_CRASH_CHILD === "true") void crashChildEntrypoint().catch(() => { process.stderr.write("synthetic_crash_child_failed\n"); process.exitCode = 1; });
+if (process.env.CRMY61_CRASH_CHILD === "true") void crashChildEntrypoint().catch((error: unknown) => {
+  const response = error instanceof HttpException ? error.getResponse() : null;
+  const code = response && typeof response === "object" && "code" in response && typeof response.code === "string" && /^[a-z_]{1,100}$/.test(response.code) ? response.code : "unclassified";
+  process.stderr.write(`synthetic_crash_child_failed:${code}\n`); process.exitCode = 1;
+});

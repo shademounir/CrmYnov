@@ -27,13 +27,13 @@ export interface BootstrapAnnotationDecision { annotationId: string; reference: 
 export interface BootstrapCellEvidence extends BootstrapSourceEvidence { raw: string | null; type: string; formulaText?: string; style?: unknown }
 export interface BootstrapRow {
   id: string; sheet: string; rowNumber: number; fingerprint: string; version: number;
-  state: "REVIEW" | "READY" | "ACCEPTED" | "INVALID" | "IGNORED";
+  state: "REVIEW" | "READY" | "ACCEPTED" | "INVALID" | "IGNORED" | "DEFERRED";
   reasons: string[]; warnings?: string[]; blockingReasons?: string[];
   values: Record<string, string | null>; comments: Array<{ column: string; text: string }>;
   sourceOwner: string | null; replacementOwner: string | null;
   annotations?: BootstrapNativeAnnotation[];
   sourceEvidence?: BootstrapCellEvidence[]; sourceEvidenceTruncated?: boolean;
-  decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE"; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string; canReopen?: boolean;
+  decision?: { action: "CREATE_DOSSIER" | "LINK_EXISTING" | "IGNORE" | "DEFER"; idempotencyKey?: string; reason: string; targetLeadId?: string; overrides?: Record<string, string>; resolvedValues?: Record<string, string | null>; cycle?: BootstrapCycleDecision & { evidence?: BootstrapSourceEvidence[] }; annotations?: BootstrapAnnotationDecision[] }; leadId?: string; canReopen?: boolean;
 }
 export interface BootstrapRows { items: BootstrapRow[]; nextAfter: string | null }
 export interface BootstrapMetadataQuarantine {
@@ -124,7 +124,7 @@ export const bootstrapStateLabels: Readonly<Record<BootstrapState, string>> = {
   PARTIAL: "Reprise partielle enregistrée", COMPLETED: "Traitement terminé · rapport à examiner",
 };
 export const bootstrapRowLabels: Readonly<Record<BootstrapRow["state"], string>> = {
-  REVIEW: "À vérifier", READY: "Décision en attente d’exécution", ACCEPTED: "Reçu d’import acquis", INVALID: "Invalide", IGNORED: "Écarté avec motif",
+  REVIEW: "À vérifier", READY: "Décision en attente d’exécution", ACCEPTED: "Reçu d’import acquis", INVALID: "Invalide", IGNORED: "Écarté avec motif", DEFERRED: "Différé · source conservée, non importée",
 };
 export function bootstrapRowMotifs(row: BootstrapRow): Readonly<{ warnings: string[]; blockingReasons: string[]; classified: boolean }> {
   const classified = Array.isArray(row.warnings) && row.warnings.every((value) => typeof value === "string") && Array.isArray(row.blockingReasons) && row.blockingReasons.every((value) => typeof value === "string");

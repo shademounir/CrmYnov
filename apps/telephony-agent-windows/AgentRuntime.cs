@@ -5,6 +5,7 @@ namespace CrmYnov.TelephonyAgent;
 internal sealed class AgentRuntime : IAsyncDisposable
 {
     private readonly DpapiStore store;
+    private readonly Func<AgentSettings, string, LinphoneEngine> engineFactory;
     private readonly SemaphoreSlim lifecycle = new(1, 1);
     private readonly object engineGate = new();
     private CancellationTokenSource? cancellation;
@@ -19,16 +20,69 @@ internal sealed class AgentRuntime : IAsyncDisposable
     private string authorizationState = "À vérifier";
     private string statusCode = "ARRÊTÉ";
     private bool maintenanceRequested;
+    private bool maintenanceStopAttested;
+    private bool sdkEverCreated;
+    private AgentSettings? engineProfileSettings;
+    private readonly WithdrawalStopBinding withdrawalStop = new();
     private readonly AgentActivityFence activity = new();
 
-    public AgentRuntime(DpapiStore store) { this.store = store; }
+    public AgentRuntime(DpapiStore store, Func<AgentSettings, string, LinphoneEngine>? engineFactory = null)
+    {
+        this.store = store;
+        this.engineFactory = engineFactory ?? ((current, directory) => new LinphoneEngine(current, directory));
+    }
     public event Action<AgentRuntimeSnapshot>? SnapshotChanged;
     public bool Running => cancellation is not null && !cancellation.IsCancellationRequested;
     public AgentRuntimeSnapshot Snapshot => BuildSnapshot();
+    public bool WithdrawalPending { get { try { return new AgentWithdrawalStateStore(store.DataDirectory).Load() is not null; } catch { return true; } } }
+    private void RequireNoWithdrawal()
+    {
+        if (new AgentWithdrawalStateStore(store.DataDirectory).Load() is not null) throw new InvalidOperationException("WITHDRAWAL_PENDING");
+    }
+
+    public async Task WithdrawProfileAsync(bool resumeOnly, CancellationToken token)
+    {
+        using var lease = activity.Maintenance();
+        var stateStore = new AgentWithdrawalStateStore(store.DataDirectory);
+        var flow = new AgentWithdrawalFlow(stateStore.Load, stateStore.Begin, stateStore.StoreReceipt,
+            state => { stateStore.Complete(state); }, () => TargetedProfileRemoval.Capture(store.DataDirectory),
+            state => { TargetedProfileRemoval.Remove(store.DataDirectory, state); },
+            StopForWithdrawalAsync,
+            async (current, request, cancellationToken) => { using var api = new CrmAgentClient(current.ApiBaseUrl, current.AgentToken); return await api.WithdrawProfileAsync(request, cancellationToken).ConfigureAwait(true); },
+            async (current, request, cancellationToken) => { using var api = new CrmAgentClient(current.ApiBaseUrl, current.AgentToken); return await api.GetWithdrawalReceiptAsync(request, cancellationToken).ConfigureAwait(true); });
+        try {
+            await flow.ExecuteAsync(resumeOnly, token).ConfigureAwait(true);
+            settings = null; maintenanceRequested = false; maintenanceStopAttested = false; withdrawalStop.Invalidate();
+            statusCode = "PROFIL_RETIRÉ"; Publish();
+        } finally { if (WithdrawalPending) { maintenanceRequested = true; statusCode = "RETRAIT_À_VÉRIFIER"; Publish(); } }
+    }
+
+    private async Task<bool> StopForWithdrawalAsync(ProtectedProfileSnapshot? target, WithdrawalState? pendingState)
+    {
+        bool hadEngine;
+        lock (engineGate) {
+            hadEngine = engine is not null;
+            if (hadEngine) {
+                if (target is null) return false;
+                WithdrawalStopBinding.RequireEngineProfile(target, settings, engineProfileSettings);
+                withdrawalStop.Invalidate();
+                maintenanceStopAttested = false;
+            } else if (pendingState is null ? target is null || !withdrawalStop.Matches(target)
+                : !withdrawalStop.AllowsResume(pendingState, sdkEverCreated)) return false;
+        }
+        // Still enforce durable event / uncertain intent guards on a restarted process.
+        await StopCoreAsync(true).ConfigureAwait(true);
+        if (hadEngine) {
+            if (!maintenanceStopAttested || target is null) return false;
+            withdrawalStop.Record(target);
+        }
+        return true;
+    }
 
     public async Task EnsureAudioAsync()
     {
         using var lease = activity.Command();
+        RequireNoWithdrawal();
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
@@ -36,6 +90,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
             settings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
             store.RemoveLegacyCoreConfig();
             lock (engineGate) {
+                maintenanceStopAttested = false;
                 engine = CreateEngine(settings);
                 engine.StartAudio();
             }
@@ -59,6 +114,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public async Task StartAsync()
     {
         using var lease = activity.Command();
+        RequireNoWithdrawal();
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
@@ -69,6 +125,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
             if (settings.SipPassword.Length == 0) throw new InvalidOperationException("SIP_SECRET_MISSING");
             store.RemoveLegacyCoreConfig();
             lock (engineGate) {
+                maintenanceStopAttested = false;
                 engine ??= CreateEngine(settings);
                 engine.StartAudio();
                 engine.ConnectSip();
@@ -98,6 +155,8 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public async Task WithProfileMaintenanceAsync(Func<Task> mutateProfile)
     {
         using var lease = activity.Maintenance();
+        RequireNoWithdrawal();
+        withdrawalStop.Invalidate();
         await StopCoreAsync(true).ConfigureAwait(true);
         await mutateProfile().ConfigureAwait(true);
     }
@@ -107,6 +166,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try
         {
+            if (!maintenance) { maintenanceStopAttested = false; withdrawalStop.Invalidate(); }
             if (maintenance) {
                 lock (engineGate) {
                     AgentMaintenancePolicy.RequireIdle(engine?.HasActiveCall == true, OutstandingEventCount());
@@ -123,7 +183,8 @@ internal sealed class AgentRuntime : IAsyncDisposable
             var pendingMaintenanceEvents = false;
             try {
                 pendingMaintenanceEvents = maintenance && OutstandingEventCount() > 0;
-                await DisposeRuntimeAsync().ConfigureAwait(true);
+                if (pendingMaintenanceEvents) throw new InvalidOperationException("PROFILE_MAINTENANCE_PENDING_EVENTS");
+                await DisposeRuntimeAsync(maintenance).ConfigureAwait(true);
             }
             finally { commandGate.Release(); }
             statusCode = "ARRÊTÉ";
@@ -154,16 +215,19 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public void ApplyDevices(string? inputId, string? outputId)
     {
         using var lease = activity.Command();
+        RequireNoWithdrawal();
         settings ??= store.Load();
         if (settings is null) throw new InvalidOperationException("AGENT_NOT_PAIRED");
         settings = settings with { InputDeviceId = inputId, OutputDeviceId = outputId };
+        withdrawalStop.Invalidate();
         store.Save(settings);
-        lock (engineGate) engine?.ApplyDevices(inputId, outputId);
+        lock (engineGate) { engine?.ApplyDevices(inputId, outputId); if (engine is not null) engineProfileSettings = settings; }
         Publish();
     }
 
     public void RefreshAudioDevices()
     {
+        using var lease = activity.Command(); RequireNoWithdrawal();
         if (engine is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         lock (engineGate) {
             engine.ReloadAudioDevices();
@@ -174,6 +238,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public void StartMicrophoneTest(bool localMonitoring = false)
     {
+        using var lease = activity.Command(); RequireNoWithdrawal();
         if (engine is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         lock (engineGate) engine.StartMicrophoneTest(localMonitoring);
         Publish();
@@ -187,6 +252,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public void PlayOutputTest()
     {
+        using var lease = activity.Command(); RequireNoWithdrawal();
         if (engine is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         lock (engineGate) engine.PlayOutputTest();
         Publish();
@@ -195,6 +261,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public async Task HandleProtocolCommandAsync(Guid commandId)
     {
         using var lease = activity.Command();
+        RequireNoWithdrawal();
         if (maintenanceRequested) throw new InvalidOperationException("PROFILE_MAINTENANCE_IN_PROGRESS");
         if (!Running) await StartAsync().ConfigureAwait(true);
         var readyDeadline = DateTimeOffset.UtcNow.AddSeconds(12);
@@ -214,6 +281,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
     public async Task StartFreeCallAsync(string phone, string purposeCode, string? comment)
     {
         using var lease = activity.Command();
+        RequireNoWithdrawal();
         if (maintenanceRequested) throw new InvalidOperationException("PROFILE_MAINTENANCE_IN_PROGRESS");
         await commandGate.WaitAsync().ConfigureAwait(true);
         try {
@@ -250,6 +318,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
         using var lease = activity.Maintenance();
         await lifecycle.WaitAsync().ConfigureAwait(true);
         try {
+            RequireNoWithdrawal();
             var currentSettings = store.Load() ?? throw new InvalidOperationException("AGENT_NOT_PAIRED");
             var durable = journal ?? new EventJournal(store.JournalPath);
             lock (engineGate) AgentMaintenancePolicy.RequireIdle(engine?.HasActiveCall == true, durable.Pending.Count);
@@ -279,7 +348,10 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     private LinphoneEngine CreateEngine(AgentSettings current)
     {
-        var next = new LinphoneEngine(current, store.DataDirectory);
+        withdrawalStop.Invalidate();
+        sdkEverCreated = true;
+        var next = engineFactory(current, store.DataDirectory);
+        engineProfileSettings = current;
         next.EventObserved += OnEventObserved;
         next.StatusChanged += OnEngineStatus;
         return next;
@@ -408,7 +480,9 @@ internal sealed class AgentRuntime : IAsyncDisposable
         if (settings is null) return;
         if (settings.CrmDisplayName == profile.CrmDisplayName && settings.CrmEmail == profile.CrmEmail) return;
         settings = settings with { CrmDisplayName = profile.CrmDisplayName, CrmEmail = profile.CrmEmail };
+        withdrawalStop.Invalidate();
         store.Save(settings);
+        lock (engineGate) { if (engine is not null) engineProfileSettings = settings; }
     }
 
     private void HandleTransportError(HttpRequestException error)
@@ -459,21 +533,31 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     private void Publish() => SnapshotChanged?.Invoke(BuildSnapshot());
 
-    private void DisposeEngine()
+    private void DisposeEngine(bool maintenance = false)
     {
         lock (engineGate)
         {
             if (engine is null) return;
+            if (maintenance)
+            {
+                AgentMaintenancePolicy.RequireIdle(engine.HasActiveCall, OutstandingEventCount());
+                engine.StopAttestedForMaintenance();
+                // SDK callbacks during shutdown can append a durable event. Never discard it.
+                AgentMaintenancePolicy.RequireIdle(engine.HasActiveCall, OutstandingEventCount());
+                maintenanceStopAttested = true;
+            }
+            else { maintenanceStopAttested = false; withdrawalStop.Invalidate(); }
             engine.EventObserved -= OnEventObserved;
             engine.StatusChanged -= OnEngineStatus;
             engine.Dispose();
             engine = null;
+            engineProfileSettings = null;
         }
     }
 
-    private async Task DisposeRuntimeAsync()
+    private async Task DisposeRuntimeAsync(bool maintenance = false)
     {
-        DisposeEngine();
+        DisposeEngine(maintenance);
         client?.Dispose();
         cancellation?.Dispose();
         client = null; cancellation = null; loop = null; journal = null;

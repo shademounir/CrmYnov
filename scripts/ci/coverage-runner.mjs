@@ -56,7 +56,7 @@ async function postgresProofs() {
     }
     // Personal telephony must exercise real HTTP authorization and competing
     // machine credentials on the same isolated, nonce-verified PostgreSQL.
-    run(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", "test/telephony-own-http-postgres.test.ts", "test/telephony-own-concurrency-postgres.test.ts"], {
+    run(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", "test/telephony-own-http-postgres.test.ts", "test/telephony-own-concurrency-postgres.test.ts", "test/telephony-withdrawal-postgres.test.ts"], {
       cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY176_EPHEMERAL_TEST: "true", CRMY171_DATABASE_NONCE: nonce, SHEETS_ENABLED: "false" },
     });
     run(process.execPath, ["--import", "tsx", "--test", "test/sheet-import-postgres.test.ts"], { cwd: "apps/api", env: { ...process.env, DATABASE_URL: direct, CRMY171_EPHEMERAL_TEST: "true" } });

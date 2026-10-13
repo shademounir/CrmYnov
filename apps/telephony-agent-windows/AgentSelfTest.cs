@@ -72,6 +72,9 @@ internal static class AgentSelfTest
             Require(!AgentEndpointPolicy.SameEndpoint("https://crm.example.test/agent", "https://crm.example.test/Agent"), "CROSS_GATEWAY_PROFILE_PRESERVED");
             Require(AgentEndpointPolicy.SameEndpoint("https://CRM.example.test:443/agent", "https://crm.example.test/agent/"), "CANONICAL_ENDPOINT_REFUSED");
             AgentMaintenancePolicy.RequireIdle(false, 0);
+            SdkShutdownSelfTest.Run();
+            WithdrawalContractSelfTest.RunAsync().GetAwaiter().GetResult();
+            WithdrawalRuntimeGuardsAsync(root, expected).GetAwaiter().GetResult();
             RequireThrows(() => AgentMaintenancePolicy.RequireIdle(true, 0), "ACTIVE_CALL_MAINTENANCE_ACCEPTED");
             RequireThrows(() => AgentMaintenancePolicy.RequireIdle(false, 1), "PENDING_EVENT_MAINTENANCE_ACCEPTED");
             // Exercise the real runtime boundary without constructing a SDK Core.
@@ -81,6 +84,9 @@ internal static class AgentSelfTest
             reloaded.Add(pendingMaintenance);
             var maintenanceRuntime = new AgentRuntime(store);
             RequireCode(() => maintenanceRuntime.StopForMaintenanceAsync().GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_PENDING_EVENTS");
+            var forbiddenMutation = false;
+            RequireCode(() => maintenanceRuntime.WithProfileMaintenanceAsync(() => { forbiddenMutation = true; return Task.CompletedTask; }).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_PENDING_EVENTS");
+            Require(!forbiddenMutation, "PENDING_EVENTS_PROFILE_MUTATION_EXECUTED");
             Require(store.Load() == expected, "MAINTENANCE_CHANGED_PROTECTED_PROFILE");
             reloaded.Acknowledge(pendingMaintenance);
             maintenanceRuntime.StopForMaintenanceAsync().GetAwaiter().GetResult();
@@ -119,7 +125,7 @@ internal static class AgentSelfTest
             Require(!ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000?token=secret", out _), "PROTOCOL_QUERY_ACCEPTED");
 
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "case-sensitive-gateway-isolation", "maintenance-call-and-event-guards", "persisted-event-maintenance-fence", "protocol-and-free-call-maintenance-fence", "async-profile-mutation-lease", "inflight-command-maintenance-fence", "uncertain-free-call-durable-intent", "exclusive-cli-gui-instance", "honest-uncertain-operation-messages", "opaque-protocol-contract", "receipt-reconciliation-identity-and-terminal-policy", "managed-runtime-reconciliation-no-sdk-and-exclusive-lease" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "case-sensitive-gateway-isolation", "maintenance-call-and-event-guards", "persisted-event-maintenance-fence", "protocol-and-free-call-maintenance-fence", "async-profile-mutation-lease", "inflight-command-maintenance-fence", "uncertain-free-call-durable-intent", "exclusive-cli-gui-instance", "honest-uncertain-operation-messages", "opaque-protocol-contract", "receipt-reconciliation-identity-and-terminal-policy", "managed-runtime-reconciliation-no-sdk-and-exclusive-lease", "attested-sdk-shutdown-managed-contract", "pending-event-prevents-profile-mutation", "withdrawal-receipt-and-fake-http-contract", "pending-and-corrupt-withdrawal-real-runtime-guards-no-sdk" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;
@@ -131,7 +137,56 @@ internal static class AgentSelfTest
         }
         finally
         {
-            try { if (Directory.Exists(root)) Directory.Delete(root, true); } catch { /* the test result remains authoritative even if Windows delays cleanup */ }
+            try {
+                var absolute = Path.GetFullPath(root);
+                var temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar);
+                const string prefix = "crm-ynov-agent-self-test-";
+                var name = Path.GetFileName(absolute);
+                Require(Path.GetDirectoryName(absolute) == temp && name.StartsWith(prefix, StringComparison.Ordinal)
+                    && Guid.TryParseExact(name[prefix.Length..], "N", out _), "SELF_TEST_CLEANUP_SCOPE_INVALID");
+                if (Directory.Exists(absolute)) {
+                    Require((File.GetAttributes(absolute) & FileAttributes.ReparsePoint) == 0
+                        && !Directory.EnumerateFileSystemEntries(absolute, "*", SearchOption.AllDirectories)
+                            .Any(path => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0), "SELF_TEST_CLEANUP_REPARSE_REFUSED");
+                    Directory.Delete(absolute, true);
+                }
+            } catch { /* Keep only this synthetic directory if scope/cleanup cannot be verified. */ }
+        }
+    }
+
+    private static async Task WithdrawalRuntimeGuardsAsync(string temporaryRoot, AgentSettings template)
+    {
+        foreach (var corrupt in new[] { false, true }) {
+            var directory = Path.Combine(temporaryRoot, corrupt ? "withdrawal-corrupt" : "withdrawal-pending");
+            var synthetic = new DpapiStore(directory);
+            synthetic.Save(template with { AssociationId = Guid.NewGuid().ToString("D") });
+            var original = File.ReadAllBytes(Path.Combine(directory, "settings.dpapi"));
+            File.WriteAllText(synthetic.JournalPath, "");
+            var journalBefore = File.ReadAllBytes(synthetic.JournalPath);
+            if (corrupt) File.WriteAllText(Path.Combine(directory, $"withdrawal-{Guid.NewGuid():D}.pending"), "synthetic interrupted write");
+            else {
+                var snapshot = TargetedProfileRemoval.Capture(directory);
+                new AgentWithdrawalStateStore(directory).Begin(AgentWithdrawalPolicy.CreateRequest(snapshot.Settings, Guid.NewGuid()), snapshot.Settings.ApiBaseUrl, snapshot.SettingsSha256);
+            }
+            var sdkFactoryCalls = 0;
+            await using var runtime = new AgentRuntime(synthetic, (_, _) => { sdkFactoryCalls++; throw new InvalidOperationException("SYNTHETIC_SDK_FACTORY_FORBIDDEN"); });
+            var mutationCalls = 0;
+            async Task Refused(Func<Task> action) {
+                try { await action(); }
+                catch (Exception error) when ((!corrupt && error is InvalidOperationException && error.Message == "WITHDRAWAL_PENDING")
+                    || (corrupt && error is IOException && error.Message == "WITHDRAWAL_PARTIAL_WRITE")) { return; }
+                throw new InvalidOperationException("WITHDRAWAL_RUNTIME_GUARD_MISSING");
+            }
+            Require(runtime.WithdrawalPending, "WITHDRAWAL_RUNTIME_PENDING_NOT_REPORTED");
+            await Refused(runtime.StartAsync);
+            await Refused(runtime.EnsureAudioAsync);
+            await Refused(() => runtime.WithProfileMaintenanceAsync(() => { mutationCalls++; return Task.CompletedTask; }));
+            await Refused(() => runtime.HandleProtocolCommandAsync(Guid.NewGuid()));
+            await Refused(() => runtime.StartFreeCallAsync("+212600000000", "OTHER_AUTHORIZED", null));
+            await Refused(() => { runtime.ApplyDevices("synthetic-input", "synthetic-output"); return Task.CompletedTask; });
+            Require(sdkFactoryCalls == 0 && mutationCalls == 0 && !runtime.Running, "WITHDRAWAL_RUNTIME_STARTED_SIDE_EFFECT");
+            Require(original.SequenceEqual(File.ReadAllBytes(Path.Combine(directory, "settings.dpapi"))), "WITHDRAWAL_RUNTIME_PROFILE_CHANGED");
+            Require(journalBefore.SequenceEqual(File.ReadAllBytes(synthetic.JournalPath)), "WITHDRAWAL_RUNTIME_JOURNAL_CHANGED");
         }
     }
 

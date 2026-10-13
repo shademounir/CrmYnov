@@ -5,6 +5,7 @@ apps/web/test-results/
 **/dist/
 **/bin/
 **/obj/
+apps/telephony-agent-windows/tests/obj-storage/
 .env
 .env.*
 !.env.example
