@@ -501,11 +501,13 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
       idempotencyKey: `small-first-${marker}`, confirmed: true, items: small.rows.slice(0, 5).map(blockItem) };
     const blockRepository = app.get(DynamicPermissionRepository);
     const readSnapshots = blockRepository.snapshots.bind(blockRepository);
-    let blockSnapshotReads = 0;
-    blockRepository.snapshots = (tx): ReturnType<DynamicPermissionRepository["snapshots"]> => { blockSnapshotReads++; return readSnapshots(tx); };
+    let requestSnapshotReads = 0;
+    blockRepository.snapshots = (tx): ReturnType<DynamicPermissionRepository["snapshots"]> => { requestSnapshotReads++; return readSnapshots(tx); };
     try {
       await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
-      assert.equal(blockSnapshotReads, 1, "five rows share one grant snapshot only inside their fenced transaction");
+      // The HTTP DynamicPermissionInterceptor must retain its own authorization
+      // read. The five-row service block then uses exactly one memoized snapshot.
+      assert.equal(requestSnapshotReads, 2, "one HTTP gate plus one grant snapshot for the entire five-row service block");
     } finally { blockRepository.snapshots = readSnapshots; }
     const smallEffects = await effectCounts();
     const firstSmallReplay = await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
