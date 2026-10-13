@@ -502,7 +502,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     const blockRepository = app.get(DynamicPermissionRepository);
     const readSnapshots = blockRepository.snapshots.bind(blockRepository);
     let blockSnapshotReads = 0;
-    blockRepository.snapshots = async tx => { blockSnapshotReads++; return readSnapshots(tx); };
+    blockRepository.snapshots = (tx): ReturnType<DynamicPermissionRepository["snapshots"]> => { blockSnapshotReads++; return readSnapshots(tx); };
     try {
       await success<BlockResult>(await request(smallEndpoint, "POST", firstSmallBlock));
       assert.equal(blockSnapshotReads, 1, "five rows share one grant snapshot only inside their fenced transaction");
