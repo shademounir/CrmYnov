@@ -3,6 +3,7 @@ import {
   mutationAllowed,
 } from "./config.mjs";
 import { plannedCommentToAdf } from "./planned-comment.mjs";
+import { compareCanonicalStrings } from "../canonical-order.mjs";
 
 export class JiraHttpError extends Error {
   constructor(status, message, retryAfter = null) {
@@ -50,7 +51,7 @@ function blockerKeys(fields) {
     if (!key) throw new Error("jira_blocker_key_missing");
     keys.push(key);
   }
-  return [...new Set(keys)].sort();
+  return [...new Set(keys)].sort(compareCanonicalStrings);
 }
 
 export class JiraClient {
