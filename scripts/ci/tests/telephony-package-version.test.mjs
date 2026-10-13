@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const read = p => readFileSync(new URL(`../../../${p}`, import.meta.url), 'utf8');
+
+test('SDK debug symbols are excluded from build and publish runtime copies', () => {
+  const project = read('apps/telephony-agent-windows/CrmYnov.TelephonyAgent.csproj');
+  for (const item of ['LiblinphoneRuntime', 'PublishedLiblinphoneRuntime']) {
+    const declaration = project.match(new RegExp(`<${item}\\s[^>]+/>`))?.[0];
+    assert.ok(declaration);
+    assert.ok(declaration.includes('Exclude="$(LiblinphoneSdkRoot)\\bin\\**\\*.pdb"'));
+    assert.ok(declaration.includes('Include="$(LiblinphoneSdkRoot)\\bin\\**\\*"'));
+  }
+});
 test('agent and installer expose the same exact pilot version', () => {
   const agent = read('apps/telephony-agent-windows/CrmYnov.TelephonyAgent.csproj');
   const installer = read('apps/telephony-agent-installer-windows/CrmYnov.TelephonyAgent.Installer.csproj');
