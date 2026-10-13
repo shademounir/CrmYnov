@@ -14,6 +14,9 @@ internal sealed class LinphoneEngine : IDisposable
     private readonly WindowsAudioSamplePlayer samplePlayer = new();
     private Config? volatileConfig;
     private Core? core;
+    private SdkShutdownSignals? shutdownSignals;
+    private bool strictShutdownStarted;
+    private bool shutdownOutputActive;
     private Account? account;
     private Player? localPlayer;
     private Call? activeCall;
@@ -38,6 +41,7 @@ internal sealed class LinphoneEngine : IDisposable
     public string? AudioMeterErrorCode => peakMeter.ErrorCode;
     public int MicrophoneLevel {
         get {
+            if (shutdownSignals?.CoreOffObserved == true) return 0;
             if (peakMeter.IsRunning) return peakMeter.ReadPercent();
             if (activeCall is null || lastState != "ANSWERED" || muted) return 0;
             var dbm0 = activeCall.RecordVolume;
@@ -49,10 +53,12 @@ internal sealed class LinphoneEngine : IDisposable
     public event Action<string>? StatusChanged;
 
     public LinphoneEngine(AgentSettings settings, string dataDirectory) { this.settings = settings; this.dataDirectory = dataDirectory; }
-    public IReadOnlyList<AudioDevice> Devices => core?.ExtendedAudioDevices.ToList() ?? [];
+    public IReadOnlyList<AudioDevice> Devices => shutdownSignals?.CoreOffObserved == true
+        ? [] : core?.ExtendedAudioDevices.ToList() ?? [];
 
     public void StartAudio()
     {
+        RequireSdkOperational();
         if (core is not null) return;
         var factory = Factory.Instance;
         factory.DataDir = dataDirectory;
@@ -63,6 +69,17 @@ internal sealed class LinphoneEngine : IDisposable
         // rebuilt for this process and the SIP secret remains DPAPI-only.
         volatileConfig = factory.CreateConfigFromString(string.Empty);
         core = factory.CreateCoreWithConfig(volatileConfig, IntPtr.Zero);
+        shutdownSignals = new SdkShutdownSignals(core.nativePtr);
+        core.Listener.OnGlobalStateChanged = (observedCore, state, _) => {
+            shutdownSignals.OnGlobalState(observedCore.nativePtr, state switch {
+                GlobalState.Ready => ObservedSdkState.Ready,
+                GlobalState.On => ObservedSdkState.On,
+                GlobalState.Shutdown => ObservedSdkState.Shutdown,
+                GlobalState.Off => ObservedSdkState.Off,
+                _ => ObservedSdkState.Unknown,
+            });
+            if (shutdownSignals.CoreOffObserved) { SdkLoaded = false; SipRegistered = false; }
+        };
         ConfigureCallAudioProcessing();
         var authUser = string.IsNullOrWhiteSpace(settings.AuthUsername) ? ExtractUser(settings.SipAddress) : settings.AuthUsername;
         var digestPolicy = factory.CreateDigestAuthenticationPolicy();
@@ -70,6 +87,7 @@ internal sealed class LinphoneEngine : IDisposable
         digestPolicy.AllowNoQop = true;
         core.DigestAuthenticationPolicy = digestPolicy;
         core.Listener.OnAuthenticationRequested = (_, requested, method) => {
+            if (strictShutdownStarted || shutdownSignals.CoreOffObserved) return;
             if (method != AuthMethod.HttpDigest) return;
             StatusChanged?.Invoke("SIP_AUTH_CHALLENGE");
             var requestedAlgorithm = requested.Algorithm?.Trim();
@@ -88,8 +106,11 @@ internal sealed class LinphoneEngine : IDisposable
             core.AddAuthInfo(normalized);
             StatusChanged?.Invoke("SIP_AUTH_HA1_CONFIGURED");
         };
-        core.Listener.OnAccountRegistrationStateChanged = (_, account, state, _) => {
+        core.Listener.OnAccountRegistrationStateChanged = (observedCore, account, state, _) => {
+            shutdownSignals.OnRegistrationState(observedCore.nativePtr, account.nativePtr, state == RegistrationState.Cleared);
+            if (this.account is null || this.account.nativePtr != account.nativePtr || observedCore.nativePtr != core.nativePtr) return;
             SipRegistered = state == RegistrationState.Ok;
+            if (strictShutdownStarted || shutdownSignals.CoreOffObserved) { if (shutdownSignals.CoreOffObserved) SipRegistered = false; return; }
             if (state == RegistrationState.Failed) {
                 var error = account.ErrorInfo;
                 StatusChanged?.Invoke($"SIP_FAILED_{error.ProtocolCode}_{error.Reason.ToString().ToUpperInvariant()}");
@@ -99,6 +120,7 @@ internal sealed class LinphoneEngine : IDisposable
         };
         core.Listener.OnCallStateChanged = (_, call, state, _) => OnCallState(call, state);
         core.Listener.OnAudioDevicesListUpdated = _ => {
+            if (strictShutdownStarted || shutdownSignals.CoreOffObserved) return;
             ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
             var missing = MissingSelectedDevice();
             if (missing is not null && activeCall is not null) {
@@ -125,15 +147,58 @@ internal sealed class LinphoneEngine : IDisposable
         var server = factory.CreateAddress(proxy) ?? throw new InvalidOperationException("SIP_PROXY_INVALID");
         server.Transport = settings.Transport.ToUpperInvariant() switch { "UDP" => TransportType.Udp, "TCP" => TransportType.Tcp, _ => TransportType.Tls };
         parameters.ServerAddress = server; parameters.RegisterEnabled = true;
-        account = core.CreateAccount(parameters); core.AddAccount(account); core.DefaultAccount = account;
+        parameters.UnregisterAtStopEnabled = true;
+        account = core.CreateAccount(parameters);
+        shutdownSignals!.BindAccount(account.nativePtr);
+        core.AddAccount(account); core.DefaultAccount = account;
         ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
     }
 
     public void Start() { StartAudio(); ConnectSip(); }
 
-    public void Iterate() => core?.Iterate();
+    public void Iterate()
+    {
+        if (shutdownSignals?.CoreOffObserved == true) return;
+        core?.Iterate();
+    }
+
+    // Not a CRM revocation. Caller must hold engineGate and block commands/audio producers.
+    // This strict path is deliberately separate from ordinary best-effort application exit.
+    public SdkShutdownReceipt StopAttestedForMaintenance()
+    {
+        if (core is null || shutdownSignals is null)
+            throw new InvalidOperationException("SDK_SHUTDOWN_STATE_UNPROVEN");
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        return SdkShutdownCoordinator.Stop(new ShutdownControl(this), () => timer.Elapsed,
+            () => Thread.Sleep(20), TimeSpan.FromSeconds(10));
+    }
+
+    private SdkShutdownObservation ObserveShutdown()
+    {
+        var snapshot = shutdownSignals!.Observe(HasActiveCall, AudioTestActive);
+        // Off forbids further SDK method/property access. Managed observations remain available.
+        if (!shutdownSignals.CoreOffObserved)
+        {
+            shutdownOutputActive = localPlayer?.State == PlayerState.Playing;
+            snapshot = snapshot with { HasCalls = snapshot.HasCalls || core!.CallsNb > 0 };
+        }
+        return snapshot with { AudioActive = snapshot.AudioActive || shutdownOutputActive };
+    }
+
+    private sealed class ShutdownControl(LinphoneEngine owner) : ISdkShutdownControl
+    {
+        public SdkShutdownObservation Observe() => owner.ObserveShutdown();
+        public void BeginStopAsync()
+        {
+            owner.shutdownSignals!.BeginShutdown();
+            owner.strictShutdownStarted = true;
+            owner.core!.StopAsync();
+        }
+        public void Iterate() => owner.Iterate();
+    }
     public void StartCall(AgentCommand command)
     {
+        RequireSdkOperational();
         if (core is null || !SipRegistered) throw new InvalidOperationException("SIP_NOT_REGISTERED");
         if (activeCall is not null) throw new InvalidOperationException("WORKSTATION_BUSY");
         if (peakMeter.IsPoisoned) throw new InvalidOperationException("AUDIO_CAPTURE_RESTART_REQUIRED");
@@ -151,10 +216,11 @@ internal sealed class LinphoneEngine : IDisposable
         activeCommandId = command.CommandId; activeCallId = command.CallId; lastState = null; answeredAt = null; lastDurationSeconds = null; muted = false;
         activeCall = createdCall;
     }
-    public void Hangup() { if (activeCall is not null) activeCall.Terminate(); }
-    public void SetMuted(bool value) { if (activeCall is null) return; activeCall.MicrophoneMuted = value; muted = activeCall.MicrophoneMuted; }
+    public void Hangup() { if (shutdownSignals?.CoreOffObserved != true && activeCall is not null) activeCall.Terminate(); }
+    public void SetMuted(bool value) { if (shutdownSignals?.CoreOffObserved == true || activeCall is null) return; activeCall.MicrophoneMuted = value; muted = activeCall.MicrophoneMuted; }
     public void ApplyDevices(string? inputId, string? outputId)
     {
+        RequireSdkOperational();
         if (core is null) return;
         if (peakMeter.IsRunning || samplePlayer.IsPlaying) StopMicrophoneTest();
         settings = settings with { InputDeviceId = inputId, OutputDeviceId = outputId };
@@ -174,12 +240,14 @@ internal sealed class LinphoneEngine : IDisposable
 
     public void ReloadAudioDevices()
     {
+        RequireSdkOperational();
         core?.ReloadSoundDevices();
         ApplyDevices(settings.InputDeviceId, settings.OutputDeviceId);
     }
 
     public void StartMicrophoneTest(bool localMonitoring = false)
     {
+        RequireSdkOperational();
         if (core is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
         var missingInput = MissingSelectedInputDevice();
@@ -216,6 +284,7 @@ internal sealed class LinphoneEngine : IDisposable
 
     public void PlayOutputTest()
     {
+        RequireSdkOperational();
         if (core is null) throw new InvalidOperationException("AUDIO_NOT_INITIALIZED");
         if (activeCall is not null) throw new InvalidOperationException("AUDIO_TEST_CALL_ACTIVE");
         if (peakMeter.IsRunning || samplePlayer.IsPlaying) throw new InvalidOperationException("AUDIO_TEST_ACTIVE");
@@ -265,6 +334,7 @@ internal sealed class LinphoneEngine : IDisposable
     }
     private void OnCallState(Call call, CallState state)
     {
+        if (shutdownSignals?.CoreOffObserved == true) return;
         if (state is CallState.IncomingReceived or CallState.PushIncomingReceived) { call.Decline(Reason.Declined); return; }
         if (activeCommandId is null || activeCallId is null || call != activeCall) return;
         var mapped = state switch {
@@ -338,15 +408,20 @@ internal sealed class LinphoneEngine : IDisposable
         return path;
     }
 
+    private void RequireSdkOperational() =>
+        SdkOperationPolicy.RequireAvailable(strictShutdownStarted, shutdownSignals?.CoreOffObserved == true);
+
     public void Dispose()
     {
         if (stopping) return; stopping = true;
+        var coreAlreadyOff = shutdownSignals?.CoreOffObserved == true;
+        replayCapturedSample = false; // Disposal must never initiate sample playback.
         try { StopMicrophoneTest(); } catch { /* continue with core shutdown */ }
-        try { localPlayer?.Close(); } catch { /* continue with core shutdown */ }
-        try { activeCall?.Terminate(); } catch { /* continue with core shutdown */ }
+        try { if (!coreAlreadyOff) localPlayer?.Close(); } catch { /* continue with core shutdown */ }
+        try { if (!coreAlreadyOff) activeCall?.Terminate(); } catch { /* continue with core shutdown */ }
         try {
-            core?.Stop();
-            for (var i = 0; i < 25; i++) { core?.Iterate(); Thread.Sleep(20); }
+            if (!coreAlreadyOff) core?.Stop();
+            for (var i = 0; i < 25 && !coreAlreadyOff; i++) { Iterate(); Thread.Sleep(20); }
         } catch { /* shutdown remains best effort */ }
         peakMeter.Dispose(); samplePlayer.Dispose(); configuredRealms.Clear(); activeCall = null; account = null; localPlayer = null; core = null; volatileConfig = null;
     }

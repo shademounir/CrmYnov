@@ -72,6 +72,7 @@ internal static class AgentSelfTest
             Require(!AgentEndpointPolicy.SameEndpoint("https://crm.example.test/agent", "https://crm.example.test/Agent"), "CROSS_GATEWAY_PROFILE_PRESERVED");
             Require(AgentEndpointPolicy.SameEndpoint("https://CRM.example.test:443/agent", "https://crm.example.test/agent/"), "CANONICAL_ENDPOINT_REFUSED");
             AgentMaintenancePolicy.RequireIdle(false, 0);
+            SdkShutdownSelfTest.Run();
             RequireThrows(() => AgentMaintenancePolicy.RequireIdle(true, 0), "ACTIVE_CALL_MAINTENANCE_ACCEPTED");
             RequireThrows(() => AgentMaintenancePolicy.RequireIdle(false, 1), "PENDING_EVENT_MAINTENANCE_ACCEPTED");
             // Exercise the real runtime boundary without constructing a SDK Core.
@@ -81,6 +82,9 @@ internal static class AgentSelfTest
             reloaded.Add(pendingMaintenance);
             var maintenanceRuntime = new AgentRuntime(store);
             RequireCode(() => maintenanceRuntime.StopForMaintenanceAsync().GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_PENDING_EVENTS");
+            var forbiddenMutation = false;
+            RequireCode(() => maintenanceRuntime.WithProfileMaintenanceAsync(() => { forbiddenMutation = true; return Task.CompletedTask; }).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_PENDING_EVENTS");
+            Require(!forbiddenMutation, "PENDING_EVENTS_PROFILE_MUTATION_EXECUTED");
             Require(store.Load() == expected, "MAINTENANCE_CHANGED_PROTECTED_PROFILE");
             reloaded.Acknowledge(pendingMaintenance);
             maintenanceRuntime.StopForMaintenanceAsync().GetAwaiter().GetResult();
@@ -119,7 +123,7 @@ internal static class AgentSelfTest
             Require(!ProtocolRequest.TryParse("crmynov-telephony://command/123e4567-e89b-42d3-a456-426614174000?token=secret", out _), "PROTOCOL_QUERY_ACCEPTED");
 
             if (!string.IsNullOrWhiteSpace(reportPath)) {
-                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "case-sensitive-gateway-isolation", "maintenance-call-and-event-guards", "persisted-event-maintenance-fence", "protocol-and-free-call-maintenance-fence", "async-profile-mutation-lease", "inflight-command-maintenance-fence", "uncertain-free-call-durable-intent", "exclusive-cli-gui-instance", "honest-uncertain-operation-messages", "opaque-protocol-contract", "receipt-reconciliation-identity-and-terminal-policy", "managed-runtime-reconciliation-no-sdk-and-exclusive-lease" } };
+                var report = new { generatedAt = DateTimeOffset.UtcNow, passed = true, checks = new[] { "dpapi-roundtrip", "journal-replay-and-ack", "sanitized-diagnostic", "readiness-contract", "call-terminal-state", "dialpad-selection-editing", "crm-address-validation", "cross-origin-profile-isolation", "case-sensitive-gateway-isolation", "maintenance-call-and-event-guards", "persisted-event-maintenance-fence", "protocol-and-free-call-maintenance-fence", "async-profile-mutation-lease", "inflight-command-maintenance-fence", "uncertain-free-call-durable-intent", "exclusive-cli-gui-instance", "honest-uncertain-operation-messages", "opaque-protocol-contract", "receipt-reconciliation-identity-and-terminal-policy", "managed-runtime-reconciliation-no-sdk-and-exclusive-lease", "attested-sdk-shutdown-managed-contract", "pending-event-prevents-profile-mutation" } };
                 File.WriteAllText(reportPath, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
             }
             return 0;

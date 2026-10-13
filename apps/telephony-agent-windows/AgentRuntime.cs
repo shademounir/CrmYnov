@@ -123,7 +123,8 @@ internal sealed class AgentRuntime : IAsyncDisposable
             var pendingMaintenanceEvents = false;
             try {
                 pendingMaintenanceEvents = maintenance && OutstandingEventCount() > 0;
-                await DisposeRuntimeAsync().ConfigureAwait(true);
+                if (pendingMaintenanceEvents) throw new InvalidOperationException("PROFILE_MAINTENANCE_PENDING_EVENTS");
+                await DisposeRuntimeAsync(maintenance).ConfigureAwait(true);
             }
             finally { commandGate.Release(); }
             statusCode = "ARRÊTÉ";
@@ -459,11 +460,18 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     private void Publish() => SnapshotChanged?.Invoke(BuildSnapshot());
 
-    private void DisposeEngine()
+    private void DisposeEngine(bool maintenance = false)
     {
         lock (engineGate)
         {
             if (engine is null) return;
+            if (maintenance)
+            {
+                AgentMaintenancePolicy.RequireIdle(engine.HasActiveCall, OutstandingEventCount());
+                engine.StopAttestedForMaintenance();
+                // SDK callbacks during shutdown can append a durable event. Never discard it.
+                AgentMaintenancePolicy.RequireIdle(engine.HasActiveCall, OutstandingEventCount());
+            }
             engine.EventObserved -= OnEventObserved;
             engine.StatusChanged -= OnEngineStatus;
             engine.Dispose();
@@ -471,9 +479,9 @@ internal sealed class AgentRuntime : IAsyncDisposable
         }
     }
 
-    private async Task DisposeRuntimeAsync()
+    private async Task DisposeRuntimeAsync(bool maintenance = false)
     {
-        DisposeEngine();
+        DisposeEngine(maintenance);
         client?.Dispose();
         cancellation?.Dispose();
         client = null; cancellation = null; loop = null; journal = null;
