@@ -14,7 +14,7 @@ import { historicalReconciliation } from "./historical-reconciliation.js";
 import { boundedBootstrapReconciliation, deferralBinding, deferralReceiptResponse, isDeferralInput, validDeferral } from "./bounded-bootstrap.js";
 import { baselineOptionalValues, BASELINE_OPTIONAL_INFORMATION } from "./baseline-unknown-fields.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, hash, HISTORICAL_SHEETS, IMPORT_FIELDS, KEY, MAX_PACKAGE_BYTES, refuse, SHA, UUID,
-  record, COLUMN, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
+  record, COLUMN, type BootstrapBlockInput, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
 
 type Cell = { value: string | number | boolean | null; raw: string | null; type: string; formula?: { text: string; attributes: Record<string, string> }; style?: string };
 type Annotation = HistoricalAnnotation;
@@ -354,6 +354,8 @@ export class BootstrapImportService {
 
   async confirm(id: string, input: BootstrapConfirmInput, actor: Principal): Promise<unknown> {
     if (!input || input.confirmed !== true || !KEY.test(input.idempotencyKey) || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 1 || !Number.isInteger(input.limit ?? 25) || (input.limit ?? 25) < 1 || (input.limit ?? 25) > 25) refuse("bootstrap_confirmation_invalid");
+    if (input.rowIds !== undefined && (!Array.isArray(input.rowIds) || !input.rowIds.length || input.rowIds.length > (input.limit ?? 25)
+      || input.rowIds.some((id) => typeof id !== "string" || !UUID.test(id)) || new Set(input.rowIds).size !== input.rowIds.length)) refuse("bootstrap_confirmation_rows_invalid");
     return this.permissions.transaction(async (tx) => {
       const row = await this.package(tx, id, actor, ["import.execute", "import.confirm", "import.review.resolve", "import.view"]); const fingerprint = hash(input);
       const receipt = await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: id, operation: "CONFIRM", key: input.idempotencyKey } } });
@@ -367,7 +369,8 @@ export class BootstrapImportService {
         return { ...saved.result, replayed: true };
       }
       if (!row.batchId || !["MAPPED", "PARTIAL"].includes(row.state) || row.version !== input.expectedVersion) this.conflict("bootstrap_confirmation_conflict");
-      const ready = await tx.bootstrapImportRow.findMany({ where: { packageId: id, state: "READY", decision: { path: ["actorId"], equals: actor.userId } }, orderBy: { id: "asc" }, take: input.limit ?? 25 });
+      const ready = await tx.bootstrapImportRow.findMany({ where: { packageId: id, ...(input.rowIds ? { id: { in: input.rowIds } } : {}), state: "READY", decision: { path: ["actorId"], equals: actor.userId } }, orderBy: { id: "asc" }, take: input.limit ?? 25 });
+      if (input.rowIds && ready.length !== input.rowIds.length) this.conflict("bootstrap_confirmation_rows_changed");
       if (!ready.length) this.conflict("bootstrap_no_owned_decided_rows");
       for (const source of ready) await this.commitRow(tx, row, source, actor);
       const counts = await this.counts(tx, id);
@@ -382,6 +385,56 @@ export class BootstrapImportService {
       await tx.bootstrapImportReceipt.create({ data: { packageId: id, operation: "CONFIRM", key: input.idempotencyKey, actorId: actor.userId, fingerprint, response: json({ result, rowIds: ready.map((item) => item.id) }) } });
       await this.audit(tx, actor, row, "BOOTSTRAP_CONFIRMATION_COMMITTED", `confirm:${row.id}:${input.idempotencyKey}`, { counts, rowIds: ready.map((item) => item.id) });
       return result;
+    });
+  }
+
+  /** One permission-fenced serializable transaction. Nested service operations
+   * reuse the repository transaction: no half decision/import and no new SQL
+   * import path. The receipt binds the exact plan and authenticating actor. */
+  async executeBlock(id: string, input: BootstrapBlockInput, actor: Principal): Promise<unknown> {
+    if (!record(input) || Object.keys(input).some((key) => !["expectedVersion", "sha256", "idempotencyKey", "confirmed", "items"].includes(key))
+      || input.confirmed !== true || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 1 || typeof input.idempotencyKey !== "string" || !KEY.test(input.idempotencyKey)
+      || typeof input.sha256 !== "string" || !SHA.test(input.sha256) || !Array.isArray(input.items) || !input.items.length || input.items.length > 25
+      || input.items.some((item) => !record(item) || Object.keys(item).some((key) => !["rowId", "fingerprint", "decision"].includes(key)) || typeof item.rowId !== "string" || !UUID.test(item.rowId)
+        || typeof item.fingerprint !== "string" || !SHA.test(item.fingerprint) || !record(item.decision))
+      || new Set(input.items.map((item) => item.rowId)).size !== input.items.length) refuse("bootstrap_block_invalid");
+    return this.permissions.transaction(async (tx) => {
+      const pack = await this.package(tx, id, actor, ["import.execute", "import.confirm", "import.review.resolve", "import.view"]);
+      if (pack.sha256 !== input.sha256) this.conflict("bootstrap_block_source_changed");
+      const fingerprint = hash(input);
+      const previous = await tx.bootstrapImportReceipt.findUnique({ where: { packageId_operation_key: { packageId: id, operation: "EXECUTE_BLOCK", key: input.idempotencyKey } } });
+      if (previous) {
+        if (previous.actorId !== actor.userId || previous.fingerprint !== fingerprint) this.conflict("bootstrap_block_key_conflict");
+        for (const item of input.items) {
+          const row = await tx.bootstrapImportRow.findFirst({ where: { id: item.rowId, packageId: id } });
+          if (!row || row.fingerprint !== item.fingerprint || row.decisionKey !== item.decision.idempotencyKey) this.conflict("bootstrap_block_receipt_changed");
+          if (row.state === "DEFERRED") {
+            const receipts = await tx.bootstrapImportReceipt.findMany({ where: { packageId: id, operation: "DEFER_ROW", key: row.decisionKey } });
+            if (!validDeferral(pack.sha256, row, receipts)) this.conflict("bootstrap_deferral_integrity_conflict");
+          } else {
+            if (!["ACCEPTED", "IGNORED"].includes(row.state)) this.conflict("bootstrap_block_receipt_changed");
+            await this.revalidateDecision(tx, pack, row, actor);
+          }
+        }
+        return { replayed: true, block: previous.response, report: await this.report(id, actor) };
+      }
+      if (pack.version !== input.expectedVersion || !["MAPPED", "PARTIAL"].includes(pack.state)) this.conflict("bootstrap_block_version_changed");
+      const ready: string[] = [], deferred: string[] = [];
+      for (const item of input.items) {
+        const row = await tx.bootstrapImportRow.findFirst({ where: { id: item.rowId, packageId: id } });
+        if (!row || row.fingerprint !== item.fingerprint || row.version !== item.decision.expectedVersion || row.state !== "REVIEW" || row.decision) this.conflict("bootstrap_block_row_changed");
+        await this.decide(id, item.rowId, item.decision, actor);
+        (item.decision.action === "DEFER" ? deferred : ready).push(item.rowId);
+      }
+      if (ready.length) await this.confirm(id, { expectedVersion: pack.version, confirmed: true, limit: ready.length, rowIds: ready,
+        idempotencyKey: `block-confirm-${hash([input.idempotencyKey, fingerprint])}` }, actor);
+      else await tx.bootstrapImportPackage.update({ where: { id, version: pack.version }, data: { state: "PARTIAL", version: { increment: 1 } } });
+      const report = object<{ reconciliation: { truncated: boolean; discrepancies: unknown[] } }>(await this.report(id, actor));
+      if (report.reconciliation.truncated || report.reconciliation.discrepancies.length) this.conflict("bootstrap_block_reconciliation_failed");
+      const result = { rowIds: ready, deferredRowIds: deferred, expectedVersion: input.expectedVersion, resultingVersion: input.expectedVersion + 1 };
+      await tx.bootstrapImportReceipt.create({ data: { packageId: id, operation: "EXECUTE_BLOCK", key: input.idempotencyKey, actorId: actor.userId, fingerprint, response: json(result) } });
+      await this.audit(tx, actor, pack, "BOOTSTRAP_BLOCK_COMMITTED", `block:${hash([id, input.idempotencyKey])}`, result);
+      return { replayed: false, block: result, report };
     });
   }
 
@@ -644,13 +697,18 @@ export class BootstrapImportService {
       canReopen: ["READY", "DEFERRED"].includes(row.state) && !row.leadId && !!actor && decision?.actorId === actor.userId,
       sourceOwner: mapped.sourceOwner, replacementOwner: mapped.replacementOwner, annotations: source.annotations ?? [], sourceEvidence: Object.entries(source.cells).map(([column, cell]) => ({ column, reference: `${column}${source.rowNumber}`, text: text(cell), raw: cell.raw, type: cell.type,
         formula: !!cell.formula, ...(cell.formula ? { formulaText: cell.formula.text } : {}), ...(cell.style ? { style: cell.style } : {}) })), sourceEvidenceTruncated: false,
-      ...(decision ? { decision: { action: decision.action, reason: decision.reason, ...(decision.targetLeadId ? { targetLeadId: decision.targetLeadId } : {}),
+      ...(decision ? { decision: { action: decision.action, reason: decision.reason, idempotencyKey: row.decisionKey, ...(decision.targetLeadId ? { targetLeadId: decision.targetLeadId } : {}),
         overrides: decision.overrides ?? {}, resolvedValues: decision.values, annotations: decision.annotations ?? [], cycle: this.cycleView(decision.cycle, source),
         ...(decision.action === "DEFER" ? { confirmed: true, deferral: decision.deferral, effectsApplied: false } : {}) } } : {}), ...(row.leadId ? { leadId: row.leadId } : {}) };
   }
   private async audit(tx: PermissionTransaction, actor: Principal, row: BootstrapImportPackage, eventType: string, key: string, after: unknown): Promise<void> {
     const current = await currentPrincipal(tx, actor);
-    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: row.campusId, resourceType: "BOOTSTRAP_IMPORT", resourceId: row.id, eventType, result: "SUCCESS", idempotencyKey: `bootstrap:${key}`, correlationId: `bootstrap:${row.id}`, after: json(after) } });
+    // Public decision keys may already be 128 characters. Keep existing short
+    // audit identities stable; hash the complete namespaced identity when the
+    // composite would exceed the audit column, never truncate its uniqueness.
+    const composite = `bootstrap:${key}`;
+    const idempotencyKey = composite.length <= 128 ? composite : `bootstrap:sha256:${hash(composite)}`;
+    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: row.campusId, resourceType: "BOOTSTRAP_IMPORT", resourceId: row.id, eventType, result: "SUCCESS", idempotencyKey, correlationId: `bootstrap:${row.id}`, after: json(after) } });
   }
   private conflict(code: string): never { throw new ConflictException({ code }); }
   private notFound(): never { throw new NotFoundException({ code: "bootstrap_package_not_found" }); }

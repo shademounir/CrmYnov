@@ -5,6 +5,7 @@ import { ArrowLeft, CheckCircle, FileXls, ShieldCheck } from "@phosphor-icons/re
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { PageHeader } from "../../_components/ui/page-header";
 import { BootstrapMapping } from "./bootstrap-mapping";
+import { BootstrapBatchRunner } from "./bootstrap-batch-runner";
 import { BootstrapMetadataQuarantineView } from "./bootstrap-metadata-quarantine";
 import { BootstrapReconciliationView } from "./bootstrap-reconciliation";
 import { BootstrapRowReview, persistBootstrapDecision, type BootstrapRowDecision } from "./bootstrap-row-review";
@@ -131,7 +132,7 @@ export function BootstrapWizard({ initialPackageId }: Readonly<{ initialPackageI
       {!context.canUpload ? <p>Lecture autorisée. La création ou le transfert d’un lot n’est pas permis par vos droits effectifs.</p> : null}
     </section>
     {source?.state === "SEALED" ? <BootstrapMapping source={source} context={context} mappings={mappings} disabled={busy || !capabilities.canMap} onChange={setMappings} onSave={() => void perform(saveMapping)} /> : null}
-    {source && confirmedPackageState(source.state) ? <><section className={styles.card} aria-labelledby="bootstrap-rows-title"><h2 id="bootstrap-rows-title">3. Occurrences et décisions de reprise</h2><p>25 occurrences maximum par page. « Prête » signifie une décision enregistrée, jamais un import réussi. Les conflits et données manquantes restent en revue ; aucun contact n’est fusionné automatiquement.</p><Counts source={source} />
+    {source && confirmedPackageState(source.state) ? <><BootstrapBatchRunner source={source} context={context} disabled={busy || !capabilities.canDecide || !capabilities.canConfirm} perform={perform} refresh={() => refresh(source.id, currentAfter)} /><section className={styles.card} aria-labelledby="bootstrap-rows-title"><h2 id="bootstrap-rows-title">3. Occurrences et décisions de reprise</h2><p>25 occurrences maximum par page. « Prête » signifie une décision enregistrée, jamais un import réussi. Les conflits et données manquantes restent en revue ; aucun contact n’est fusionné automatiquement.</p><Counts source={source} />
       <div className={styles.rows}>{rows.map((row) => <BootstrapRowReview key={`${row.id}:${row.version}`} source={source} row={row} context={context} disabled={busy || !capabilities.canDecide} onDecision={decide} {...(capabilities.canDecide ? { onReopen: reopen } : {})} />)}{!rows.length ? <p>Aucune occurrence à afficher sur cette page.</p> : null}</div>
       <div className={styles.actions}><button className="secondary-button" type="button" disabled={busy || previousPages.length === 0} onClick={() => { const previous = [...previousPages]; const after = previous.pop() ?? ""; void perform(() => page(after, previous)); }}>Page précédente</button><button className="secondary-button" type="button" disabled={busy || !nextAfter} onClick={() => { if (nextAfter) void perform(() => page(nextAfter, [...previousPages, currentAfter])); }}>Page suivante</button></div>
     </section>

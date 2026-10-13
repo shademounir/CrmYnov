@@ -17,6 +17,16 @@ $packageDirectory = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot "$packageName.zip"
 $sourceZipPath = Join-Path $OutputRoot "$packageName-source.zip"
 
+# Source distribution contains tracked source only, never ignored profiles,
+# generated harness obj-storage or private files beside a working checkout.
+$sourcePaths = @(& git -C $repositoryRoot ls-files -- apps/telephony-agent-windows apps/telephony-agent-installer-windows docs/runbooks/linphone-windows-bridge.md scripts/telephony-agent/package-windows-agent.ps1 scripts/telephony-agent/install-windows-agent.ps1 scripts/telephony-agent/build-windows-installer.ps1)
+if ($LASTEXITCODE -ne 0 -or $sourcePaths.Count -eq 0) { throw 'PACKAGE_TRACKED_SOURCE_REQUIRED' }
+$sourceChanges = @(& git -C $repositoryRoot status --porcelain --untracked-files=no -- $sourcePaths)
+if ($LASTEXITCODE -ne 0 -or $sourceChanges.Count -ne 0) { throw 'PACKAGE_COMMITTED_SOURCE_REQUIRED' }
+if ($sourcePaths | Where-Object { $_ -match '(^|/)(bin|obj[^/]*|profiles?|secrets?)(/|$)' }) { throw 'PACKAGE_GENERATED_SOURCE_REFUSED' }
+$sourceCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40}$') { throw 'PACKAGE_SOURCE_COMMIT_REQUIRED' }
+
 $syntaxTokens = $null
 $syntaxErrors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($installerScript, [ref]$syntaxTokens, [ref]$syntaxErrors) | Out-Null
@@ -87,6 +97,7 @@ $manifestDocument = [ordered]@{
     executableProductVersion = $publishedVersion
     signed = $false
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    sourceCommit = $sourceCommit
     files = $manifest
 }
 $manifestDocument | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $packageDirectory 'manifest.json') -Encoding utf8
@@ -111,16 +122,7 @@ function New-DeterministicZip([string]$Root, [string]$Destination, [System.IO.Fi
 }
 
 New-DeterministicZip $packageDirectory $zipPath @(Get-ChildItem -LiteralPath $packageDirectory -Recurse -File)
-$sourceFiles = @(
-    Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows') -Recurse -File |
-        Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
-    Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-installer-windows') -Recurse -File |
-        Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
-    Get-Item -LiteralPath (Join-Path $repositoryRoot 'docs\runbooks\linphone-windows-bridge.md')
-    Get-Item -LiteralPath $PSCommandPath
-    Get-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\telephony-agent\install-windows-agent.ps1')
-    Get-Item -LiteralPath (Join-Path $repositoryRoot 'scripts\telephony-agent\build-windows-installer.ps1')
-)
+$sourceFiles = @($sourcePaths | ForEach-Object { Get-Item -LiteralPath (Join-Path $repositoryRoot $_) })
 New-DeterministicZip $repositoryRoot $sourceZipPath $sourceFiles
 
 [pscustomobject]@{

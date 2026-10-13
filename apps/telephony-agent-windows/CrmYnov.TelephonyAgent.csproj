@@ -35,7 +35,9 @@
 
   <Target Name="CopyLiblinphoneRuntime" AfterTargets="Build">
     <ItemGroup>
-      <LiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*" />
+      <!-- SDK debug symbols remain in the canonical SDK, not runtime packages. -->
+      <LiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*"
+                          Exclude="$(LiblinphoneSdkRoot)\bin\**\*.pdb" />
       <!-- The OpenH264 plugin requires a separately distributed Cisco binary
            which is neither needed nor licensed for this audio-only pilot. -->
       <LiblinphonePlugins Include="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\**\*"
@@ -53,7 +55,8 @@
 
   <Target Name="CopyLiblinphoneRuntimeToPublish" AfterTargets="Publish">
     <ItemGroup>
-      <PublishedLiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*" />
+      <PublishedLiblinphoneRuntime Include="$(LiblinphoneSdkRoot)\bin\**\*"
+                                   Exclude="$(LiblinphoneSdkRoot)\bin\**\*.pdb" />
       <PublishedLiblinphonePlugins Include="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\**\*"
                                    Exclude="$(LiblinphoneSdkRoot)\lib\mediastreamer\plugins\libmsopenh264.*" />
       <PublishedLiblinphoneSounds Include="$(LiblinphoneSdkRoot)\share\sounds\**\*" />
