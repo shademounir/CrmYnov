@@ -2,7 +2,7 @@
 
 import React, { useRef, useState } from "react";
 import { bootstrapFailure, bootstrapRequest, type BootstrapContext, type BootstrapPackage } from "./bootstrap-client";
-import { parseBatchPlan, readBatchRows, runBatchPlan, type BatchPlan, type BatchProgress } from "./bootstrap-batch";
+import { batchSize, parseBatchPlan, readBatchRows, runBatchPlan, type BatchPlan, type BatchProgress } from "./bootstrap-batch";
 import styles from "./bootstrap-styles";
 
 export function BootstrapBatchRunner({ source, context, disabled, perform, refresh }: Readonly<{
@@ -22,7 +22,7 @@ export function BootstrapBatchRunner({ source, context, disabled, perform, refre
   }
   return <section className={styles.card} aria-labelledby="bootstrap-batch-title">
     <h2 id="bootstrap-batch-title">Traitement continu du portefeuille</h2>
-    <p>Un plan préparé conserve une décision motivée par occurrence. Chaque bloc de 25 maximum enregistre, confirme, importe et réconcilie dans une seule transaction. Le traitement poursuit ensuite le bloc suivant ; les refus explicites restent à résoudre, sans différé automatique.</p>
+    <p>Un plan préparé conserve une décision motivée par occurrence. Chaque bloc de 5 par défaut, 25 maximum, enregistre, confirme, importe et réconcilie dans une seule transaction. Le traitement poursuit ensuite le bloc suivant ; les refus explicites restent à résoudre, sans différé automatique.</p>
     <details><summary>Préparer le plan depuis les données conservées</summary>
       <p>Lecture privée du paquet et de ses références autorisées, sans retransférer le classeur. Ne diffusez pas cet export de travail.</p>
       <button type="button" className="secondary-button" disabled={disabled} onClick={() => void perform(async () => {
@@ -35,6 +35,7 @@ export function BootstrapBatchRunner({ source, context, disabled, perform, refre
     <label>Plan de décisions JSON · paquet existant<textarea value={text} rows={5} maxLength={8 * 1024 * 1024} disabled={disabled || running} spellCheck={false} onChange={event => { setText(event.target.value); setPlan(null); setConfirmed(false); }} /></label>
     <button type="button" className="secondary-button" disabled={disabled || running || !text} onClick={inspect}>Vérifier le plan préparé</button>
     {plan ? <><p>{plan.items.length} occurrences dans le plan : {plan.items.filter(item => item.decision.action === "CREATE_DOSSIER").length} créations proposées, {plan.items.filter(item => item.decision.action === "LINK_EXISTING").length} rapprochements explicites, {plan.items.filter(item => item.decision.action === "IGNORE").length} exclusions motivées, {plan.items.filter(item => item.decision.action === "DEFER").length} différés explicites. Ces propositions ne sont pas des résultats d’import.</p>
+      <p>Exécution par blocs de {batchSize(plan)} maximum ; reprise par clés durables, sans modifier la limite transactionnelle du serveur.</p>
       <label className={styles.check}><input type="checkbox" disabled={disabled || running} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />J’autorise les décisions explicites de ce plan et leur exécution par blocs successifs, dans mes droits actuels. Aucun rapprochement ni propriétaire n’est inventé.</label>
       <div className={styles.actions}><button type="button" className="primary-button" disabled={disabled || running || !confirmed} onClick={() => void perform(execute)}>Importer le plan par blocs successifs</button>
         {running ? <button type="button" className="secondary-button" onClick={() => { stop.current = true; }}>Arrêter après le bloc en cours</button> : null}</div>
