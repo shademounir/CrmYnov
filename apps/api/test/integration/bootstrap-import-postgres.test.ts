@@ -440,7 +440,7 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     let blockSheet = 0;
     const operator = await scopedPackage("operator", `operator-${marker.toLowerCase()}@example.invalid`, "À contacter", xml => xml.replaceAll(`operator-${marker.toLowerCase()}@example.invalid`, `operator-${++blockSheet}-${marker.toLowerCase()}@example.invalid`));
     const blockItem = (row: Row): BootstrapBlockInput["items"][number] => ({ rowId: row.id, fingerprint: row.fingerprint,
-      decision: { expectedVersion: row.version, idempotencyKey: `operator-row-${row.id}`, action: "CREATE_DOSSIER", reason: "Dossier synthétique unique, propriétaire et provenance source confirmés" } });
+      decision: { expectedVersion: row.version, idempotencyKey: `operator-row-${row.id}`.padEnd(128, "x"), action: "CREATE_DOSSIER", reason: "Dossier synthétique unique, propriétaire et provenance source confirmés" } });
     const block: BootstrapBlockInput = { expectedVersion: operator.pack.version, sha256: operator.pack.sha256, idempotencyKey: `operator-block-${marker}`, confirmed: true, items: operator.rows.slice(0, 2).map(blockItem) };
     const endpoint = `/packages/${operator.pack.id}/execute-block`;
     assert.equal((await request(endpoint, "POST", block, "invalid-synthetic-session")).status, 401);

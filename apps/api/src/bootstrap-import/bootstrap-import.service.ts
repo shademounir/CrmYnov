@@ -703,7 +703,12 @@ export class BootstrapImportService {
   }
   private async audit(tx: PermissionTransaction, actor: Principal, row: BootstrapImportPackage, eventType: string, key: string, after: unknown): Promise<void> {
     const current = await currentPrincipal(tx, actor);
-    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: row.campusId, resourceType: "BOOTSTRAP_IMPORT", resourceId: row.id, eventType, result: "SUCCESS", idempotencyKey: `bootstrap:${key}`, correlationId: `bootstrap:${row.id}`, after: json(after) } });
+    // Public decision keys may already be 128 characters. Keep existing short
+    // audit identities stable; hash the complete namespaced identity when the
+    // composite would exceed the audit column, never truncate its uniqueness.
+    const composite = `bootstrap:${key}`;
+    const idempotencyKey = composite.length <= 128 ? composite : `bootstrap:sha256:${hash(composite)}`;
+    await tx.auditEvent.create({ data: { actorId: current.userId, actorRoles: current.roles, campusId: row.campusId, resourceType: "BOOTSTRAP_IMPORT", resourceId: row.id, eventType, result: "SUCCESS", idempotencyKey, correlationId: `bootstrap:${row.id}`, after: json(after) } });
   }
   private conflict(code: string): never { throw new ConflictException({ code }); }
   private notFound(): never { throw new NotFoundException({ code: "bootstrap_package_not_found" }); }
