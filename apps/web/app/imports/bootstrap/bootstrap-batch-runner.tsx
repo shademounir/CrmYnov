@@ -12,6 +12,15 @@ export function BootstrapBatchRunner({ source, context, disabled, perform, refre
   const [text, setText] = useState(""), [plan, setPlan] = useState<BatchPlan | null>(null), [confirmed, setConfirmed] = useState(false);
   const [exported, setExported] = useState(""), [progress, setProgress] = useState<BatchProgress | null>(null), [error, setError] = useState(""), [running, setRunning] = useState(false);
   const stop = useRef(false);
+  async function loadPlanFile(file: File | undefined): Promise<void> {
+    setText(""); setError(""); setPlan(null); setConfirmed(false); setProgress(null);
+    if (!file) return;
+    if (!/\.json$/i.test(file.name) || file.size === 0 || file.size > 8 * 1024 * 1024) {
+      setError("Choisissez un plan JSON non vide de 8 Mio maximum. Aucun effet appliqué."); return;
+    }
+    try { setText(await file.text()); }
+    catch { setError("Le plan local n’a pas pu être lu. Aucun effet appliqué."); }
+  }
   function inspect(): void { setError(""); setConfirmed(false); setProgress(null); try { setPlan(parseBatchPlan(text, source)); } catch { setPlan(null); setError("Plan invalide : vérifiez le paquet, son empreinte, les versions et les décisions motivées. Aucun effet appliqué."); } }
   async function execute(): Promise<void> {
     if (!plan || !confirmed || disabled || running) return;
@@ -32,6 +41,8 @@ export function BootstrapBatchRunner({ source, context, disabled, perform, refre
       })}>Lire les occurrences et références pour préparer le plan</button>
       {exported ? <label>Export privé des occurrences<textarea readOnly value={exported} rows={4} spellCheck={false} /></label> : null}
     </details>
+    <label>Plan de décisions JSON · fichier privé local<input type="file" accept=".json,application/json" disabled={disabled || running} onChange={event => void loadPlanFile(event.target.files?.[0])} /></label>
+    <p>Le fichier est lu uniquement dans ce navigateur pour remplir le champ ci-dessous. Il n’est ni transféré séparément ni conservé hors des décisions et reçus explicitement exécutés.</p>
     <label>Plan de décisions JSON · paquet existant<textarea value={text} rows={5} maxLength={8 * 1024 * 1024} disabled={disabled || running} spellCheck={false} onChange={event => { setText(event.target.value); setPlan(null); setConfirmed(false); }} /></label>
     <button type="button" className="secondary-button" disabled={disabled || running || !text} onClick={inspect}>Vérifier le plan préparé</button>
     {plan ? <><p>{plan.items.length} occurrences dans le plan : {plan.items.filter(item => item.decision.action === "CREATE_DOSSIER").length} créations proposées, {plan.items.filter(item => item.decision.action === "LINK_EXISTING").length} rapprochements explicites, {plan.items.filter(item => item.decision.action === "IGNORE").length} exclusions motivées, {plan.items.filter(item => item.decision.action === "DEFER").length} différés explicites. Ces propositions ne sont pas des résultats d’import.</p>
