@@ -163,7 +163,7 @@ test("upload resumes exact bytes without assuming received chunks form a contigu
     return new Response(null, { status: 404 });
   });
   const { dom, render, click, dispatch, flush } = await setup(t); await render(id);
-  const input = dom.window.document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  const input = dom.window.document.querySelector<HTMLInputElement>('input[type="file"][accept*="spreadsheetml"]')!;
   Object.defineProperty(input, "files", { configurable: true, value: [file] }); await dispatch(input, "change");
   await click(dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
   const form = input.closest("form")!; await dispatch(form, "submit");
