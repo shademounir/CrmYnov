@@ -67,7 +67,7 @@ test("continuous portfolio UI confirms once then executes successive bounded blo
     return new Response(null, { status: 404 });
   });
   const { dom, render, edit, click, flush } = await setup(t); await render(id);
-  await edit(control<HTMLTextAreaElement>(dom, "Plan de décisions JSON"), JSON.stringify({ schemaVersion: 1, packageId: id, sha256: source.sha256, items }));
+  await edit(control<HTMLTextAreaElement>(dom, "Plan de décisions JSON · paquet existant"), JSON.stringify({ schemaVersion: 1, packageId: id, sha256: source.sha256, items }));
   await click(button(dom, "Vérifier le plan préparé"));
   assert.equal(button(dom, "Importer le plan par blocs successifs").disabled, true);
   await click(control<HTMLInputElement>(dom, "J’autorise les décisions explicites"));
@@ -163,7 +163,7 @@ test("upload resumes exact bytes without assuming received chunks form a contigu
     return new Response(null, { status: 404 });
   });
   const { dom, render, click, dispatch, flush } = await setup(t); await render(id);
-  const input = dom.window.document.querySelector<HTMLInputElement>('input[type="file"][accept*="spreadsheetml"]')!;
+  const input = dom.window.document.querySelector<HTMLInputElement>('input[type="file"][accept^=".xlsx"]')!;
   Object.defineProperty(input, "files", { configurable: true, value: [file] }); await dispatch(input, "change");
   await click(dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
   const form = input.closest("form")!; await dispatch(form, "submit");
