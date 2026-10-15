@@ -28,10 +28,10 @@ test("computes distinct primary KPIs and keeps secondary contributions separate"
   const { audit, leads, followUps, engine, reassignments, service } = setup();
   const contacted = leads.registerLocalLead({ id: "lead-contacted", leadCode: "LD-SYN-1", firstName: "Prénom", lastName: "Synthétique",
     campus: "Campus synthétique", campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique",
-    source: "SOURCE_SYNTHETIQUE", status: "CONTACTED", assignedToId: adviserA.userId, collaboratorIds: [adviserB.userId] });
+    source: "SOURCE_SYNTHETIQUE", status: "CONTACTED", assignedToId: adviserA.userId, assignedToLabel: "Conseillère A", collaboratorIds: [adviserB.userId] });
   leads.registerLocalLead({ id: "lead-enrolled", leadCode: "LD-SYN-2", firstName: "Autre", lastName: "Synthétique",
     campus: "Campus synthétique", campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique",
-    source: "SOURCE_SYNTHETIQUE", status: "ENROLLED", assignedToId: adviserA.userId, collaboratorIds: [adviserB.userId] });
+    source: "SOURCE_SYNTHETIQUE", status: "ENROLLED", assignedToId: adviserA.userId, assignedToLabel: "Conseillère A", collaboratorIds: [adviserB.userId] });
   leads.addActivity(contacted.id, { type: "PHONE_CALL", result: "ANSWERED" }, adviserA, "corr-interaction");
   const future = new Date(Date.now() + 3_600_000).toISOString();
   followUps.schedule(contacted.id, { dueAt: future, reason: "Relance synthétique", ownerId: adviserA.userId }, adviserA, "corr-follow-up");
@@ -46,6 +46,8 @@ test("computes distinct primary KPIs and keeps secondary contributions separate"
   assert.equal(result.cohort.uniqueLeadCount, 2); assert.equal(a.primaryLeadCount, 1); assert.equal(b.primaryLeadCount, 1);
   assert.equal(b.secondaryLeadCount, 1); assert.equal(a.statusVolumes.enrolled, 1); assert.equal(b.statusVolumes.contacted, 1);
   assert.equal(a.rates.enrollment, 1); assert.equal(b.rates.contact, 1); assert.equal(a.followUps.overdue, 1);
+  assert.equal(a.adviserLabel, "Conseillère A");
+  assert.equal(new URL(a.drillDown.assigned, "https://crm.invalid").searchParams.get("assignedToLabel"), "Conseillère A");
   assert.deepEqual(a.reassignments, { requested: 1, approved: 1, rejected: 0 });
   assert.ok(result.definitions.every((definition) => definition.numerator && definition.denominator));
   const serialized = JSON.stringify(result); assert.equal(serialized.includes("Prénom"), false); assert.equal(serialized.includes("LD-SYN"), false);

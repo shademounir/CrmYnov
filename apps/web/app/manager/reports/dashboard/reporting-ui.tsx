@@ -21,7 +21,7 @@ type DashboardReport = {
   distributions: Record<"source" | "campaign" | "program" | "campus", Datum[]>;
   panels: {
     funnel: { currentState: Record<string, number>; rates?: { enrolled: number | null } };
-    performance: { advisers: Array<{ adviserId: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number }> };
+    performance: { advisers: Array<{ adviserId: string; adviserLabel?: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number }> };
     operationalRisks: { alerts: Array<{ code: string; count: number; drillDown: string }>; queues: Record<string, number | null>; sourceQualityAvailability?: "LOCAL_SYNTHETIC_OCCURRENCES" | "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" };
     sharedContributions: { contributors: Array<{ contributorId: string; primaryActionCount: number; secondaryActionCount: number }> };
   };
@@ -30,7 +30,7 @@ type DashboardReport = {
 } & ReportingEvidence;
 type PersonalDashboardReport = {
   definitionVersion: "personal-dashboard-v1"; timezone: string; filters: Record<string, string>;
-  performance: { advisers: Array<{ adviserId: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number; followUps: { overdue: number } }> };
+  performance: { advisers: Array<{ adviserId: string; adviserLabel?: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number; followUps: { overdue: number } }> };
   contributions: { contributors: Array<{ contributorId: string; primaryActionCount: number; secondaryActionCount: number }> };
   safeguards: { personalScopeOnly: true; aggregatedOnly: true };
 } & ReportingEvidence;
@@ -284,7 +284,7 @@ function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readon
 
 function DashboardContent({ report, showTables, query, operationalThreshold, onSessionExpired }: Readonly<{ report: DashboardReport; showTables: boolean; query: URLSearchParams; operationalThreshold: number; onSessionExpired: () => void }>): React.JSX.Element {
   const funnel = Object.entries(report.panels.funnel.currentState).map(([value, count]) => ({ value, count }));
-  const loads = report.panels.performance.advisers.map((item) => ({ key: item.adviserId, value: "Libellé commercial indisponible", count: item.activeLoad }));
+  const loads = report.panels.performance.advisers.map((item) => ({ key: item.adviserId, value: item.adviserLabel?.trim() || "Libellé commercial indisponible", count: item.activeLoad }));
   const contributions = report.panels.sharedContributions.contributors.map((item) => ({ key: item.contributorId, value: "Libellé contributeur indisponible", count: item.primaryActionCount + item.secondaryActionCount }));
   const followUpsHref = preserveFilters(report.drillDowns.find((item) => item.key === "overdueFollowUps")?.href ?? "/leads?view=FOLLOW_UP", query);
   return <>

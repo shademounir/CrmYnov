@@ -1,5 +1,18 @@
 import { expect, test } from "@playwright/test";
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/crm/sessions/current", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      roles: ["ADMISSIONS"],
+      scopes: [{ kind: "CAMPUS", id: "synthetic-campus" }],
+      professionalEmail: "appointments-synthetic@example.invalid",
+      mustChangeSecret: false,
+    }),
+  }));
+});
+
 test("synthetic appointment agenda remains accessible and API-connected", async ({ page }) => {
   const hydrationErrors: string[] = [];
   page.on("pageerror", (error) => hydrationErrors.push(error.message));
