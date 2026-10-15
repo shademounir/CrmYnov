@@ -41,6 +41,7 @@ test("mobile navigation keeps keyboard focus inside and restores it on Escape", 
   const closer = find("Fermer la navigation");
   assert.equal(dom.window.document.activeElement, closer);
   assert.equal(opener.getAttribute("aria-expanded"), "true");
+  assert.equal(dom.window.document.body.style.overflow, "hidden");
   assert.match(dom.window.document.body.textContent ?? "", /Équipe attribuée/u);
 
   const sidebar = dom.window.document.querySelector<HTMLElement>("#crm-sidebar")!;
@@ -61,4 +62,5 @@ test("mobile navigation keeps keyboard focus inside and restores it on Escape", 
   assert.equal(escape.defaultPrevented, true);
   assert.equal(dom.window.document.activeElement, opener);
   assert.equal(opener.getAttribute("aria-expanded"), "false");
+  assert.equal(dom.window.document.body.style.overflow, "");
 });

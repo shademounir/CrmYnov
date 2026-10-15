@@ -12,6 +12,7 @@ import { canonicalCampus } from "../permissions/dynamic-resources.js";
 export interface Collaborator { id: string; professionalEmail: string; secondaryEmail?: string | undefined; roles: Role[]; campusId?: string | undefined; teamId?: string | undefined; active: boolean; authenticationVersion: number; firstLoginRequired?: boolean }
 export interface CreateCollaborator { professionalEmail: string; secondaryEmail?: string; professionalDisplayName?: string | null; roles: string[]; campusId?: string; teamId?: string }
 export interface UpdateAuthorization { roles: string[]; campusId?: string; teamId?: string; reason: string; confirmed: boolean }
+export interface UpdateCollaboratorProfile { professionalDisplayName: string }
 export interface IssueTemporarySecret { reason: "INITIAL_ACCESS" | "CREDENTIAL_COMPROMISED" | "USER_REQUEST"; confirmed: boolean }
 export interface TemporarySecretResult { temporarySecret: string; mustChangeAtFirstLogin: true; revokedSessions: number }
 
@@ -120,6 +121,30 @@ export class UserService implements OnModuleInit {
         const revoked = await tx.localSession.updateMany({ where: { collaboratorId: id, active: true }, data: { active: false, revokedAt: new Date() } });
         await tx.auditEvent.create({ data: { eventType: "COLLABORATOR_AUTHORIZATION_CHANGED", actorId, actorRoles: actor.roles, campusId, resourceType: "COLLABORATOR", resourceId: id, correlationId, result: "SUCCESS", idempotencyKey: `collaborator-authorization:${id}:v${user.authenticationVersion}`, before: { roles: user.roles, campusId: user.campusId, teamId: user.teamId }, after: { subjectId: id, roles, campusId, teamId, reason: input.reason, revokedSessions: revoked.count, authenticationVersion: row.authenticationVersion } } });
       }
+      return { id: row.id, professionalEmail: row.professionalEmail, secondaryEmail: row.secondaryEmail ?? undefined, roles: row.roles as Role[], campusId: row.campusId ?? undefined, teamId: row.teamId ?? undefined, active: row.active, authenticationVersion: row.authenticationVersion, firstLoginRequired: row.firstLoginRequired };
+    }, { isolationLevel: "Serializable" });
+  }
+
+  /** Governed write-only profile metadata update. It does not change authorization or browser sessions. */
+  async updateProfileForApi(id: string, input: UpdateCollaboratorProfile, actorId: string, correlationId: string): Promise<Collaborator> {
+    const displayName = professionalDisplayName(input.professionalDisplayName);
+    if (!displayName) throw new ForbiddenException({ code: "professional_display_name_required" });
+    const client = this.prisma?.client;
+    if (!client) {
+      const user = this.users.get(id);
+      if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
+      this.audit.record({ eventType: "COLLABORATOR_PROFILE_UPDATED", actorId, actorRoles: ["SUPER_ADMIN"], correlationId, after: { subjectId: id, displayNameConfigured: true }, result: "SUCCESS", idempotencyKey: `collaborator-profile:${id}:${correlationId}` });
+      return { ...user, roles: [...user.roles] };
+    }
+    return client.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM collaborators WHERE id = ${id}::uuid FOR UPDATE`;
+      const user = await tx.collaborator.findUnique({ where: { id } });
+      const actor = await tx.collaborator.findUnique({ where: { id: actorId } });
+      if (!user) throw new ForbiddenException({ code: "collaborator_not_found" });
+      if (!actor?.active || !actor.roles.includes("SUPER_ADMIN")) throw new ForbiddenException({ code: "authorization_change_invalid" });
+      const changed = user.professionalDisplayName !== displayName;
+      const row = changed ? await tx.collaborator.update({ where: { id }, data: { professionalDisplayName: displayName } }) : user;
+      if (changed) await tx.auditEvent.create({ data: { eventType: "COLLABORATOR_PROFILE_UPDATED", actorId, actorRoles: actor.roles, campusId: row.campusId, resourceType: "COLLABORATOR", resourceId: row.id, correlationId, result: "SUCCESS", idempotencyKey: `collaborator-profile:${row.id}:${correlationId}`, before: { displayNameConfigured: user.professionalDisplayName !== null }, after: { subjectId: row.id, displayNameConfigured: true } } });
       return { id: row.id, professionalEmail: row.professionalEmail, secondaryEmail: row.secondaryEmail ?? undefined, roles: row.roles as Role[], campusId: row.campusId ?? undefined, teamId: row.teamId ?? undefined, active: row.active, authenticationVersion: row.authenticationVersion, firstLoginRequired: row.firstLoginRequired };
     }, { isolationLevel: "Serializable" });
   }

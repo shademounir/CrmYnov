@@ -78,15 +78,16 @@ test("administration creates and rereads a scoped user, retaining input on refus
   await act(async () => { root.render(createElement(UsersConsole)); await new Promise<void>((resolve) => setImmediate(resolve)); });
   const form = dom.window.document.querySelector("form")!;
   const email = form.querySelector<HTMLInputElement>('input[name="professionalEmail"]')!;
+  const displayName = form.querySelector<HTMLInputElement>('input[name="professionalDisplayName"]')!;
   const campus = form.querySelector<HTMLSelectElement>('select[name="campusId"]')!;
-  email.value = "synthetic@example.invalid"; campus.value = "campus-a";
+  displayName.value = "Responsable synthétique"; email.value = "synthetic@example.invalid"; campus.value = "campus-a";
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.equal(email.value, "synthetic@example.invalid"); assert.match(dom.window.document.body.textContent ?? "", /Accès refusé/u);
   refused = false;
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.match(dom.window.document.body.textContent ?? "", /Compte créé et relu/u);
   const posts = requests.filter((item) => item.path === "/api/crm/users" && item.body);
-  assert.deepEqual(posts[1]?.body, { professionalEmail: "synthetic@example.invalid", roles: ["ADMISSIONS"], campusId: "campus-a" });
+  assert.deepEqual(posts[1]?.body, { professionalEmail: "synthetic@example.invalid", professionalDisplayName: "Responsable synthétique", roles: ["ADMISSIONS"], campusId: "campus-a" });
   assert.ok(requests.filter((item) => item.path === "/api/crm/users" && !item.body).length >= 2);
 });
 

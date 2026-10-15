@@ -189,7 +189,9 @@ export class ReferenceService {
     const values = await tx.lead.findMany({ select: { campaign: true }, distinct: ["campaign"] });
     return values.some((row) => keys.has(referenceKey(row.campaign)));
   }
-  private hasCampus(principal: Principal, keys: string[]): boolean { return principal.scopes.some((scope) => scope.kind === "CAMPUS" && keys.includes(scope.id)); }
+  private hasCampus(principal: Principal, keys: string[]): boolean {
+    return principal.scopes.some((scope) => scope.kind === "GLOBAL" || scope.kind === "CAMPUS" && keys.includes(scope.id));
+  }
   private async usedByLead(tx: ReferenceTransaction, row: CrmReference, leadId: string): Promise<boolean> {
     if (row.kind === "TAG") return (await tx.crmLeadTag.count({ where: { leadId, tagId: row.id, active: true } })) > 0;
     const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId } });
