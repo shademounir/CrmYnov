@@ -340,6 +340,27 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
     const formulaRefusal = await request(`/packages/${formulaAbsent.pack.id}/rows/${formulaAbsent.rows[0]!.id}/decision`, "POST", decisionFor(formulaAbsent.rows[0]!, "formula-not-unknown")); assert.equal(formulaRefusal.status, 422); assert.deepEqual(await formulaRefusal.json(), { code: "bootstrap_formula_review_required" });
     const knownErase = await scopedPackage("baseline-known-erase", `known-erase-${marker.toLowerCase()}@example.invalid`);
     const knownRefusal = await request(`/packages/${knownErase.pack.id}/rows/${knownErase.rows[0]!.id}/decision`, "POST", decisionFor(knownErase.rows[0]!, "known-cannot-clear", { program: "" })); assert.equal(knownRefusal.status, 422); assert.deepEqual(await knownRefusal.json(), { code: "bootstrap_baseline_known_value_cannot_clear", field: "program" });
+    // Historical branch labels are retained literally, never converted to a
+    // degree or made available as invented overrides on unrelated source rows.
+    for (const [index, label] of ["Autres Branches Scientifiques", "Autres branches Techniques"].entries()) {
+      const tag = `historical-education-${index}`, fixtureEmail = `${tag}-${marker.toLowerCase()}@example.invalid`;
+      let sheet = 0;
+      const fixture = await scopedPackage(tag, fixtureEmail, "À contacter", xml => xml
+        .replaceAll(fixtureEmail, `${tag}-${++sheet}-${marker.toLowerCase()}@example.invalid`)
+        .replace(/<c r="D9"[^>]*>[\s\S]*?<\/c>/g, `<c r="D9" t="inlineStr"><is><t>${label}</t></is></c>`));
+      const source = fixture.rows[0]!;
+      const invented = await request(`/packages/${fixture.pack.id}/rows/${source.id}/decision`, "POST", decisionFor(source, `${tag}-invented`, { educationLevel: index === 0 ? "Autres branches Techniques" : "Autres Branches Scientifiques" }));
+      assert.equal(invented.status, 400); assert.deepEqual(await invented.json(), { code: "bootstrap_lead_domain_invalid" });
+      const block = { expectedVersion: fixture.pack.version, sha256: fixture.pack.sha256, idempotencyKey: `${tag}-block-${marker}`, confirmed: true,
+        items: [{ rowId: source.id, fingerprint: source.fingerprint, decision: decisionFor(source, `${tag}-source`) }] };
+      await success(await request(`/packages/${fixture.pack.id}/execute-block`, "POST", block));
+      const committed = await client.bootstrapImportRow.findUniqueOrThrow({ where: { id: source.id } });
+      const lead = await client.lead.findUniqueOrThrow({ where: { id: committed.leadId! } });
+      assert.equal(lead.educationLevel, label); assert.equal(lead.acquisitionKind, "BASELINE");
+      assert.equal(await client.importedHistoricalNote.count({ where: { leadId: lead.id } }), 1);
+      const after = await effectCounts(); await success(await request(`/packages/${fixture.pack.id}/execute-block`, "POST", block));
+      assert.deepEqual(await effectCounts(), after, "literal historical education replay has no duplicate effect");
+    }
     for (const [index, status] of ["", "RDV planifié", "RDV effectué", "Dossier ouvert", "À qualifier"].entries()) {
       const fixture = await scopedPackage(`status-${index}`, `status-${index}-${marker.toLowerCase()}@example.invalid`, status); const source = fixture.rows[0]!;
       const refused = await request(`/packages/${fixture.pack.id}/rows/${source.id}/decision`, "POST", decisionFor(source, `status-${index}`));

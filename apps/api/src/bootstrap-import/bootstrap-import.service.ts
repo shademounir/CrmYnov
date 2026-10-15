@@ -29,6 +29,9 @@ type MetadataQuarantine = { key: string; sheet: string; relationId: string; sour
 const statuses = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
 const sources = ["OTHER", "WEBSITE", "WEB_FORM", "PHONE_CALL", "PHYSICAL_VISIT", "REFERRAL", "SOCIAL_MEDIA", "FACEBOOK", "INSTAGRAM", "GOOGLE", "PARTNER", "EVENT", "YNOV_COM", "YNOV_MA_LEGACY", "JOBINTECH", "LEGACY_RELAUNCH"];
 const educationLevels = ["Bac", "Bac+1", "Bac+2", "Bac+3", "Bac+4", "Bac+5", "B1", "B2", "B3", "M1", "M2", "Terminale"];
+// These are literal historical NIVEAU labels, not inferred qualifications.
+// They are valid only when the sealed source cell itself contains that label.
+const historicalEducationLabels = ["Autres Branches Scientifiques", "Autres branches Techniques"];
 const overrideFields = ["firstName", "lastName", "email", "phone", "program", "educationLevel", "source", "status", "temperature", "ownerId", "campaign"];
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const object = <T>(value: unknown): T => value as T;
@@ -609,7 +612,10 @@ export class BootstrapImportService {
     if (!values.email?.trim() && !values.phone?.trim()) refuse("bootstrap_contact_required");
     if (values.email?.trim() && !normalizeHistoricalEmail(values.email)) refuse("bootstrap_email_invalid");
     if (values.phone?.trim() && !normalizeHistoricalPhone(values.phone)) throw new UnprocessableEntityException({ code: "bootstrap_phone_explicit_resolution_required" });
-    if (!sources.includes(values.source!) || (values.educationLevel && !educationLevels.includes(values.educationLevel)) || !["COLD", "WARM", "HOT", "UNEVALUATED"].includes(values.temperature ?? "")) refuse("bootstrap_lead_domain_invalid");
+    const sourceHistoricalEducation = historicalEducationLabels.includes(values.educationLevel ?? "")
+      && values.educationLevel === mapped.values.educationLevel
+      && !mapped.reasons.includes("FORMULA_REVIEW:educationLevel");
+    if (!sources.includes(values.source!) || (values.educationLevel && !educationLevels.includes(values.educationLevel) && !sourceHistoricalEducation) || !["COLD", "WARM", "HOT", "UNEVALUATED"].includes(values.temperature ?? "")) refuse("bootstrap_lead_domain_invalid");
     this.validateSourceCoverage(mapped, decision, object<SourceRow>(row.payload));
     if (mapped.reasons.includes("HISTORICAL_DUPLICATE_STATUS_REVIEW")) throw new UnprocessableEntityException({ code: "bootstrap_duplicate_requires_link_or_ignore" });
     if (mapped.reasons.some((reason) => reason.startsWith("FORMULA_REVIEW"))) {
