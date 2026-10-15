@@ -16,13 +16,13 @@ export function LeadFilterChips({ current }: Readonly<{ current: URLSearchParams
   const filters = Object.entries(leadListFilterLabels).filter(([key]) => current.get(key) && (!current.get("sharedViewId") || key === "sharedViewId") && !(key === "view" && current.get(key)?.toUpperCase() === "ALL"));
   return <section className="lead-active-filters" aria-label="Filtres actifs">
     <div><strong>{filters.length ? "Filtres actifs" : "Aucun filtre actif"}</strong><Link href={leadListResetHref(current)}>Réinitialiser les filtres</Link></div>
-    {filters.length ? <ul>{filters.map(([key, label]) => <li key={key}><span>{label} : {leadListFilterValue(key, current.get(key) ?? "")}</span><Link prefetch={false} href={leadListHref(current, { [key]: null })} aria-label={`Retirer le filtre ${label}`}><X size={16} aria-hidden="true" /></Link></li>)}</ul> : null}
+    {filters.length ? <ul>{filters.map(([key, label]) => <li key={key}><span>{label} : {leadListFilterValue(key, current.get(key) ?? "", current)}</span><Link prefetch={false} href={leadListHref(current, { [key]: null })} aria-label={`Retirer le filtre ${label}`}><X size={16} aria-hidden="true" /></Link></li>)}</ul> : null}
   </section>;
 }
 
 export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchParams; mode: LeadPageMode }>): React.JSX.Element {
   const sharedView = Boolean(current.get("sharedViewId"));
-  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "collaboratorId", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize", "page"]);
+  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize", "page"]);
   // Context fields are not owned by this form (shared view, provenance, drill-down, return URL).
   const preserved = [...current.entries()].filter(([key]) => !visibleKeys.has(key));
   return <form className="lead-filter-form" action="/leads" method="get" aria-label={mode === "follow-up" ? "Recherche dans les relances" : "Recherche et filtres des leads"}>
@@ -38,7 +38,7 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
         <button className="secondary-button" type="submit"><Funnel size={18} aria-hidden="true" /> Appliquer</button>
       </div>
       <details className="advanced-filters"><summary>Filtres avancés et tri</summary><div className="filter-grid">
-        <label>Conseiller principal<input name="assignedToId" defaultValue={current.get("assignedToId") ?? ""} /></label>
+        <OwnerFilter current={current} />
         <label>Collaborateur<input name="collaboratorId" defaultValue={current.get("collaboratorId") ?? ""} /></label>
         <label>Source<input name="source" defaultValue={current.get("source") ?? ""} /></label>
         <label>Formation<input name="program" defaultValue={current.get("program") ?? ""} /></label>
@@ -55,4 +55,15 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
     </fieldset>
     <input name="page" type="hidden" value="1" />
   </form>;
+}
+
+function OwnerFilter({ current }: Readonly<{ current: URLSearchParams }>): React.JSX.Element {
+  const initialId = current.get("assignedToId") ?? "";
+  const [id, setId] = React.useState(initialId);
+  const [label, setLabel] = React.useState(current.get("assignedToLabel") ?? "");
+  return <label>Conseiller principal<input name="assignedToId" value={id} onChange={(event) => {
+    const next = event.target.value;
+    setId(next);
+    if (next !== initialId) setLabel("");
+  }} />{label ? <><input name="assignedToLabel" type="hidden" value={label} /><small>Filtre actuel : {label}</small></> : null}</label>;
 }

@@ -64,6 +64,7 @@ export interface LeadAssignmentSnapshot {
 export interface LeadReportingRow {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
   assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
+  assignedToLabel?: string;
   acquisitionKind?: LeadAcquisitionKind;
   activities: Array<{ type: ActivityType; result: string; authorId: string; occurredAt: string }>;
   temperature: LeadTemperature;
@@ -606,12 +607,12 @@ export class LeadService implements OnModuleInit {
     return [...this.leads.values()]
       .filter((lead) => (principal.permissionLeadIds ? principal.permissionLeadIds.has(lead.id) : global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, acquisitionKind, temperature, temperatureSource }) => ({
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, assignedToLabel, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, acquisitionKind, temperature, temperatureSource }) => ({
         id, status, campus, campaign, program, source, createdAt,
         acquisitionKind: acquisitionKind ?? "NEW",
         temperature: temperature ?? "UNEVALUATED",
         ...(temperatureSource ? { temperatureSource } : {}),
-        ...(assignedToId ? { assignedToId } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
+        ...(assignedToId ? { assignedToId } : {}), ...(assignedToLabel ? { assignedToLabel } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
         ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
         ...(importBatchId ? { importBatchId } : {}),
         activities: this.activities.filter((activity) => activity.leadId === id)
@@ -625,7 +626,8 @@ export class LeadService implements OnModuleInit {
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (current.assignedToId) throw new ConflictException({ code: "lead_already_assigned", nextAction: "CRMY-94" });
     const occurredAt = new Date().toISOString();
-    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId, assignmentMode, lastActivityAt: occurredAt });
+    const { assignedToLabel: _previousAssigneeLabel, ...leadWithoutAssigneeLabel } = current;
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...leadWithoutAssigneeLabel, assignedToId, assignmentMode, lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({
       id: randomUUID(), leadId, type: "ASSIGNMENT_CHANGED", result: assignedToId,
@@ -645,7 +647,8 @@ export class LeadService implements OnModuleInit {
     if (current.assignedToId !== expectedOwnerId) throw new ConflictException({ code: "reassignment_owner_changed" });
     if (targetUserId === expectedOwnerId) throw new BadRequestException({ code: "reassignment_target_unchanged" });
     const occurredAt = new Date().toISOString();
-    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, assignedToId: targetUserId, assignmentMode: "REASSIGNMENT", lastActivityAt: occurredAt });
+    const { assignedToLabel: _previousAssigneeLabel, ...leadWithoutAssigneeLabel } = current;
+    const updated: Readonly<LeadRecord> = Object.freeze({ ...leadWithoutAssigneeLabel, assignedToId: targetUserId, assignmentMode: "REASSIGNMENT", lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: "ASSIGNMENT_CHANGED",
       result: `${expectedOwnerId}->${targetUserId}`, note: reason, authorId: principal.userId, correlationId, occurredAt });

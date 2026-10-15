@@ -50,7 +50,7 @@ p { line-height: 1.5; }
 .brand-lockup span { font-size: 12px; font-weight: 600; color: #c4ccd4; }
 .is-collapsed .brand-lockup { padding-inline: 13px; align-items: center; }
 .is-collapsed .brand-lockup img { width: 50px; height: auto; object-fit: contain; object-position: left center; }
-.sidebar nav { display: flex; flex-direction: column; gap: 3px; padding: 4px 0; }
+.sidebar nav { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; display: flex; flex-direction: column; gap: 3px; padding: 4px 0; }
 .sidebar nav button { position: relative; min-height: 48px; padding: 0 13px 0 18px; border: 0; background: transparent; color: #dce3e8; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; text-align: left; cursor: pointer; }
 .sidebar nav button:hover { background: rgb(255 255 255 / 5%); }
 .sidebar nav button.active { background: rgb(35 178 164 / 13%); color: #fff; }
@@ -364,6 +364,9 @@ input, select, textarea { color: var(--onyx); }
 .login-card { width: min(430px, 100%); padding: 38px; border: 1px solid var(--border); border-radius: 16px; background: white; box-shadow: var(--shadow); }
 .login-card h2 { font-size: 29px; }.login-card .muted { font-size: 12px; }.login-card .primary-button { width: 100%; margin-top: 22px; }
 .field-error { margin: 12px 0 0; color: var(--red); display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.session-expired-note { margin: 0 0 18px; padding: 12px; border: 1px solid #e9c86a; border-radius: 9px; background: #fff8df; color: #66500b; display: flex; align-items: flex-start; gap: 8px; font-size: 11px; }
+.session-gate { min-height: 100vh; padding: 24px; background: var(--page); display: grid; place-items: center; }
+.session-gate .ui-state { width: min(560px, 100%); }
 .password-field { position: relative; display: block; }
 .password-field input { padding-right: 52px; }
 .password-toggle { position: absolute; top: 0; right: 0; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: #5f6b73; display: grid; place-items: center; cursor: pointer; }

@@ -21,6 +21,8 @@ test("CRMY-44 real HTTP API uses PostgreSQL, session authentication and referenc
       const response = await request("/references", "POST", { kind, code, label: code, scope: "GLOBAL", campusId: null }); assert.equal(response.status, 201); return response.json() as Promise<{ id: string; code: string }>;
     };
     const campus = await create("CAMPUS", `API-${marker}`); const program = await create("PROGRAM", `B1-${marker}`); const campaign = await create("CAMPAIGN", `CAM-${marker}`);
+    const campuses = await request("/references?kind=CAMPUS", "GET"); assert.equal(campuses.status, 200);
+    assert.ok((await campuses.json() as Array<{ id: string }>).some((item) => item.id === campus.id), "a GLOBAL principal can list active campuses");
     assert.equal((await request(`/references/${program.id}/availability/${campus.id}`, "POST", { active: true, expectedVersion: 0 })).status, 201);
     const leadInput = { firstName: "Lead", lastName: "Synthétique", email: `lead-${marker}@example.invalid`, campus: campus.code, program: program.code, campaign: campaign.code, educationLevel: "BAC", source: "TEST" };
     const before = await client.auditEvent.count({ where: { actorId: user.id, eventType: "LEAD_CREATED" } });

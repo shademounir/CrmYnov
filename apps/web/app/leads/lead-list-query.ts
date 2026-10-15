@@ -24,9 +24,12 @@ export const leadListFilterLabels: Readonly<Record<string, string>> = {
 /** Changing a filter starts at page one; unrelated URL context is kept intact. */
 export function leadListHref(current: URLSearchParams, changes: Readonly<Record<string, string | null>>, resetPage = true): string {
   const next = new URLSearchParams(current);
+  const labelKeys: Readonly<Record<string, string>> = { assignedToId: "assignedToLabel", collaboratorId: "collaboratorLabel", adviserId: "adviserLabel" };
   for (const [key, value] of Object.entries(changes)) {
     if (value === null || value === "") next.delete(key);
     else next.set(key, value);
+    const labelKey = labelKeys[key];
+    if (labelKey && (value === null || value === "" || value !== current.get(key)) && !(labelKey in changes)) next.delete(labelKey);
   }
   if (resetPage) next.set("page", "1");
   const query = next.toString();
@@ -37,7 +40,7 @@ export function leadListResetHref(current: URLSearchParams): string {
   return leadListHref(current, Object.fromEntries(Object.keys(leadListFilterLabels).map((key) => [key, null])));
 }
 
-export function leadListFilterValue(key: string, value: string): string {
+export function leadListFilterValue(key: string, value: string, current?: URLSearchParams): string {
   const choices: Record<string, string> = {
     ...Object.fromEntries(leadWorkViews), ...Object.fromEntries(leadProvenanceViews),
     IMPORT_ERRORS: "Imports en erreur — indisponibles", PROSPECT: "Prospect", CONTACTED: "Contacté",
@@ -45,6 +48,9 @@ export function leadListFilterValue(key: string, value: string): string {
     COLD: "Froid", WARM: "Tiède", HOT: "Chaud", DIGITAL: "Digital", PHONE: "Téléphone",
     IN_PERSON: "Présentiel", PARTNER: "Partenaire", OTHER: "Autre",
   };
+  const labelKey: Readonly<Record<string, string>> = { assignedToId: "assignedToLabel", collaboratorId: "collaboratorLabel", adviserId: "adviserLabel" };
+  const label = labelKey[key] ? current?.get(labelKey[key]!)?.normalize("NFC").trim() : undefined;
+  if (label && label.length <= 120 && !/[\u0000-\u001f]/u.test(label) && !/[0-9a-f]{8}-[0-9a-f-]{27}/iu.test(label)) return label;
   if (["assignedToId", "collaboratorId", "adviserId", "importBatchId", "sharedViewId"].includes(key)) return "Filtre actif";
   return choices[value] ?? value;
 }

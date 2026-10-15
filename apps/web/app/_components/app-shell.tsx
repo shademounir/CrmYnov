@@ -58,6 +58,9 @@ const navigation = [
 
 type SessionRole = "SUPER_ADMIN" | "ADMIN" | "MANAGER" | "ADMISSIONS" | "AUDITOR";
 type SessionProfile = { roles: SessionRole[]; professionalEmail?: string; scopeLabel?: string };
+export type ShellSessionState =
+  | { kind: "loading" | "expired" | "first-login" | "unavailable" }
+  | { kind: "ready"; profile: SessionProfile };
 export type ShellReportingAccess = Readonly<{ canViewPersonalDashboard: boolean; canViewPilotageDashboard: boolean }>;
 const roleNames: Record<SessionRole, string> = { SUPER_ADMIN: "Super Admin", ADMIN: "Administrateur", MANAGER: "Manager", ADMISSIONS: "Commercial", AUDITOR: "Lecteur" };
 const commercialNavigation = new Set(["/manager/reports/dashboard", "/leads", "/leads?view=FOLLOW_UP", "/appointments", "/calls/queue", "/notifications", "/chat", "/manager/reports/commercial-performance"]);
@@ -110,22 +113,28 @@ export async function loadShellReportingAccess(request: typeof fetch = fetch, si
   } catch { return null; }
 }
 
-export async function loadShellSession(request: typeof fetch = fetch): Promise<SessionProfile> {
+export function sessionLoginHref(pathname: string, locationSearch = ""): string {
+  const returnTo = `${pathname}${locationSearch ? `?${locationSearch}` : ""}`;
+  return `/?reason=session-expired&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+export async function loadShellSession(request: typeof fetch = fetch): Promise<Exclude<ShellSessionState, { kind: "loading" }>> {
   const response = await request("/api/crm/sessions/current", { credentials: "same-origin", cache: "no-store" });
-  if (!response.ok) return { roles: [] };
+  if (response.status === 401) return { kind: "expired" };
+  if (!response.ok) return { kind: "unavailable" };
   const value = await response.json() as { roles?: unknown; scopes?: unknown; professionalEmail?: unknown; mustChangeSecret?: boolean; campusLabel?: unknown };
-  if (value.mustChangeSecret) { globalThis.location.assign("/first-login"); return { roles: [] }; }
+  if (value.mustChangeSecret) return { kind: "first-login" };
   const allowed: readonly string[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"];
   const scopes: unknown[] = Array.isArray(value.scopes) ? value.scopes : [];
   const hasScopeKind = (kind: string): boolean => scopes.some((scope) => typeof scope === "object" && scope !== null && "kind" in scope && scope.kind === kind);
   const scopeLabel = hasScopeKind("GLOBAL") ? "Tous les campus"
     : hasScopeKind("CAMPUS") ? "Campus attribué"
       : hasScopeKind("TEAM") ? "Équipe attribuée" : "Périmètre contrôlé";
-  return {
+  return { kind: "ready", profile: {
     roles: Array.isArray(value.roles) ? value.roles.filter((role): role is SessionRole => typeof role === "string" && allowed.includes(role)) : [],
     scopeLabel: typeof value.campusLabel === "string" ? value.campusLabel : scopeLabel,
     ...(typeof value.professionalEmail === "string" ? { professionalEmail: value.professionalEmail } : {}),
-  };
+  } };
 }
 
 export function isActive(pathname: string, href: string, locationSearch = ""): boolean {
@@ -186,7 +195,7 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState<SearchState>({ kind: "closed", items: [] });
   const [unreadNotifications, setUnreadNotifications] = useState<number>();
-  const [sessionProfile, setSessionProfile] = useState<SessionProfile>({ roles: [] });
+  const [shellSession, setShellSession] = useState<ShellSessionState>({ kind: "loading" });
   const [ownTelephonyAllowed, setOwnTelephonyAllowed] = useState(false);
   const [reportingAccess, setReportingAccess] = useState<ShellReportingAccess | null>(null);
   const mobileMenuRef = useRef<HTMLButtonElement>(null);
@@ -196,11 +205,19 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
 
   useEffect(() => {
     if (isAuthPath) return;
-    void loadShellSession().then(setSessionProfile).catch(() => setSessionProfile({ roles: [] }));
-  }, [isAuthPath]);
+    let current = true;
+    setShellSession({ kind: "loading" });
+    void loadShellSession().then((state) => {
+      if (!current) return;
+      setShellSession(state);
+      if (state.kind === "expired") globalThis.location.assign(sessionLoginHref(pathname, locationSearch));
+      if (state.kind === "first-login") globalThis.location.assign("/first-login");
+    }).catch(() => { if (current) setShellSession({ kind: "unavailable" }); });
+    return (): void => { current = false; };
+  }, [isAuthPath, locationSearch, pathname]);
 
   useEffect(() => {
-    if (isAuthPath) { setReportingAccess(null); return; }
+    if (isAuthPath || shellSession.kind !== "ready") { setReportingAccess(null); return; }
     let current = true;
     let controller: AbortController | undefined;
     const refresh = (): void => {
@@ -215,18 +232,25 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     refresh();
     globalThis.addEventListener("focus", refresh);
     return (): void => { current = false; controller?.abort(); globalThis.removeEventListener("focus", refresh); };
-  }, [isAuthPath, pathname, profileOpen]);
+  }, [isAuthPath, pathname, profileOpen, shellSession.kind]);
 
   useEffect(() => {
     let current = true;
     setOwnTelephonyAllowed(false);
-    if (isAuthPath || !ownTelephonyRoleAllowed(sessionProfile.roles)) return;
+    if (isAuthPath || shellSession.kind !== "ready" || !ownTelephonyRoleAllowed(shellSession.profile.roles)) return;
     void loadOwnTelephonyAccess().then((allowed) => { if (current) setOwnTelephonyAllowed(allowed); });
     return (): void => { current = false; };
-  }, [isAuthPath, pathname, profileOpen, sessionProfile.roles]);
+  }, [isAuthPath, pathname, profileOpen, shellSession]);
 
   useEffect(() => {
     if (mobileOpen) mobileCloseRef.current?.focus();
+  }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return (): void => { document.body.style.overflow = previous; };
   }, [mobileOpen]);
 
   const closeMobileMenu = (): void => {
@@ -272,14 +296,22 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   }, [isAuthPath, query]);
 
   useEffect(() => {
-    if (isAuthPath) return;
+    if (isAuthPath || shellSession.kind !== "ready") return;
     void loadUnreadNotificationCount().then(setUnreadNotifications).catch(() => setUnreadNotifications(undefined));
     const update = (event: Event): void => setUnreadNotifications((event as CustomEvent<number>).detail);
     globalThis.addEventListener("crm:notifications-changed", update);
     return (): void => { globalThis.removeEventListener("crm:notifications-changed", update); };
-  }, [isAuthPath, pathname]);
+  }, [isAuthPath, pathname, shellSession.kind]);
 
   if (isAuthPath) return <>{children}</>;
+  if (shellSession.kind !== "ready") return <main className="session-gate" aria-live="polite" aria-busy={shellSession.kind === "loading"}>
+    <section className={`ui-state${shellSession.kind === "unavailable" ? " ui-state--error" : ""}`}>
+      <h1>{shellSession.kind === "unavailable" ? "Session momentanément indisponible" : "Vérification de la session"}</h1>
+      <p>{shellSession.kind === "unavailable" ? "Le profil et les droits n’ont pas pu être confirmés. Aucun menu ou résultat n’est affiché sans preuve serveur." : "Redirection sécurisée en cours…"}</p>
+      {shellSession.kind === "unavailable" ? <button className="secondary-button" type="button" onClick={() => globalThis.location.reload()}>Réessayer</button> : null}
+    </section>
+  </main>;
+  const sessionProfile = shellSession.profile;
 
   return <AppShellView
     pathname={pathname}
