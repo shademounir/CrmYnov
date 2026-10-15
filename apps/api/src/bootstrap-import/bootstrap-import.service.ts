@@ -612,9 +612,8 @@ export class BootstrapImportService {
     if (!values.email?.trim() && !values.phone?.trim()) refuse("bootstrap_contact_required");
     if (values.email?.trim() && !normalizeHistoricalEmail(values.email)) refuse("bootstrap_email_invalid");
     if (values.phone?.trim() && !normalizeHistoricalPhone(values.phone)) throw new UnprocessableEntityException({ code: "bootstrap_phone_explicit_resolution_required" });
-    const sourceHistoricalEducation = historicalEducationLabels.includes(values.educationLevel ?? "")
-      && values.educationLevel === mapped.values.educationLevel
-      && !mapped.reasons.includes("FORMULA_REVIEW:educationLevel");
+    const sourceHistoricalEducation = historicalEducationLabels.includes(mapped.values.educationLevel ?? "");
+    if (sourceHistoricalEducation && (values.educationLevel !== mapped.values.educationLevel || mapped.reasons.includes("FORMULA_REVIEW:educationLevel"))) refuse("bootstrap_lead_domain_invalid");
     if (!sources.includes(values.source!) || (values.educationLevel && !educationLevels.includes(values.educationLevel) && !sourceHistoricalEducation) || !["COLD", "WARM", "HOT", "UNEVALUATED"].includes(values.temperature ?? "")) refuse("bootstrap_lead_domain_invalid");
     this.validateSourceCoverage(mapped, decision, object<SourceRow>(row.payload));
     if (mapped.reasons.includes("HISTORICAL_DUPLICATE_STATUS_REVIEW")) throw new UnprocessableEntityException({ code: "bootstrap_duplicate_requires_link_or_ignore" });

@@ -351,6 +351,8 @@ test("CRMY-61 real HTTP/Prisma: immutable upload, decisions, atomic notes/receip
       const source = fixture.rows[0]!;
       const invented = await request(`/packages/${fixture.pack.id}/rows/${source.id}/decision`, "POST", decisionFor(source, `${tag}-invented`, { educationLevel: index === 0 ? "Autres branches Techniques" : "Autres Branches Scientifiques" }));
       assert.equal(invented.status, 400); assert.deepEqual(await invented.json(), { code: "bootstrap_lead_domain_invalid" });
+      const falseDegree = await request(`/packages/${fixture.pack.id}/rows/${source.id}/decision`, "POST", decisionFor(source, `${tag}-false-degree`, { educationLevel: "Bac" }));
+      assert.equal(falseDegree.status, 400); assert.deepEqual(await falseDegree.json(), { code: "bootstrap_lead_domain_invalid" });
       const block = { expectedVersion: fixture.pack.version, sha256: fixture.pack.sha256, idempotencyKey: `${tag}-block-${marker}`, confirmed: true,
         items: [{ rowId: source.id, fingerprint: source.fingerprint, decision: decisionFor(source, `${tag}-source`) }] };
       await success(await request(`/packages/${fixture.pack.id}/execute-block`, "POST", block));
