@@ -210,11 +210,11 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
     void loadShellSession().then((state) => {
       if (!current) return;
       setShellSession(state);
-      if (state.kind === "expired") globalThis.location.assign(sessionLoginHref(pathname, locationSearch));
+      if (state.kind === "expired") globalThis.location.assign(sessionLoginHref(pathname, globalThis.location.search.replace(/^\?/, "")));
       if (state.kind === "first-login") globalThis.location.assign("/first-login");
     }).catch(() => { if (current) setShellSession({ kind: "unavailable" }); });
     return (): void => { current = false; };
-  }, [isAuthPath, locationSearch, pathname]);
+  }, [isAuthPath, pathname]);
 
   useEffect(() => {
     if (isAuthPath || shellSession.kind !== "ready") { setReportingAccess(null); return; }
