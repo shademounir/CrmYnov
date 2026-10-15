@@ -7,7 +7,7 @@ const authenticationPaths = new Set(["/", "/access-recovery", "/access-recovery/
 
 export function loginRedirectPath(search = ""): string {
   const candidate = new URLSearchParams(search).get("returnTo");
-  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || candidate.includes("\\") || /[\u0000-\u001f]/u.test(candidate)) return "/leads";
+  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || candidate.includes("\\") || Array.from(candidate).some((character) => (character.codePointAt(0) ?? 0) < 32)) return "/leads";
   try {
     const target = new URL(candidate, "https://crm.invalid");
     if (target.origin !== "https://crm.invalid" || authenticationPaths.has(target.pathname) || target.pathname.startsWith("/api/")) return "/leads";

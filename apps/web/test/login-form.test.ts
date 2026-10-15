@@ -153,7 +153,7 @@ for (const [mustChangeSecret, path] of [[true, "/first-login"], [false, "/leads"
   });
 }
 
-test("a successful reconnection resumes a safe internal URL and rejects unsafe return targets", async (t) => {
+test("a successful reconnection resumes a safe internal URL and rejects unsafe return targets", async () => {
   const { loginRedirectPath } = await import("../app/_components/login-form.js");
   assert.equal(loginRedirectPath("?returnTo=%2Fleads%3Fview%3DMINE%26page%3D4%23results"), "/leads?view=MINE&page=4#results");
   for (const unsafe of ["https://attacker.invalid/leads", "//attacker.invalid/leads", "/api/private", "/first-login", "/\\attacker.invalid"]) {

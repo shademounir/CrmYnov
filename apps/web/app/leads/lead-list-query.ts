@@ -49,8 +49,8 @@ export function leadListFilterValue(key: string, value: string, current?: URLSea
     IN_PERSON: "Présentiel", PARTNER: "Partenaire", OTHER: "Autre",
   };
   const labelKey: Readonly<Record<string, string>> = { assignedToId: "assignedToLabel", collaboratorId: "collaboratorLabel", adviserId: "adviserLabel" };
-  const label = labelKey[key] ? current?.get(labelKey[key]!)?.normalize("NFC").trim() : undefined;
-  if (label && label.length <= 120 && !/[\u0000-\u001f]/u.test(label) && !/[0-9a-f]{8}-[0-9a-f-]{27}/iu.test(label)) return label;
+  const label = labelKey[key] ? current?.get(labelKey[key])?.normalize("NFC").trim() : undefined;
+  if (label && label.length <= 120 && !Array.from(label).some((character) => (character.codePointAt(0) ?? 0) < 32) && !/[0-9a-f]{8}-[0-9a-f-]{27}/iu.test(label)) return label;
   if (["assignedToId", "collaboratorId", "adviserId", "importBatchId", "sharedViewId"].includes(key)) return "Filtre actif";
   return choices[value] ?? value;
 }

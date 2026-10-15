@@ -626,7 +626,8 @@ export class LeadService implements OnModuleInit {
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (current.assignedToId) throw new ConflictException({ code: "lead_already_assigned", nextAction: "CRMY-94" });
     const occurredAt = new Date().toISOString();
-    const { assignedToLabel: _previousAssigneeLabel, ...leadWithoutAssigneeLabel } = current;
+    const leadWithoutAssigneeLabel = { ...current };
+    delete leadWithoutAssigneeLabel.assignedToLabel;
     const updated: Readonly<LeadRecord> = Object.freeze({ ...leadWithoutAssigneeLabel, assignedToId, assignmentMode, lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({
@@ -647,7 +648,8 @@ export class LeadService implements OnModuleInit {
     if (current.assignedToId !== expectedOwnerId) throw new ConflictException({ code: "reassignment_owner_changed" });
     if (targetUserId === expectedOwnerId) throw new BadRequestException({ code: "reassignment_target_unchanged" });
     const occurredAt = new Date().toISOString();
-    const { assignedToLabel: _previousAssigneeLabel, ...leadWithoutAssigneeLabel } = current;
+    const leadWithoutAssigneeLabel = { ...current };
+    delete leadWithoutAssigneeLabel.assignedToLabel;
     const updated: Readonly<LeadRecord> = Object.freeze({ ...leadWithoutAssigneeLabel, assignedToId: targetUserId, assignmentMode: "REASSIGNMENT", lastActivityAt: occurredAt });
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({ id: randomUUID(), leadId, type: "ASSIGNMENT_CHANGED",
