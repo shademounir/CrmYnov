@@ -37,6 +37,19 @@ test("existing user creation validates names but never exposes them in general u
   assert.equal(users.list().length, count); assert.equal(audit.list().length, audits);
 });
 
+test("a governed profile update stays write-only and does not revoke sessions", async () => {
+  const audit = new AuditService(), sessions = new SessionService(), users = new UserService(sessions, audit);
+  const user = users.create({ professionalEmail: "profile-update@example.invalid", roles: ["ADMISSIONS"] }, "synthetic-admin", "synthetic-create");
+  const session = sessions.create(user.id, ["ADMISSIONS"], [{ kind: "CAMPUS", id: "campus-a" }]);
+  const updated = await users.updateProfileForApi(user.id, { professionalDisplayName: "  Responsable synthétique  " }, "synthetic-admin", "synthetic-profile");
+  assert.equal("professionalDisplayName" in updated, false);
+  assert.equal(sessions.authenticate(session.token)?.userId, user.id);
+  const event = audit.list().find((item) => item.eventType === "COLLABORATOR_PROFILE_UPDATED");
+  assert.deepEqual(event?.after, { subjectId: user.id, displayNameConfigured: true });
+  assert.equal(JSON.stringify(event).includes("Responsable synthétique"), false);
+  await assert.rejects(() => users.updateProfileForApi(user.id, { professionalDisplayName: "   " }, "synthetic-admin", "synthetic-profile-empty"), ForbiddenException);
+});
+
 test("OpenAPI describes a write-only optional name and a minimal server-derived sharing contract", () => {
   const field = createCollaboratorBody.content["application/json"].schema.properties.professionalDisplayName;
   assert.equal(field.maxLength, 120); assert.equal(field.nullable, true); assert.equal(field.writeOnly, true);

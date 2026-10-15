@@ -13,6 +13,7 @@ import {
   visibleNavigation,
   ownTelephonyRoleAllowed,
   loadOwnTelephonyAccess,
+  sessionLoginHref,
   type SearchState,
 } from "../app/_components/app-shell.js";
 
@@ -80,8 +81,10 @@ test("limits the shell navigation to the authenticated role without granting API
   assert.match(commercial, /href="\/leads"/u);
   assert.match(commercial, /Commercial/u);
   assert.doesNotMatch(commercial, /Session locale/u);
-  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" })))), { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" });
-  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401)))), { roles: [] });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(200, { roles: ["ADMISSIONS", "FORGED"], scopes: [{ kind: "CAMPUS", id: "synthetic" }], professionalEmail: "synthetic@example.invalid" })))), { kind: "ready", profile: { roles: ["ADMISSIONS"], professionalEmail: "synthetic@example.invalid", scopeLabel: "Campus attribué" } });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(401)))), { kind: "expired" });
+  assert.deepEqual(await loadShellSession((() => Promise.resolve(response(503)))), { kind: "unavailable" });
+  assert.equal(sessionLoginHref("/leads", "view=MINE&search=A%2BB"), "/?reason=session-expired&returnTo=%2Fleads%3Fview%3DMINE%26search%3DA%252BB");
 });
 
 test("loads every bounded global-search state", async () => {
@@ -153,8 +156,8 @@ test("marks only Relances active for the follow-up queue", () => {
 
 test("renders the client shell initial state and bypasses chrome on authentication routes", () => {
   const authenticated = renderToStaticMarkup(createElement(AppShellClient, { pathname: "/leads", children: createElement("main", null, "Contenu CRM") }));
-  assert.match(authenticated, /Navigation CRM/);
-  assert.match(authenticated, /Contenu CRM/);
+  assert.match(authenticated, /Vérification de la session/);
+  assert.doesNotMatch(authenticated, /Contenu CRM/);
 
   const authentication = renderToStaticMarkup(createElement(AppShellClient, { pathname: "/", children: createElement("main", null, "Connexion locale") }));
   assert.match(authentication, /^<main>Connexion locale<\/main>$/u);

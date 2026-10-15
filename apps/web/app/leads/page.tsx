@@ -18,9 +18,11 @@ function LeadResults({ queryString, mode }: Readonly<{ queryString: string; mode
   if (!query.has("page")) query.set("page", "1");
   if (!query.has("pageSize")) query.set("pageSize", "25");
   const followUp = mode === "follow-up";
+  const apiQuery = new URLSearchParams(query);
+  for (const key of ["assignedToLabel", "collaboratorLabel", "adviserLabel"]) apiQuery.delete(key);
   return <LeadDirectory
     key={query.toString()}
-    endpoint={`/api/crm/leads?${query.toString()}`}
+    endpoint={`/api/crm/leads?${apiQuery.toString()}`}
     ariaLabel={followUp ? "Relances arrivées à échéance dans votre périmètre" : "Leads visibles dans votre périmètre"}
     emptyMessage={followUp ? "Aucune relance arrivée à échéance ne correspond aux filtres." : "Aucun lead ne correspond aux filtres."}
     context={mode}

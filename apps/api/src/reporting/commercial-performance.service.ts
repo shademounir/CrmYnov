@@ -16,6 +16,7 @@ export interface CommercialPerformanceQuery extends InteractiveReportingQuery { 
 
 export interface AdviserPerformance {
   adviserId: string;
+  adviserLabel?: string;
   primaryLeadCount: number;
   secondaryLeadCount: number;
   acquisition: AcquisitionPartition;
@@ -81,8 +82,10 @@ export class CommercialPerformanceService {
       const adviserFollowUps = followUps.filter((item) => item.ownerId === adviserId && unique.has(item.leadId));
       const adviserReassignments = reassignments.filter((item) => item.requestedBy === adviserId && unique.has(item.leadId));
       const rate = (value: number): number | null => primary.length === 0 ? null : Number((value / primary.length).toFixed(4));
+      const adviserLabel = primary.find((lead) => lead.assignedToLabel)?.assignedToLabel;
       return {
-        adviserId, primaryLeadCount: primary.length, secondaryLeadCount: secondary.length, acquisition: acquisitionPartition(primary),
+        adviserId, ...(adviserLabel ? { adviserLabel } : {}),
+        primaryLeadCount: primary.length, secondaryLeadCount: secondary.length, acquisition: acquisitionPartition(primary),
         statusVolumes: { contacted, qualified, enrolled, closedLost },
         rates: { contact: rate(contacted), qualification: rate(qualified), enrollment: rate(enrolled), loss: rate(closedLost) },
         medianMinutes: {
@@ -104,9 +107,9 @@ export class CommercialPerformanceService {
           rejected: adviserReassignments.filter((item) => item.status === "REJECTED").length,
         },
         drillDown: {
-          assigned: `/leads?assignedToId=${encodeURIComponent(adviserId)}`,
-          overdue: `/leads?assignedToId=${encodeURIComponent(adviserId)}&view=FOLLOW_UP`,
-          inactive: `/leads?assignedToId=${encodeURIComponent(adviserId)}&view=NO_ACTIVITY`,
+          assigned: this.adviserHref(adviserId, primary, undefined),
+          overdue: this.adviserHref(adviserId, primary, "FOLLOW_UP"),
+          inactive: this.adviserHref(adviserId, primary, "NO_ACTIVITY"),
         },
       } satisfies AdviserPerformance;
     });
@@ -129,6 +132,14 @@ export class CommercialPerformanceService {
         activeFilterNames: Object.entries(query).filter(([, value]) => Boolean(value)).map(([key]) => key).sort((left, right) => left.localeCompare(right, "en")) },
       result: "SUCCESS", idempotencyKey: `commercial-performance:${randomUUID()}` });
     return report;
+  }
+
+  private adviserHref(adviserId: string, rows: readonly LeadReportingRow[], view: "FOLLOW_UP" | "NO_ACTIVITY" | undefined): string {
+    const params = new URLSearchParams({ assignedToId: adviserId });
+    const label = rows.find((lead) => lead.assignedToLabel)?.assignedToLabel;
+    if (label) params.set("assignedToLabel", label);
+    if (view) params.set("view", view);
+    return `/leads?${params.toString()}`;
   }
 
   private reached(lead: LeadReportingRow, stage: "CONTACTED" | "QUALIFIED" | "ENROLLED"): boolean {

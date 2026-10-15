@@ -43,7 +43,7 @@ test("list handles 401, 403, 503 and network failures distinctly without exposin
     assert.equal(host.querySelector("table"), null);
     assert.notEqual(host.querySelector("h2")?.textContent, "Aucun résultat");
     assert.equal(host.querySelector('.lead-list-pagination'), null);
-    if (row.status === 401) assert.equal(host.querySelector("a")?.getAttribute("href"), "/");
+    if (row.status === 401) assert.equal(host.querySelector("a")?.getAttribute("href"), "/?reason=session-expired&returnTo=%2Fleads%3Fpage%3D1%26pageSize%3D25");
   });
 });
 

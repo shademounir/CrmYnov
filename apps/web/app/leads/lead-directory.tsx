@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowRight, CalendarBlank } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { apiString, type ApiObject, type ApiValue } from "../_components/connected-resource";
+import { sessionLoginHref } from "../_components/app-shell";
 import { leadListFailureForStatus, leadListHref, readLeadListPage, type LeadListFailure, type LeadListPage } from "./lead-list-query";
 
 const statusLabels: Readonly<Record<string, string>> = {
@@ -157,7 +158,8 @@ export function LeadDirectory({ endpoint, ariaLabel, emptyMessage, context = "di
   if (state.kind === "loading") return <section className="connected-state" aria-live="polite" aria-busy="true"><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="ui-skeleton connected-state__skeleton" /><span className="sr-only">Chargement des prospects depuis l’API locale…</span></section>;
   if (state.kind !== "ready") {
     const failure = failureMessages[state.kind];
-    return <section className="ui-state ui-state--error" role="alert"><h2>{failure.title}</h2><p>{failure.message}</p>{state.kind === "session" ? <Link className="secondary-button" href="/">Se reconnecter</Link> : <button className="secondary-button" type="button" onClick={() => setRetry((value) => value + 1)}>Réessayer</button>}</section>;
+    const current = new URL(endpoint, "https://crm.invalid").search;
+    return <section className="ui-state ui-state--error" role="alert"><h2>{failure.title}</h2><p>{failure.message}</p>{state.kind === "session" ? <Link className="secondary-button" href={sessionLoginHref("/leads", current.slice(1))}>Se reconnecter</Link> : <button className="secondary-button" type="button" onClick={() => setRetry((value) => value + 1)}>Réessayer</button>}</section>;
   }
   const current = new URL(endpoint, "https://crm.invalid").searchParams;
   return <>{state.result.items.length ? <LeadDirectoryTable items={state.result.items} total={state.result.total} ariaLabel={ariaLabel} context={context} />
