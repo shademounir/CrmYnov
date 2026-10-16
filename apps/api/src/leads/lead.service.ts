@@ -28,9 +28,9 @@ export type LeadAcquisitionKind = "NEW" | "BASELINE";
 export type LeadTemperatureSource = "HUMAN_QUALIFICATION" | "HISTORICAL_BASELINE" | "UNEVALUATED";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
 const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = {
-  PROSPECT: ["CONTACTED"],
-  CONTACTED: ["QUALIFIED", "CLOSED_LOST"],
-  QUALIFIED: ["ENROLLED", "CLOSED_LOST"],
+  PROSPECT: ["CONTACTED", "QUALIFIED"],
+  CONTACTED: ["PROSPECT", "QUALIFIED", "CLOSED_LOST"],
+  QUALIFIED: ["PROSPECT", "CONTACTED", "ENROLLED", "CLOSED_LOST"],
   ENROLLED: [],
   CLOSED_LOST: [],
 };
@@ -750,6 +750,7 @@ export class LeadService implements OnModuleInit {
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (!leadStatuses.includes(input.status as LeadStatus)) throw new BadRequestException({ code: "lead_status_invalid" });
     const status = input.status as LeadStatus;
+    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_status_approval_required" });
     if (!allowedTransitions[current.status].includes(status)) throw new BadRequestException({ code: "lead_status_transition_forbidden" });
     const terminal = status === "ENROLLED" || status === "CLOSED_LOST";
     if (terminal && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_closure_approval_required" });

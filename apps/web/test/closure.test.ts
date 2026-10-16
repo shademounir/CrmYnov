@@ -28,7 +28,7 @@ test("submits one versioned closure decision and reloads the Lead history", asyn
   const { ClosureHistory } = await import("../app/leads/[leadId]/lead-workflow-forms");
   const host = dom.window.document.getElementById("root"); assert.ok(host); const root = createRoot(host);
   t.after(async () => { await act<void>(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
-  const pending = { id: "closure-1", leadId: "synthetic-lead", requesterId: "requester", state: "PENDING", version: 1, target: "ENROLLED", reason: "ADMISSION_CONFIRMED", comment: "Qualification vérifiée", evidence: ["DOSSIER-171"], createdAt: "2026-09-21T10:00:00.000Z" };
+  const pending = { id: "closure-1", leadId: "synthetic-lead", requesterId: "requester", canDecide: true, state: "PENDING", version: 1, target: "ENROLLED", reason: "ADMISSION_CONFIRMED", comment: "Qualification vérifiée", evidence: ["DOSSIER-171"], createdAt: "2026-09-21T10:00:00.000Z" };
   const requests: Array<{ init?: RequestInit }> = []; let completions = 0;
   t.mock.method(globalThis, "fetch", (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     requests.push({ ...(init ? { init } : {}) });

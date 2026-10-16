@@ -25,11 +25,13 @@ const defaultRoles: Record<string, readonly Role[]> = {
 export function defaultRoleScope(role: Role, permission: string): PermissionScope {
   const item = definition(permission);
   if (!item?.available || role === "AUDITOR" && item.mutation) return "NONE";
-  // Catalogue v2: qualification is an explicit administrative capability.
-  // Other roles stay denied until a separate, persisted delegation is approved.
+  // Commercial qualification applies to owned/collaborated dossiers. Explicit
+  // persisted restrictions remain authoritative and are never overridden here.
   if (permission === "lead.qualification.update") {
     if (role === "SUPER_ADMIN") return "GLOBAL";
     if (role === "ADMIN") return "CAMPUS";
+    if (role === "MANAGER") return "CAMPUS";
+    if (role === "ADMISSIONS") return "OWN";
     return "NONE";
   }
   if (permission === "telephony.free-call.create") {
@@ -115,7 +117,7 @@ export function assignmentCandidateCapability(roleList: readonly Role[], rows: r
 /** Minimized assignment alerts go only to activated recipients whose actual
  * grants allow the linked operation. This is not an HTTP session assertion.
  */
-export function assignmentManagerCapability(roleList: readonly Role[], permission: "lead.assign" | "lead.reassign.approve", rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+export function assignmentManagerCapability(roleList: readonly Role[], permission: "lead.assign" | "lead.reassign.approve" | "lead.close.approve", rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
   return roleList.filter((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))
     .some((role) => explainRole(role, "lead.view", rows, context).allowed && explainRole(role, permission, rows, context).allowed);
 }

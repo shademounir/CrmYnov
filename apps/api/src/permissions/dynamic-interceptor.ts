@@ -54,8 +54,13 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
       const serverLeadIds = await this.locator.leadIds(controller, context.getHandler().name, request);
       for (const key of contextualPermissions(controller, keys, request.body, request.query, request.principal.roles.includes("SUPER_ADMIN"))) {
         if (usesScopedReportingAuthorization(controller, handler) && key.startsWith("reporting.") && key !== "reporting.global.view") continue;
-        if (controller === "LeadController" && context.getHandler().name === "list") {
+        if (controller === "LeadController" && ["list", "filterOptions"].includes(handler) || controller === "ClosureController" && ["list", "reconcileNotifications"].includes(handler)) {
           await this.filterLeadCollection(tx, request, rows);
+          if (controller === "ClosureController" && handler === "reconcileNotifications") {
+            const allowed = new Set<string>();
+            for (const id of request.principal.permissionLeadIds ?? []) if (evaluatePermission(request.principal, key, rows, await resourceEvaluationContext(tx, request.principal, await leadResource(tx, id))).allowed) allowed.add(id);
+            request.principal.permissionLeadIds = allowed;
+          }
         } else {
           const contexts = await routeContexts(tx, request, controller, key, request.principal, serverLeadIds);
           if (!contexts.length || contexts.some((resource) => !evaluatePermission(request.principal!, key, rows, resource).allowed)) permissionDenied();
