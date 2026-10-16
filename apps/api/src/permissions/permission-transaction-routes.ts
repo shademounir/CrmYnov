@@ -4,7 +4,7 @@ import type { PermissionTransactionMode } from "./permission-fence.js";
 const readers: Readonly<Record<string, readonly string[]>> = {
   BootstrapImportController: ["context", "get", "rows", "report"],
   BootstrapHistoricalNotesController: ["notes"],
-  LeadController: ["list", "detail"],
+  LeadController: ["list", "filterOptions", "detail"],
   LeadTimelineController: ["list"],
   LeadQualificationController: ["read"],
   ReassignmentController: ["list", "pending"],

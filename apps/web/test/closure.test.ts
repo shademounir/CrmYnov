@@ -28,7 +28,7 @@ test("submits one versioned closure decision and reloads the Lead history", asyn
   const { ClosureHistory } = await import("../app/leads/[leadId]/lead-workflow-forms");
   const host = dom.window.document.getElementById("root"); assert.ok(host); const root = createRoot(host);
   t.after(async () => { await act<void>(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
-  const pending = { id: "closure-1", leadId: "synthetic-lead", requesterId: "requester", state: "PENDING", version: 1, target: "ENROLLED", reason: "ADMISSION_CONFIRMED", comment: "Qualification vérifiée", evidence: ["DOSSIER-171"], createdAt: "2026-09-21T10:00:00.000Z" };
+  const pending = { id: "closure-1", leadId: "synthetic-lead", requesterId: "requester", canDecide: true, state: "PENDING", version: 1, target: "ENROLLED", reason: "ADMISSION_CONFIRMED", comment: "Qualification vérifiée", evidence: ["DOSSIER-171"], createdAt: "2026-09-21T10:00:00.000Z" };
   const requests: Array<{ init?: RequestInit }> = []; let completions = 0;
   t.mock.method(globalThis, "fetch", (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     requests.push({ ...(init ? { init } : {}) });
@@ -42,6 +42,19 @@ test("submits one versioned closure decision and reloads the Lead history", asyn
   const body = patches[0]?.init?.body; if (typeof body !== "string") assert.fail("expected_string_request_body");
   assert.deepEqual(JSON.parse(body), { decision: "APPROVE", reason: "Validation Manager", expectedVersion: 1 });
   assert.equal(completions, 1); assert.match(host.textContent ?? "", /Approuvée/u); assert.doesNotMatch(host.textContent ?? "", /Confirmer la décision/u);
+  for (const canDecide of [false, undefined]) {
+    t.mock.method(globalThis, "fetch", (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      assert.ok(!init?.method || init.method === "GET", "a requester history must remain read-only");
+      return Promise.resolve(Response.json({ items: [{ ...pending, target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", canDecide }] }));
+    });
+    await act(async () => {
+      root.render(createElement(ClosureHistory, { key: String(canDecide), leadId: "synthetic-lead" }));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    });
+    assert.match(host.textContent ?? "", /Qualifié/u);
+    assert.equal(host.querySelector("form"), null, "missing or denied decision capability must not expose approval controls");
+    assert.doesNotMatch(host.textContent ?? "", /Confirmer la décision/u);
+  }
 });
 
 test("explains the requester and approver separation without suggesting a retry", () => {

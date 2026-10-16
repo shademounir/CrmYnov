@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, Optional, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ViewSharingService } from "./view-sharing.service.js";
+import { PrismaService } from "../persistence/prisma.service.js";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { LeadService, type CreateLeadInput, type CreateLeadResult, type InteractionCorrectionInput, type LeadActivityRecord, type LeadListQuery, type LeadPage, type LeadRecord, type UpdateLeadInput } from "./lead.service.js";
@@ -49,7 +50,20 @@ export class LeadStatusController {
 @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN")
 export class LeadController {
   constructor(@Inject(LeadService) private readonly leads: LeadService,
-    @Optional() @Inject(ViewSharingService) private readonly sharedViews?: ViewSharingService) {}
+    @Optional() @Inject(ViewSharingService) private readonly sharedViews?: ViewSharingService,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService) {}
+
+  @Get("filter-options")
+  @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
+  async filterOptions(@Req() request: AuthenticatedRequest): Promise<{ advisers: Array<{ id: string; label: string }>; collaborators: Array<{ id: string; label: string }> }> {
+    const principal = request.principal;
+    if (!principal?.permissionLeadIds || !this.prisma?.client) throw new BadRequestException({ code: "lead_filter_context_unavailable" });
+    const leads = await this.prisma.client.lead.findMany({ where: { id: { in: [...principal.permissionLeadIds] } }, select: { assignedToId: true, collaborators: { where: { active: true }, select: { userId: true } } } });
+    const ids = [...new Set(leads.flatMap((lead) => [...(lead.assignedToId ? [lead.assignedToId] : []), ...lead.collaborators.map((item) => item.userId)]))];
+    const users = await this.prisma.client.collaborator.findMany({ where: { id: { in: ids } }, select: { id: true, professionalDisplayName: true } });
+    const advisers = users.map((user) => ({ id: user.id, label: user.professionalDisplayName?.trim() || "Conseiller — nom non renseigné" })).sort((a, b) => a.label.localeCompare(b.label, "fr") || a.id.localeCompare(b.id));
+    return { advisers, collaborators: advisers };
+  }
 
   @Post()
   async create(@Body() body: CreateLeadInput, @Req() request: AuthenticatedRequest): Promise<CreateLeadResult> {

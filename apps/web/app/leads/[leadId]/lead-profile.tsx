@@ -59,6 +59,7 @@ export interface LeadTimelineEvent {
   type: string;
   result: string;
   occurredAt: string;
+  note?: string;
 }
 
 type LoadState =
@@ -176,7 +177,8 @@ function parseTimeline(value: unknown): LeadTimelineEvent[] {
     const type = requiredString(candidate, "type");
     const occurredAt = requiredString(candidate, "occurredAt");
     if (!id || !type || !occurredAt) return [];
-    return [{ id, type, result: requiredString(candidate, "result"), occurredAt }];
+    const note = optionalString(candidate, "note");
+    return [{ id, type, result: requiredString(candidate, "result"), occurredAt, ...(note ? { note } : {}) }];
   });
 }
 
@@ -399,6 +401,7 @@ function TimelinePanel({ leadId, events }: Readonly<{ leadId: string; events: re
       <time dateTime={event.occurredAt}>{formatDate(event.occurredAt)}</time>
       <h3>{timelineEventLabel(event.type)}</h3>
       <ResultSummary result={event.result} />
+      {event.note ? <p className="lead-profile__interaction-note" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{event.note}</p> : null}
     </li>)}</ol> : <div className="lead-profile__empty"><Clock size={22} aria-hidden="true" /><p>Aucun événement visible pour ce lead.</p></div>}
     <HistoricalNotesDisclosure leadId={leadId} />
   </section>;
