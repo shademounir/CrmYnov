@@ -234,6 +234,33 @@ test("CRMY-169 ephemeral PostgreSQL: authorization, versions, restore, rollback 
     assert.equal((await read(`leads/${lead.id}`, managerSession.token)).status, 200);
     await service.teamResponsibilities(superAdmin, { teamId: "synthetic-team", campusId, managerId: manager.userId, active: false, expectedVersion: 3, confirmed: true });
     assert.equal((await read(`leads/${lead.id}`, managerSession.token)).status, 403, "same membership without responsibility cannot grant TEAM");
+    await httpTest.test("2398 synthetic Leads: concurrent filters remain scoped and a second API sees revocation", async (scale) => {
+      const code = `SCALE-${marker}`, scaleCampus = await campus(code);
+      const commercial = await actor(["ADMISSIONS"], scaleCampus);
+      const scaleTarget: ConfigurationTarget = { kind: "ROLE", role: "ADMISSIONS", campus: scaleCampus };
+      await service.save(superAdmin, change(scaleTarget, { ...defaultConfiguration(scaleTarget), "lead.view": "OWN" }));
+      await client.lead.createMany({ data: Array.from({ length: 2398 }, (_, index) => ({
+        leadCode: `SCALE-${marker}-${index}`, firstName: "Synthetic", lastName: `Occurrence ${index}`, campus: code,
+        campaign: "SYNTHETIC", program: "SYNTHETIC", educationLevel: "BAC", source: "TEST",
+        assignedToId: index < 1199 ? commercial.userId : admin.userId,
+      })) });
+      const token = sessions.create(commercial.userId, commercial.roles, [{ kind: "CAMPUS", id: scaleCampus }]); await sessions.flush();
+      const started = Date.now();
+      const responses = await Promise.all([
+        read(`leads?assignedToId=${commercial.userId}&pageSize=25`, token.token),
+        read(`leads?collaboratorId=${commercial.userId}&pageSize=25`, token.token),
+        fetch(`${secondBase}/leads/filter-options`, { headers: headers(token.token) }),
+      ]);
+      assert.deepEqual(responses.map((response) => response.status), [200, 200, 200]);
+      const owned = await responses[0].json() as { total: number; items: { assignedToId: string }[] };
+      assert.equal(owned.total, 1199); assert.equal(owned.items.length, 25); assert(owned.items.every((item) => item.assignedToId === commercial.userId));
+      assert.equal((await responses[1].json() as { total: number }).total, 0, "owner is not automatically a secondary collaborator");
+      const options = await responses[2].json() as { advisers: { id: string }[]; collaborators: { id: string }[] };
+      assert.deepEqual(options.advisers.map((item) => item.id), [commercial.userId]); assert.deepEqual(options.collaborators, options.advisers);
+      scale.diagnostic(`Three concurrent scoped HTTP reads for 2398 synthetic Leads completed in ${Date.now() - started} ms; this is not PROD latency evidence.`);
+      await service.save(superAdmin, change(scaleTarget, { ...defaultConfiguration(scaleTarget), "lead.view": "NONE" }, 1));
+      assert.equal((await fetch(`${secondBase}/leads/filter-options`, { headers: headers(token.token) })).status, 403, "new request cannot reuse prior transaction's cached grants or resources");
+    });
   });
   await t.test("administrative delegation is separate from runtime ownership (CRMY-170 PO arbitration)", async (delegation) => {
     const delegationCampus = await campus(`DELEGATION-${marker}`);
