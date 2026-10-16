@@ -1,4 +1,4 @@
-import { createPrivateKey, sign } from "node:crypto";
+import { createHash, createPrivateKey, sign } from "node:crypto";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { GoogleAuth, Impersonated } from "google-auth-library";
@@ -7,16 +7,20 @@ import { SheetsSourceError, type SheetsAccessTokenProvider, type SheetsTransport
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const SERVICE_ACCOUNT_EMAIL = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+\.iam\.gserviceaccount\.com$/u;
-export async function readPrivateGoogleJson(path: string, repositoryRoot: string): Promise<unknown> {
+export async function readPrivateGoogleJson(path: string, repositoryRoot: string, expectedSha256?: string): Promise<unknown> {
   try {
     if (!isAbsolute(path)) throw new Error();
+    if (expectedSha256 !== undefined && !/^[a-f0-9]{64}$/u.test(expectedSha256)) throw new Error();
     const actual = await realpath(path), root = await realpath(repositoryRoot);
     const rel = relative(root, actual);
     if (!rel || (!rel.startsWith(`..${sep}`) && !isAbsolute(rel))) throw new Error();
     await rejectGitAncestor(dirname(actual));
     const info = await stat(actual);
     if (!info.isFile() || info.size > 64 * 1024) throw new Error();
-    return JSON.parse(await readFile(actual, "utf8")) as unknown;
+    const bytes = await readFile(actual);
+    if (bytes.length > 64 * 1024) throw new Error();
+    if (expectedSha256 !== undefined && createHash("sha256").update(bytes).digest("hex") !== expectedSha256) throw new Error();
+    return JSON.parse(bytes.toString("utf8")) as unknown;
   } catch { throw new SheetsSourceError("sheet_server_configuration_invalid", 503); }
 }
 
