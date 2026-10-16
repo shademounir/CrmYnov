@@ -16,12 +16,12 @@ const code = (expected: string) => (error: unknown): boolean => JSON.stringify((
 
 // Unit boundary double: no network, SIP or real persistence. PostgreSQL contracts
 // are separately exercised by the isolated integration suite.
-function fixture(): { service: TelephonyService; calls: Map<string, CallRecord>; lead: ReturnType<LeadService["registerLocalLead"]>; queued: string[]; hungUp: string[]; accesses(): number; fail(value: string): void; readiness(value: boolean): void; mode(value: TelephonyConfiguration["mode"]): void } {
+function fixture(): { service: TelephonyService; calls: Map<string, CallRecord>; lead: ReturnType<LeadService["registerLocalLead"]>; queued: string[]; destinations: string[]; hungUp: string[]; accesses(): number; fail(value: string): void; readiness(value: boolean): void; mode(value: TelephonyConfiguration["mode"]): void } {
   const audit = new AuditService(); const leads = new LeadService(audit);
   const lead = leads.registerLocalLead({ leadCode: "LD-SERVICE", firstName: "Synthetic", lastName: "Coverage", phone: "+212600000165", campus: "CAMPUS", campaign: "TEST", program: "TEST", educationLevel: "BAC", source: "MANUAL" });
   let configuration: TelephonyConfiguration = { mode: "LINPHONE", clickToCallEnabled: true, inboundEnabled: false, outboundEnabled: true, recordingPolicy: "DISABLED", maxCallDurationSeconds: 7200, version: 1, updatedBy: admin.userId, updatedAt: new Date().toISOString(), webhookEnabled: false };
   const calls = new Map<string, CallRecord>();
-  let failure = ""; let ready = true; const queued: string[] = []; const hungUp: string[] = []; let accesses = 0;
+  let failure = ""; let ready = true; const queued: string[] = []; const destinations: string[] = []; const hungUp: string[] = []; let accesses = 0;
   const save = async (_previous: CallRecord, record: CallRecord): Promise<void> => { await Promise.resolve(); if (failure === "transition") throw Error("storage unavailable"); calls.set(record.id, structuredClone(record)); };
   const persistence = {
     enabled: true,
@@ -39,11 +39,11 @@ function fixture(): { service: TelephonyService; calls: Map<string, CallRecord>;
   const agents = {
     enabled: true,
     readiness: () => Promise.resolve({ available: ready, reason: ready ? "READY" : "WORKSTATION_OFFLINE", identityLabel: "Synthetic agent" }),
-    enqueue: async (id: string) => { await Promise.resolve(); if (failure === "dispatch") throw Error("agent unavailable"); queued.push(id); },
+    enqueue: async (id: string, _userId: string, destination: string) => { await Promise.resolve(); if (failure === "dispatch") throw Error("agent unavailable"); queued.push(id); destinations.push(destination); },
     requestHangup: async (id: string) => { await Promise.resolve(); hungUp.push(id); },
   } as unknown as TelephonyAgentRepository;
   const service = new TelephonyService(audit, leads, persistence, agents);
-  return { service, calls, lead, queued, hungUp, accesses: (): number => accesses, fail: (value: string): void => { failure = value; }, readiness: (value: boolean): void => { ready = value; }, mode: (value: TelephonyConfiguration["mode"]): void => { configuration.mode = value; configuration.inboundEnabled = value === "MANUAL_EXTERNAL"; } };
+  return { service, calls, lead, queued, destinations, hungUp, accesses: (): number => accesses, fail: (value: string): void => { failure = value; }, readiness: (value: boolean): void => { ready = value; }, mode: (value: TelephonyConfiguration["mode"]): void => { configuration.mode = value; configuration.inboundEnabled = value === "MANUAL_EXTERNAL"; } };
 }
 
 test("persistent orchestration reloads configuration, dispatches once and replays without recomposition", async () => {
@@ -78,13 +78,18 @@ test("dispatch failure remains uncertain and retry never enqueues another call",
   await assert.rejects(f.service.receiveAgentEventForApi("absent", {}, admin, "bad"), code("telephony_call_not_found"));
 });
 
-test("free calls validate purpose and Morocco destination, normalize once and retain uncertainty", async () => {
+test("free calls type Morocco, international and internal destinations without inventing a prefix", async () => {
   const f = fixture(); const input = { phone: "06 00 00 01 65", purposeCode: "PARTNER", comment: " Synthetic ", idempotencyKey: "free-synthetic-01" };
   const created = await f.service.initiateFreeForApi(input, admin, "free");
   assert.equal(created.leadId, undefined); assert.equal(created.purposeComment, "Synthetic"); assert.equal(created.maskedPhone, "***165");
+  assert.deepEqual(f.destinations, ["+212600000165"]);
   assert.equal(await f.service.permissionLeadIdForApi(created.id), undefined);
   assert.equal((await f.service.initiateFreeForApi(input, admin, "replay")).id, created.id); assert.equal(f.queued.length, 1);
-  for (const [patch, expected] of [[{ purposeCode: "UNKNOWN" }, "telephony_free_call_purpose_invalid"], [{ comment: "line\nbreak" }, "telephony_free_call_comment_invalid"], [{ phone: "+33600000165" }, "telephony_free_call_destination_refused"], [{ idempotencyKey: "x" }, "telephony_idempotency_invalid"]] as const) {
+  const international = await f.service.initiateFreeForApi({ ...input, phone: "+33 6 00 00 01 65", destinationType: "INTERNATIONAL", idempotencyKey: "free-international-01" }, admin, "international");
+  const extension = await f.service.initiateFreeForApi({ ...input, phone: "0211", destinationType: "EXTENSION", idempotencyKey: "free-extension-01" }, admin, "extension");
+  assert.equal(international.maskedPhone, "***165"); assert.equal(extension.maskedPhone, "***211");
+  assert.deepEqual(f.destinations, ["+212600000165", "+33600000165", "0211"]);
+  for (const [patch, expected] of [[{ purposeCode: "UNKNOWN" }, "telephony_free_call_purpose_invalid"], [{ comment: "line\nbreak" }, "telephony_free_call_comment_invalid"], [{ phone: "+33600000165" }, "telephony_free_call_destination_refused"], [{ phone: "600000165", destinationType: "INTERNATIONAL" }, "telephony_free_call_international_invalid"], [{ phone: "+212600000165", destinationType: "EXTENSION" }, "telephony_free_call_extension_invalid"], [{ destinationType: "AUTOMATIC" }, "telephony_free_call_destination_type_invalid"], [{ idempotencyKey: "x" }, "telephony_idempotency_invalid"]] as const) {
     await assert.rejects(f.service.initiateFreeForApi({ ...input, ...patch }, admin, "invalid"), code(expected));
   }
   f.readiness(false); await assert.rejects(f.service.initiateFreeForApi({ ...input, idempotencyKey: "free-offline-01" }, admin, "offline"), code("telephony_bridge_not_ready"));

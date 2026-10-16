@@ -154,14 +154,14 @@ et reste exclu de la compilation du paquet Windows. Les projets voisins
 `WithdrawalFlow.Managed.csproj` (orchestration simulée) qualifient les gardes et la
 reprise sans SDK ni réseau réel. Ces preuves ne qualifient ni l'interface native,
 ni un cycle SDK/SIP réel, ni l'installateur ou un retrait de profil réel.
-La version source `0.4.12-pilot` n'est pas une preuve de distribution : l'API et
+La version source `0.4.13-pilot` n'est pas une preuve de distribution : l'API et
 la passerelle compatibles avec `associationId` et les reçus doivent être déployées
 avant toute diffusion du nouvel agent. Un ancien API reste utilisable pour les
 parcours antérieurs ; l'absence de génération interdit alors le retrait.
 
-Les extensions internes et l'autorisation d'appels internationaux hors Maroc
-restent hors de ce correctif. Elles requièrent un contrat de destination typé et
-des permissions serveur : aucun élargissement implicite de la validation actuelle.
+Les extensions internes et les appels internationaux utilisent un type de
+destination explicite. Une extension reste inchangée et un numéro international
+doit inclure son préfixe `+` ; le serveur refuse toute ambiguïté de format.
 
 `scripts/telephony-agent/test-maintenance-policy.ps1` compile les politiques
 managed et les teste sans SDK, réseau, profil réel ou microphone. Le `self-test`

@@ -180,7 +180,7 @@ export class TelephonyAgentRepository {
     };
   }
 
-  async upsertServerProfile(input: { id?: string; name?: string; sipDomain?: string; proxyUri?: string | null; transport?: string; campusId?: string | null; enabled?: boolean; expectedVersion?: number }, principal: Principal): Promise<Record<string, unknown>> {
+  async upsertServerProfile(input: { id?: string; name?: string; sipDomain?: string; proxyUri?: string | null; transport?: string; campusId?: string | null; enabled?: boolean; expectedVersion?: number }, principal: Principal, correlationId = "telephony-admin-server"): Promise<Record<string, unknown>> {
     this.assertAdmin(principal);
     const name = this.text(input.name, "telephony_server_name_invalid", 2, 120);
     const sipDomain = this.host(input.sipDomain);
@@ -194,12 +194,16 @@ export class TelephonyAgentRepository {
     if (proxyUri && !/^sips?:[^\s@]+(?::\d{1,5})?(?:;transport=(?:udp|tcp|tls))?$/iu.test(proxyUri)) throw new BadRequestException({ code: "telephony_proxy_uri_invalid" });
     const client = this.requiredClient();
     const now = new Date();
-    if (!input.id) {
-      const row = await client.telephonyServerProfile.create({ data: { id: randomUUID(), name, sipDomain, proxyUri, transport, campusId, enabled: Boolean(input.enabled), createdBy: principal.userId, updatedBy: principal.userId, updatedAt: now } });
+    if (!input.id) return client.$transaction(async (tx) => {
+      await acquirePermissionFence(tx, "write");
+      const row = await tx.telephonyServerProfile.create({ data: { id: randomUUID(), name, sipDomain, proxyUri, transport, campusId, enabled: Boolean(input.enabled), createdBy: principal.userId, updatedBy: principal.userId, updatedAt: now } });
+      await this.audit(tx, principal, { campusId, eventType: "TELEPHONY_SERVER_PROFILE_CREATED", resourceType: "TELEPHONY_SERVER_PROFILE", resourceId: row.id,
+        idempotencyKey: `telephony-server-created:${row.id}`, correlationId, after: { serverProfileId: row.id, enabled: row.enabled, version: row.version } });
       return { ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
-    }
+    });
     const serverId = this.uuid(input.id, "telephony_server_profile_id_invalid");
     return client.$transaction(async (tx) => {
+    await acquirePermissionFence(tx, "write");
     await tx.$queryRaw`SELECT id FROM telephony_server_profiles WHERE id = ${serverId}::uuid FOR UPDATE`;
     const current = await tx.telephonyServerProfile.findUnique({ where: { id: serverId } });
     if (!current) throw new NotFoundException({ code: "telephony_server_profile_not_found" });
@@ -212,11 +216,13 @@ export class TelephonyAgentRepository {
     const changed = await tx.telephonyServerProfile.updateMany({ where: { id: current.id, version: current.version }, data: { name, sipDomain, proxyUri, transport, campusId, enabled: Boolean(input.enabled), version: { increment: 1 }, updatedBy: principal.userId, updatedAt: now } });
     if (changed.count !== 1) throw new ConflictException({ code: "telephony_server_profile_version_conflict" });
     const row = await tx.telephonyServerProfile.findUniqueOrThrow({ where: { id: current.id } });
+    await this.audit(tx, principal, { campusId: row.campusId, eventType: "TELEPHONY_SERVER_PROFILE_UPDATED", resourceType: "TELEPHONY_SERVER_PROFILE", resourceId: row.id,
+      idempotencyKey: `telephony-server-updated:${row.id}:${current.version}`, correlationId, after: { serverProfileId: row.id, enabled: row.enabled, version: row.version } });
     return { ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
     });
   }
 
-  async upsertUserProfile(input: { userId?: string; serverProfileId?: string; sipAddress?: string; authUsername?: string | null; enabled?: boolean; expectedVersion?: number }, principal: Principal): Promise<Record<string, unknown>> {
+  async upsertUserProfile(input: { userId?: string; serverProfileId?: string; sipAddress?: string; authUsername?: string | null; enabled?: boolean; expectedVersion?: number }, principal: Principal, correlationId = "telephony-admin-profile"): Promise<Record<string, unknown>> {
     this.assertAdmin(principal);
     const userId = this.uuid(input.userId, "telephony_user_id_invalid");
     const serverProfileId = this.uuid(input.serverProfileId, "telephony_server_profile_id_invalid");
@@ -236,18 +242,51 @@ export class TelephonyAgentRepository {
     const enabled = Boolean(input.enabled);
     if (enabled && (!user.active || !server.enabled)) throw new ConflictException({ code: "telephony_profile_dependency_inactive" });
     const now = new Date();
-    if (!current) {
-      const row = await client.telephonyUserProfile.create({ data: { id: randomUUID(), userId, serverProfileId, sipAddress, authUsername, enabled, state: enabled ? "PAIRING_REQUIRED" : "INCOMPLETE", version: 1, updatedBy: principal.userId, updatedAt: now } });
+    if (!current) return client.$transaction(async (tx) => {
+      await acquirePermissionFence(tx, "write");
+      const row = await tx.telephonyUserProfile.create({ data: { id: randomUUID(), userId, serverProfileId, sipAddress, authUsername, enabled, state: enabled ? "PAIRING_REQUIRED" : "INCOMPLETE", version: 1, updatedBy: principal.userId, updatedAt: now } });
+      await this.audit(tx, principal, { campusId: user.campusId, eventType: "TELEPHONY_USER_PROFILE_CREATED", resourceId: row.id,
+        idempotencyKey: `telephony-profile-created:${row.id}`, correlationId, after: { profileId: row.id, userId, serverProfileId, enabled: row.enabled, state: row.state, version: row.version } });
       return this.publicUserProfile(row);
-    }
+    });
     return client.$transaction(async (tx) => {
+    await acquirePermissionFence(tx, "write");
     await this.lockProfile(tx, current.id);
     const locked = await tx.telephonyUserProfile.findUniqueOrThrow({ where: { id: current.id }, include: { workstations: { where: { active: true }, select: { id: true } } } });
     if (input.expectedVersion !== locked.version) throw new ConflictException({ code: "telephony_user_profile_version_conflict", currentVersion: locked.version });
+    if (!enabled && locked.workstations.length) throw new ConflictException({ code: "telephony_profile_requires_disable" });
     if (locked.workstations.length && (locked.sipAddress !== sipAddress || locked.authUsername !== authUsername || locked.serverProfileId !== serverProfileId)) throw new ConflictException({ code: "telephony_profile_requires_repairing" });
     const changed = await tx.telephonyUserProfile.updateMany({ where: { id: locked.id, version: locked.version }, data: { serverProfileId, sipAddress, authUsername, enabled, state: enabled ? "PAIRING_REQUIRED" : "DISABLED", version: { increment: 1 }, updatedBy: principal.userId, updatedAt: now } });
     if (changed.count !== 1) throw new ConflictException({ code: "telephony_user_profile_version_conflict" });
-    return this.publicUserProfile(await tx.telephonyUserProfile.findUniqueOrThrow({ where: { id: current.id } }));
+    const row = await tx.telephonyUserProfile.findUniqueOrThrow({ where: { id: current.id } });
+    await this.audit(tx, principal, { campusId: user.campusId, eventType: "TELEPHONY_USER_PROFILE_UPDATED", resourceId: row.id,
+      idempotencyKey: `telephony-profile-updated:${row.id}:${locked.version}`, correlationId, after: { profileId: row.id, userId, serverProfileId, enabled: row.enabled, state: row.state, version: row.version } });
+    return this.publicUserProfile(row);
+    });
+  }
+
+  async disableUserProfile(profileId: string, expectedVersion: number | undefined, principal: Principal, correlationId = "telephony-admin-disable"): Promise<Record<string, unknown>> {
+    this.assertAdmin(principal);
+    const id = this.uuid(profileId, "telephony_profile_id_invalid");
+    return this.requiredClient().$transaction(async (tx) => {
+      await acquirePermissionFence(tx, "write");
+      await this.lockProfile(tx, id);
+      const profile = await tx.telephonyUserProfile.findUnique({ where: { id }, include: { user: true, workstations: { where: { active: true } } } });
+      if (!profile) throw new NotFoundException({ code: "telephony_user_profile_not_found" });
+      this.assertCampus(principal, profile.user.campusId);
+      if (!profile.enabled && (expectedVersion === undefined || profile.version === expectedVersion + 1)) return this.publicUserProfile(profile);
+      if (expectedVersion !== undefined && expectedVersion !== profile.version) throw new ConflictException({ code: "telephony_user_profile_version_conflict", currentVersion: profile.version });
+      await this.assertNoWithdrawalActivity(tx, profile.userId, profile.id);
+      const now = new Date();
+      const revoked = await tx.telephonyWorkstation.updateMany({ where: { userProfileId: id, active: true }, data: {
+        active: false, connectionState: "OFFLINE", sdkLoaded: false, sipRegistered: false, revokedAt: now, version: { increment: 1 },
+      } });
+      await tx.telephonyPairingCode.updateMany({ where: { userProfileId: id, usedAt: null, expiresAt: { gt: now } }, data: { expiresAt: now } });
+      const row = await tx.telephonyUserProfile.update({ where: { id }, data: { enabled: false, state: "DISABLED", version: { increment: 1 }, updatedBy: principal.userId, updatedAt: now } });
+      await this.audit(tx, principal, { campusId: profile.user.campusId, eventType: "TELEPHONY_USER_PROFILE_DISABLED", resourceId: id,
+        idempotencyKey: `telephony-profile-disabled:${id}:${profile.version}`, correlationId,
+        after: { profileId: id, userId: profile.userId, enabled: false, state: row.state, revokedWorkstations: revoked.count, version: row.version } });
+      return this.publicUserProfile(row);
     });
   }
 
@@ -614,9 +653,9 @@ export class TelephonyAgentRepository {
     const permission = call.leadId ? "interaction.create" : "telephony.free-call.create";
     if (!evaluatePermission(principal, permission, await new DynamicPermissionRepository(this.prisma).snapshots(tx), context).allowed) throw new ForbiddenException({ code: "telephony_agent_command_scope_forbidden" });
   }
-  private async audit(tx: Prisma.TransactionClient, principal: Principal, input: { campusId: string | null; eventType: string; resourceId: string; idempotencyKey: string; correlationId: string; after: Prisma.InputJsonValue }): Promise<void> {
-    const { campusId, eventType, resourceId, idempotencyKey, correlationId, after } = input;
-    await tx.auditEvent.create({ data: { id: randomUUID(), campusId, resourceType: "TELEPHONY_PROFILE", resourceId, eventType,
+  private async audit(tx: Prisma.TransactionClient, principal: Principal, input: { campusId: string | null; eventType: string; resourceType?: string; resourceId: string; idempotencyKey: string; correlationId: string; after: Prisma.InputJsonValue }): Promise<void> {
+    const { campusId, eventType, resourceType = "TELEPHONY_PROFILE", resourceId, idempotencyKey, correlationId, after } = input;
+    await tx.auditEvent.create({ data: { id: randomUUID(), campusId, resourceType, resourceId, eventType,
       actorId: principal.userId, actorRoles: principal.roles, ...( /^[0-9a-f-]{36}$/iu.test(principal.sessionId) ? { sessionId: principal.sessionId } : {}),
       correlationId: correlationId.slice(0, 64), after, result: "SUCCESS", idempotencyKey } });
   }

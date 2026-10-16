@@ -278,7 +278,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
         finally { commandGate.Release(); }
     }
 
-    public async Task StartFreeCallAsync(string phone, string purposeCode, string? comment)
+    public async Task StartFreeCallAsync(string phone, string destinationType, string purposeCode, string? comment)
     {
         using var lease = activity.Command();
         RequireNoWithdrawal();
@@ -292,7 +292,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
             journal.BeginFreeCall(idempotencyKey);
             FreeCallResponse created;
             try {
-                created = await client.CreateFreeCallAsync(new FreeCallRequest(phone, purposeCode, string.IsNullOrWhiteSpace(comment) ? null : comment.Trim(), idempotencyKey), CancellationToken.None).ConfigureAwait(true);
+                created = await client.CreateFreeCallAsync(new FreeCallRequest(phone, destinationType, purposeCode, string.IsNullOrWhiteSpace(comment) ? null : comment.Trim(), idempotencyKey), CancellationToken.None).ConfigureAwait(true);
             } catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity) {
                 journal.ResolveFreeCall(idempotencyKey);
                 throw;

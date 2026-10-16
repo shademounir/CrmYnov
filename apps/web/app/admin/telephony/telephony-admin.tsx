@@ -23,7 +23,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function humanError(failure: unknown): string {
   const code = failure instanceof Error ? failure.message : "telephony_unavailable";
-  return ({ authentication_required: "Votre session a expiré. Reconnectez-vous avant de modifier la configuration.", telephony_administration_forbidden: "Cette configuration est réservée aux administrateurs autorisés.", telephony_profile_scope_forbidden: "L’utilisateur ou le poste est hors de votre périmètre.", telephony_workstation_already_paired: "Un poste actif est déjà associé à cette identité.", telephony_user_profile_version_conflict: "Le profil a changé. Rechargez avant de recommencer.", telephony_server_profile_version_conflict: "Le serveur a changé. Rechargez avant de recommencer.", telephony_bridge_not_ready: "Le poste Windows doit être associé, actif et enregistré sur le compte SIP avant l’activation.", api_proxy_unavailable: "L’API locale est indisponible. Aucun changement n’a été enregistré." } as Record<string, string>)[code] ?? "L’opération n’a pas été confirmée. Rechargez l’état avant de recommencer.";
+  return ({
+    authentication_required: "Votre session a expiré. Reconnectez-vous avant de modifier la configuration.",
+    telephony_administration_forbidden: "Cette configuration est réservée aux administrateurs autorisés.",
+    telephony_profile_scope_forbidden: "L’utilisateur ou le poste est hors de votre périmètre.",
+    telephony_server_scope_forbidden: "Le serveur SIP n’appartient pas au campus du collaborateur.",
+    telephony_workstation_already_paired: "Un poste actif est déjà associé à cette identité.",
+    telephony_profile_requires_repairing: "Révoquez d’abord le poste actif, modifiez l’identité SIP, puis générez un nouveau code d’association.",
+    telephony_profile_requires_disable: "Utilisez « Retirer le profil téléphonique » pour révoquer atomiquement le profil, ses postes et ses codes.",
+    telephony_server_requires_repairing: "Révoquez d’abord tous les postes actifs utilisant ce serveur avant de modifier son adresse ou son transport.",
+    telephony_profile_dependency_inactive: "Le collaborateur ou le serveur SIP est désactivé. Réactivez la dépendance avant ce profil.",
+    telephony_workstation_busy: "Un appel ou une commande reste en cours ou incertain. Terminez sa réconciliation avant de retirer ce profil.",
+    telephony_sip_address_invalid: "L’adresse SIP doit respecter le format sip:extension@domaine.",
+    telephony_auth_username_invalid: "Le nom d’authentification contient un caractère interdit ou dépasse 255 caractères.",
+    telephony_user_profile_version_conflict: "Le profil a changé. Rechargez avant de recommencer.",
+    telephony_server_profile_version_conflict: "Le serveur a changé. Rechargez avant de recommencer.",
+    telephony_workstation_version_conflict: "Le poste a changé. Rechargez avant de recommencer.",
+    telephony_bridge_not_ready: "Le poste Windows doit être associé, actif et enregistré sur le compte SIP avant l’activation.",
+    api_proxy_unavailable: "L’API locale est indisponible. Aucun changement n’a été enregistré.",
+  } as Record<string, string>)[code] ?? "L’opération n’a pas été confirmée. Rechargez l’état avant de recommencer.";
 }
 
 export function TelephonyAdmin(): React.JSX.Element {
@@ -78,6 +96,9 @@ export function TelephonyAdmin(): React.JSX.Element {
     finally { setBusy(false); }
   }
   async function revoke(workstationId: string): Promise<void> { await operation(() => request(`telephony/provisioning/workstations/${encodeURIComponent(workstationId)}/revoke`, { method: "PATCH", body: "{}" }).then(() => undefined), "Poste révoqué. Son token local ne peut plus interroger le CRM."); }
+  async function disableProfile(profile: UserProfile): Promise<void> {
+    await operation(() => request(`telephony/provisioning/user-profiles/${encodeURIComponent(profile.id)}/disable`, { method: "PATCH", body: JSON.stringify({ expectedVersion: profile.version }) }).then(() => undefined), "Profil téléphonique retiré. Les postes et codes d’association ont été révoqués sans désactiver le compte CRM.");
+  }
   async function activate(): Promise<void> {
     if (!configuration) return;
     await operation(() => request("telephony/configuration", { method: "PATCH", body: JSON.stringify({ expectedVersion: configuration.version, mode: "LINPHONE", clickToCallEnabled: true, inboundEnabled: false, outboundEnabled: true, recordingPolicy: "DISABLED", maxCallDurationSeconds: 7200 }) }).then(() => undefined), "Appels sortants activés pour les postes prêts. Réception et enregistrement restent désactivés.");
@@ -98,9 +119,9 @@ export function TelephonyAdmin(): React.JSX.Element {
       </li>
       <li className="panel"><header><span>2</span><div><p className="eyebrow">Identité contrôlée</p><h2>Collaborateur et extension</h2></div></header><p>L’extension appartient à un utilisateur CRM. Son mot de passe sera saisi uniquement sur son poste Windows.</p>
         <form onSubmit={(event) => void saveUser(event)}><label>Collaborateur<select value={selectedUser} onChange={(event) => { setSelectedUser(event.target.value); const profile = provisioning.users.find((item) => item.userId === event.target.value); if (profile) { setSipAddress(profile.sipAddress); setAuthUsername(profile.authUsername ?? ""); setSelectedServer(profile.server.id); } }} required><option value="">Sélectionner</option>{collaborators.map((user) => <option key={user.id} value={user.id}>{user.professionalDisplayName || user.professionalEmail}</option>)}</select></label><label>Serveur<select value={selectedServer} onChange={(event) => setSelectedServer(event.target.value)} required><option value="">Sélectionner</option>{provisioning.servers.filter((item) => item.enabled).map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select></label><label>Adresse SIP<input value={sipAddress} onChange={(event) => setSipAddress(event.target.value)} placeholder="sip:extension@domaine" required /></label><label>Nom d’authentification facultatif<input value={authUsername} onChange={(event) => setAuthUsername(event.target.value)} autoComplete="off" /></label><button className="secondary-button" disabled={busy || !selectedServer || !selectedUser} type="submit">Enregistrer l’identité</button></form>
-        {activeProfile ? <p className="telephony-admin__profile-state"><ShieldCheck size={18} /> {stateLabels[activeProfile.state] ?? activeProfile.state}</p> : null}
+        {activeProfile ? <div className="telephony-admin__profile-state"><ShieldCheck size={18} /><span>{stateLabels[activeProfile.state] ?? activeProfile.state}</span>{activeProfile.enabled ? <button className="text-button" disabled={busy} type="button" onClick={() => void disableProfile(activeProfile)}>Retirer le profil téléphonique</button> : null}</div> : null}
       </li>
-      <li className="panel"><header><span>3</span><div><p className="eyebrow">Association locale</p><h2>Poste Windows</h2></div></header><p>Le code est valable dix minutes et une seule fois. L’agent utilisera ensuite un token révocable, protégé localement avec DPAPI.</p>
+      <li className="panel"><header><span>3</span><div><p className="eyebrow">Association locale</p><h2>Poste Windows</h2></div></header><p>Le code est valable dix minutes et une seule fois. L’agent utilisera ensuite un token révocable, protégé localement avec DPAPI. Pour changer une extension ou un serveur, révoquez le poste, enregistrez la nouvelle identité puis générez un nouveau code.</p>
         {provisioning.users.length === 0 ? <p className="telephony-admin__empty">Créez d’abord une identité SIP.</p> : <div className="telephony-admin__profiles">{provisioning.users.map((profile) => <article key={profile.id}><div><strong>{profile.user.professionalDisplayName || profile.user.professionalEmail}</strong><span>{stateLabels[profile.state] ?? profile.state}</span></div>{profile.workstations.some((item) => item.active) ? profile.workstations.filter((item) => item.active).map((workstation) => <div className="telephony-admin__workstation" key={workstation.id}><Desktop size={19} /><span><strong>{workstation.displayName}</strong><small>{workstation.sdkLoaded ? "SDK chargé" : "SDK absent"} · {workstation.sipRegistered ? "SIP enregistré" : "SIP non enregistré"}</small></span><button className="text-button" disabled={busy} type="button" onClick={() => void revoke(workstation.id)}>Révoquer</button></div>) : <button className="secondary-button" disabled={busy} type="button" onClick={() => void issuePairing(profile.id)}><LinkSimple size={17} /> Générer le code d’association</button>}</article>)}</div>}
         {pairing ? <div className="telephony-admin__pairing" role="status"><p className="eyebrow">Code à saisir dans l’agent Windows</p><code>{pairing.code}</code><p>Expire à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Casablanca" }).format(new Date(pairing.expiresAt))}, heure de Casablanca. Ne le publiez pas.</p></div> : null}
       </li>
