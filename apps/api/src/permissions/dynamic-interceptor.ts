@@ -4,10 +4,12 @@ import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard } from "../auth/rbac.guard.js";
 import { UserService } from "../users/user.service.js";
 import { DynamicPermissionRepository, type PermissionTransaction } from "./dynamic-repository.js";
-import { currentPrincipal, permissionDenied, resourceEvaluationContext } from "./dynamic-context.js";
+import { currentPrincipal, permissionDenied } from "./dynamic-context.js";
 import { contextualPermissions, lifecycleControllers, routePermissions, usesScopedReportingAuthorization } from "./dynamic-routes.js";
 import { evaluatePermission } from "./dynamic-evaluator.js";
-import { leadResource, routeContexts } from "./dynamic-resources.js";
+import { routeContexts } from "./dynamic-resources.js";
+import { leadCollectionContexts } from "./lead-collection-contexts.js";
+import type { EvaluationContext } from "./dynamic-evaluator.js";
 import type { ConfigurationSnapshot } from "./dynamic-contract.js";
 import { DynamicResourceLocator } from "./dynamic-locator.js";
 import { lifecyclePermissionFence, permissionTransactionMode, type PermissionLifecycle } from "./permission-transaction-routes.js";
@@ -52,13 +54,17 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
         await this.sessions.onModuleInit();
       }
       const serverLeadIds = await this.locator.leadIds(controller, context.getHandler().name, request);
+      let collection: Map<string, EvaluationContext> | undefined;
       for (const key of contextualPermissions(controller, keys, request.body, request.query, request.principal.roles.includes("SUPER_ADMIN"))) {
         if (usesScopedReportingAuthorization(controller, handler) && key.startsWith("reporting.") && key !== "reporting.global.view") continue;
         if (controller === "LeadController" && ["list", "filterOptions"].includes(handler) || controller === "ClosureController" && ["list", "reconcileNotifications"].includes(handler)) {
-          await this.filterLeadCollection(tx, request, rows);
+          collection ??= await this.filterLeadCollection(tx, request, rows);
           if (controller === "ClosureController" && handler === "reconcileNotifications") {
             const allowed = new Set<string>();
-            for (const id of request.principal.permissionLeadIds ?? []) if (evaluatePermission(request.principal, key, rows, await resourceEvaluationContext(tx, request.principal, await leadResource(tx, id))).allowed) allowed.add(id);
+            for (const id of request.principal.permissionLeadIds ?? []) {
+              const resource = collection.get(id);
+              if (resource && evaluatePermission(request.principal, key, rows, resource).allowed) allowed.add(id);
+            }
             request.principal.permissionLeadIds = allowed;
           }
         } else {
@@ -116,18 +122,17 @@ export class DynamicPermissionInterceptor implements NestInterceptor {
     if (fence === "recovery") await this.challenges.onModuleInit();
     else await this.sessions.onModuleInit();
   }
-  private async filterLeadCollection(tx: PermissionTransaction, request: AuthenticatedRequest, rows: ConfigurationSnapshot[]): Promise<void> {
+  private async filterLeadCollection(tx: PermissionTransaction, request: AuthenticatedRequest, rows: ConfigurationSnapshot[]): Promise<Map<string, EvaluationContext>> {
     const principal = request.principal as Principal;
     const contexts = await routeContexts(tx, request, "LeadController", "lead.view", principal);
     // A resource-limited grant may produce an empty authorized collection.
     if (!contexts.some((context) => evaluatePermission(principal, "lead.view", rows, { ...context, own: true, team: true, managedTeam: true }).allowed)) permissionDenied();
-    const campusKeys = principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []);
-    const leads = await tx.lead.findMany({ where: principal.roles.includes("SUPER_ADMIN") ? {} : { campus: { in: campusKeys } }, select: { id: true } });
+    const resources = await leadCollectionContexts(tx, principal);
     const allowed = new Set<string>();
-    for (const lead of leads) {
-      const resource = await resourceEvaluationContext(tx, principal, await leadResource(tx, lead.id));
-      if (evaluatePermission(principal, "lead.view", rows, resource).allowed) allowed.add(lead.id);
+    for (const [id, resource] of resources) {
+      if (evaluatePermission(principal, "lead.view", rows, resource).allowed) allowed.add(id);
     }
     principal.permissionLeadIds = allowed;
+    return resources;
   }
 }
