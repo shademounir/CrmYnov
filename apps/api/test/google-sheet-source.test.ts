@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, verify } from "node:crypto";
+import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -123,15 +123,17 @@ test("Real factory selects explicit ADC impersonation without a private key", as
   const directory = await mkdtemp(join(resolve(__dirname, "../../../.."), "crm-google-adc-test-"));
   try {
     const allowlistPath = join(directory, "allowlist.json");
-    await writeFile(allowlistPath, JSON.stringify({
+    const allowlist = JSON.stringify({
       sources: [{ workbookId: "synthetic_workbook", tab: "Fixture", sheetId: 0, range: "A1:C6" }]
-    }), { flag: "wx" });
+    });
+    await writeFile(allowlistPath, allowlist, { flag: "wx" });
     const principal = "synthetic-reader@synthetic-project.iam.gserviceaccount.com";
     const source = await createSheetSource({
       CRM_GOOGLE_SHEETS_ENABLED: "true",
       CRM_GOOGLE_SHEETS_AUTH_MODE: "ADC_IMPERSONATION",
       CRM_GOOGLE_SHEETS_IMPERSONATE_SERVICE_ACCOUNT: principal,
-      CRM_GOOGLE_SHEETS_ALLOWLIST_FILE: allowlistPath
+      CRM_GOOGLE_SHEETS_ALLOWLIST_FILE: allowlistPath,
+      CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256: createHash("sha256").update(allowlist).digest("hex")
     }, process.cwd(), (url, init): Promise<Response> => {
       assert.equal(url.origin, "https://sheets.googleapis.com");
       assert.equal(new Headers(init.headers).get("authorization"), "Bearer synthetic-adc-token");
@@ -155,11 +157,16 @@ test("Real factory refuses ambiguous or implicit authentication modes", async ()
   const directory = await mkdtemp(join(resolve(__dirname, "../../../.."), "crm-google-auth-mode-test-"));
   try {
     const allowlistPath = join(directory, "allowlist.json");
-    await writeFile(allowlistPath, JSON.stringify({
+    const allowlist = JSON.stringify({
       sources: [{ workbookId: "synthetic_workbook", tab: "Fixture", sheetId: 0, range: "A1:C6" }]
-    }), { flag: "wx" });
-    const base = { CRM_GOOGLE_SHEETS_ENABLED: "true", CRM_GOOGLE_SHEETS_ALLOWLIST_FILE: allowlistPath };
+    });
+    await writeFile(allowlistPath, allowlist, { flag: "wx" });
+    const base = { CRM_GOOGLE_SHEETS_ENABLED: "true", CRM_GOOGLE_SHEETS_ALLOWLIST_FILE: allowlistPath,
+      CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256: createHash("sha256").update(allowlist).digest("hex") };
     await assert.rejects(createSheetSource(base, process.cwd()), /sheet_server_configuration_invalid/u);
+    await assert.rejects(createSheetSource({ ...base, CRM_GOOGLE_SHEETS_AUTH_MODE: "ADC_IMPERSONATION",
+      CRM_GOOGLE_SHEETS_IMPERSONATE_SERVICE_ACCOUNT: "reader@synthetic.iam.gserviceaccount.com",
+      CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256: "0".repeat(64) }, process.cwd()), /sheet_server_configuration_invalid/u);
     await assert.rejects(createSheetSource({ ...base, CRM_GOOGLE_SHEETS_AUTH_MODE: "ADC_IMPERSONATION",
       CRM_GOOGLE_SHEETS_IMPERSONATE_SERVICE_ACCOUNT: "reader@synthetic.iam.gserviceaccount.com",
       CRM_GOOGLE_SHEETS_CREDENTIALS_FILE: allowlistPath }, process.cwd()), /sheet_server_configuration_invalid/u);
@@ -208,8 +215,12 @@ test("Explicit private configuration files must be outside every Git worktree an
   const directory = await mkdtemp(join(resolve(__dirname, "../../../.."), "crm-google-config-test-"));
   try {
     const path = join(directory, "synthetic.json");
-    await writeFile(path, JSON.stringify({ fixture: "synthetic" }), { flag: "wx" });
+    const bytes = JSON.stringify({ fixture: "synthetic" });
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(path, bytes, { flag: "wx" });
     assert.deepEqual(await readPrivateGoogleJson(path, process.cwd()), { fixture: "synthetic" });
+    assert.deepEqual(await readPrivateGoogleJson(path, process.cwd(), sha256), { fixture: "synthetic" });
+    await assert.rejects(readPrivateGoogleJson(path, process.cwd(), "0".repeat(64)), /sheet_server_configuration_invalid/u);
     await assert.rejects(readPrivateGoogleJson("relative.json", process.cwd()), /sheet_server_configuration_invalid/u);
     await assert.rejects(readPrivateGoogleJson(join(process.cwd(), "package.json"), process.cwd()), /sheet_server_configuration_invalid/u);
     await writeFile(path, " ".repeat(65 * 1024));

@@ -105,3 +105,59 @@ variable "deployer_service_account_email" {
   type        = string
   default     = ""
 }
+
+variable "sheet_append_storage_prepared" {
+  description = "Create the target-private immutable artifact store and dedicated identities. This does not mount artifacts or enable ingestion."
+  type        = bool
+  default     = false
+}
+variable "sheet_append_runtime_prepared" {
+  description = "Mount already uploaded, hash-pinned artifacts and provision the isolated worker/Scheduler PAUSED. Ingestion still stays OFF."
+  type        = bool
+  default     = false
+}
+variable "sheet_append_enabled" {
+  description = "Literal activation gate for the API and isolated append worker. It does not unpause Scheduler."
+  type        = bool
+  default     = false
+}
+variable "sheet_append_observation_verified" {
+  description = "Operator evidence that one real post-boundary execution completed and was reconciled before Scheduler can be unpaused."
+  type        = bool
+  default     = false
+}
+variable "sheet_append_scheduler_paused" {
+  description = "Independent append Scheduler control. Rollback sets this true and sheet_append_enabled false without changing cursors."
+  type        = bool
+  default     = true
+}
+variable "sheet_append_artifact_objects" {
+  description = "Private bucket object basenames for boundary, qualification and allowlist. Names must include their pinned SHA-256."
+  type        = map(string)
+  default     = {}
+  validation {
+    condition = alltrue([
+      for name in values(var.sheet_append_artifact_objects) :
+      can(regex("^[a-z0-9][a-z0-9._-]{0,190}\\.json$", name)) && !strcontains(name, "..")
+    ])
+    error_message = "Artifact names must be bounded JSON basenames without paths or traversal."
+  }
+}
+variable "sheet_append_artifact_sha256" {
+  description = "Lowercase SHA-256 values for boundary, qualification and allowlist; payloads remain outside Terraform state."
+  type        = map(string)
+  default     = {}
+  validation {
+    condition     = alltrue([for digest in values(var.sheet_append_artifact_sha256) : can(regex("^[a-f0-9]{64}$", digest))])
+    error_message = "Every Sheets artifact digest must be an exact lowercase SHA-256."
+  }
+}
+variable "sheet_append_expected_boundary_sha256" {
+  description = "Canonical target root pins the previously captured immutable boundary. Empty is permitted only while runtime is not prepared."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.sheet_append_expected_boundary_sha256 == "" || can(regex("^[a-f0-9]{64}$", var.sheet_append_expected_boundary_sha256))
+    error_message = "The expected boundary must be empty or one exact lowercase SHA-256."
+  }
+}

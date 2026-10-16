@@ -3,22 +3,24 @@ locals {
     staging = { project_id = "crmynov-stg-n7x4q2", database = "crmynov_stg", cidr = "10.43.0.0/24" }
     prod    = { project_id = "crmynov-prod-n7x4q2", database = "crmynov_prod", cidr = "10.44.0.0/24" }
   }
-  target      = local.targets[var.environment]
-  project_id  = local.target.project_id
-  region      = "europe-west1"
-  prefix      = "crm-${var.environment}"
-  repository  = "crm-ynov-${var.environment}"
-  registry    = "${local.region}-docker.pkg.dev/${local.project_id}/${local.repository}"
-  job_image   = var.job_image != "" ? var.job_image : var.api_image
-  deploy_jobs = local.job_image != ""
-  labels      = { application = "crm-ynov", environment = var.environment, managed-by = "terraform" }
+  target              = local.targets[var.environment]
+  project_id          = local.target.project_id
+  region              = "europe-west1"
+  prefix              = "crm-${var.environment}"
+  repository          = "crm-ynov-${var.environment}"
+  registry            = "${local.region}-docker.pkg.dev/${local.project_id}/${local.repository}"
+  job_image           = var.job_image != "" ? var.job_image : var.api_image
+  deploy_jobs         = local.job_image != ""
+  sheet_runtime_ready = var.sheet_append_storage_prepared && var.sheet_append_runtime_prepared
+  labels              = { application = "crm-ynov", environment = var.environment, managed-by = "terraform" }
   services = toset(concat([
     "artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "run.googleapis.com",
     "secretmanager.googleapis.com", "servicenetworking.googleapis.com", "serviceusage.googleapis.com",
     "sqladmin.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com",
-  ], var.gmail_invitation_enabled ? ["gmail.googleapis.com"] : []))
-  // No Sheets worker/source/API or inbound/audio connector is provisioned.
+  ], var.gmail_invitation_enabled ? ["gmail.googleapis.com"] : [], var.sheet_append_storage_prepared ? ["sheets.googleapis.com", "storage.googleapis.com"] : []))
+  // Webhook/cutover stay forbidden. Append has its own three-stage storage,
+  // runtime and activation gates; Scheduler is a fourth, independently paused gate.
   disabled_ingestion = {
     FORMINATOR_WEBHOOK_ENABLED        = "false"
     SHEETS_ENABLED                    = "false"
@@ -27,6 +29,29 @@ locals {
     SHEET_ROW_APPEND_ENABLED          = "false"
     CRM_SHEET_APPEND_POLICY_QUALIFIED = "false"
   }
+  sheet_ingestion = var.sheet_append_enabled ? merge(local.disabled_ingestion, {
+    SHEETS_ENABLED                    = "true"
+    CRM_GOOGLE_SHEETS_ENABLED         = "true"
+    SHEET_ROW_APPEND_ENABLED          = "true"
+    CRM_SHEET_APPEND_POLICY_QUALIFIED = "true"
+  }) : local.disabled_ingestion
+  sheet_private_mount  = "/var/run/crm-sheet-private"
+  sheet_private_bucket = "${local.prefix}-sheet-private-n7x4q2"
+  sheet_artifact_paths = local.sheet_runtime_ready ? {
+    boundary      = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "boundary", "missing-boundary.json")}"
+    qualification = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "qualification", "missing-qualification.json")}"
+    allowlist     = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "allowlist", "missing-allowlist.json")}"
+  } : {}
+  sheet_runtime_environment = local.sheet_runtime_ready ? {
+    CRM_GOOGLE_SHEETS_AUTH_MODE                   = "ADC_IMPERSONATION"
+    CRM_GOOGLE_SHEETS_IMPERSONATE_SERVICE_ACCOUNT = google_service_account.sheet_reader[0].email
+    CRM_GOOGLE_SHEETS_ALLOWLIST_FILE              = local.sheet_artifact_paths.allowlist
+    CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256            = lookup(var.sheet_append_artifact_sha256, "allowlist", "")
+    CRM_SHEET_APPEND_BOUNDARY_FILE                = local.sheet_artifact_paths.boundary
+    CRM_SHEET_APPEND_BOUNDARY_SHA256              = lookup(var.sheet_append_artifact_sha256, "boundary", "")
+    CRM_SHEET_APPEND_QUALIFICATION_FILE           = local.sheet_artifact_paths.qualification
+    CRM_SHEET_APPEND_QUALIFICATION_SHA256         = lookup(var.sheet_append_artifact_sha256, "qualification", "")
+  } : {}
   gmail_secrets = { client_id = "gmail-oauth-client-id", client_secret = "gmail-oauth-client-secret", refresh_token = "gmail-oauth-refresh-token" }
   accounts      = toset(["api", "web", "jobs", "migrator", "scheduler"])
   jobs = local.deploy_jobs ? {
@@ -161,6 +186,28 @@ resource "google_sql_database_instance" "postgres" {
       condition     = var.deployer_service_account_email == "" || var.deployer_service_account_email == "gh-deploy-${var.environment}@${local.project_id}.iam.gserviceaccount.com"
       error_message = "Only the existing canonical target deploy identity can receive these bounded bindings."
     }
+    precondition {
+      condition     = !var.sheet_append_runtime_prepared || var.sheet_append_storage_prepared
+      error_message = "Sheets runtime preparation requires the separately applied private storage/identity stage."
+    }
+    precondition {
+      condition     = !var.sheet_append_enabled || var.sheet_append_runtime_prepared
+      error_message = "Sheets activation requires the already mounted, hash-pinned runtime stage."
+    }
+    precondition {
+      condition     = var.sheet_append_scheduler_paused || (var.sheet_append_enabled && var.sheet_append_observation_verified)
+      error_message = "The append Scheduler can be unpaused only after literal activation and a verified real execution."
+    }
+    precondition {
+      condition = !var.sheet_append_runtime_prepared || (
+        var.deploy_services && local.deploy_jobs
+        && toset(keys(var.sheet_append_artifact_objects)) == toset(["boundary", "qualification", "allowlist"])
+        && toset(keys(var.sheet_append_artifact_sha256)) == toset(["boundary", "qualification", "allowlist"])
+        && alltrue([for key in ["boundary", "qualification", "allowlist"] : strcontains(lookup(var.sheet_append_artifact_objects, key, ""), lookup(var.sheet_append_artifact_sha256, key, "_missing_"))])
+        && lookup(var.sheet_append_artifact_sha256, "boundary", "") == var.sheet_append_expected_boundary_sha256
+      )
+      error_message = "Runtime preparation requires compatible services/jobs, the canonical boundary, and exactly three private artifact names containing their pinned digests."
+    }
   }
   depends_on = [google_service_networking_connection.private_services, google_project_service.runtime]
 }
@@ -183,6 +230,59 @@ resource "google_service_account" "runtime" {
   account_id   = "${local.prefix}-${each.value}"
   display_name = "CRM ${var.environment} ${each.value}"
   depends_on   = [google_project_service.runtime]
+}
+resource "google_service_account" "sheet_worker" {
+  count        = var.sheet_append_storage_prepared ? 1 : 0
+  project      = local.project_id
+  account_id   = "${local.prefix}-sheet-append"
+  display_name = "CRM ${var.environment} isolated Sheets append worker"
+  depends_on   = [google_project_service.runtime]
+}
+resource "google_service_account" "sheet_reader" {
+  count        = var.sheet_append_storage_prepared ? 1 : 0
+  project      = local.project_id
+  account_id   = "${local.prefix}-sheet-reader"
+  display_name = "CRM ${var.environment} Google Sheets read-only identity"
+  depends_on   = [google_project_service.runtime]
+}
+resource "google_service_account" "sheet_scheduler" {
+  count        = var.sheet_append_storage_prepared ? 1 : 0
+  project      = local.project_id
+  account_id   = "${local.prefix}-sheet-scheduler"
+  display_name = "CRM ${var.environment} isolated Sheets Scheduler"
+  depends_on   = [google_project_service.runtime]
+}
+resource "google_storage_bucket" "sheet_private" {
+  count                       = var.sheet_append_storage_prepared ? 1 : 0
+  project                     = local.project_id
+  name                        = local.sheet_private_bucket
+  location                    = local.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+  labels                      = local.labels
+  versioning { enabled = true }
+  retention_policy { retention_period = 2592000 }
+  lifecycle { prevent_destroy = true }
+  depends_on = [google_project_service.runtime]
+}
+resource "google_storage_bucket_iam_member" "sheet_private_reader" {
+  for_each = var.sheet_append_storage_prepared ? {
+    api    = google_service_account.runtime["api"].member
+    worker = google_service_account.sheet_worker[0].member
+  } : {}
+  bucket = google_storage_bucket.sheet_private[0].name
+  role   = "roles/storage.objectViewer"
+  member = each.value
+}
+resource "google_service_account_iam_member" "sheet_reader_impersonation" {
+  for_each = var.sheet_append_storage_prepared ? {
+    api    = google_service_account.runtime["api"].member
+    worker = google_service_account.sheet_worker[0].member
+  } : {}
+  service_account_id = google_service_account.sheet_reader[0].name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.value
 }
 resource "google_secret_manager_secret" "database" {
   for_each  = toset(["runtime", "migrator"])
@@ -232,6 +332,13 @@ resource "google_secret_manager_secret_iam_member" "runtime_database" {
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.runtime[each.key].member
 }
+resource "google_secret_manager_secret_iam_member" "sheet_worker_database" {
+  count     = local.sheet_runtime_ready ? 1 : 0
+  project   = local.project_id
+  secret_id = google_secret_manager_secret.database["runtime"].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.sheet_worker[0].member
+}
 resource "google_secret_manager_secret_iam_member" "migration_database" {
   project   = local.project_id
   secret_id = google_secret_manager_secret.database["migrator"].secret_id
@@ -252,6 +359,12 @@ resource "google_project_iam_member" "cloudsql" {
   project  = local.project_id
   role     = "roles/cloudsql.client"
   member   = google_service_account.runtime[each.key].member
+}
+resource "google_project_iam_member" "sheet_worker_cloudsql" {
+  count   = local.sheet_runtime_ready ? 1 : 0
+  project = local.project_id
+  role    = "roles/cloudsql.client"
+  member  = google_service_account.sheet_worker[0].member
 }
 resource "google_project_iam_member" "deploy_roles" {
   for_each = var.deployer_service_account_email == "" ? toset([]) : toset(["roles/artifactregistry.writer", "roles/cloudsql.viewer", "roles/run.admin", "roles/secretmanager.viewer", "roles/serviceusage.serviceUsageViewer"])
@@ -297,7 +410,7 @@ resource "google_cloud_run_v2_service" "api" {
         cpu_idle = true
       }
       dynamic "env" {
-        for_each = merge(local.disabled_ingestion, { API_PORT = "3001", LOG_LEVEL = "warn", CRM_BACKGROUND_WORKERS = "external", CRM_ACCESS_RECOVERY_ENABLED = tostring(var.access_recovery_enabled), CRM_PUBLIC_ORIGIN = var.crm_public_origin })
+        for_each = merge(local.sheet_ingestion, local.sheet_runtime_environment, { API_PORT = "3001", LOG_LEVEL = "warn", CRM_BACKGROUND_WORKERS = "external", CRM_ACCESS_RECOVERY_ENABLED = tostring(var.access_recovery_enabled), CRM_PUBLIC_ORIGIN = var.crm_public_origin })
         content {
           name  = env.key
           value = env.value
@@ -333,6 +446,13 @@ resource "google_cloud_run_v2_service" "api" {
           }
         }
       }
+      dynamic "volume_mounts" {
+        for_each = local.sheet_runtime_ready ? toset(["sheet-private"]) : toset([])
+        content {
+          name       = volume_mounts.value
+          mount_path = local.sheet_private_mount
+        }
+      }
       dynamic "env" {
         for_each = var.gmail_invitation_enabled ? toset(["sender"]) : toset([])
         content {
@@ -360,8 +480,20 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
     }
+    dynamic "volumes" {
+      for_each = local.sheet_runtime_ready ? toset(["sheet-private"]) : toset([])
+      content {
+        name = volumes.value
+        gcs {
+          bucket        = google_storage_bucket.sheet_private[0].name
+          read_only     = true
+          mount_options = ["implicit-dirs"]
+        }
+      }
+    }
   }
-  depends_on = [google_secret_manager_secret_iam_member.runtime_database, google_secret_manager_secret_iam_member.api_secrets]
+  depends_on = [google_secret_manager_secret_iam_member.runtime_database, google_secret_manager_secret_iam_member.api_secrets,
+  google_storage_bucket_iam_member.sheet_private_reader, google_service_account_iam_member.sheet_reader_impersonation]
 }
 resource "google_cloud_run_v2_service_iam_member" "web_invokes_api" {
   count    = var.deploy_services ? 1 : 0
@@ -485,6 +617,63 @@ resource "google_cloud_run_v2_job" "runtime" {
   }
   depends_on = [google_secret_manager_secret_iam_member.runtime_database, google_secret_manager_secret_iam_member.migration_database, google_project_iam_member.cloudsql]
 }
+resource "google_cloud_run_v2_job" "sheet_append" {
+  count               = local.sheet_runtime_ready ? 1 : 0
+  project             = local.project_id
+  name                = "${local.prefix}-sheet-append"
+  location            = local.region
+  deletion_protection = true
+  labels              = local.labels
+  template {
+    template {
+      service_account = google_service_account.sheet_worker[0].email
+      timeout         = "300s"
+      max_retries     = 0
+      vpc_access {
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.runtime.id
+          subnetwork = google_compute_subnetwork.run.id
+        }
+      }
+      containers {
+        image = local.job_image
+        args  = ["apps/api/dist/jobs/sheet-append.js"]
+        resources { limits = { cpu = "1", memory = "512Mi" } }
+        dynamic "env" {
+          for_each = merge(local.sheet_ingestion, local.sheet_runtime_environment, { CRM_BACKGROUND_WORKERS = "external" })
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+        env {
+          name = "DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.database["runtime"].secret_id
+              version = google_secret_manager_secret_version.database["runtime"].version
+            }
+          }
+        }
+        volume_mounts {
+          name       = "sheet-private"
+          mount_path = local.sheet_private_mount
+        }
+      }
+      volumes {
+        name = "sheet-private"
+        gcs {
+          bucket        = google_storage_bucket.sheet_private[0].name
+          read_only     = true
+          mount_options = ["implicit-dirs"]
+        }
+      }
+    }
+  }
+  depends_on = [google_secret_manager_secret_iam_member.sheet_worker_database, google_project_iam_member.sheet_worker_cloudsql,
+  google_storage_bucket_iam_member.sheet_private_reader, google_service_account_iam_member.sheet_reader_impersonation]
+}
 resource "google_cloud_run_v2_job_iam_member" "scheduler_runs_due" {
   count    = local.deploy_jobs ? 1 : 0
   project  = local.project_id
@@ -513,4 +702,31 @@ resource "google_cloud_scheduler_job" "follow_up_due" {
     max_retry_duration   = "120s"
   }
   depends_on = [google_cloud_run_v2_job_iam_member.scheduler_runs_due]
+}
+resource "google_cloud_run_v2_job_iam_member" "scheduler_runs_sheet_append" {
+  count    = local.sheet_runtime_ready ? 1 : 0
+  project  = local.project_id
+  location = local.region
+  name     = google_cloud_run_v2_job.sheet_append[0].name
+  role     = "roles/run.invoker"
+  member   = google_service_account.sheet_scheduler[0].member
+}
+resource "google_cloud_scheduler_job" "sheet_append" {
+  count     = local.sheet_runtime_ready ? 1 : 0
+  project   = local.project_id
+  region    = local.region
+  name      = "${local.prefix}-sheet-append"
+  schedule  = "*/5 * * * *"
+  time_zone = "Etc/UTC"
+  paused    = var.sheet_append_scheduler_paused
+  http_target {
+    http_method = "POST"
+    uri         = "https://run.googleapis.com/v2/projects/${local.project_id}/locations/${local.region}/jobs/${google_cloud_run_v2_job.sheet_append[0].name}:run"
+    oauth_token { service_account_email = google_service_account.sheet_scheduler[0].email }
+  }
+  retry_config {
+    retry_count        = 0
+    max_retry_duration = "0s"
+  }
+  depends_on = [google_cloud_run_v2_job_iam_member.scheduler_runs_sheet_append]
 }
