@@ -19,7 +19,8 @@ export interface FollowUpRecord { id: string; leadId: string; dueAt: string; sta
 export interface ClosureRequestRecord {
   id: string;
   leadId: string;
-  target: "ENROLLED" | "CLOSED_LOST";
+  target: "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
+  canDecide?: boolean;
   reason: string;
   comment: string;
   evidence: string[];
@@ -103,6 +104,7 @@ const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Reco
     follow_up_concurrent: "Cette relance a changé depuis son affichage. Actualisez-la avant de réessayer.",
   },
   "closure-request": {
+    supervisor_unavailable: "Aucun superviseur autorisé n’est disponible pour ce dossier. La demande n’a pas été enregistrée ; contactez votre responsable.",
     closure_request_invalid: "La demande nécessite un motif, un commentaire et au moins une preuve métier.",
     closure_source_status_invalid: "Cette clôture n’est pas disponible depuis l’étape commerciale actuelle.",
     closure_pending: "Une demande de clôture est déjà en attente pour ce Lead.",
@@ -327,8 +329,8 @@ export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirty
     <label>Type d’interaction<select name="type" required disabled={busy} defaultValue="CRM_CALL" autoFocus><option value="CRM_CALL">Appel depuis le CRM</option><option value="PHONE_CALL">Appel téléphonique</option><option value="PHYSICAL_VISIT">Visite du campus</option><option value="WHATSAPP">Échange WhatsApp</option><option value="MANUAL_EMAIL">Email de suivi</option><option value="MEETING">Rendez-vous</option><option value="COMMENT">Note de suivi</option></select></label>
     <label>Résultat<select name="result" required disabled={busy} defaultValue="NO_ANSWER"><option value="CONNECTED">Contact établi</option><option value="NO_ANSWER">Injoignable</option><option value="COMPLETED">Action terminée</option><option value="FOLLOW_UP_REQUIRED">Relance nécessaire</option><option value="INFORMATION_RECORDED">Information enregistrée</option></select></label>
     <label>Note de suivi<textarea name="note" disabled={busy} rows={5} maxLength={1000} placeholder="Ajoutez uniquement les informations utiles au suivi." /></label>
-    <label>Prochaine action<input name="nextActionAt" type="datetime-local" disabled={busy} aria-describedby="interaction-date-help" /></label>
-    <p id="interaction-date-help" className="lead-assignment-dialog__help">La saisie suit l’heure locale Africa/Casablanca. Elle doit être postérieure à l’interaction ; le serveur enregistre les instants en UTC.</p>
+    <label>Prochaine action (facultative)<input name="nextActionAt" type="datetime-local" disabled={busy} aria-describedby="interaction-date-help" /></label>
+    <p id="interaction-date-help" className="lead-assignment-dialog__help">Vous pouvez enregistrer l’interaction sans date. Si vous planifiez une action, choisissez une date future, en heure de Casablanca.</p>
     <p className="lead-assignment-dialog__notice">Le résultat de contact reste distinct de l’étape commerciale. L’interaction est horodatée par le serveur et l’historique existant n’est jamais réécrit.</p>
     <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’interaction" {...(onCancel ? { onCancel } : {})} />
   </form>;
@@ -336,13 +338,14 @@ export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirty
 
 export function StatusWorkflowForm({ leadId, currentStatus, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps & { currentStatus: string }>): React.JSX.Element {
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const dirty = useDirty(onDirtyChange);
-  const options = statusTransitionOptions(currentStatus);
+  const options = ["PROSPECT", "CONTACTED", "QUALIFIED"].includes(currentStatus) ? statusJourney.filter((option) => option.value !== currentStatus) : [];
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); if (busy) return; setBusy(true); setFeedback({ kind: "idle" });
     try {
-      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/status`, { method: "PATCH", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(statusBody(new FormData(event.currentTarget))) });
+      const body = statusBody(new FormData(event.currentTarget));
+      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/closure-requests`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ target: body.status, reason: "COMMERCIAL_STAGE_REVIEW", comment: body.reason, evidence: ["COMMERCIAL_STAGE_REVIEW"] }) });
       if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("status", response) }); return; }
-      dirty.clearDirty(); setFeedback({ kind: "success", message: "Statut mis à jour. La fiche va être actualisée." }); onCompleted?.();
+      dirty.clearDirty(); setFeedback({ kind: "success", message: "Demande transmise au superviseur. L’étape sera modifiée après sa validation." }); onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
     finally { setBusy(false); }
   }
@@ -354,10 +357,10 @@ export function StatusWorkflowForm({ leadId, currentStatus, onCancel, onComplete
     </section>
     {options.length ? <>
       <label>Étape suivante autorisée<select name="status" required disabled={busy} defaultValue={options[0]?.value} autoFocus>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-      <label>Motif<textarea name="reason" disabled={busy} rows={5} maxLength={1000} placeholder="Précisez le contexte utile à l’historique." /></label>
-      <p className="lead-assignment-dialog__notice">La liste propose uniquement la progression autorisée depuis l’étape actuelle. La température commerciale reste indépendante.</p>
+      <label>Motif<textarea name="reason" required minLength={3} disabled={busy} rows={5} maxLength={1000} placeholder="Précisez le contexte utile à la validation du superviseur." /></label>
+      <p className="lead-assignment-dialog__notice">Le superviseur reçoit votre demande. Le statut actuel reste conservé jusqu’à sa décision. La température commerciale reste indépendante.</p>
       {(currentStatus === "CONTACTED" || currentStatus === "QUALIFIED") ? <Link className="lead-assignment-dialog__details" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir le parcours « Inscrit / Sans suite »</Link> : null}
-      <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’étape" {...(onCancel ? { onCancel } : {})} />
+      <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Soumettre au superviseur" {...(onCancel ? { onCancel } : {})} />
     </> : <div className="lead-status-dialog__terminal" role="status">
       <p>Aucune transition directe n’est disponible depuis cette étape.</p>
       <p>Pour passer à « Inscrit » ou « Sans suite », créez une demande de clôture qui conservera les validations métier et l’historique.</p>
@@ -506,13 +509,13 @@ export function parseClosureRequests(value: unknown, leadId: string): ClosureReq
       && typeof row.createdAt === "string"
       && typeof row.version === "number"
       && Array.isArray(row.evidence)
-      && ["ENROLLED", "CLOSED_LOST"].includes(row.target ?? "")
+      && ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"].includes(row.target ?? "")
       && ["PENDING", "APPROVED", "REJECTED", "CANCELLED"].includes(row.state ?? "");
   });
 }
 
 function closureTargetLabel(target: ClosureRequestRecord["target"]): string {
-  return target === "ENROLLED" ? "Inscrit" : "Sans suite";
+  return { PROSPECT: "Prospect", CONTACTED: "Contacté", QUALIFIED: "Qualifié", ENROLLED: "Inscrit", CLOSED_LOST: "Sans suite" }[target];
 }
 
 function closureStateLabel(state: ClosureRequestRecord["state"]): string {
@@ -526,6 +529,7 @@ function closureReasonLabel(reason: string): string {
     NOT_INTERESTED: "Non intéressé",
     UNREACHABLE: "Injoignable après le parcours prévu",
     OTHER_PROGRAM: "Autre programme choisi",
+    COMMERCIAL_STAGE_REVIEW: "Validation de l’étape commerciale",
   } as Readonly<Record<string, string>>)[reason] ?? reason;
 }
 
@@ -578,11 +582,11 @@ export function ClosureHistory({ leadId, onCompleted }: Readonly<{ leadId: strin
         <p>{item.comment}</p>
         {item.decisionReason ? <p><strong>Motif de décision :</strong> {item.decisionReason}</p> : null}
       </div>
-      {item.state === "PENDING" ? <form onSubmit={(event) => void decide(event, item)}>
-        <label>Décision du responsable<select name="decision" defaultValue="APPROVE" disabled={busyId === item.id}><option value="APPROVE">Approuver la clôture</option><option value="REJECT">Refuser la demande</option></select></label>
+      {item.state === "PENDING" && item.canDecide === true ? <form onSubmit={(event) => void decide(event, item)}>
+        <label>Décision du responsable<select name="decision" defaultValue="APPROVE" disabled={busyId === item.id}><option value="APPROVE">Approuver la demande</option><option value="REJECT">Refuser la demande</option></select></label>
         <label>Motif de la décision<textarea name="reason" required minLength={3} maxLength={1000} rows={3} disabled={busyId === item.id} placeholder="Justifiez la décision sans données superflues." /></label>
         <button className="secondary-button" type="submit" disabled={busyId === item.id}>{busyId === item.id ? "Décision en cours…" : "Confirmer la décision"}</button>
-      </form> : null}
+      </form> : item.state === "PENDING" ? <p role="status">Demande en attente de validation du superviseur.</p> : null}
     </li>)}</ol>}
     <p className="lead-assignment-dialog__notice">La décision est contrôlée par le serveur : le demandeur ne peut pas approuver sa propre clôture, et une version déjà décidée ne peut pas être rejouée.</p>
   </div>;

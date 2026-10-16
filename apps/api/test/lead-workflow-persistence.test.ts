@@ -42,7 +42,12 @@ function fakeRepository(): { repository: LeadWorkflowPersistenceRepository; rows
     reassignmentRequest: delegate(rows.reassignments, "reassignment"),
     leadCollaborationRequest: delegate(rows.collaborations, "collaboration"),
     leadClosureRequest: delegate(rows.closures, "closure"),
-    lead: { findUniqueOrThrow: async () => ({ campus: "SYNTHETIC-CAMPUS" }) },
+    lead: { findUniqueOrThrow: async () => ({ campus: "00000000-0000-4000-8000-000000000210" }) },
+    rolePermissionConfiguration: { findMany: async () => [] },
+    crmReference: { findUnique: async () => ({ id: "00000000-0000-4000-8000-000000000210", kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC-CAMPUS", label: "Synthetic campus" }), findFirst: async () => ({ id: "00000000-0000-4000-8000-000000000210", kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC-CAMPUS", label: "Synthetic campus" }) },
+    crmReferenceKey: { findMany: async () => [], findUnique: async () => ({ reference: { id: "00000000-0000-4000-8000-000000000210", kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC-CAMPUS", label: "Synthetic campus" } }) },
+    collaborator: { findMany: async () => [{ id: targetId, roles: ["MANAGER"], campusId: "00000000-0000-4000-8000-000000000210" }] },
+    internalNotification: { findUnique: async () => null, create: async ({ data }: { data: Record<string, unknown> }) => data },
     auditEvent: { create: async ({ data }: { data: Row }) => { const row = { ...data, id: data.id ?? `audit-${rows.audits.length + 1}` } as Row; rows.audits.push(row); return row; } },
     $transaction: async (value: unknown) => typeof value === "function" ? (value as (tx: unknown) => unknown)(client) : Promise.all(value as Promise<unknown>[]),
   };

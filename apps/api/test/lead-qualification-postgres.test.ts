@@ -44,6 +44,12 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   const superActorId = randomUUID(); const superEmail = `${superActorId}@example.invalid`; const superSalt = randomBytes(16).toString("hex");
   await client.collaborator.create({ data: { id: superActorId, professionalEmail: superEmail, roles: ["SUPER_ADMIN"], firstLoginRequired: false } });
   await client.localPasswordHash.create({ data: { collaboratorId: superActorId, identityDigest: createHash("sha256").update(superEmail).digest("hex"), passwordSalt: superSalt, passwordDigest: scryptSync(password, superSalt, 32).toString("hex"), mustChange: false } });
+  const commercialId = randomUUID(), supervisorId = randomUUID();
+  for (const [id, role] of [[commercialId, "ADMISSIONS"], [supervisorId, "MANAGER"]] as const) {
+    const identity = `${id}@example.invalid`, identitySalt = randomBytes(16).toString("hex");
+    await client.collaborator.create({ data: { id, professionalEmail: identity, professionalDisplayName: role === "MANAGER" ? "Superviseure synthétique" : "Conseillère synthétique", roles: [role], campusId: campus, firstLoginRequired: false } });
+    await client.localPasswordHash.create({ data: { collaboratorId: id, identityDigest: createHash("sha256").update(identity).digest("hex"), passwordSalt: identitySalt, passwordDigest: scryptSync(password, identitySalt, 32).toString("hex"), mustChange: false } });
+  }
   const grants = { ...defaultConfiguration({ kind: "ROLE", role: "ADMIN", campus: "GLOBAL" }), "lead.qualification.update": "CAMPUS" as const };
   await client.rolePermissionConfiguration.create({ data: { id: "ROLE:ADMIN:GLOBAL", kind: "ROLE", role: "ADMIN", campus: "GLOBAL", version: 1, versions: { create: { number: 1, grants: { create: Object.entries(grants).map(([permission, scope]) => ({ permission, scope })) } } } } });
   const lead = await client.lead.create({ data: { leadCode: "LD-QUALIFICATION-A", firstName: "Lead", lastName: "Synthétique", campus, campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique", source: "TEST" } });
@@ -94,6 +100,44 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(await client.auditEvent.count({ where: { correlationId: "qualification-rollback" } }), 0);
   await client.$executeRawUnsafe("DROP TRIGGER qualification_audit_failure ON audit_events");
   await client.$executeRawUnsafe("DROP FUNCTION fail_qualification_audit()");
+
+  const businessLead = await client.lead.create({ data: { leadCode: "LD-BUSINESS-PROCESS", firstName: "Dossier", lastName: "Synthétique", campus, campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique", source: "TEST", assignedToId: commercialId } });
+  const businessToken = async (id: string): Promise<string> => {
+    const response = await fetch(`${base(firstPort)}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `${id}@example.invalid`, password }) });
+    assert.equal(response.status, 201); return (await response.json() as { token: string }).token;
+  };
+  const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId);
+  const businessRequest = (actorToken: string, path: string, method = "GET", payload?: unknown): Promise<Response> => fetch(`${base(firstPort)}${path}`, { method, headers: { authorization: `Bearer ${actorToken}`, "content-type": "application/json", "x-correlation-id": `business-${randomUUID()}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
+  const interaction = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`, "POST", { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nSans prochaine action" });
+  assert.equal(interaction.status, 201);
+  const timeline = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`);
+  assert.equal(timeline.status, 200);
+  assert.equal((await timeline.json() as { events: Array<{ note?: string }> }).events[0]?.note, "Commentaire synthétique visible\nSans prochaine action");
+  const commercialQualification = await businessRequest(commercialToken, `/leads/${businessLead.id}/qualification`, "PATCH", { temperature: "WARM", reason: "Projet commercial confirmé", expectedVersion: 0, idempotencyKey: "business:qualification-owned" });
+  assert.equal(commercialQualification.status, 200);
+  assert.equal((await businessRequest(commercialToken, `/leads/${outside.id}/qualification`, "PATCH", { temperature: "WARM", reason: "Dossier hors périmètre", expectedVersion: 1, idempotencyKey: "business:qualification-outside" })).status, 403);
+  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/status`, "PATCH", { status: "QUALIFIED" })).status, 403);
+  const proposal = await businessRequest(commercialToken, `/leads/${businessLead.id}/closure-requests`, "POST", { target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", comment: "Projet et contact vérifiés", evidence: ["COMMERCIAL_STAGE_REVIEW"] });
+  assert.equal(proposal.status, 201, await proposal.clone().text());
+  const proposed = await proposal.json() as { id: string; version: number };
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "PROSPECT");
+  assert.equal(await client.internalNotification.count({ where: { recipientId: supervisorId, resourceId: businessLead.id, type: "CLOSURE_REQUEST" } }), 1);
+  assert.equal(await client.internalNotification.count({ where: { recipientId: "manager-queue", resourceId: businessLead.id } }), 0);
+  const commercialInbox = await businessRequest(commercialToken, "/closure-requests");
+  assert.equal(commercialInbox.status, 200);
+  assert.equal((await commercialInbox.json() as { items: Array<{ id: string; canDecide: boolean }> }).items.find((item) => item.id === proposed.id)?.canDecide, false);
+  const supervisorInbox = await businessRequest(supervisorToken, "/closure-requests");
+  assert.equal(supervisorInbox.status, 200);
+  assert.equal((await supervisorInbox.json() as { items: Array<{ id: string; canDecide: boolean }> }).items.find((item) => item.id === proposed.id)?.canDecide, true);
+  assert.equal((await businessRequest(commercialToken, `/closure-requests/${proposed.id}/decision`, "PATCH", { decision: "APPROVE", reason: "Auto validation", expectedVersion: proposed.version })).status, 403);
+  const decision = await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", { decision: "APPROVE", reason: "Signaux commerciaux vérifiés", expectedVersion: proposed.version });
+  assert.equal(decision.status, 200, await decision.clone().text());
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "QUALIFIED");
+  const options = await businessRequest(commercialToken, "/leads/filter-options");
+  assert.equal(options.status, 200);
+  const people = await options.json() as { advisers: Array<{ id: string; label: string }> };
+  assert(people.advisers.some((item) => item.id === commercialId && item.label === "Conseillère synthétique"));
+  assert(!people.advisers.some((item) => item.id === actorId));
 
   await second.close(); secondClosed = true;
   const restarted = await createApplication("error"); const restartPort = await port(); await restarted.listen(restartPort, "127.0.0.1");

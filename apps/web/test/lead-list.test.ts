@@ -70,6 +70,9 @@ test("GET form retains all supported context and exact inclusive/exclusive bound
     for (const [key, value] of context) assert.equal(data.get(key), key === "page" ? "1" : value, key);
     assert.equal(data.getAll("view").length, 1);
     assert.equal(data.getAll("pageSize").length, 1);
+    assert.equal(form.querySelectorAll('select[name="assignedToId"]').length, 1);
+    assert.equal(form.querySelectorAll('select[name="collaboratorId"]').length, 1);
+    assert.equal(form.querySelectorAll('input[name="assignedToId"], input[name="collaboratorId"]').length, 0);
     assert.equal(form.querySelector<HTMLInputElement>('input[type="date"][aria-label="Créés jusqu’au (inclus)"]')?.value, "2026-09-30");
   } finally { dom.window.close(); }
 });

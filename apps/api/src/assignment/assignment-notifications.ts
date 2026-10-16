@@ -5,7 +5,7 @@ import type { ConfigurationSnapshot } from "../permissions/dynamic-contract.js";
 import { assignmentManagerCapability } from "../permissions/dynamic-evaluator.js";
 import { canonicalCampus } from "../permissions/dynamic-resources.js";
 
-export async function assignmentManagerRecipients(tx: Prisma.TransactionClient, campusValue: string, permissions: readonly ConfigurationSnapshot[], permission: "lead.assign" | "lead.reassign.approve", excludeId?: string): Promise<string[]> {
+export async function assignmentManagerRecipients(tx: Prisma.TransactionClient, campusValue: string, permissions: readonly ConfigurationSnapshot[], permission: "lead.assign" | "lead.reassign.approve" | "lead.close.approve", excludeId?: string): Promise<string[]> {
   const campus = await canonicalCampus(tx, campusValue);
   const rows = await tx.collaborator.findMany({ where: { active: true, firstLoginRequired: false, roles: { hasSome: ["MANAGER", "ADMIN", "SUPER_ADMIN"] },
     OR: [{ campusId: { in: campus.keys } }, { roles: { has: "SUPER_ADMIN" } }] }, select: { id: true, roles: true, campusId: true }, orderBy: { id: "asc" } });
