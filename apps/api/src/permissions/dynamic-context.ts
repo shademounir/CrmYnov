@@ -37,20 +37,53 @@ export function campusContext(principal: PermissionIdentity, campus: string): Ev
   const globalAllowed = principal.roles.includes("SUPER_ADMIN");
   return { campus, active: true, own: false, team: false, globalAllowed, campusAllowed: globalAllowed || principal.scopes.some((scope) => scope.kind === "CAMPUS" && scope.id === campus) };
 }
+type AssignedIdentity = { active: boolean; campusId: string | null; teamId: string | null } | null;
+type ResourceLookups = {
+  assigned(id: string): Promise<AssignedIdentity>;
+  managed(teamId: string, campusId: string, managerId: string): Promise<boolean>;
+};
+function resourceLookups(tx: PermissionTransaction): ResourceLookups {
+  return {
+    assigned: (id) => tx.collaborator.findUnique({ where: { id } }),
+    managed: async (teamId, campusId, managerId) => (await tx.teamResponsibility.findUnique({ where: { teamId_campusId_managerId: { teamId, campusId, managerId } } }))?.active === true,
+  };
+}
 export async function resourceEvaluationContext(tx: PermissionTransaction, principal: PermissionIdentity, resource: ResourceContext): Promise<EvaluationContext> {
+  return evaluateResourceContext(principal, resource, resourceLookups(tx));
+}
+/** Cache only within the caller's fenced transaction. Never reuse across requests,
+ * identities or transactions: revocation and ownership remain freshly evaluated. */
+export function transactionResourceResolver(tx: PermissionTransaction, principal: PermissionIdentity): (resource: ResourceContext) => Promise<EvaluationContext> {
+  const lookups = resourceLookups(tx);
+  const assigned = new Map<string, Promise<AssignedIdentity>>();
+  const managed = new Map<string, Promise<boolean>>();
+  return (resource) => evaluateResourceContext(principal, resource, {
+    assigned: (id) => {
+      let result = assigned.get(id);
+      if (!result) { result = lookups.assigned(id); assigned.set(id, result); }
+      return result;
+    },
+    managed: (teamId, campusId, managerId) => {
+      const key = JSON.stringify([teamId, campusId, managerId]);
+      let result = managed.get(key);
+      if (!result) { result = lookups.managed(teamId, campusId, managerId); managed.set(key, result); }
+      return result;
+    },
+  });
+}
+async function evaluateResourceContext(principal: PermissionIdentity, resource: ResourceContext, lookups: ResourceLookups): Promise<EvaluationContext> {
   const campus = resource.campusKeys[0] ?? "GLOBAL";
   const context = campusContext(principal, campus);
   context.campusAllowed ||= principal.scopes.some((scope) => scope.kind === "CAMPUS" && resource.campusKeys.includes(scope.id));
   context.active = resource.active;
   context.own = resource.ownerId === principal.userId || resource.collaboratorIds?.includes(principal.userId) === true;
   if (!resource.ownerId) return context;
-  const assigned = await tx.collaborator.findUnique({ where: { id: resource.ownerId } });
+  const assigned = await lookups.assigned(resource.ownerId);
   const assignedInCampus = Boolean(assigned?.campusId && resource.campusKeys.includes(assigned.campusId));
   context.team = Boolean(assigned?.active && assignedInCampus && assigned.teamId && principal.scopes.some((scope) => scope.kind === "TEAM" && scope.id === assigned.teamId));
   context.managedTeam = false;
   if (assigned?.active && assignedInCampus && assigned.teamId && principal.roles.includes("MANAGER")) {
-    const responsibility = await tx.teamResponsibility.findUnique({ where: { teamId_campusId_managerId: { teamId: assigned.teamId, campusId: campus, managerId: principal.userId } } });
-    context.managedTeam = responsibility?.active === true;
+    context.managedTeam = await lookups.managed(assigned.teamId, campus, principal.userId);
   }
   return context;
 }
