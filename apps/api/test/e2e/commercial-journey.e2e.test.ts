@@ -59,8 +59,16 @@ test("runs the complete synthetic commercial journey without external or replay 
   assert.throws(() => collaborations.decide(collaboration.id, { decision: "APPROVE", reason: "VALID", expectedVersion: 1 }, adviser, "journey:self-approval"), responseHas("collaboration_self_approval_forbidden"));
   assert.equal(collaborations.decide(collaboration.id, { decision: "APPROVE", reason: "VALID", expectedVersion: 1 }, manager, "journey:collaboration-approve").state, "APPROVED");
 
-  leads.changeStatus(created.lead.id, { status: "CONTACTED" }, adviser, "journey:contacted");
-  leads.changeStatus(created.lead.id, { status: "QUALIFIED" }, adviser, "journey:qualified");
+  for (const target of ["CONTACTED", "QUALIFIED"] as const) {
+    assert.throws(() => leads.changeStatus(created.lead.id, { status: target }, adviser, `journey:direct-${target}`), responseHas("lead_status_approval_required"));
+    const before = leads.listLeads({ page: 1, pageSize: 10 }, manager, "journey:stage-before").items[0]?.status;
+    const proposal = closures.request(created.lead.id, { target, reason: "COMMERCIAL_STAGE_REVIEW",
+      comment: "SYNTHETIC_STAGE_REVIEW", evidence: ["SYNTHETIC_CONFIRMATION"] }, adviser, `journey:propose-${target}`);
+    assert.equal(leads.listLeads({ page: 1, pageSize: 10 }, manager, "journey:stage-pending").items[0]?.status, before);
+    assert.throws(() => closures.decide(proposal.id, { decision: "APPROVE", reason: "VALID", expectedVersion: 1 }, adviser, "journey:stage-self"), responseHas("closure_self_approval_forbidden"));
+    assert.equal(closures.decide(proposal.id, { decision: "APPROVE", reason: "VALID", expectedVersion: 1 }, manager, `journey:approve-${target}`).state, "APPROVED");
+    assert.equal(leads.listLeads({ page: 1, pageSize: 10 }, manager, "journey:stage-approved").items[0]?.status, target);
+  }
   const closure = closures.request(created.lead.id, { target: "ENROLLED", reason: "ADMISSION_CONFIRMED",
     comment: "SYNTHETIC_ENROLLMENT", evidence: ["SYNTHETIC_CONFIRMATION"] }, adviser, "journey:closure");
   assert.throws(() => closures.decide(closure.id, { decision: "APPROVE", reason: "VALID", expectedVersion: 1 }, adviser, "journey:closure-self"), responseHas("closure_self_approval_forbidden"));
