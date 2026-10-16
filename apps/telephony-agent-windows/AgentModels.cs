@@ -26,7 +26,7 @@ internal sealed record AgentProfile(string Id, string WorkstationId, string SipA
 internal sealed record AgentServer(string SipDomain, string? ProxyUri, string Transport);
 internal sealed record PollResponse(AgentProfile Profile, AgentCommand? Command);
 internal sealed record AgentCommand(string CommandId, string CallId, string Destination, DateTimeOffset ExpiresAt, int MaxDurationSeconds, bool HangupRequested);
-internal sealed record FreeCallRequest(string Phone, string PurposeCode, string? Comment, string IdempotencyKey);
+internal sealed record FreeCallRequest(string Phone, string DestinationType, string PurposeCode, string? Comment, string IdempotencyKey);
 internal sealed record FreeCallResponse(string Id, string ExternalId, string State, string DispatchState, string MaskedPhone);
 internal sealed record FreeCallReconciliationRequest(string IdempotencyKey);
 internal sealed record FreeCallReconciliationResponse(string IdempotencyKey, string WorkstationId, string ProfileId, string Outcome, string? CommandId = null, string? CallId = null);

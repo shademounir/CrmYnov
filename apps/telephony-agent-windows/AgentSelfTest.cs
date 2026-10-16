@@ -94,7 +94,7 @@ internal static class AgentSelfTest
             // before SDK initialization or any SIP registration is possible.
             store.Save(expected with { SipPassword = "" });
             RequireCode(() => maintenanceRuntime.HandleProtocolCommandAsync(Guid.NewGuid()).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
-            RequireCode(() => maintenanceRuntime.StartFreeCallAsync("+212600000000", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            RequireCode(() => maintenanceRuntime.StartFreeCallAsync("+212600000000", "MOROCCO", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
             MaintenanceLeaseTestAsync(maintenanceRuntime).GetAwaiter().GetResult();
             reloaded.BeginFreeCall("synthetic-uncertain-request");
             Require(new EventJournal(store.JournalPath).UnresolvedFreeCallCount == 1, "UNCERTAIN_FREE_CALL_NOT_DURABLE");
@@ -182,7 +182,7 @@ internal static class AgentSelfTest
             await Refused(runtime.EnsureAudioAsync);
             await Refused(() => runtime.WithProfileMaintenanceAsync(() => { mutationCalls++; return Task.CompletedTask; }));
             await Refused(() => runtime.HandleProtocolCommandAsync(Guid.NewGuid()));
-            await Refused(() => runtime.StartFreeCallAsync("+212600000000", "OTHER_AUTHORIZED", null));
+            await Refused(() => runtime.StartFreeCallAsync("+212600000000", "MOROCCO", "OTHER_AUTHORIZED", null));
             await Refused(() => { runtime.ApplyDevices("synthetic-input", "synthetic-output"); return Task.CompletedTask; });
             Require(sdkFactoryCalls == 0 && mutationCalls == 0 && !runtime.Running, "WITHDRAWAL_RUNTIME_STARTED_SIDE_EFFECT");
             Require(original.SequenceEqual(File.ReadAllBytes(Path.Combine(directory, "settings.dpapi"))), "WITHDRAWAL_RUNTIME_PROFILE_CHANGED");
@@ -206,7 +206,7 @@ internal static class AgentSelfTest
         try {
             RequireCode(() => runtime.StartAsync().GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
             RequireCode(() => runtime.HandleProtocolCommandAsync(Guid.NewGuid()).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
-            RequireCode(() => runtime.StartFreeCallAsync("+212600000000", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            RequireCode(() => runtime.StartFreeCallAsync("+212600000000", "MOROCCO", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
             RequireCode(() => runtime.WithProfileMaintenanceAsync(() => Task.CompletedTask).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
         } finally { release.SetResult(); await mutation; }
     }
@@ -257,7 +257,7 @@ internal static class AgentSelfTest
         Task? stopWaiting = null;
         try {
             RequireCode(() => runtime.StartAsync().GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
-            RequireCode(() => runtime.StartFreeCallAsync("+212600000000", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
+            RequireCode(() => runtime.StartFreeCallAsync("+212600000000", "MOROCCO", "OTHER_AUTHORIZED", null).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
             RequireCode(() => runtime.HandleProtocolCommandAsync(Guid.NewGuid()).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
             RequireCode(() => runtime.WithProfileMaintenanceAsync(() => Task.CompletedTask).GetAwaiter().GetResult(), "PROFILE_MAINTENANCE_IN_PROGRESS");
             stopWaiting = runtime.StopAsync();
