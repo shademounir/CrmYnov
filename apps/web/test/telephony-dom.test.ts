@@ -79,13 +79,14 @@ test("provisioning edits retain versions, pairs and revokes explicitly, and acti
   const server = { id: "server-a", name: "Synthetic", sipDomain: "sip.example.invalid", proxyUri: null, transport: "TLS", campusId: null, enabled: true, version: 3 };
   const user = { id: "user-a", professionalEmail: "synthetic@example.invalid", professionalDisplayName: "Synthetic", active: true };
   const workstation = { id: "station-a", active: true, displayName: "Synthetic station", sdkLoaded: true, sipRegistered: true };
-  const profile = { id: "profile-a", userId: user.id, sipAddress: "sip:synthetic@example.invalid", authUsername: null, version: 4, state: "PAIRING_REQUIRED", user, server, workstations: [] as typeof workstation[] };
+  const profile = { id: "profile-a", userId: user.id, sipAddress: "sip:synthetic@example.invalid", authUsername: null, enabled: true, version: 4, state: "PAIRING_REQUIRED", user, server, workstations: [] as typeof workstation[] };
   let ready = false; let enabled = false; let failure = ""; const writes: { url: string; body: Record<string, unknown> }[] = [];
   t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit): Promise<Response> => { await Promise.resolve();
     if (init?.method) {
       writes.push({ url, body: JSON.parse(init.body as string) as Record<string, unknown> });
       if (failure) return Response.json({ code: failure }, { status: 409 });
       if (url.endsWith("pairing-codes")) return Response.json({ code: "SYNTHETIC-ONLY", expiresAt: "2099-01-01T10:00:00Z", profileId: profile.id });
+      if (url.endsWith("/disable")) { profile.enabled = false; profile.state = "DISABLED"; profile.version++; profile.workstations = []; return Response.json(profile); }
       if (url.endsWith("revoke")) { profile.workstations = []; ready = false; }
       if (url.endsWith("configuration")) enabled = true;
       return Response.json(server);
@@ -103,5 +104,7 @@ test("provisioning edits retain versions, pairs and revokes explicitly, and acti
   profile.workstations = [workstation]; ready = true; await b.click("Actualiser"); assert.doesNotMatch(b.text(), /SYNTHETIC-ONLY/u); assert.match(b.text(), /SDK chargé/u);
   await b.click("Activer les appels sortants"); assert.deepEqual(writes.at(-1)?.body, { expectedVersion: 7, mode: "LINPHONE", clickToCallEnabled: true, inboundEnabled: false, outboundEnabled: true, recordingPolicy: "DISABLED", maxCallDurationSeconds: 7200 }); assert.equal(b.button("Émission activée").disabled, true);
   await b.click("Révoquer"); assert.match(b.text(), /Poste révoqué/u); assert.equal(writes.at(-1)?.url.endsWith("/station-a/revoke"), true);
+  failure = "telephony_workstation_busy"; await b.click("Retirer le profil téléphonique"); assert.match(b.text(), /appel ou une commande reste en cours ou incertain/u); failure = "";
+  await b.click("Retirer le profil téléphonique"); assert.match(b.text(), /sans désactiver le compte CRM/u); assert.equal(writes.at(-1)?.url.endsWith("/profile-a/disable"), true); assert.deepEqual(writes.at(-1)?.body, { expectedVersion: 4 });
   assert.equal(b.dom.window.document.querySelector('input[type="password"]'), null);
 });

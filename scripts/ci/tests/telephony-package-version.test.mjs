@@ -19,7 +19,7 @@ test('agent and installer expose the same exact pilot version', () => {
     const pattern = new RegExp(`<${tag}>([^<]+)</${tag}>`);
     assert.equal(installer.match(pattern)?.[1], agent.match(pattern)?.[1]);
   }
-  assert.match(installer, /<InformationalVersion>0\.4\.12-pilot<\/InformationalVersion>/);
+  assert.match(installer, /<InformationalVersion>0\.4\.13-pilot<\/InformationalVersion>/);
 });
 test('packaging uses committed tracked sources and checks executable version', () => {
   const pack = read('scripts/telephony-agent/package-windows-agent.ps1');
