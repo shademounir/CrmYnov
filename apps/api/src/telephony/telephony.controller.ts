@@ -49,11 +49,13 @@ export class TelephonyBridgeController {
 export class TelephonyProvisioningController {
   constructor(@Inject(TelephonyAgentRepository) private readonly agents: TelephonyAgentRepository) {}
   @Get() list(@Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.listProvisioning(this.principal(request)); }
-  @Post("server-profiles") server(@Body() body: Parameters<TelephonyAgentRepository["upsertServerProfile"]>[0], @Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.upsertServerProfile(body, this.principal(request)); }
-  @Post("user-profiles") user(@Body() body: Parameters<TelephonyAgentRepository["upsertUserProfile"]>[0], @Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.upsertUserProfile(body, this.principal(request)); }
+  @Post("server-profiles") server(@Body() body: Parameters<TelephonyAgentRepository["upsertServerProfile"]>[0], @Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.upsertServerProfile(body, this.principal(request), this.correlation(request)); }
+  @Post("user-profiles") user(@Body() body: Parameters<TelephonyAgentRepository["upsertUserProfile"]>[0], @Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.upsertUserProfile(body, this.principal(request), this.correlation(request)); }
+  @Patch("user-profiles/:profileId/disable") disableUser(@Param("profileId") profileId: string, @Body() body: { expectedVersion?: number }, @Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.disableUserProfile(profileId, body.expectedVersion, this.principal(request), this.correlation(request)); }
   @Post("user-profiles/:profileId/pairing-codes") pairing(@Param("profileId") profileId: string, @Req() request: AuthenticatedRequest): ReturnType<TelephonyAgentRepository["createPairingCode"]> { return this.agents.createPairingCode(profileId, this.principal(request)); }
   @Patch("workstations/:workstationId/revoke") revoke(@Param("workstationId") workstationId: string, @Req() request: AuthenticatedRequest): Promise<Record<string, unknown>> { return this.agents.revokeWorkstation(workstationId, this.principal(request)); }
   private principal(request: AuthenticatedRequest): Principal { if (!request.principal) throw new BadRequestException({ code: "principal_missing" }); return request.principal; }
+  private correlation(request: AuthenticatedRequest): string { return request.header("x-correlation-id")?.slice(0, 64) ?? "telephony-admin"; }
 }
 
 @Controller("integrations/telephony/agent/v1")
@@ -87,7 +89,7 @@ export class TelephonyAgentController {
   ): ReturnType<TelephonyAgentRepository["claim"]> { return this.agents.claim(await this.agents.authenticate(token), commandId); }
   @Post("free-calls") async freeCall(
     @Headers("x-telephony-agent-token") token: string | undefined,
-    @Body() body: { phone?: string; purposeCode?: string; comment?: string; idempotencyKey?: string },
+    @Body() body: { phone?: string; destinationType?: string; purposeCode?: string; comment?: string; idempotencyKey?: string },
     @Headers("x-correlation-id") correlationId: string | undefined,
   ): Promise<CallRecord> {
     return this.permissions.transaction(async (tx) => {

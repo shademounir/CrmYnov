@@ -47,6 +47,7 @@ internal sealed class MainForm : Form
     private TextBox? sipPassword;
     private TextBox? freeCallPhone;
     private TextBox? freeCallComment;
+    private ComboBox? freeCallDestinationType;
     private ComboBox? freeCallPurpose;
     private Button? freeCallButton;
     private Button? freeCallClearButton;
@@ -385,13 +386,26 @@ internal sealed class MainForm : Form
     private Control BuildDialPad()
     {
         var form = FormStack();
-        form.Controls.Add(SectionTitle("Appeler un numéro autorisé", "Ce parcours reste relié au CRM : droit, motif, commande et événements sont vérifiés côté serveur. Les destinations marocaines sont autorisées par défaut."));
+        form.Controls.Add(SectionTitle("Appeler un numéro autorisé", "Ce parcours reste relié au CRM : droit, type de destination, motif, commande et événements sont vérifiés côté serveur."));
+        freeCallDestinationType = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520, AccessibleName = "Type de destination" };
+        freeCallDestinationType.Items.AddRange([
+            new DestinationTypeItem("MOROCCO", "Numéro marocain"),
+            new DestinationTypeItem("INTERNATIONAL", "Numéro international (+ indicatif)"),
+            new DestinationTypeItem("EXTENSION", "Extension interne"),
+        ]);
+        freeCallDestinationType.SelectedIndex = 0;
+        form.Controls.Add(Labeled("Type de destination", freeCallDestinationType));
         freeCallPhone = Field(""); freeCallPhone.AccessibleName = "Numéro à appeler"; freeCallPhone.PlaceholderText = "06 00 00 00 00";
         freeCallPhone.Enter += (_, _) => { if (freeCallPhone.TextLength > 0) freeCallPhone.SelectAll(); };
         freeCallPhone.TextChanged += (_, _) => {
             if (freeCallClearButton is not null) freeCallClearButton.Enabled = !AgentCallState.IsActive(snapshot.CallState) && freeCallPhone.TextLength > 0;
         };
-        form.Controls.Add(Labeled("Numéro marocain", freeCallPhone));
+        form.Controls.Add(Labeled("Numéro ou extension", freeCallPhone));
+        freeCallDestinationType.SelectedIndexChanged += (_, _) => {
+            if (freeCallDestinationType.SelectedItem is not DestinationTypeItem type || freeCallPhone is null) return;
+            freeCallPhone.PlaceholderText = type.Code switch { "INTERNATIONAL" => "+33 6 00 00 00 00", "EXTENSION" => "0211", _ => "06 00 00 00 00" };
+            freeCallPhone.AccessibleName = type.Code == "EXTENSION" ? "Extension interne" : "Numéro à appeler";
+        };
         var keypad = new TableLayoutPanel { AutoSize = true, ColumnCount = 3, Margin = new Padding(0, 0, 0, 12) };
         var keys = new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "⌫" };
         for (var index = 0; index < keys.Length; index++) {
@@ -423,10 +437,10 @@ internal sealed class MainForm : Form
 
     private async Task StartFreeCallAsync()
     {
-        if (freeCallPhone is null || freeCallPurpose?.SelectedItem is not PurposeItem purpose) return;
+        if (freeCallPhone is null || freeCallDestinationType?.SelectedItem is not DestinationTypeItem destinationType || freeCallPurpose?.SelectedItem is not PurposeItem purpose) return;
         freeCallButton!.Enabled = false;
         try {
-            await runtime.StartFreeCallAsync(freeCallPhone.Text, purpose.Code, freeCallComment?.Text);
+            await runtime.StartFreeCallAsync(freeCallPhone.Text, destinationType.Code, purpose.Code, freeCallComment?.Text);
             ShowFeedback("Demande enregistrée et vérifiée. La numérotation est maintenant suivie par Liblinphone.", false);
         }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
@@ -765,5 +779,6 @@ internal sealed class MainForm : Form
     private static Button ActionButton(string text, bool primary) { var button = new Button { AutoSize = true, Text = text, FlatStyle = FlatStyle.Flat, Padding = new Padding(13, 7, 13, 7), Margin = new Padding(0, 0, 8, 0), BackColor = primary ? Teal : Color.White, ForeColor = primary ? Navy : Navy, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), UseVisualStyleBackColor = false }; button.FlatAppearance.BorderColor = primary ? Teal : Color.FromArgb(188, 202, 213); return button; }
     private static void FillDevices(ComboBox combo, IEnumerable<AudioDeviceView> devices, string? selectedId) { combo.Items.Clear(); foreach (var item in devices) combo.Items.Add(new AudioDeviceItem(item.Id, item.Name)); var selected = combo.Items.Cast<AudioDeviceItem>().FirstOrDefault(item => item.Id == selectedId); combo.SelectedItem = selected ?? (combo.Items.Count > 0 ? combo.Items[0] : null); }
     private sealed record AudioDeviceItem(string Id, string Label) { public override string ToString() => Label; }
+    private sealed record DestinationTypeItem(string Code, string Label) { public override string ToString() => Label; }
     private sealed record PurposeItem(string Code, string Label) { public override string ToString() => Label; }
 }

@@ -81,6 +81,23 @@ test("pairs one workstation, encrypts and claims one command, then revokes its t
     assert.equal(replacement.workstationId, workstationId, "a revoked physical workstation must be versioned rather than duplicated");
     assert.equal(await client.telephonyWorkstation.count({ where: { publicId: `test-${suffix}` } }), 1);
     assert.equal((await repository.authenticate(replacement.token)).workstationId, workstationId);
+    const beforeDisable = await client.telephonyUserProfile.findUniqueOrThrow({ where: { id: profileId } });
+    const disabled = await repository.disableUserProfile(profileId, beforeDisable.version, principal, "synthetic-disable") as { enabled: boolean; state: string; version: number };
+    assert.equal(disabled.enabled, false); assert.equal(disabled.state, "DISABLED");
+    assert.equal((await client.telephonyWorkstation.findUniqueOrThrow({ where: { id: workstationId } })).active, false);
+    assert.equal((await client.collaborator.findUniqueOrThrow({ where: { id: userId } })).active, true, "profile withdrawal must not disable the CRM account");
+    await assert.rejects(() => repository.authenticate(replacement.token), errorCode("telephony_agent_authentication_refused"));
+    const disabledAudit = await client.auditEvent.findUniqueOrThrow({ where: { idempotencyKey: `telephony-profile-disabled:${profileId}:${beforeDisable.version}` } });
+    assert.equal(disabledAudit.eventType, "TELEPHONY_USER_PROFILE_DISABLED");
+    for (const excluded of [replacement.token, `agent-${suffix}`, `sip:agent-${suffix}@sip.example.invalid`]) assert.equal(JSON.stringify(disabledAudit).includes(excluded), false);
+    const enabledProfile = await repository.upsertUserProfile({ userId, serverProfileId: serverId, sipAddress: `sip:agent-${suffix}@sip.example.invalid`, authUsername: `agent-${suffix}`, enabled: true, expectedVersion: disabled.version }, principal, "synthetic-reenable") as { id: string; enabled: boolean; version: number };
+    assert.equal(enabledProfile.enabled, true);
+    const finalPairing = await repository.createPairingCode(profileId, principal);
+    const finalPair = await repository.pair({ code: finalPairing.code, publicId: `test-${suffix}`, displayName: "Poste synthétique reconfiguré", agentVersion: "0.4.13-pilot", sdkVersion: "5.5.21" }) as { workstationId: string };
+    assert.equal(finalPair.workstationId, workstationId, "reconfiguration must reuse the durable physical workstation record");
+    assert.equal(await client.auditEvent.count({ where: { actorId: userId, eventType: "TELEPHONY_SERVER_PROFILE_CREATED" } }), 1);
+    assert.equal(await client.auditEvent.count({ where: { actorId: userId, eventType: "TELEPHONY_USER_PROFILE_CREATED" } }), 1);
+    assert.equal(await client.auditEvent.count({ where: { actorId: userId, eventType: "TELEPHONY_USER_PROFILE_UPDATED" } }), 1);
   } finally {
     await client.telephonyAgentCommand.deleteMany({ where: { callId: { in: [callId, busyCallId, expiredCallId] } } });
     await client.telephonyCall.deleteMany({ where: { id: { in: [callId, busyCallId, expiredCallId] } } });

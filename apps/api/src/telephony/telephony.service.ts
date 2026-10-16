@@ -15,6 +15,8 @@ export type CallDirection = "INBOUND" | "OUTBOUND";
 export type MatchState = "MATCHED" | "UNMATCHED" | "AMBIGUOUS" | "CONFIRMED";
 export type RecordingState = "AVAILABLE" | "UNAVAILABLE" | "RESTRICTED" | "EXPIRED";
 export type DispatchState = "PENDING" | "ACCEPTED" | "UNCERTAIN" | "REJECTED";
+export const freeCallDestinationTypes = ["MOROCCO", "INTERNATIONAL", "EXTENSION"] as const;
+export type FreeCallDestinationType = typeof freeCallDestinationTypes[number];
 
 export interface TelephonyConfiguration {
   mode: TelephonyMode; clickToCallEnabled: boolean; inboundEnabled: boolean; outboundEnabled: boolean;
@@ -134,7 +136,7 @@ export class TelephonyService implements OnModuleInit {
     }
   }
 
-  async initiateFreeForApi(input: { phone?: string; purposeCode?: string; comment?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): Promise<CallRecord> {
+  async initiateFreeForApi(input: { phone?: string; destinationType?: string; purposeCode?: string; comment?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): Promise<CallRecord> {
     await this.preparePersistentMutation();
     if (!this.persistence?.enabled || !this.agents?.enabled) throw new ServiceUnavailableException({ code: "telephony_persistence_required" });
     this.assertContributor(principal);
@@ -143,7 +145,7 @@ export class TelephonyService implements OnModuleInit {
     if (!input.purposeCode || !["PROSPECT_CALLBACK", "PARTNER", "OTHER_AUTHORIZED"].includes(input.purposeCode)) throw new BadRequestException({ code: "telephony_free_call_purpose_invalid" });
     const comment = input.comment?.trim();
     if (comment && (comment.length > 500 || /[\r\n\0]/u.test(comment))) throw new BadRequestException({ code: "telephony_free_call_comment_invalid" });
-    const normalized = this.normalizeMoroccoPhone(input.phone ?? "");
+    const normalized = this.normalizeFreeCallDestination(input.phone ?? "", input.destinationType);
     const replayId = this.callByProviderId.get(`LINPHONE:request:${input.idempotencyKey}`);
     if (replayId) return this.freeCallReplay(this.calls.get(replayId), principal, normalized, input.purposeCode, comment);
     const readiness = await this.agents.readiness(principal.userId);
@@ -394,8 +396,18 @@ export class TelephonyService implements OnModuleInit {
     try { this.scopedLead(call.leadId, principal, "telephony-queue"); return true; } catch { return false; }
   }
   private normalizePhone(value: string): string { const normalized = value.replace(/[^+\d]/g, ""); if (!/^\+?\d{8,15}$/.test(normalized)) throw new BadRequestException({ code: "telephony_phone_invalid" }); return normalized; }
-  private normalizeMoroccoPhone(value: string): string {
-    const compact = value.replace(/[\s().-]/gu, "");
+  private normalizeFreeCallDestination(value: string, rawType: string | undefined): string {
+    const destinationType = (rawType?.trim().toUpperCase() || "MOROCCO") as FreeCallDestinationType;
+    if (!freeCallDestinationTypes.includes(destinationType)) throw new BadRequestException({ code: "telephony_free_call_destination_type_invalid" });
+    const compact = value.trim().replace(/[\s().-]/gu, "");
+    if (destinationType === "EXTENSION") {
+      if (!/^\d{2,7}$/u.test(compact)) throw new BadRequestException({ code: "telephony_free_call_extension_invalid" });
+      return compact;
+    }
+    if (destinationType === "INTERNATIONAL") {
+      if (!/^\+[1-9]\d{7,14}$/u.test(compact)) throw new BadRequestException({ code: "telephony_free_call_international_invalid" });
+      return compact;
+    }
     const normalized = /^0\d{9}$/u.test(compact) ? `+212${compact.slice(1)}` : /^212\d{9}$/u.test(compact) ? `+${compact}` : compact;
     if (!/^\+212\d{9}$/u.test(normalized)) throw new BadRequestException({ code: "telephony_free_call_destination_refused" });
     return normalized;
