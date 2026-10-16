@@ -72,10 +72,11 @@ export async function createSheetSource(environment: Readonly<Record<string, str
   if (environment.CRM_GOOGLE_SHEETS_ENABLED !== "true") return new RoutedSheetSource(synthetic);
   const credentialsPath = environment.CRM_GOOGLE_SHEETS_CREDENTIALS_FILE;
   const allowlistPath = environment.CRM_GOOGLE_SHEETS_ALLOWLIST_FILE;
+  const allowlistSha256 = environment.CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256;
   const authMode = environment.CRM_GOOGLE_SHEETS_AUTH_MODE;
   const impersonatedPrincipal = environment.CRM_GOOGLE_SHEETS_IMPERSONATE_SERVICE_ACCOUNT;
-  if (!allowlistPath) throw new SheetsSourceError("sheet_server_configuration_invalid", 503);
-  const allowed = parseGoogleAllowlist(await readPrivateGoogleJson(allowlistPath, repositoryRoot));
+  if (!allowlistPath || !allowlistSha256) throw new SheetsSourceError("sheet_server_configuration_invalid", 503);
+  const allowed = parseGoogleAllowlist(await readPrivateGoogleJson(allowlistPath, repositoryRoot, allowlistSha256));
   if (authMode === "ADC_IMPERSONATION") {
     if (!impersonatedPrincipal || credentialsPath) throw new SheetsSourceError("sheet_server_configuration_invalid", 503);
     return new RoutedSheetSource(synthetic,

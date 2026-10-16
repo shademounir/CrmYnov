@@ -8,3 +8,7 @@ output "deployed_api_image" { value = var.deploy_services ? var.api_image : "" }
 output "deployed_web_image" { value = var.deploy_services ? var.web_image : "" }
 output "operations_channel" { value = google_monitoring_notification_channel.operations.id }
 output "scheduler_paused" { value = true }
+output "sheet_append_private_bucket" { value = var.sheet_append_storage_prepared ? google_storage_bucket.sheet_private[0].name : null }
+output "sheet_append_runtime_prepared" { value = var.sheet_append_runtime_prepared }
+output "sheet_append_enabled" { value = var.sheet_append_enabled }
+output "sheet_append_scheduler_paused" { value = var.sheet_append_runtime_prepared ? var.sheet_append_scheduler_paused : true }

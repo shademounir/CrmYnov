@@ -77,6 +77,32 @@ run "prod_bounded_api_capacity" {
     error_message = "Capacity does not change instance bounds or activate Scheduler."
   }
 }
+run "prod_sheet_storage_only_keeps_runtime_off" {
+  command = plan
+  variables {
+    environment                   = "prod"
+    sheet_append_storage_prepared = true
+  }
+  assert {
+    condition     = length(google_storage_bucket.sheet_private) == 1 && length(google_cloud_run_v2_job.sheet_append) == 0 && length(google_cloud_scheduler_job.sheet_append) == 0
+    error_message = "Storage preparation may create only the private store and identities, never executable append runtime."
+  }
+}
+run "reject_sheet_runtime_before_storage" {
+  command = plan
+  variables { sheet_append_runtime_prepared = true }
+  expect_failures = [google_sql_database_instance.postgres]
+}
+run "reject_sheet_activation_before_runtime" {
+  command = plan
+  variables { sheet_append_enabled = true }
+  expect_failures = [google_sql_database_instance.postgres]
+}
+run "reject_sheet_scheduler_before_observation" {
+  command = plan
+  variables { sheet_append_scheduler_paused = false }
+  expect_failures = [google_sql_database_instance.postgres]
+}
 run "reject_unreviewed_api_capacity" {
   command = plan
   variables { api_memory = "2Gi" }

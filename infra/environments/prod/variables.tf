@@ -47,3 +47,31 @@ variable "deployer_service_account_email" {
   type    = string
   default = ""
 }
+variable "sheet_append_storage_prepared" {
+  type    = bool
+  default = false
+}
+variable "sheet_append_runtime_prepared" {
+  type    = bool
+  default = false
+}
+variable "sheet_append_enabled" {
+  type    = bool
+  default = false
+}
+variable "sheet_append_observation_verified" {
+  type    = bool
+  default = false
+}
+variable "sheet_append_scheduler_paused" {
+  type    = bool
+  default = true
+}
+variable "sheet_append_artifact_objects" {
+  type    = map(string)
+  default = {}
+}
+variable "sheet_append_artifact_sha256" {
+  type    = map(string)
+  default = {}
+}

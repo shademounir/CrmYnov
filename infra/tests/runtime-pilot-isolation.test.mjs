@@ -40,7 +40,9 @@ test("only the two canonical projects and databases can be selected", () => {
 
 test("project metadata, billing association and bootstrap identities are not created", () => {
   assert.match(main, /data "google_project" "current"/);
-  assert.doesNotMatch(main, /resource "(?:google_project|google_billing_project_info|google_storage_bucket|google_iam_workload_identity_pool[^"\s]*|google_service_account_key)"/);
+  assert.doesNotMatch(main, /resource "(?:google_project|google_billing_project_info|google_iam_workload_identity_pool[^"\s]*|google_service_account_key)"/);
+  assert.equal([...main.matchAll(/resource "google_storage_bucket"/g)].length, 1);
+  assert.doesNotMatch(main, /resource "google_storage_bucket_object"/);
   assert.match(main, /data\.google_project\.current\.billing_account == var\.billing_account_id/);
   assert.doesNotMatch(main, /roles\/(?:owner|editor|iam\.serviceAccountKeyAdmin)/);
 });
@@ -120,14 +122,52 @@ test("migration identity alone reads its secret; runtime identities are separate
   }
 });
 
-test("all six ingestion flags are literal OFF and shared by API and jobs", () => {
+test("append preparation is isolated and all ingestion flags remain OFF by default", () => {
   for (const flag of ["FORMINATOR_WEBHOOK_ENABLED", "SHEETS_ENABLED", "SHEET_CUTOVER_ENABLED", "CRM_GOOGLE_SHEETS_ENABLED", "SHEET_ROW_APPEND_ENABLED", "CRM_SHEET_APPEND_POLICY_QUALIFIED"]) {
     assert.match(main, new RegExp(`\\b${flag}\\s*=\\s*"false"`));
   }
-  for (const [type, name] of [["google_cloud_run_v2_service", "api"], ["google_cloud_run_v2_job", "runtime"]]) {
-    assert.match(block(main, type, name), /merge\(local\.disabled_ingestion,/);
-  }
-  assert.doesNotMatch(main, /sheets\.googleapis\.com|sheet-import\.js/);
+  assert.match(block(main, "google_cloud_run_v2_service", "api"), /merge\(local\.sheet_ingestion, local\.sheet_runtime_environment,/);
+  assert.match(block(main, "google_cloud_run_v2_job", "runtime"), /merge\(local\.disabled_ingestion,/);
+  const worker = block(main, "google_cloud_run_v2_job", "sheet_append");
+  assert.match(worker, /apps\/api\/dist\/jobs\/sheet-append\.js/);
+  assert.match(worker, /service_account\.sheet_worker\[0\]\.email/);
+  assert.match(worker, /max_retries\s*=\s*0/);
+  assert.match(worker, /merge\(local\.sheet_ingestion, local\.sheet_runtime_environment,/);
+  assert.match(main, /var\.sheet_append_storage_prepared \? \["sheets\.googleapis\.com", "storage\.googleapis\.com"\] : \[\]/);
+  assert.match(variables, /variable "sheet_append_enabled"[\s\S]*?default\s*=\s*false/);
+  assert.match(variables, /variable "sheet_append_scheduler_paused"[\s\S]*?default\s*=\s*true/);
+});
+
+test("private Sheets artifacts are durable, read-only and hash pinned without entering Terraform state", () => {
+  const bucket = block(main, "google_storage_bucket", "sheet_private");
+  assert.match(bucket, /uniform_bucket_level_access\s*=\s*true/);
+  assert.match(bucket, /public_access_prevention\s*=\s*"enforced"/);
+  assert.match(bucket, /versioning\s*\{ enabled = true \}/);
+  assert.match(bucket, /retention_period\s*=\s*2592000/);
+  assert.match(bucket, /prevent_destroy\s*=\s*true/);
+  assert.match(block(main, "google_storage_bucket_iam_member", "sheet_private_reader"), /roles\/storage\.objectViewer/);
+  assert.doesNotMatch(main, /roles\/storage\.(?:objectAdmin|admin)/);
+  assert.match(main, /CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256/);
+  assert.match(main, /CRM_SHEET_APPEND_BOUNDARY_SHA256/);
+  assert.match(main, /CRM_SHEET_APPEND_QUALIFICATION_SHA256/);
+  assert.match(read("environments/prod/main.tf"), /sheet_append_expected_boundary_sha256\s*=\s*"832763475bb07aeaf3b631efe6c43c93b448d782f4ce71420702e2f1acf6e4ed"/);
+  assert.match(main, /lookup\(var\.sheet_append_artifact_sha256, "boundary", ""\) == var\.sheet_append_expected_boundary_sha256/);
+  assert.match(main, /strcontains\(lookup\(var\.sheet_append_artifact_objects, key, ""\), lookup\(var\.sheet_append_artifact_sha256, key, "_missing_"\)\)/);
+  assert.doesNotMatch(main, /secret_data[^\n]*(?:sheet|boundary|qualification|allowlist)/);
+  assert.doesNotMatch(main, /google_storage_bucket_object/);
+});
+
+test("Sheets reader impersonation, worker and Scheduler are least-privilege and separate", () => {
+  const impersonation = block(main, "google_service_account_iam_member", "sheet_reader_impersonation");
+  assert.match(impersonation, /roles\/iam\.serviceAccountTokenCreator/);
+  assert.match(impersonation, /runtime\["api"\]\.member/);
+  assert.match(impersonation, /sheet_worker\[0\]\.member/);
+  const scheduler = block(main, "google_cloud_scheduler_job", "sheet_append");
+  assert.match(scheduler, /paused\s*=\s*var\.sheet_append_scheduler_paused/);
+  assert.match(scheduler, /schedule\s*=\s*"\*\/5 \* \* \* \*"/);
+  assert.match(scheduler, /sheet_scheduler\[0\]\.email/);
+  assert.match(block(main, "google_cloud_run_v2_job_iam_member", "scheduler_runs_sheet_append"), /sheet_scheduler\[0\]\.member/);
+  assert.match(main, /var\.sheet_append_scheduler_paused \|\| \(var\.sheet_append_enabled && var\.sheet_append_observation_verified\)/);
 });
 
 test("Scheduler is created PAUSED with target-local job and identity", () => {
@@ -194,6 +234,11 @@ test("no payload credentials or actual private recipient enter examples or outpu
     assert.match(example, /gmail_invitation_enabled\s*=\s*false/);
     assert.match(example, /access_recovery_enabled\s*=\s*false/);
   }
+  const prodExample = read("environments/prod/terraform.tfvars.example");
+  assert.match(prodExample, /sheet_append_storage_prepared\s*=\s*false/);
+  assert.match(prodExample, /sheet_append_runtime_prepared\s*=\s*false/);
+  assert.match(prodExample, /sheet_append_enabled\s*=\s*false/);
+  assert.match(prodExample, /sheet_append_scheduler_paused\s*=\s*true/);
 });
 
 test("CI extends backend-free read-only-lock validation without removing prior roots", () => {
