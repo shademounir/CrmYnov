@@ -10,7 +10,7 @@ type CenterState = { kind: "loading" } | { kind: "session" | "forbidden" | "erro
 const labels: Readonly<Record<string, { title: string; detail: string }>> = {
   ASSIGNMENT: { title: "Nouveau Lead affecté", detail: "Un dossier vient de rejoindre votre portefeuille." },
   REASSIGNMENT_DECISION: { title: "Décision de réaffectation", detail: "Une demande de réaffectation a été traitée." },
-  CLOSURE_REQUEST: { title: "Clôture à examiner", detail: "Une décision humaine est attendue sur un dossier." },
+  CLOSURE_REQUEST: { title: "Demande à valider", detail: "Une étape commerciale ou une clôture attend la décision d’un responsable." },
   COLLABORATOR_REQUEST: { title: "Collaboration à examiner", detail: "Une demande d’accès à un dossier a évolué." },
   FOLLOW_UP_DUE: { title: "Relance arrivée à échéance", detail: "Une prochaine action doit être traitée." },
   IMPORT_REVIEW: { title: "Import à vérifier", detail: "Une ligne importée demande une revue." },

@@ -34,7 +34,7 @@ function parseLeadContext(value: unknown): LeadContext | undefined {
 }
 
 function ResourceForSurface({ leadId, surface, refreshKey }: Readonly<{ leadId: string; surface: Surface; refreshKey: number }>): React.JSX.Element | null {
-  if (surface === "interaction") return <><ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "occurredAt", label: "Date" }]} /><HistoricalNotes leadId={leadId} /></>;
+  if (surface === "interaction") return <><ConnectedResource key={`${leadId}:${refreshKey}:interaction`} endpoint={`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`} ariaLabel="Historique protégé du Lead" emptyMessage="Aucune interaction enregistrée." fields={[{ key: "type", label: "Événement" }, { key: "result", label: "Résultat" }, { key: "note", label: "Commentaire" }, { key: "occurredAt", label: "Date" }]} /><HistoricalNotes leadId={leadId} /></>;
   if (surface === "follow-up") return <FollowUpHistory key={`${leadId}:${refreshKey}`} leadId={leadId} />;
   return null;
 }
@@ -105,7 +105,7 @@ function WorkflowHistory({ leadId, surface, refreshKey, onCompleted }: Readonly<
   if (surface === "assignment") return <ReassignmentHistory key={`${leadId}:${refreshKey}:assignment`} leadId={leadId} onCompleted={onCompleted} />;
   if (surface === "closure") return <ClosureHistory key={`${leadId}:${refreshKey}:closure`} leadId={leadId} onCompleted={onCompleted} />;
   if (surface !== "status") return <ResourceForSurface leadId={leadId} surface={surface} refreshKey={refreshKey} />;
-  return <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique. Une clôture reste soumise au parcours dédié.</p><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></>;
+  return <><p>Les changements sont contrôlés par l’API et ajoutés à l’historique après validation du superviseur.</p><ClosureHistory key={`${leadId}:${refreshKey}:status`} leadId={leadId} onCompleted={onCompleted} /><Link className="secondary-button" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir les demandes de clôture</Link></>;
 }
 
 export function LeadWorkflowPage({ leadId, surface }: Readonly<{ leadId: string; surface: Surface }>): React.JSX.Element {

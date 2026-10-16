@@ -21,8 +21,20 @@ export function LeadFilterChips({ current }: Readonly<{ current: URLSearchParams
 }
 
 export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchParams; mode: LeadPageMode }>): React.JSX.Element {
+  const [people, setPeople] = React.useState<Array<{ id: string; label: string }>>([]);
+  const [peopleState, setPeopleState] = React.useState<"loading" | "ready" | "error">("loading");
+  React.useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/crm/leads/filter-options", { credentials: "same-origin", cache: "no-store", signal: controller.signal }).then(async (response) => {
+      if (!response.ok) throw new Error("filter_options_unavailable");
+      const data = await response.json() as { advisers?: Array<{ id: string; label: string }> };
+      if (!Array.isArray(data.advisers)) throw new Error("filter_options_invalid");
+      setPeople(data.advisers); setPeopleState("ready");
+    }).catch(() => { if (!controller.signal.aborted) setPeopleState("error"); });
+    return (): void => controller.abort();
+  }, []);
   const sharedView = Boolean(current.get("sharedViewId"));
-  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize", "page"]);
+  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "collaboratorLabel", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize", "page"]);
   // Context fields are not owned by this form (shared view, provenance, drill-down, return URL).
   const preserved = [...current.entries()].filter(([key]) => !visibleKeys.has(key));
   return <form className="lead-filter-form" action="/leads" method="get" aria-label={mode === "follow-up" ? "Recherche dans les relances" : "Recherche et filtres des leads"}>
@@ -37,9 +49,11 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
         <label><span className="sr-only">Température</span><select name="temperature" defaultValue={current.get("temperature") ?? ""}><option value="">Toutes les températures</option><option value="UNEVALUATED">Non évalué</option><option value="COLD">Froid</option><option value="WARM">Tiède</option><option value="HOT">Chaud</option></select></label>
         <button className="secondary-button" type="submit"><Funnel size={18} aria-hidden="true" /> Appliquer</button>
       </div>
+      <div className="filter-grid">
+        <PersonFilter name="assignedToId" label="Conseiller principal" current={current} people={people} state={peopleState} />
+        <PersonFilter name="collaboratorId" label="Collaborateur" current={current} people={people} state={peopleState} />
+      </div>
       <details className="advanced-filters"><summary>Filtres avancés et tri</summary><div className="filter-grid">
-        <OwnerFilter current={current} />
-        <label>Collaborateur<input name="collaboratorId" defaultValue={current.get("collaboratorId") ?? ""} /></label>
         <label>Source<input name="source" defaultValue={current.get("source") ?? ""} /></label>
         <label>Formation<input name="program" defaultValue={current.get("program") ?? ""} /></label>
         <label>Campagne<input name="campaign" defaultValue={current.get("campaign") ?? ""} /></label>
@@ -57,13 +71,13 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
   </form>;
 }
 
-function OwnerFilter({ current }: Readonly<{ current: URLSearchParams }>): React.JSX.Element {
-  const initialId = current.get("assignedToId") ?? "";
-  const [id, setId] = React.useState(initialId);
-  const [label, setLabel] = React.useState(current.get("assignedToLabel") ?? "");
-  return <label>Conseiller principal<input name="assignedToId" value={id} onChange={(event) => {
-    const next = event.target.value;
-    setId(next);
-    if (next !== initialId) setLabel("");
-  }} />{label ? <><input name="assignedToLabel" type="hidden" value={label} /><small>Filtre actuel : {label}</small></> : null}</label>;
+function PersonFilter({ name, label, current, people, state }: Readonly<{ name: "assignedToId" | "collaboratorId"; label: string; current: URLSearchParams; people: Array<{ id: string; label: string }>; state: "loading" | "ready" | "error" }>): React.JSX.Element {
+  const [id, setId] = React.useState(current.get(name) ?? "");
+  const selected = people.find((person) => person.id === id);
+  const labelKey = name === "assignedToId" ? "assignedToLabel" : "collaboratorLabel";
+  return <label>{label}<select name={name} value={id} onChange={(event) => setId(event.target.value)} aria-busy={state === "loading"}>
+    <option value="">Tous les {name === "assignedToId" ? "conseillers" : "collaborateurs"}</option>
+    {id && !selected ? <option value={id}>{current.get(labelKey) || "Personne du filtre actuel"}</option> : null}
+    {people.map((person) => <option key={person.id} value={person.id}>{person.label}</option>)}
+  </select>{id && (selected?.label || current.get(labelKey)) ? <input name={labelKey} type="hidden" value={selected?.label || current.get(labelKey) || ""} /> : null}{state === "error" ? <small role="status">Liste momentanément indisponible.</small> : null}</label>;
 }

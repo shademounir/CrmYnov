@@ -58,6 +58,11 @@ async function mockReporting(page: Page): Promise<void> {
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], page: Number(query.get("page") ?? "1"), pageSize: Number(query.get("pageSize") ?? "25"), total: 0 }) });
   });
   await page.route("**/api/crm/lead-views", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route("**/api/crm/leads/filter-options", (route) => {
+    expect(route.request().method()).toBe("GET");
+    const people = [{ id: "adviser-synthetic", label: "Conseiller synthétique" }];
+    return route.fulfill({ json: { advisers: people, collaborators: people } });
+  });
   await page.route("**/api/crm/view-sharing/received", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route("**/api/crm/view-sharing/audiences", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route("**/api/crm/view-sharing/history", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
@@ -84,6 +89,8 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   const funnel = page.getByRole("button", { name: /Funnel commercial/u }); await funnel.focus(); await expect(funnel).toBeFocused();
   await expect(page.getByRole("table", { name: /Données alternatives — Funnel commercial/u })).toBeVisible();
   await page.getByRole("link", { name: /Leads uniques.*3/u }).click(); await expect(page).toHaveURL(/\/leads\?campus=campus-a.*returnTo=/u);
+  await expect(page.getByRole("combobox", { name: "Conseiller principal", exact: true }).getByRole("option", { name: "Conseiller synthétique", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("combobox", { name: "Collaborateur", exact: true }).getByRole("option", { name: "Conseiller synthétique", exact: true })).toHaveCount(1);
   await page.getByRole("link", { name: "Retour au dashboard avec les filtres conservés" }).click(); await expect(page).toHaveURL(/period=7d.*campus=campus-a/u);
   await page.getByText("Analyses détaillées et tableaux accessibles", { exact: true }).click();
   const downloadPromise = page.waitForEvent("download"); await page.getByRole("link", { name: "Exporter les agrégats CSV" }).click(); const download = await downloadPromise;

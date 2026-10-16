@@ -6,10 +6,14 @@ import { LeadService, type LeadStatus } from "../leads/lead.service.js";
 import { LeadWorkflowPersistenceRepository } from "../leads/lead-workflow-persistence.repository.js";
 import { NotificationService } from "../notifications/notification.service.js";
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
+import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
+import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
+import { leadResource } from "../permissions/dynamic-resources.js";
+import { resourceEvaluationContext } from "../permissions/dynamic-context.js";
 
 export type ClosureState = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-export type ClosureTarget = "ENROLLED" | "CLOSED_LOST";
-export const closureReasons = { ENROLLED: ["ADMISSION_CONFIRMED", "REGISTRATION_COMPLETE"], CLOSED_LOST: ["NOT_INTERESTED", "UNREACHABLE", "OTHER_PROGRAM"] } as const;
+export type ClosureTarget = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
+export const closureReasons = { PROSPECT: ["COMMERCIAL_STAGE_REVIEW"], CONTACTED: ["COMMERCIAL_STAGE_REVIEW"], QUALIFIED: ["COMMERCIAL_STAGE_REVIEW"], ENROLLED: ["ADMISSION_CONFIRMED", "REGISTRATION_COMPLETE"], CLOSED_LOST: ["NOT_INTERESTED", "UNREACHABLE", "OTHER_PROGRAM"] } as const;
 export interface ClosureRequest { id: string; leadId: string; target: ClosureTarget; reason: string; comment: string; evidence: string[]; requesterId: string; state: ClosureState; version: number; createdAt: string; decidedAt?: string; decidedBy?: string; decisionReason?: string }
 
 @Injectable()
@@ -20,6 +24,7 @@ export class ClosureService implements OnModuleInit {
     @Inject(NotificationService) private readonly notifications: NotificationService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(LeadWorkflowPersistenceRepository) private readonly persistence?: LeadWorkflowPersistenceRepository,
+    @Optional() @Inject(DynamicPermissionRepository) private readonly permissions?: DynamicPermissionRepository,
   ) {}
 
   async onModuleInit(): Promise<void> { await this.refreshPersistentState(); }
@@ -29,6 +34,7 @@ export class ClosureService implements OnModuleInit {
 
   async requestForApi(leadId: string, input: { target?: string; reason?: string; comment?: string; evidence?: string[] }, principal: Principal, correlationId: string): Promise<ClosureRequest> {
     if (!this.persistence?.enabled) return this.request(leadId, input, principal, correlationId);
+    await this.leads.getLeadForApi(leadId, principal, correlationId);
     await this.refreshPersistentState();
     const record = this.request(leadId, input, principal, correlationId);
     const stored = await this.persistence.saveClosure(record, undefined, { eventType: "CLOSURE_REQUESTED", principal, correlationId });
@@ -59,17 +65,35 @@ export class ClosureService implements OnModuleInit {
     await this.refreshPersistentState(); return stored;
   }
 
-  async listForApi(principal: Principal): Promise<ClosureRequest[]> { await this.refreshPersistentState(); return this.list(principal); }
+  async listForApi(principal: Principal): Promise<Array<ClosureRequest & { canDecide: boolean }>> {
+    await this.refreshPersistentState();
+    const items = this.list(principal);
+    if (!this.permissions?.enabled) return items.map((item) => ({ ...item, canDecide: !this.persistence?.enabled && item.canDecide }));
+    return this.permissions.readTransaction(async (tx) => {
+      const rows = await this.permissions!.snapshots(tx);
+      return Promise.all(items.map(async (item) => ({ ...item, canDecide: item.canDecide && evaluatePermission(principal, "lead.close.approve", rows, await resourceEvaluationContext(tx, principal, await leadResource(tx, item.leadId))).allowed })));
+    });
+  }
+
+  async reconcileNotificationsForApi(principal: Principal): Promise<{ pendingRequests: number }> {
+    if (!principal.roles.some((role) => ["SUPER_ADMIN", "ADMIN", "MANAGER"].includes(role))) throw new ForbiddenException({ code: "closure_approval_forbidden" });
+    await this.refreshPersistentState();
+    const pending = this.list(principal).filter((item) => item.state === "PENDING");
+    if (!this.persistence?.enabled) return { pendingRequests: 0 };
+    for (const item of pending) await this.persistence.reconcileClosureNotifications(item);
+    return { pendingRequests: pending.length };
+  }
 
   request(leadId: string, input: { target?: string; reason?: string; comment?: string; evidence?: string[] }, principal: Principal, correlationId: string): ClosureRequest {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) { throw new ForbiddenException({ code: "closure_request_forbidden" }); }
     const lead = this.leads.getLead(leadId, principal, correlationId); const target = input.target as ClosureTarget; const comment = input.comment?.trim(); const evidence = input.evidence?.map((value) => value.trim()).filter(Boolean) ?? [];
-    if (!["ENROLLED", "CLOSED_LOST"].includes(target) || !closureReasons[target]?.includes(input.reason as never) || !comment || comment.length > 1000 || evidence.length === 0 || evidence.length > 10) { throw new BadRequestException({ code: "closure_request_invalid" }); }
-    const validSource = target === "ENROLLED" ? lead.status === "QUALIFIED" : (["CONTACTED", "QUALIFIED"] as LeadStatus[]).includes(lead.status);
+    if (!Object.hasOwn(closureReasons, target) || !closureReasons[target]?.includes(input.reason as never) || !comment || comment.length > 1000 || evidence.length === 0 || evidence.length > 10) { throw new BadRequestException({ code: "closure_request_invalid" }); }
+    const commercialStage = ["PROSPECT", "CONTACTED", "QUALIFIED"].includes(target);
+    const validSource = commercialStage ? ["PROSPECT", "CONTACTED", "QUALIFIED"].includes(lead.status) && lead.status !== target : target === "ENROLLED" ? lead.status === "QUALIFIED" : (["CONTACTED", "QUALIFIED"] as LeadStatus[]).includes(lead.status);
     if (!validSource) { throw new BadRequestException({ code: "closure_source_status_invalid" }); }
     if ([...this.requests.values()].some((item) => item.leadId === leadId && item.state === "PENDING")) { throw new ConflictException({ code: "closure_pending" }); }
     const record: Readonly<ClosureRequest> = Object.freeze({ id: randomUUID(), leadId, target, reason: input.reason!, comment, evidence: [...evidence], requesterId: principal.userId, state: "PENDING", version: 1, createdAt: new Date().toISOString() });
-    this.requests.set(record.id, record); this.notifications.create({ recipientId: "manager-queue", type: "CLOSURE_REQUEST", priority: "HIGH", resourceType: "LEAD", resourceId: leadId, href: `/leads/${leadId}/closure` }, `closure-request:${record.id}`); this.record(record, principal, correlationId, "CLOSURE_REQUESTED"); return this.copy(record);
+    this.requests.set(record.id, record); this.record(record, principal, correlationId, "CLOSURE_REQUESTED"); return this.copy(record);
   }
 
   decide(id: string, input: { decision?: "APPROVE" | "REJECT"; reason?: string; expectedVersion?: number }, principal: Principal, correlationId: string): ClosureRequest {
@@ -95,7 +119,7 @@ export class ClosureService implements OnModuleInit {
     return this.copy(updated);
   }
 
-  list(principal: Principal): ClosureRequest[] { const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN"); return [...this.requests.values()].filter((item) => manager || item.requesterId === principal.userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).map((item) => this.copy(item)); }
+  list(principal: Principal): Array<ClosureRequest & { canDecide: boolean }> { const manager = principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN"); return [...this.requests.values()].filter((item) => (!principal.permissionLeadIds || principal.permissionLeadIds.has(item.leadId)) && (manager || item.requesterId === principal.userId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).map((item) => ({ ...this.copy(item), canDecide: manager && item.requesterId !== principal.userId && item.state === "PENDING" })); }
   reportingSnapshot(principal: Principal): ClosureRequest[] {
     if (!hasPilotageReportingScope(principal)) return this.list(principal);
     return [...this.requests.values()].filter((item) => principal.permissionLeadIds!.has(item.leadId)).map((item) => this.copy(item));

@@ -5,6 +5,10 @@ import type { Principal } from "../auth/auth.types.js";
 import type { ClosureRequest } from "../closure/closure.service.js";
 import type { CollaborationRequest } from "../collaboration/lead-collaboration.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
+import { assignmentManagerRecipients } from "../assignment/assignment-notifications.js";
+import { historicalGrants, type ConfigurationSnapshot } from "../permissions/dynamic-contract.js";
+import { createNotificationInTransaction } from "../notifications/notification-persistence.repository.js";
+import { randomUUID } from "node:crypto";
 
 type WorkflowSnapshot = Readonly<{
   reassignments: ReassignmentRequest[];
@@ -118,6 +122,7 @@ export class LeadWorkflowPersistenceRepository {
       if (expectedVersion === undefined) {
         const row = await tx.leadClosureRequest.create({ data: this.closureData(item) });
         if (audit) await this.auditClosure(tx, item, audit);
+        await this.notifyClosure(tx, item);
         return this.mapClosure(row);
       }
       const updated = await tx.leadClosureRequest.updateMany({ where: { id: item.id, state: "PENDING", version: expectedVersion }, data: {
@@ -129,6 +134,27 @@ export class LeadWorkflowPersistenceRepository {
       if (audit) await this.auditClosure(tx, item, audit);
       return this.mapClosure(row);
     }, { isolationLevel: "Serializable" });
+  }
+
+  async reconcileClosureNotifications(item: ClosureRequest): Promise<void> {
+    await this.requiredClient().$transaction(async (tx) => {
+      const current = await tx.leadClosureRequest.findUniqueOrThrow({ where: { id: item.id } });
+      if (current.state === "PENDING") await this.notifyClosure(tx, this.mapClosure(current));
+    }, { isolationLevel: "Serializable" });
+  }
+
+  private async notifyClosure(tx: Prisma.TransactionClient, item: ClosureRequest): Promise<void> {
+    const lead = await tx.lead.findUniqueOrThrow({ where: { id: item.leadId }, select: { campus: true } });
+    const configurations = await tx.rolePermissionConfiguration.findMany({ include: { versions: { include: { grants: true } } } });
+    const permissions = configurations.map((configuration): ConfigurationSnapshot => {
+      const target = { kind: configuration.kind, role: configuration.role, campus: configuration.campus } as ConfigurationSnapshot;
+      const current = configuration.versions.find((version) => version.number === configuration.version);
+      if (!current) throw new Error("permission_version_missing");
+      return { ...target, id: configuration.id, version: configuration.version, grants: historicalGrants(Object.fromEntries(current.grants.map((grant) => [grant.permission, grant.scope])), target) };
+    });
+    const recipients = await assignmentManagerRecipients(tx, lead.campus, permissions, "lead.close.approve", item.requesterId);
+    if (!recipients.length) throw new ConflictException({ code: "supervisor_unavailable" });
+    for (const recipientId of recipients) await createNotificationInTransaction(tx, { id: randomUUID(), recipientId, type: "CLOSURE_REQUEST", priority: "HIGH", resourceType: "LEAD", resourceId: item.leadId, href: `/leads/${item.leadId}/closure`, createdAt: new Date().toISOString() }, `closure-request:${item.id}:${recipientId}`);
   }
 
   private async auditClosure(tx: Prisma.TransactionClient, item: ClosureRequest, context: ClosureAuditContext): Promise<void> {

@@ -57,7 +57,7 @@ async function mountProfile(t: TestContext, rereadFails: boolean): Promise<{ hos
     if (url.endsWith("/timeline")) {
       reads += 1;
       if (written && rereadFails) return Promise.resolve(Response.json({ code: "temporary" }, { status: 503 }));
-      return Promise.resolve(Response.json({ events: written ? [{ id: "interaction-readback", type: "CRM_CALL", result: "CONNECTED", occurredAt: "2026-09-11T14:00:00.000Z" }] : [] }));
+      return Promise.resolve(Response.json({ events: written ? [{ id: "interaction-readback", type: "CRM_CALL", result: "CONNECTED", note: "Commentaire commercial conservé\nSeconde ligne", occurredAt: "2026-09-11T14:00:00.000Z" }] : [] }));
     }
     return Promise.resolve(Response.json(lead));
   });
@@ -88,6 +88,7 @@ async function mountProfile(t: TestContext, rereadFails: boolean): Promise<{ hos
 test("profile announces success only after the interaction is reread and displayed", async (t) => {
   const mounted = await mountProfile(t, false);
   assert.ok(mounted.timelineReads() >= 2);
+  assert.match(mounted.host.textContent ?? "", /Commentaire commercial conservé\s*Seconde ligne/u);
   assert.match(mounted.host.textContent ?? "", /Appel depuis le CRM/u);
   assert.match(mounted.host.textContent ?? "", /fiche et l’historique ont été relus depuis le serveur/u);
 });

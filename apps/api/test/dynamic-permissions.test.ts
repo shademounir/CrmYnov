@@ -111,12 +111,15 @@ test("CRMY-169 route permission registry denies unknown controllers and handlers
   assert.deepEqual(routePermissions("UserController", "updateProfile"), ["users.roles.assign"]);
   assert.deepEqual(routePermissions("UserController", "issueTemporarySecret"), ["users.roles.assign"]);
 });
-test("qualification update defaults are limited to Admin and Super Admin scopes", () => {
+test("qualification permits owned commercial dossiers and campus supervision while retaining explicit denials", () => {
   const permission = "lead.qualification.update";
   assert.equal(evaluatePermission(principal(["SUPER_ADMIN"]), permission, [], { ...context, globalAllowed: true }).allowed, true);
   assert.equal(evaluatePermission(principal(["ADMIN"]), permission, [], context).allowed, true);
   assert.equal(evaluatePermission(principal(["ADMIN"]), permission, [], { ...context, campusAllowed: false }).allowed, false);
-  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [], context).allowed, false);
+  assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [], context).allowed, true);
+  assert.equal(evaluatePermission(principal(["ADMISSIONS"]), permission, [], { ...context, own: true }).allowed, true);
+  assert.equal(evaluatePermission(principal(["ADMISSIONS"]), permission, [], { ...context, own: false }).allowed, false);
+  assert.equal(evaluatePermission(principal(["ADMISSIONS"]), permission, [snapshot(roleTarget("ADMISSIONS"), permission, "NONE")], { ...context, own: true }).allowed, false);
   assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "CAMPUS")], context).allowed, true);
   assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "OWN")], { ...context, own: true }).allowed, true);
   assert.equal(evaluatePermission(principal(["MANAGER"]), permission, [snapshot(roleTarget("MANAGER"), permission, "OWN")], context).allowed, false);
