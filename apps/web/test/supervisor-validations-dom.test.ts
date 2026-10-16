@@ -11,7 +11,8 @@ test("supervisor inbox is scoped, read-only for the requester and reconciles onl
   for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
     descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key)); Object.defineProperty(globalThis, key, { configurable: true, value });
   }
-  const host = dom.window.document.getElementById("root"); assert.ok(host); const root = createRoot(host);
+  const element = dom.window.document.getElementById("root"); assert.ok(element);
+  const host: HTMLElement = element; const root = createRoot(host);
   t.after(async () => { await act<void>(() => root.unmount()); dom.window.close(); for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
   const pending = { id: "proposal-synthetic", leadId: "lead-synthetic", requesterId: "requester", state: "PENDING", version: 1, target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", comment: "Commentaire synthétique à examiner", evidence: [], createdAt: "2026-10-16T10:00:00.000Z" };
   let canManage = false; let canDecide = false; let readStatus = 200; let invalid = false; let empty = false; let reconcileStatus = 200; let writes = 0;
