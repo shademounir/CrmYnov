@@ -18,7 +18,7 @@ import { assignmentManagerRecipients, assignmentNotification } from "../assignme
 import { BASELINE_OPTIONAL_INFORMATION, mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 
 type StoredLead = LeadRecord & { version: number };
-type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[] }>;
+type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[]; historicalTreatments?: Array<{ leadId: string; occurredAt: string | null }> }>;
 type SnapshotLeadRow = Prisma.LeadGetPayload<{ include: { collaborators: true; commercialQualifications: true } }>;
 type PersistMutationInput = Readonly<{
   before: StoredLead;
@@ -64,16 +64,18 @@ export class LeadPersistenceRepository {
   async snapshot(): Promise<PersistentSnapshot> {
     const client = this.prisma.client;
     if (!client) return { leads: [], activities: [] };
-    const [rows, activities] = await client.$transaction([
+    const [rows, activities, historicalNotes] = await client.$transaction([
       client.lead.findMany({ include: {
         collaborators: { where: { active: true }, orderBy: { userId: "asc" } },
         commercialQualifications: { orderBy: [{ version: "desc" }, { id: "desc" }], take: 1 },
       } }),
       client.leadActivity.findMany({ orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
+      client.importedHistoricalNote.findMany({ select: { leadId: true, occurredAt: true } }),
     ]);
     const ownerIds = [...new Set(rows.flatMap((row) => row.assignedToId ? [row.assignedToId] : []))];
     const owners = this.permissions && ownerIds.length ? await client.collaborator.findMany({ where: { id: { in: ownerIds } }, select: { id: true, professionalDisplayName: true } }) : [];
     return {
+      historicalTreatments: historicalNotes.map((note) => ({ leadId: note.leadId, occurredAt: note.occurredAt?.toISOString() ?? null })),
       leads: rows.map((row) => { const label = owners.find((owner) => owner.id === row.assignedToId)?.professionalDisplayName?.trim();
         return { ...this.mapStoredLead(row), ...(label ? { assignedToLabel: label } : {}) }; }),
       activities: activities.map((row): LeadActivityRecord => ({
