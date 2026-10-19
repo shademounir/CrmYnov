@@ -12,6 +12,30 @@ async function setup(t: TestContext): Promise<{ dom: JSDOM; root: import("react-
   return { dom, root, act, createElement, settle: async (): Promise<void> => { await act(async () => { await new Promise<void>((resolve) => setImmediate(resolve)); }); } };
 }
 
+test("designated recipients stay visible with activation, permission or availability needs, without requesting fictitious slots", async (t) => {
+  const { dom, root, act, createElement, settle } = await setup(t);
+  const { AdmissionsBookingForm } = await import("../app/appointments/admissions/booking-form");
+  const labels = ["Activation personnelle en attente", "Disponibilités à renseigner", "Accès à l’agenda indisponible"];
+  let slotRequests = 0;
+  t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => {
+    assert.notEqual(init?.method, "POST", "no appointment may be submitted without a real slot");
+    if (path.includes("/admissions/slots?")) { slotRequests++; return Promise.resolve(Response.json({ items: [] })); }
+    if (path.endsWith("/admissions/context")) return Promise.resolve(Response.json({ ownResponsibilities: [], campuses: [], eligibleUsers: [], canManageResponsibilities: false, canUseAgenda: true }));
+    if (path.includes("/admissions/responsibles?")) return Promise.resolve(Response.json({ items: labels.map((label, index) => ({ id: `profile-${index}`, userId: `user-${index}`, label: `Responsable ${index}`, campus: "SYNTHETIC", active: true, version: 1, readinessLabel: label, canConsultSlots: false })) }));
+    if (path.includes("/admissions/bookings?")) return Promise.resolve(Response.json({ items: [] }));
+    return Promise.resolve(Response.json({ id: "lead-synthetic", leadCode: "LD-SYNTHETIC", firstName: "Test", lastName: "Synthétique", campus: "SYNTHETIC" }));
+  });
+  act(() => root.render(createElement(AdmissionsBookingForm, { leadId: "lead-synthetic" }))); await settle();
+  const selector = dom.window.document.querySelector<HTMLSelectElement>('[name="responsibilityId"]'); assert(selector);
+  assert.equal(selector.options.length, 4);
+  for (let index = 0; index < labels.length; index++) {
+    act(() => { selector.value = `profile-${index}`; selector.dispatchEvent(new dom.window.Event("change", { bubbles: true })); }); await settle();
+    assert(dom.window.document.body.textContent?.includes(labels[index]!));
+    assert.equal(dom.window.document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled, true);
+  }
+  assert.equal(slotRequests, 0);
+});
+
 test("Lead booking consumes only declared slots, retains input after refusal and suppresses duplicate submission", async (t) => {
   const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsBookingForm } = await import("../app/appointments/admissions/booking-form");
   let refused = true; let posts = 0; let created = false; const bodies: Record<string, unknown>[] = []; let release: (() => void) | undefined;
@@ -91,10 +115,10 @@ test("manual window persists only after a server response, retaining the date ra
   refused = false; act(() => form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }))); await settle(); assert.equal(refreshed, 1); assert.equal(bodies[0]!.idempotencyKey, bodies[1]!.idempotencyKey); assert.match(dom.window.document.body.textContent ?? "", /Disponibilité enregistrée et relue/u);
 });
 
-test("administration selects only eligible activated campus users and does not fabricate a broad role", async (t) => {
+test("administration selects eligible campus users independently of personal activation, without fabricating a broad role", async (t) => {
   const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsResponsibilities } = await import("../app/appointments/admissions/agenda-forms"); let body: Record<string, unknown> | undefined;
   t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => { assert.equal(path, "/api/crm/admissions/responsibles"); assert.equal(typeof init?.body, "string"); body = JSON.parse(init!.body as string) as Record<string, unknown>; return Promise.resolve(Response.json({ id: "responsibility-synthetic" })); });
-  const context = { timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: true, canUseAgenda: true, campuses: [{ id: "campus-synthetic", code: "SYNTHETIC", label: "Campus synthétique", canManageResponsibilities: true }], eligibleUsers: [{ id: "user-synthetic", label: "Utilisateur activé", campus: "SYNTHETIC" }] };
+  const context = { timezone: "Africa/Casablanca", ownResponsibilities: [], canManageResponsibilities: true, canUseAgenda: true, campuses: [{ id: "campus-synthetic", code: "SYNTHETIC", label: "Campus synthétique", canManageResponsibilities: true }], eligibleUsers: [{ id: "user-synthetic", label: "Responsable synthétique", campus: "SYNTHETIC", activationRequired: true }] };
   act(() => root.render(createElement(AdmissionsResponsibilities, { context, items: [], onUpdated: async (): Promise<void> => { await Promise.resolve(); } })));
   const campus = dom.window.document.querySelector<HTMLSelectElement>('select[name="responsibilityCampus"]')!; const user = dom.window.document.querySelector<HTMLSelectElement>('select[name="responsibilityUserId"]')!;
   assert.equal(user.disabled, true); act(() => { campus.value = "SYNTHETIC"; campus.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });

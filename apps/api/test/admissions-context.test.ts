@@ -4,7 +4,7 @@ import test from "node:test";
 import { AdmissionsService } from "../src/admissions/admissions.service.js";
 import type { Principal, Role } from "../src/auth/auth.types.js";
 import { configurationKey, type ConfigurationSnapshot, type ConfigurationTarget } from "../src/permissions/dynamic-contract.js";
-import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
+import { admissionsResponsibleCapability, defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
 import type { DynamicPermissionRepository } from "../src/permissions/dynamic-repository.js";
 
 const campusA = { id: "00000000-0000-4000-8000-000000000175", code: "SYNTHETIC_A", label: "Synthetic A", kind: "CAMPUS", state: "ACTIVE", keys: [] as Array<{ key: string }> };
@@ -13,6 +13,17 @@ const archived = { ...campusA, id: "00000000-0000-4000-8000-000000000177", code:
 type CampusRow = typeof campusA;
 type ScalarSelector = string | { in: string[] };
 type Selector = { id?: ScalarSelector; code?: ScalarSelector; label?: ScalarSelector; keys?: { some: { key: ScalarSelector } } };
+
+test("recipient eligibility inspects actual appointment grants without an invented session or elevated roles", () => {
+  const context = { campus: campusA.id, active: true, own: false, team: false, campusAllowed: true, globalAllowed: false };
+  assert.equal(admissionsResponsibleCapability(["ADMIN"], [], context), true);
+  assert.equal(admissionsResponsibleCapability(["ADMISSIONS"], [], context), true);
+  assert.equal(admissionsResponsibleCapability(["AUDITOR"], [], context), false);
+  assert.equal(admissionsResponsibleCapability(["ADMIN"], [], { ...context, active: false }), false);
+  const target: ConfigurationTarget = { kind: "CEILING", role: "*", campus: campusA.id };
+  const denied: ConfigurationSnapshot = { ...target, id: configurationKey(target), version: 1, grants: { ...defaultConfiguration(target), "appointment.manage": "NONE" } };
+  assert.equal(admissionsResponsibleCapability(["SUPER_ADMIN", "ADMIN"], [denied], context), false);
+});
 
 function fixture(role: Role = "SUPER_ADMIN", campusId: string | null = null, snapshots: ConfigurationSnapshot[] = []): { service: AdmissionsService; principal: Principal } {
   // Isolated synthetic transaction adapter: exercises currentPrincipal and actual
@@ -33,9 +44,9 @@ function fixture(role: Role = "SUPER_ADMIN", campusId: string | null = null, sna
   const tx = {
     collaborator: {
       findUnique: ({ where }: { where: { id: string } }): Promise<typeof actor | null> => Promise.resolve(users.find((user) => user.id === where.id) ?? null),
-      findMany: ({ where }: { where: { active: boolean; firstLoginRequired: boolean; campusId: { in: string[] } } }): Promise<typeof users> => {
-        assert.equal(where.active, true); assert.equal(where.firstLoginRequired, false);
-        return Promise.resolve(users.filter((user) => user.active && !user.firstLoginRequired && user.campusId !== null && where.campusId.in.includes(user.campusId)));
+      findMany: ({ where }: { where: { active: boolean; firstLoginRequired?: boolean; campusId: { in: string[] } } }): Promise<typeof users> => {
+        assert.equal(where.active, true); assert.equal(where.firstLoginRequired, undefined);
+        return Promise.resolve(users.filter((user) => user.active && user.campusId !== null && where.campusId.in.includes(user.campusId)));
       },
     },
     localSession: { findUnique: (): Promise<object> => Promise.resolve({ active: true, collaboratorId: actor.id, expiresAt: new Date("2099-12-31T00:00:00Z"), authenticationVersion: actor.authenticationVersion }) },
@@ -60,7 +71,8 @@ test("Admissions context explicitly identifies both manageable active campuses f
   const f = fixture(); const context = await f.service.context(f.principal);
   assert.deepEqual(context.campuses, [campusA, campusB].map(({ id, code, label }) => ({ id, code, label, canManageResponsibilities: true })));
   assert.equal(context.canManageResponsibilities, true); assert.equal(context.canUseAgenda, true);
-  assert.deepEqual(context.eligibleUsers.map((user) => user.id), ["synthetic-user-a", "synthetic-user-b"]);
+  assert.deepEqual(context.eligibleUsers.map((user) => user.id), ["synthetic-user-a", "synthetic-user-b", "synthetic-user-first-access"]);
+  assert.equal(context.eligibleUsers.find(user => user.id === "synthetic-user-first-access")?.activationRequired, true);
   assert.ok(context.eligibleUsers.every((user) => [campusA.code, campusB.code].includes(user.campus)));
 });
 
@@ -82,7 +94,7 @@ test("Admissions context does not advertise responsibility management or eligibl
     { code: campusA.code, canManageResponsibilities: true }, { code: campusB.code, canManageResponsibilities: false },
   ]);
   assert.equal(context.canManageResponsibilities, true); assert.equal(context.canUseAgenda, true);
-  assert.deepEqual(context.eligibleUsers.map((user) => user.id), ["synthetic-user-a"]);
+  assert.deepEqual(context.eligibleUsers.map((user) => user.id), ["synthetic-user-a", "synthetic-user-first-access"]);
   assert.ok(context.eligibleUsers.every((user) => user.campus === campusA.code));
   const useOnly = await f.service.context(f.principal, campusB.code);
   assert.deepEqual(useOnly.campuses, [{ id: campusB.id, code: campusB.code, label: campusB.label, canManageResponsibilities: false }]);

@@ -121,3 +121,10 @@ export function assignmentManagerCapability(roleList: readonly Role[], permissio
   return roleList.filter((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))
     .some((role) => explainRole(role, "lead.view", rows, context).allowed && explainRole(role, permission, rows, context).allowed);
 }
+
+/** Read-only eligibility of a designated Admissions recipient. No fabricated
+ * session, HTTP authority or grant: real actions still require currentPrincipal. */
+export function admissionsResponsibleCapability(roleList: readonly Role[], rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  return roleList.filter((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))
+    .some((role) => explainRole(role, "appointment.manage", rows, context).allowed);
+}
