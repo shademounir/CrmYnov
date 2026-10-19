@@ -11,7 +11,8 @@ import { IngestionService } from "../ingestion/ingestion.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
-import { firstTreatmentState } from "../leads/first-treatment.js";
+import { projectCommercialWork } from "./commercial-work.js";
+import { commercialWorkHref } from "./commercial-work-query.js";
 
 export const OPERATIONAL_RISK_VERSION = "operational-risk-v1";
 export interface OperationalRiskQuery extends InteractiveReportingQuery {
@@ -63,10 +64,11 @@ export class OperationalRiskService {
     const rows = this.leads.reportingSnapshot(principal, now).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const leadIds = new Set(rows.map((row) => row.id));
     const active = rows.filter((row) => row.status !== "ENROLLED" && row.status !== "CLOSED_LOST");
-    const withoutFirstInteraction = active.filter(row => firstTreatmentState(row, now).firstTreatmentOverdue).length;
     const followUps = this.followUps.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId));
-    const overdueFollowUps = followUps.filter((item) => (item.state === "DUE" || item.state === "SCHEDULED") && new Date(item.dueAt) < now).length;
-    const pendingClosures = this.closures.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.state === "PENDING" && ["ENROLLED", "CLOSED_LOST"].includes(item.target)).length;
+    const work = projectCommercialWork(rows, followUps, this.closures.reportingSnapshot(principal), now);
+    const withoutFirstInteraction = work.queues.FIRST_TREATMENT_OVERDUE.leadIds.length;
+    const overdueFollowUps = work.queues.OVERDUE_FOLLOW_UP.itemCount;
+    const pendingClosures = work.queues.PENDING_CLOSURE.itemCount;
     const pendingReassignments = this.reassignments.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.status === "PENDING").length;
     const visibleOwners = new Set(active.flatMap((row) => row.assignedToId ? [row.assignedToId] : []));
     const candidateCapacity = new Map<string, number>();
@@ -90,7 +92,10 @@ export class OperationalRiskService {
       return group.length >= thresholds.minSourceVolume && rate >= thresholds.sourceRiskPercent ? [{ source, volume: group.length, rejectedOrReview, rate }] : [];
     });
     const queues = { unassigned: active.filter((row) => !row.assignedToId).length, withoutFirstInteraction, overdueFollowUps, pendingClosures, pendingReassignments };
-    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds);
+    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds).map((alert) => ({ ...alert,
+      ...(alert.code === "follow_up_overdue" ? { drillDown: commercialWorkHref(normalized, "OVERDUE_FOLLOW_UP", "INVOLVED") } : {}),
+      ...(alert.code === "closure_decision_pending" ? { drillDown: commercialWorkHref(normalized, "PENDING_CLOSURE", "INVOLVED") } : {}),
+    }));
     const report: OperationalRiskReport = { definitionVersion: OPERATIONAL_RISK_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       thresholds, queues, capacity, sourceRisks, alerts, sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",
       safeguards: { disciplinaryScore: false, financialDecision: false } };

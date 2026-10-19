@@ -301,10 +301,13 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
     assert.equal(after.firstTreatmentDeadlineAt, initial.firstTreatmentDeadlineAt); assert.ok(after.firstTreatmentAgeMinutes >= initial.firstTreatmentAgeMinutes);
   }
   const slaQuery = new URLSearchParams({ from: "2026-01-01", to: "2026-12-31", campaign: slaCampaign, adviserId: commercialId });
+  const workDue = new Date(Date.now() - 60_000);
+  await client.leadFollowUp.create({ data: { leadId: sourced.id, ownerId: commercialId, dueAt: workDue, createdAt: new Date(workDue.valueOf() - 60_000), state: "SCHEDULED", reason: "Suivi synthétique de cohérence des compteurs", idempotencyKey: "synthetic-work-counter", fingerprint: createHash("sha256").update("synthetic-work-counter").digest("hex") } });
+  await client.lead.update({ where: { id: sourced.id }, data: { nextActionAt: workDue } });
   type SlaQueue = { count: number; href: string };
   const dashboardSlaResponse = await businessRequest(supervisorToken, `/reports/manager-dashboard?${slaQuery}`);
   assert.equal(dashboardSlaResponse.status, 200, await dashboardSlaResponse.clone().text());
-  const slaDashboard = await dashboardSlaResponse.json() as { firstTreatmentOverdue: SlaQueue; panels: { funnel: { firstTreatmentOverdue: SlaQueue } } };
+  const slaDashboard = await dashboardSlaResponse.json() as { firstTreatmentOverdue: SlaQueue; panels: { funnel: { firstTreatmentOverdue: SlaQueue } }; cards: { overdueFollowUps: number }; drillDowns: Array<{ key: string; href: string }> };
   assert.equal(slaDashboard.firstTreatmentOverdue.count, 2); assert.equal(slaDashboard.panels.funnel.firstTreatmentOverdue.count, 2);
   for (const queue of [slaDashboard.firstTreatmentOverdue, slaDashboard.panels.funnel.firstTreatmentOverdue]) {
     const response = await businessRequest(supervisorToken, queue.href); assert.equal(response.status, 200);
@@ -321,6 +324,15 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
 
   type WorkSummary = { key: string; leadCount: number; itemCount: number; href: string };
   type WorkRead = { queues: WorkSummary[]; selectedQueue: string; page: { total: number; items: Array<{ id: string }> }; cohort: { leadCount: number }; advisers: Array<{ adviserId: string }> };
+  const dashboardLink = new URL(slaDashboard.drillDowns.find((item) => item.key === "overdueFollowUps")!.href, "https://example.invalid");
+  assert.equal(dashboardLink.pathname, "/manager/reports/commercial-work"); assert.equal(dashboardLink.searchParams.get("adviserScope"), "INVOLVED");
+  dashboardLink.searchParams.delete("returnTo");
+  const dashboardWorkResponse = await businessRequest(supervisorToken, `/reports/commercial-work?${dashboardLink.searchParams}`);
+  assert.equal(dashboardWorkResponse.status, 200, await dashboardWorkResponse.clone().text());
+  const dashboardWork = await dashboardWorkResponse.json() as WorkRead;
+  assert.equal(slaDashboard.cards.overdueFollowUps, 1);
+  assert.equal(dashboardWork.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!.itemCount, slaDashboard.cards.overdueFollowUps);
+  assert.deepEqual(dashboardWork.page.items.map((item) => item.id), [sourced.id]);
   const workResponse = await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&queue=FIRST_TREATMENT_OVERDUE`);
   assert.equal(workResponse.status, 200, await workResponse.clone().text());
   const work = await workResponse.json() as WorkRead;

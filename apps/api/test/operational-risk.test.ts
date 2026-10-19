@@ -14,6 +14,8 @@ import { OperationalRiskController } from "../src/reporting/operational-risk.con
 import { OperationalRiskService } from "../src/reporting/operational-risk.service.js";
 import { withPilotageReportingScope } from "../src/reporting/reporting-authority.js";
 import { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
+import { CommercialWorkService } from "../src/reporting/commercial-work.service.js";
+import { normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviser: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-adviser" };
@@ -44,6 +46,14 @@ test("reports explicit workload, reactivity, approval and source alerts without 
   const report = service.read({ noInteractionHours: "24", capacityWarningPercent: "90", loadGap: "1", sourceRiskPercent: "30", minSourceVolume: "3" }, manager, "corr-report", reportingAt);
   assert.equal(report.queues.unassigned >= 1, true); assert.equal(report.queues.withoutFirstInteraction, 1); // Contacted is not a first-contact backlog.
   assert.equal(report.queues.overdueFollowUps, 1); assert.equal(report.queues.pendingClosures, 1); assert.equal(report.queues.pendingReassignments, 1);
+  const workService = new CommercialWorkService(leads, followUps, closures, audit);
+  for (const alert of report.alerts.filter((item) => ["follow_up_overdue", "closure_decision_pending"].includes(item.code))) {
+    const { queue, adviserScope, ...filters } = Object.fromEntries(new URL(alert.drillDown, "https://example.invalid").searchParams);
+    const work = workService.read(normalizeWorkQuery(filters, manager, reportingAt), { queue, adviserScope }, manager, "fixture-work", reportingAt);
+    const selected = work.queues.find((item) => item.key === work.selectedQueue)!;
+    assert.equal(selected.itemCount, alert.count); assert.equal(work.page.total, selected.leadCount);
+    assert.equal(work.cohort.attribution, "INVOLVED_ADVISER");
+  }
   assert.equal(report.capacity.find((item) => item.adviserId === "adviser-a")?.utilizationPercent, 100);
   assert.equal(report.sourceRisks.find((item) => item.source === "WEB_FORM")?.rate, 100);
   assert.equal(report.alerts.some((item) => item.code === "unassigned_leads"), true);

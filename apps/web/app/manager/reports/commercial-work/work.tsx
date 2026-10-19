@@ -28,7 +28,7 @@ function queue(value: unknown): value is Queue {
 export function parseWorkReport(value: unknown): WorkReport {
   if (!object(value) || value.definitionVersion !== "commercial-work-v1" || value.timezone !== "Africa/Casablanca" || typeof value.generatedAt !== "string" || !Number.isFinite(Date.parse(value.generatedAt))
     || !Array.isArray(value.queues) || value.queues.length !== keys.length || !value.queues.every(queue) || new Set(value.queues.map((item) => item.key)).size !== keys.length
-    || !object(value.cohort) || !count(value.cohort.leadCount) || value.cohort.attribution !== "CURRENT_PRIMARY_ADVISER" || value.cohort.dateBasis !== "LEAD_CREATED_COHORT_CURRENT_STATE" || ![value.cohort.from, value.cohort.to].every((date) => date === undefined || typeof date === "string" && Number.isFinite(Date.parse(date)))
+    || !object(value.cohort) || !count(value.cohort.leadCount) || !["CURRENT_PRIMARY_ADVISER", "INVOLVED_ADVISER"].includes(String(value.cohort.attribution)) || value.cohort.dateBasis !== "LEAD_CREATED_COHORT_CURRENT_STATE" || ![value.cohort.from, value.cohort.to].every((date) => date === undefined || typeof date === "string" && Number.isFinite(Date.parse(date)))
     || !actions(value.actions) || !Array.isArray(value.advisers) || !value.advisers.every((item) => object(item) && typeof item.adviserId === "string" && (item.adviserLabel === undefined || typeof item.adviserLabel === "string") && count(item.leadCount) && actions(item.actions) && Array.isArray(item.queues) && item.queues.length === keys.length && item.queues.every(queue) && new Set(item.queues.map((entry) => entry.key)).size === keys.length && item.queues.every((entry) => entry.leadShare.denominator === item.leadCount))
     || !Array.isArray(value.definitions) || !value.definitions.every((item) => typeof item === "string")) throw new Error("commercial_work_contract_invalid");
   const page = readLeadListPage(value.page as ApiValue);
@@ -53,7 +53,7 @@ export default function CommercialWork({ query }: Readonly<{ query: string }>): 
     setState({ kind: "loading" });
     void (async (): Promise<void> => {
       try {
-        const response = await fetch(`/api/crm/reports/commercial-work?${query}`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
+        const response = await fetch(workApiEndpoint(query), { credentials: "same-origin", cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error(response.status === 401 ? "Session expirée. Reconnectez-vous pour consulter votre file." : response.status === 403 ? "Votre périmètre ne permet pas cette consultation." : "File indisponible. Vérifiez les filtres ; aucun total n’est confirmé.");
         const report = parseWorkReport(await response.json()); if (current) setState({ kind: "ready", report });
       } catch (error) { if (current) setState({ kind: "error", message: controller.signal.aborted ? "Délai de chargement dépassé. Réessayez." : error instanceof Error ? error.message : "Chargement impossible." }); }
@@ -76,4 +76,10 @@ export default function CommercialWork({ query }: Readonly<{ query: string }>): 
       <details><summary>Définitions, période et limites</summary>{state.report.definitions.map((definition) => <p key={definition}>{definition}</p>)}<p>Lecture API générée le {new Date(state.report.generatedAt).toLocaleString("fr-FR", { timeZone: "Africa/Casablanca" })}, heure de Casablanca. Les droits sont revérifiés à chaque ouverture de file.</p></details>
     </> : null}
   </main>;
+}
+
+/** Navigation state is not a server filter, just as in Pipeline drilldowns. */
+export function workApiEndpoint(query: string): string {
+  const params = new URLSearchParams(query); params.delete("returnTo");
+  return `/api/crm/reports/commercial-work?${params.toString()}`;
 }

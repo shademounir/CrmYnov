@@ -3,7 +3,8 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import CommercialWork, { parseWorkReport } from "../app/manager/reports/commercial-work/work";
+import CommercialWork, { parseWorkReport, workApiEndpoint } from "../app/manager/reports/commercial-work/work";
+import { preserveFilters } from "../app/manager/reports/dashboard/reporting-ui";
 
 const keys = ["TO_CONTACT", "FIRST_TREATMENT_OVERDUE", "ACTIVE_FOLLOW_UP", "OVERDUE_FOLLOW_UP", "NEXT_ACTION_MISSING", "PENDING_CLOSURE"];
 function fixture(): Record<string, unknown> {
@@ -22,6 +23,14 @@ test("work contract requires all six queues, exact selected total and explicit r
     (value: Record<string, unknown>): void => { (value.queues as Array<{ href: string }>)[0]!.href = "https://example.invalid"; },
   ]) { const value = fixture(); mutate(value); assert.throws(() => parseWorkReport(value)); }
   assert.match(renderToStaticMarkup(React.createElement(CommercialWork, { query: "campus=SYNTHETIC" })), /Chargement des files autorisées/u);
+});
+
+test("dashboard navigation context never becomes an API filter or changes frozen selection scope", () => {
+  const href = preserveFilters("/manager/reports/commercial-work?queue=OVERDUE_FOLLOW_UP&adviserScope=INVOLVED&period=open", new URLSearchParams({ campus: "SYNTHETIC", adviserId: "synthetic" }));
+  const endpoint = workApiEndpoint(href.split("?")[1]!);
+  const params = new URL(endpoint, "https://example.invalid").searchParams;
+  assert.equal(params.has("returnTo"), false); assert.equal(params.get("adviserScope"), "INVOLVED"); assert.equal(params.get("period"), "open");
+  assert.equal(params.get("campus"), "SYNTHETIC"); assert.equal(params.get("adviserId"), "synthetic");
 });
 
 test("work UI reads server units and selected dossiers then removes them after session failure", async (t) => {

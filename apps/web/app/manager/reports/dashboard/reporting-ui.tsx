@@ -346,6 +346,7 @@ type OperationalAlert = DashboardReport["panels"]["operationalRisks"]["alerts"][
 function operationalAlertHref(alert: OperationalAlert, query: URLSearchParams): string { return preserveFilters(alert.drillDown, query); }
 function unavailableAlertLabel(): string { return "Liste non disponible dans cette vue ; consultez votre responsable"; }
 function operationalAlertLinkLabel(alert: OperationalAlert): string {
+  if (alert.drillDown.startsWith("/manager/reports/commercial-work?")) return "Ouvrir les actions et dossiers de cette file";
   if (alert.code === "follow_up_overdue") return "Ouvrir la file distincte des Leads à relancer";
   if (alert.code === "first_interaction_overdue") return "Ouvrir les Prospects à contacter en retard";
   if (alert.code === "unassigned_leads") return "Ouvrir la file non affectée (statuts clos inclus)";

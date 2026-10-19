@@ -46,6 +46,10 @@ test("consolidates versioned reports with common filters and explicit safeguards
   assert.equal(csv.includes('rate,enrolledConversionRatio,"0.5",'), true);
   assert.equal(csv.includes("distribution,source,\"'=FORMULA\",1"), true);
   assert.equal(result.drillDowns.every((item) => item.href.includes("returnTo=")), true);
+  const workLink = new URL(result.drillDowns.find((item) => item.key === "overdueFollowUps")!.href, "https://example.invalid");
+  assert.equal(workLink.pathname, "/manager/reports/commercial-work");
+  assert.equal(workLink.searchParams.get("adviserScope"), "INVOLVED");
+  assert.equal(workLink.searchParams.get("queue"), "OVERDUE_FOLLOW_UP");
   assert.equal(audit.list().some((event) => event.eventType === "MANAGER_DASHBOARD_VIEWED"), true);
 });
 

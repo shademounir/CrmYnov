@@ -13,6 +13,7 @@ import { matchesInteractiveFilters, normalizeReportingQuery, reportingSearchPara
 import { acquisitionPartition, isBaseline, observedEnrollment, type AcquisitionPartition } from "./acquisition-cohort.js";
 import { isToContact } from "../leads/lead-treatment.js";
 import { firstTreatmentState } from "../leads/first-treatment.js";
+import { commercialWorkHref } from "./commercial-work-query.js";
 
 export const MANAGER_DASHBOARD_VERSION = "manager-dashboard-v1";
 export type ManagerDashboardQuery = InteractiveReportingQuery;
@@ -113,7 +114,7 @@ export class ManagerDashboardService {
       { key: "uniqueLeads", count: cards.uniqueLeads, href: this.leadHref(query) },
       { key: "enrolled", count: cards.enrolled, href: this.leadHref({ ...query, status: "ENROLLED" }) },
       { key: "unassigned", count: cards.unassigned, href: this.leadHref(query, { view: "UNASSIGNED" }) },
-      { key: "overdueFollowUps", count: cards.overdueFollowUps, href: this.leadHref(query, { view: "FOLLOW_UP" }) },
+      { key: "overdueFollowUps", count: cards.overdueFollowUps, href: `${commercialWorkHref(query, "OVERDUE_FOLLOW_UP", "INVOLVED")}&${new URLSearchParams({ returnTo: `/manager/reports/dashboard?${suffix}` })}` },
     ];
     const exportHref = `/reports/manager-dashboard/export?${suffix}`;
     const report: ManagerDashboardReport = { definitionVersion: MANAGER_DASHBOARD_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",

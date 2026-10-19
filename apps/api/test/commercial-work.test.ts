@@ -10,6 +10,7 @@ import { projectCommercialWork } from "../src/reporting/commercial-work.js";
 import { CommercialWorkService, workQueueKey } from "../src/reporting/commercial-work.service.js";
 import { commercialWorkPaths } from "../src/reporting/commercial-work.openapi.js";
 import { routePermissions, usesScopedReportingAuthorization } from "../src/permissions/dynamic-routes.js";
+import { commercialWorkHref, normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
 
 const now = new Date("2026-10-20T12:00:00Z");
 const manager: Principal = { userId: "manager", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "synthetic" };
@@ -53,9 +54,9 @@ test("every summary and adviser drilldown reuses the exact paginated selection a
   assert.equal(report.cohort.leadCount, 3); assert.equal(report.advisers.length, 2);
   for (const summary of report.queues) {
     const params = Object.fromEntries(new URL(summary.href, "https://example.invalid").searchParams);
-    const { queue, ...filters } = params;
+    const { queue, adviserScope, ...filters } = params;
     assert.equal(params.period, "custom", "drilldown freezes explicit cohort boundaries rather than recomputing a rolling window");
-    const list = service.read(filters, { queue, page: "1", pageSize: "1" }, manager, "fixture", now);
+    const list = service.read(filters, { queue, adviserScope, page: "1", pageSize: "1" }, manager, "fixture", now);
     assert.equal(list.page.total, summary.leadCount);
     assert.ok(list.page.items.length <= 1);
     assert.equal(summary.leadShare.numerator, summary.leadCount); assert.equal(summary.leadShare.denominator, 3);
@@ -63,8 +64,8 @@ test("every summary and adviser drilldown reuses the exact paginated selection a
   const adviser = report.advisers.find((item) => item.adviserId === "adviser-a")!;
   assert.equal(adviser.leadCount, 1, "secondary contribution not silently counted as primary portfolio");
   for (const summary of adviser.queues) {
-    const { queue, ...filters } = Object.fromEntries(new URL(summary.href, "https://example.invalid").searchParams);
-    const list = service.read(filters, { queue }, manager, "fixture", now);
+    const { queue, adviserScope, ...filters } = Object.fromEntries(new URL(summary.href, "https://example.invalid").searchParams);
+    const list = service.read(filters, { queue, adviserScope }, manager, "fixture", now);
     assert.equal(list.page.total, summary.leadCount); assert.equal(list.cohort.leadCount, adviser.leadCount);
   }
   const personal: Principal = { ...manager, userId: "adviser-a", roles: ["ADMISSIONS"] };
@@ -72,6 +73,26 @@ test("every summary and adviser drilldown reuses the exact paginated selection a
   assert.deepEqual(own.page.items.map((lead) => lead.id), ["a"]);
   const fenced = service.read(query, {}, { ...manager, permissionLeadIds: new Set(["a"]) }, "fixture", now);
   assert.equal(fenced.cohort.leadCount, 1); assert.equal(JSON.stringify(fenced).includes("Conseiller B"), false);
+});
+
+test("explicit involved mode preserves collaborations without widening the authorized fence", async () => {
+  const service = await setup(); const query = { campus: "CAMPUS", adviserId: "adviser-a" };
+  const involved = service.read(query, { adviserScope: "INVOLVED" }, manager, "fixture", now);
+  assert.equal(involved.cohort.attribution, "INVOLVED_ADVISER");
+  assert.deepEqual(involved.page.items.map((lead) => lead.id), ["a", "secondary"]);
+  const fenced = service.read(query, { adviserScope: "INVOLVED" }, { ...manager, permissionLeadIds: new Set(["a"]) }, "fixture", now);
+  assert.equal(fenced.page.total, 1);
+  assert.throws(() => service.read(query, { adviserScope: "BYPASS" }, manager, "fixture", now));
+});
+
+test("open work periods retain all-time/one-sided cohorts and shared filter denials", () => {
+  const href = commercialWorkHref({ adviserId: "adviser-a" }, "OVERDUE_FOLLOW_UP", "INVOLVED");
+  const params = new URL(href, "https://example.invalid").searchParams;
+  assert.equal(params.get("period"), "open"); assert.equal(params.get("adviserScope"), "INVOLVED");
+  const all = normalizeWorkQuery({ period: "open" }, manager, now); assert.equal(all.from, undefined); assert.equal(all.to, undefined);
+  const one = normalizeWorkQuery({ period: "open", from: "2026-01-01" }, manager, now); assert.equal(one.from, "2026-01-01T00:00:00.000Z"); assert.equal(one.to, undefined);
+  assert.throws(() => normalizeWorkQuery({ period: "open", unexpected: "true" }, manager, now));
+  assert.throws(() => normalizeWorkQuery({ period: "open", from: "invalid" }, manager, now));
 });
 
 test("empty data is observed zero with unavailable ratio; invalid filters never select a default queue", async () => {
