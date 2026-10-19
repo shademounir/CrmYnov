@@ -4,6 +4,7 @@ import { PrismaService } from "../persistence/prisma.service.js";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { LeadService, type CreateLeadInput, type CreateLeadResult, type InteractionCorrectionInput, type LeadActivityRecord, type LeadListQuery, type LeadPage, type LeadRecord, type UpdateLeadInput } from "./lead.service.js";
+import type { CommercialStatusInput } from "./commercial-progression.js";
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
@@ -18,8 +19,8 @@ export class LeadTimelineController {
   }
 
   @Post()
-  @RequireRoles("ADMISSIONS", "ADMIN", "SUPER_ADMIN")
-  async create(@Param("leadId") leadId: string, @Body() body: { type: string; result: string; note?: string; nextActionAt?: string }, @Req() request: AuthenticatedRequest): Promise<LeadActivityRecord> {
+  @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
+  async create(@Param("leadId") leadId: string, @Body() body: { type: string; result: string; note?: string; nextActionAt?: string; idempotencyKey?: string }, @Req() request: AuthenticatedRequest): Promise<LeadActivityRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.leads.addActivityForApi(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
@@ -39,7 +40,7 @@ export class LeadStatusController {
   constructor(@Inject(LeadService) private readonly leads: LeadService) {}
 
   @Patch()
-  async update(@Param("leadId") leadId: string, @Body() body: { status: string; reason?: string }, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {
+  async update(@Param("leadId") leadId: string, @Body() body: CommercialStatusInput, @Req() request: AuthenticatedRequest): Promise<LeadRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
     return this.leads.changeStatusForApi(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }

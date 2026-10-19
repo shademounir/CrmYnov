@@ -1,17 +1,20 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
-import { ClosureService, type ClosureRequest } from "./closure.service.js";
+import { ClosureService, type ClosureInput, type ClosureRequest } from "./closure.service.js";
 
 @Controller()
 @UseGuards(RbacGuard)
 @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
 export class ClosureController {
   constructor(@Inject(ClosureService) private readonly closures: ClosureService) {}
+  @Patch("closure-requests/:id/retire")
+  @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
+  retire(@Param("id") id: string, @Req() request: AuthenticatedRequest): Promise<ClosureRequest> { return this.closures.cancelForApi(id, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation", true); }
   @Post("closure-requests/reconcile-notifications")
   @RequireRoles("MANAGER", "ADMIN", "SUPER_ADMIN")
   reconcileNotifications(@Req() request: AuthenticatedRequest): Promise<{ pendingRequests: number }> { return this.closures.reconcileNotificationsForApi(this.principal(request)); }
-  @Post("leads/:leadId/closure-requests") request(@Param("leadId") leadId: string, @Body() body: { target?: string; reason?: string; comment?: string; evidence?: string[] }, @Req() request: AuthenticatedRequest): ClosureRequest | Promise<ClosureRequest> { return this.closures.persistenceEnabled() ? this.closures.requestForApi(leadId, body, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation") : this.closures.request(leadId, body, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation"); }
+  @Post("leads/:leadId/closure-requests") request(@Param("leadId") leadId: string, @Body() body: ClosureInput, @Req() request: AuthenticatedRequest): ClosureRequest | Promise<ClosureRequest> { return this.closures.persistenceEnabled() ? this.closures.requestForApi(leadId, body, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation") : this.closures.request(leadId, body, this.principal(request), request.header("x-correlation-id") ?? "missing-correlation"); }
   @Get("closure-requests") list(@Req() request: AuthenticatedRequest): { items: ClosureRequest[]; canManage: boolean } | Promise<{ items: ClosureRequest[]; canManage: boolean }> {
     const actor = this.principal(request);
     const canManage = actor.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));

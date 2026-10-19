@@ -14,7 +14,8 @@ test("appends immutable, server-timestamped activities in deterministic order", 
   const first = service.addActivity(lead.id, { type: "CRM_CALL", result: "Answered" }, admissions, "corr-1");
   const second = service.addActivity(lead.id, { type: "COMMENT", result: "Follow-up", nextActionAt: "2099-09-01T09:00:00Z" }, admissions, "corr-2");
   const events = service.timeline(lead.id, admissions);
-  assert.equal(events.length, 2); assert.ok(events.some((event) => event.id === first.id)); assert.ok(events.some((event) => event.id === second.id));
+  assert.equal(events.length, 3); assert.ok(events.some((event) => event.id === first.id)); assert.ok(events.some((event) => event.id === second.id));
+  assert.equal(events.filter(event => event.type === "STATUS_CHANGED" && event.result === "PROSPECT->CONTACTED").length, 1);
   assert.equal(audit.list().filter((event) => event.eventType === "LEAD_ACTIVITY_ADDED").length, 2);
   assert.equal(Object.isFrozen(first), false);
 });

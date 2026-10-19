@@ -107,20 +107,34 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
     assert.equal(response.status, 201); return (await response.json() as { token: string }).token;
   };
   const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId);
-  const businessRequest = (actorToken: string, path: string, method = "GET", payload?: unknown): Promise<Response> => fetch(`${base(firstPort)}${path}`, { method, headers: { authorization: `Bearer ${actorToken}`, "content-type": "application/json", "x-correlation-id": `business-${randomUUID()}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
-  const interaction = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`, "POST", { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nSans prochaine action" });
+  const businessRequest = (actorToken: string, path: string, method = "GET", payload?: unknown, apiPort = firstPort): Promise<Response> => fetch(`${base(apiPort)}${path}`, { method, headers: { authorization: `Bearer ${actorToken}`, "content-type": "application/json", "x-correlation-id": `business-${randomUUID()}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
+  const interactionBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nSans prochaine action", idempotencyKey: "business:first-interaction" };
+  const interaction = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`, "POST", interactionBody);
   assert.equal(interaction.status, 201);
+  const interactionId = (await interaction.json() as { id: string }).id;
+  const replays = await Promise.all([firstPort, secondPort].map(apiPort => fetch(`${base(apiPort)}/leads/${businessLead.id}/timeline`, { method: "POST", headers: { authorization: `Bearer ${commercialToken}`, "content-type": "application/json", "x-correlation-id": randomUUID() }, body: JSON.stringify(interactionBody) })));
+  for (const replay of replays) { assert.equal(replay.status, 201); assert.equal((await replay.json() as { id: string }).id, interactionId); }
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "CONTACTED");
+  assert.equal(await client.leadActivity.count({ where: { leadId: businessLead.id, type: "STATUS_CHANGED" } }), 1);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: businessLead.id, eventType: "LEAD_STATUS_CHANGED" } }), 1);
   const timeline = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`);
   assert.equal(timeline.status, 200);
-  assert.equal((await timeline.json() as { events: Array<{ note?: string }> }).events[0]?.note, "Commentaire synthétique visible\nSans prochaine action");
+  assert((await timeline.json() as { events: Array<{ note?: string }> }).events.some(event => event.note === "Commentaire synthétique visible\nSans prochaine action"));
   const commercialQualification = await businessRequest(commercialToken, `/leads/${businessLead.id}/qualification`, "PATCH", { temperature: "WARM", reason: "Projet commercial confirmé", expectedVersion: 0, idempotencyKey: "business:qualification-owned" });
   assert.equal(commercialQualification.status, 200);
   assert.equal((await businessRequest(commercialToken, `/leads/${outside.id}/qualification`, "PATCH", { temperature: "WARM", reason: "Dossier hors périmètre", expectedVersion: 1, idempotencyKey: "business:qualification-outside" })).status, 403);
-  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/status`, "PATCH", { status: "QUALIFIED" })).status, 403);
-  const proposal = await businessRequest(commercialToken, `/leads/${businessLead.id}/closure-requests`, "POST", { target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", comment: "Projet et contact vérifiés", evidence: ["COMMERCIAL_STAGE_REVIEW"] });
+  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/status`, "PATCH", { status: "QUALIFIED" })).status, 400);
+  const qualified = await businessRequest(commercialToken, `/leads/${businessLead.id}/status`, "PATCH", { status: "QUALIFIED", reason: "Intérêt et éligibilité vérifiés", qualification: { interestConfirmed: true, eligibilityConfirmed: true }, idempotencyKey: "business:positive-qualification" });
+  assert.equal(qualified.status, 200, await qualified.clone().text());
+  assert.equal(await client.internalNotification.count({ where: { resourceId: businessLead.id, type: "CLOSURE_REQUEST" } }), 0);
+  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/closure-requests`, "POST", { target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", comment: "Ancienne demande interdite", evidence: ["LEGACY"] })).status, 400);
+  const closureBody = { target: "ENROLLED", reason: "REGISTRATION_COMPLETE", comment: "Conditions et documents vérifiés", evidence: ["CHECKLIST_COMPLETE"], idempotencyKey: "business:final-closure" };
+  const proposal = await businessRequest(commercialToken, `/leads/${businessLead.id}/closure-requests`, "POST", closureBody);
   assert.equal(proposal.status, 201, await proposal.clone().text());
   const proposed = await proposal.json() as { id: string; version: number };
-  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "PROSPECT");
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "QUALIFIED");
+  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/closure-requests`, "POST", closureBody)).status, 201);
+  assert.equal(await client.leadClosureRequest.count({ where: { leadId: businessLead.id, state: "PENDING" } }), 1);
   assert.equal(await client.internalNotification.count({ where: { recipientId: supervisorId, resourceId: businessLead.id, type: "CLOSURE_REQUEST" } }), 1);
   assert.equal(await client.internalNotification.count({ where: { recipientId: "manager-queue", resourceId: businessLead.id } }), 0);
   const commercialInbox = await businessRequest(commercialToken, "/closure-requests");
@@ -130,14 +144,51 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(supervisorInbox.status, 200);
   assert.equal((await supervisorInbox.json() as { items: Array<{ id: string; canDecide: boolean }> }).items.find((item) => item.id === proposed.id)?.canDecide, true);
   assert.equal((await businessRequest(commercialToken, `/closure-requests/${proposed.id}/decision`, "PATCH", { decision: "APPROVE", reason: "Auto validation", expectedVersion: proposed.version })).status, 403);
-  const decision = await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", { decision: "APPROVE", reason: "Signaux commerciaux vérifiés", expectedVersion: proposed.version });
-  assert.equal(decision.status, 200, await decision.clone().text());
+  // Failure after lead UPDATE must also roll back the status, receipt, activity
+  // and notification. In RC28 these were two separate transactions.
+  await client.$executeRawUnsafe("CREATE FUNCTION fail_closure_decision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = 'CLOSURE_APPROVED' THEN RAISE EXCEPTION 'synthetic_closure_failure'; END IF; RETURN NEW; END $$");
+  await client.$executeRawUnsafe("CREATE TRIGGER closure_decision_failure BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_closure_decision()");
+  const decisionBody = { decision: "APPROVE", reason: "Conditions et pièces vérifiées", expectedVersion: proposed.version };
+  const failedDecision = await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", decisionBody);
+  assert(failedDecision.status >= 500);
   assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "QUALIFIED");
+  assert.equal((await client.leadClosureRequest.findUniqueOrThrow({ where: { id: proposed.id } })).state, "PENDING");
+  assert.equal(await client.auditEvent.count({ where: { resourceId: businessLead.id, eventType: "CLOSURE_APPROVED" } }), 0);
+  assert.equal(await client.internalNotification.count({ where: { recipientId: commercialId, resourceId: businessLead.id, type: "CLOSURE_REQUEST" } }), 0);
+  await client.$executeRawUnsafe("DROP TRIGGER closure_decision_failure ON audit_events");
+  await client.$executeRawUnsafe("DROP FUNCTION fail_closure_decision()");
+  const decision = await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", decisionBody);
+  assert.equal(decision.status, 200, await decision.clone().text());
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "ENROLLED");
+  assert.equal((await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", decisionBody)).status, 200);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: businessLead.id, eventType: "CLOSURE_APPROVED" } }), 1);
+  assert.equal(await client.internalNotification.count({ where: { recipientId: commercialId, resourceId: businessLead.id, type: "CLOSURE_REQUEST" } }), 1);
   const options = await businessRequest(commercialToken, "/leads/filter-options");
   assert.equal(options.status, 200);
   const people = await options.json() as { advisers: Array<{ id: string; label: string }> };
   assert(people.advisers.some((item) => item.id === commercialId && item.label === "Conseillère synthétique"));
   assert(!people.advisers.some((item) => item.id === actorId));
+
+  const fresh = await client.lead.create({ data: { leadCode: "LD-PROGRESSION-CONCURRENT", firstName: "Test", lastName: "Synthétique", campus, campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique", source: "TEST", assignedToId: commercialId } });
+  const concurrentBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Premier échange synthétique", idempotencyKey: "business:concurrent-first-contact" };
+  const simultaneous = await Promise.all([firstPort, secondPort].map(apiPort => businessRequest(commercialToken, `/leads/${fresh.id}/timeline`, "POST", concurrentBody, apiPort)));
+  const ids: string[] = [];
+  for (const response of simultaneous) { assert.equal(response.status, 201, await response.clone().text()); ids.push((await response.json() as { id: string }).id); }
+  assert.equal(ids[0], ids[1]);
+  assert.equal(await client.leadActivity.count({ where: { leadId: fresh.id } }), 2);
+  assert.equal(await client.leadMutationReceipt.count({ where: { leadId: fresh.id, operation: "ADD_ACTIVITY" } }), 1);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: fresh.id, eventType: "LEAD_STATUS_CHANGED" } }), 1);
+
+  const legacy = await client.leadClosureRequest.create({ data: { leadId: fresh.id, target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", comment: "Ancienne demande synthétique", evidence: ["LEGACY_FIXTURE"], requesterId: commercialId } });
+  assert.equal((await businessRequest(commercialToken, `/closure-requests/${legacy.id}/retire`, "PATCH")).status, 403);
+  assert.equal((await businessRequest(supervisorToken, `/closure-requests/${legacy.id}/decision`, "PATCH", { decision: "APPROVE", expectedVersion: 1, reason: "Ancien circuit" })).status, 409);
+  for (const apiPort of [firstPort, secondPort]) assert.equal((await businessRequest(supervisorToken, `/closure-requests/${legacy.id}/retire`, "PATCH", undefined, apiPort)).status, 200);
+  assert.equal((await client.leadClosureRequest.findUniqueOrThrow({ where: { id: legacy.id } })).decisionReason, "COMMERCIAL_STAGE_WORKFLOW_RETIRED_V1");
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: fresh.id } })).status, "CONTACTED");
+  assert.equal(await client.auditEvent.count({ where: { idempotencyKey: `closure-audit:CLOSURE_CANCELLED:${legacy.id}:2` } }), 1);
+  const competing = await Promise.all([firstPort, secondPort].map((apiPort, index) => businessRequest(commercialToken, `/leads/${fresh.id}/closure-requests`, "POST", { target: "CLOSED_LOST", reason: "NOT_INTERESTED", comment: "Refus synthétique", evidence: ["REFUS_EXPLICITE"], idempotencyKey: `business:competing-closure-${index}` }, apiPort)));
+  assert.deepEqual(competing.map(response => response.status).sort(), [201, 409]);
+  assert.equal(await client.leadClosureRequest.count({ where: { leadId: fresh.id, state: "PENDING" } }), 1);
 
   await second.close(); secondClosed = true;
   const restarted = await createApplication("error"); const restartPort = await port(); await restarted.listen(restartPort, "127.0.0.1");
