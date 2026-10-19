@@ -19,6 +19,7 @@ import { bootstrapImportPaths, bootstrapImportSchemas } from "./bootstrap-import
 import { cutoverPaths, cutoverSchemas } from "./cutover/cutover.openapi.js";
 import { manualInteractionSchema, followUpDecisionSchema } from "./follow-up/next-action.openapi.js";
 import { firstTreatmentSchemas, treatmentListParameters } from "./leads/first-treatment.openapi.js";
+import { commercialWorkPaths } from "./reporting/commercial-work.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -46,6 +47,7 @@ export function configureApplication(app: INestApplication): void {
       ...admissionsPaths,
       ...ownTelephonyPaths,
       ...dashboardCapabilityPaths,
+      ...commercialWorkPaths,
       ...bootstrapImportPaths,
       ...cutoverPaths,
       "/health": {

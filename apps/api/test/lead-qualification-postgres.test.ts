@@ -319,6 +319,35 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(foreignSla.status, 200, "list filters refine the already authorized scope rather than granting another adviser's scope");
   assert.deepEqual(await foreignSla.json(), { items: [], page: 1, pageSize: 25, total: 0 }, "another adviser's filter must not expose a single foreign Lead or inflate its total");
 
+  type WorkSummary = { key: string; leadCount: number; itemCount: number; href: string };
+  type WorkRead = { queues: WorkSummary[]; selectedQueue: string; page: { total: number; items: Array<{ id: string }> }; cohort: { leadCount: number }; advisers: Array<{ adviserId: string }> };
+  const workResponse = await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&queue=FIRST_TREATMENT_OVERDUE`);
+  assert.equal(workResponse.status, 200, await workResponse.clone().text());
+  const work = await workResponse.json() as WorkRead;
+  assert.equal((await fetch(`${base(firstPort)}/reports/commercial-work`)).status, 401, "no unauthenticated queue access");
+  assert.equal((await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&queue=__proto__`)).status, 400);
+  assert.equal((await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&unexpected=true`)).status, 400);
+  assert.equal((await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&campus=${otherCampus}`)).status, 403, "campus scope unchanged");
+  assert.equal((await businessRequest(commercialToken, `/reports/commercial-work?${slaQuery}&view=global`)).status, 403, "commercial cannot request pilotage");
+  assert.equal(work.queues.length, 6); assert.equal(work.cohort.leadCount, 2); assert.equal(work.page.total, 2);
+  assert.deepEqual(work.page.items.map(item => item.id).sort(), [sourced.id, observed.id].sort());
+  for (const queue of work.queues) {
+    const link = queue.href.replace("/manager/reports/commercial-work?", "/reports/commercial-work?");
+    const response = await businessRequest(supervisorToken, link);
+    assert.equal(response.status, 200, await response.clone().text());
+    const list = await response.json() as WorkRead;
+    assert.equal(list.selectedQueue, queue.key); assert.equal(list.page.total, queue.leadCount);
+    assert.equal(list.page.items.some(item => item.id === otherOwner.id), false);
+  }
+  const ownWorkResponse = await businessRequest(commercialToken, `/reports/commercial-work?${slaQuery}&view=personal&queue=FIRST_TREATMENT_OVERDUE`);
+  assert.equal(ownWorkResponse.status, 200, await ownWorkResponse.clone().text());
+  const ownWork = await ownWorkResponse.json() as WorkRead;
+  assert.equal(ownWork.page.total, 2); assert.deepEqual(ownWork.advisers.map(adviser => adviser.adviserId), [commercialId]);
+  const foreignWork = await businessRequest(commercialToken, `/reports/commercial-work?${slaQuery}&adviserId=${actorId}`);
+  // Personal reporting canonicalizes the adviser to the authenticated commercial.
+  assert.equal(foreignWork.status, 200, await foreignWork.clone().text());
+  assert.equal((await foreignWork.json() as WorkRead).page.items.some(item => item.id === otherOwner.id), false);
+
   await second.close(); secondClosed = true;
   const restarted = await createApplication("error"); const restartPort = await port(); await restarted.listen(restartPort, "127.0.0.1");
   t.after(() => restarted.close());

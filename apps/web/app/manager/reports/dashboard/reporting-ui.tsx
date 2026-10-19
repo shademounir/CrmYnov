@@ -142,8 +142,9 @@ function ReportingState({ state, report, showTables, query, operationalThreshold
   if (state === "error") return <section role="alert"><h2>Erreur de chargement</h2><p>Le rapport n’a pas pu être chargé. Réessayez sans modifier vos filtres.</p></section>;
   if (state === "empty") return <section aria-live="polite"><h2>Aucun résultat</h2><p>Aucune donnée agrégée pour les filtres sélectionnés.</p></section>;
   if (!report) return null;
-  if ("cards" in report) return <DashboardContent report={report} showTables={showTables} query={query} operationalThreshold={operationalThreshold} onSessionExpired={onSessionExpired} />;
-  return <PersonalDashboardContent report={report} showTables={showTables} />;
+  return <><p><Link className="secondary-button" href={preserveFilters("/manager/reports/commercial-work", query)}>Ouvrir les six files et le suivi par conseiller principal</Link></p>{"cards" in report
+    ? <DashboardContent report={report} showTables={showTables} query={query} operationalThreshold={operationalThreshold} onSessionExpired={onSessionExpired} />
+    : <PersonalDashboardContent report={report} showTables={showTables} />}</>;
 }
 
 function PersonalDashboardContent({ report, showTables }: Readonly<{ report: PersonalDashboardReport; showTables: boolean }>): React.JSX.Element {
@@ -375,7 +376,7 @@ function AccessibleTrend({ data, showTable }: Readonly<{ data: DashboardReport["
 }
 
 function preserveFilters(href: string, query: URLSearchParams): string {
-  const safe = safeInternalHref(href, ["/leads", "/manager/assignment", "/manager/validations", "/manager/reports/commercial-performance", "/manager/reports/commercial-funnel", "/reports/manager-dashboard/export"]);
+  const safe = safeInternalHref(href, ["/leads", "/manager/assignment", "/manager/validations", "/manager/reports/commercial-performance", "/manager/reports/commercial-funnel", "/manager/reports/commercial-work", "/reports/manager-dashboard/export"]);
   if (safe === "#") return safe;
   const [path, current = ""] = safe.split("?");
   const params = new URLSearchParams(current);
