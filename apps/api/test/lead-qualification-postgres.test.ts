@@ -169,6 +169,45 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert(people.advisers.some((item) => item.id === commercialId && item.label === "Conseillère synthétique"));
   assert(!people.advisers.some((item) => item.id === actorId));
 
+  // Synthetic imported history: old business date and unknown date coexist
+  // with a recent technical import. No PROD source or candidate is involved.
+  const historyCampaign = "Traitement synthetique";
+  const historyLeads = await Promise.all(["DATED", "UNKNOWN", "NONE"].map(suffix => client.lead.create({ data: {
+    leadCode: `LD-TREATMENT-${suffix}`, firstName: "Test", lastName: "Synthétique", campus,
+    campaign: historyCampaign, educationLevel: "BAC", program: "Programme synthétique", source: "TEST",
+    assignedToId: commercialId, lastActivityAt: new Date(),
+  } })));
+  const hashFixture = (value: string): string => createHash("sha256").update(value).digest("hex");
+  const historyPackage = await client.bootstrapImportPackage.create({ data: { actorId, campusId: randomUUID(), key: "synthetic-treatment-history", fingerprint: hashFixture("fixture"), fileName: "synthetic-fixture.xlsx", sizeBytes: 1, sha256: hashFixture(randomUUID()) } });
+  const historyPlan = await client.bootstrapImportPlan.create({ data: { packageId: historyPackage.id, version: 1, mappingVersion: "synthetic", fingerprint: hashFixture("plan"), configuration: {} } });
+  for (const [index, historyLead] of historyLeads.slice(0, 2).entries()) {
+    const row = await client.bootstrapImportRow.create({ data: { packageId: historyPackage.id, planId: historyPlan.id, sheet: "SYNTHETIC", relationId: "r1", rowNumber: index + 1, sourceKey: hashFixture(`row-${index}`), fingerprint: hashFixture(`payload-${index}`), payload: {}, mapped: {}, reasons: [], leadId: historyLead.id } });
+    await client.importedHistoricalNote.create({ data: { rowId: row.id, leadId: historyLead.id, cellKey: hashFixture(`cell-${index}`), fingerprint: hashFixture(`note-${index}`), sourceSheet: "SYNTHETIC", sourceRow: index + 1, sourceColumn: "A", text: "Commentaire synthétique exact", sourceValue: "Commentaire synthétique exact", occurredAt: index === 0 ? new Date("2026-01-01T23:30:00.000Z") : null } });
+    await client.leadActivity.create({ data: { leadId: historyLead.id, type: "LEGACY_IMPORT", result: "IMPORTED", authorId: actorId, correlationId: "synthetic-history-import" } });
+  }
+  const historyQuery = new URLSearchParams({ campaign: historyCampaign, sortBy: "lastTreatmentAt", sortDirection: "asc", view: "TO_CONTACT" });
+  type HistoryPage = { items: Array<{ id: string; lastTreatmentAt?: string; treatmentState: string }>; total: number };
+  const readHistory = async (extra: Record<string, string> = {}): Promise<HistoryPage> => {
+    const response = await businessRequest(commercialToken, `/leads?${new URLSearchParams({ ...Object.fromEntries(historyQuery), ...extra })}`);
+    assert.equal(response.status, 200); return response.json() as Promise<HistoryPage>;
+  };
+  const allHistory = await readHistory();
+  assert.equal(allHistory.total, 3);
+  assert.equal(allHistory.items[0]?.lastTreatmentAt, "2026-01-01T23:30:00.000Z");
+  assert.equal(allHistory.items.find(item => item.id === historyLeads[1]!.id)?.treatmentState, "UNKNOWN_DATE");
+  assert.equal(allHistory.items.find(item => item.id === historyLeads[2]!.id)?.treatmentState, "NONE");
+  assert.equal((await readHistory({ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" })).total, 1);
+  assert.equal((await readHistory({ treatmentState: "UNKNOWN_DATE" })).total, 1);
+  const dashboard = await businessRequest(supervisorToken, `/reports/manager-dashboard?period=30d&campaign=${encodeURIComponent(historyCampaign)}`);
+  assert.equal(dashboard.status, 200, await dashboard.clone().text());
+  const contactCard = (await dashboard.json() as { toContact: { count: number; href: string } }).toContact;
+  assert.equal(contactCard.count, allHistory.total);
+  const fromCard = await businessRequest(supervisorToken, contactCard.href);
+  assert.equal(fromCard.status, 200); assert.equal((await fromCard.json() as { total: number }).total, contactCard.count);
+  assert.equal((await businessRequest(commercialToken, `/leads/${historyLeads[2]!.id}/timeline`, "POST", { type: "COMMENT", result: "COMPLETED", note: "Premier échange synthétique daté", idempotencyKey: "treatment:first-contact" })).status, 201);
+  assert.equal((await readHistory()).total, 2);
+  assert.equal(await client.importedHistoricalNote.count({ where: { leadId: { in: historyLeads.map(item => item.id) } } }), 2);
+
   const fresh = await client.lead.create({ data: { leadCode: "LD-PROGRESSION-CONCURRENT", firstName: "Test", lastName: "Synthétique", campus, campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique", source: "TEST", assignedToId: commercialId } });
   const concurrentBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Premier échange synthétique", idempotencyKey: "business:concurrent-first-contact" };
   const simultaneous = await Promise.all([firstPort, secondPort].map(apiPort => businessRequest(commercialToken, `/leads/${fresh.id}/timeline`, "POST", concurrentBody, apiPort)));

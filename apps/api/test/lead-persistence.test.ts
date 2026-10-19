@@ -25,6 +25,7 @@ type Row = Record<string, unknown>;
 function fakeRepository(): { repository: LeadPersistenceRepository; state: FakeState } {
   const state: FakeState = { leads: [], activities: [], receipts: [], collaborators: [], outbox: [], audits: [] };
   const client = {
+    importedHistoricalNote: { findMany: async () => [] },
     auditEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { state.audits.push(data); return data; } },
     crmReferenceKey: { findMany: async ({ where }: { where: { kind: string; key: string } }) => where.key === "SYNTHETIC" ? [{ reference: { id: `${where.kind}-synthetic`, code: "SYNTHETIC", state: "ACTIVE" } }] : [] },
     crmProgramAvailability: { findUnique: async () => ({ active: true }) },

@@ -142,6 +142,7 @@ test("persistence projects explicit baseline temperature without manufacturing a
   const rows = [row("baseline", "BASELINE", "HOT"), row("human", "BASELINE", "HOT", [{ temperature: "COLD", version: 1, reason: "Qualification synthétique", authorId: adviser.userId, createdAt: now }]),
     row("new", "NEW", "HOT"), row("unknown", "BASELINE", null)];
   const client = { lead: { findMany: (): Promise<typeof rows> => Promise.resolve(rows) }, leadActivity: { findMany: (): Promise<[]> => Promise.resolve([]) },
+    importedHistoricalNote: { findMany: (): Promise<[]> => Promise.resolve([]) },
     $transaction: (operations: Promise<unknown>[]): Promise<unknown[]> => Promise.all(operations) };
   const repository = new LeadPersistenceRepository({ enabled: true, client } as unknown as PrismaService);
   const snapshot = await repository.snapshot(); const [baseline, human, fresh, unknown] = snapshot.leads;

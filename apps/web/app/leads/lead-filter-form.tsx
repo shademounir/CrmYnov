@@ -34,7 +34,7 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
     return (): void => controller.abort();
   }, []);
   const sharedView = Boolean(current.get("sharedViewId"));
-  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "collaboratorLabel", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize", "page"]);
+  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "collaboratorLabel", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "treatmentFrom", "treatmentTo", "treatmentState", "sortBy", "sortDirection", "pageSize", "page"]);
   // Context fields are not owned by this form (shared view, provenance, drill-down, return URL).
   const preserved = [...current.entries()].filter(([key]) => !visibleKeys.has(key));
   return <form className="lead-filter-form" action="/leads" method="get" aria-label={mode === "follow-up" ? "Recherche dans les relances" : "Recherche et filtres des leads"}>
@@ -62,10 +62,13 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
         <label>Lot d’import<input name="importBatchId" defaultValue={current.get("importBatchId") ?? ""} /></label>
         <DateBoundaryFilter name="createdFrom" label="Créés à partir du" initialValue={current.get("createdFrom") ?? ""} />
         <DateBoundaryFilter name="createdTo" label="Créés jusqu’au (inclus)" initialValue={current.get("createdTo") ?? ""} />
-        <label>Trier par<select name="sortBy" defaultValue={current.get("sortBy") ?? "createdAt"}><option value="createdAt">Date de création</option><option value="leadCode">Identifiant</option><option value="lastName">Nom</option><option value="status">Statut</option></select></label>
+        <label>Dernier traitement à partir du<input name="treatmentFrom" type="date" defaultValue={current.get("treatmentFrom") ?? ""} /></label>
+        <label>Dernier traitement jusqu’au (inclus)<input name="treatmentTo" type="date" defaultValue={current.get("treatmentTo") ?? ""} /></label>
+        <label>Historique de traitement<select name="treatmentState" defaultValue={current.get("treatmentState") ?? ""}><option value="">Tous les historiques</option><option value="DATED">Historique entièrement daté</option><option value="UNKNOWN_DATE">Contient un commentaire de date inconnue</option><option value="NONE">Aucun traitement connu</option></select></label>
+        <label>Trier par<select name="sortBy" defaultValue={current.get("sortBy") ?? "createdAt"}><option value="createdAt">Date de création</option><option value="lastTreatmentAt">Dernier traitement métier</option><option value="leadCode">Identifiant</option><option value="lastName">Nom</option><option value="status">Statut</option></select></label>
         <label>Sens du tri<select name="sortDirection" defaultValue={current.get("sortDirection") ?? "desc"}><option value="desc">Décroissant</option><option value="asc">Croissant</option></select></label>
         <label>Résultats par page<input name="pageSize" type="number" min={1} max={100} required defaultValue={current.get("pageSize") ?? "25"} /></label>
-      </div><p className="lead-filter-help">Les journées saisies couvrent une journée UTC complète. Les bornes horaires déjà présentes dans l’URL restent inchangées tant que la date n’est pas modifiée.{mode === "follow-up" ? " La file de relances est toujours ordonnée par échéance, la plus ancienne d’abord." : ""}</p></details>
+      </div><p className="lead-filter-help">Dernier traitement : journées de Casablanca, bornes incluses. Les dates d’import et les lectures sont exclues. Une date inconnue ne signifie pas absence de traitement ; une plage de dates porte seulement sur le dernier traitement daté connu. Les filtres de création conservent leurs bornes UTC.{mode === "follow-up" ? " La file de relances est toujours ordonnée par échéance, la plus ancienne d’abord." : ""}</p></details>
     </fieldset>
     <input name="page" type="hidden" value="1" />
   </form>;

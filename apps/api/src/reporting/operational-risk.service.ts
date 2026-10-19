@@ -11,9 +11,9 @@ import { IngestionService } from "../ingestion/ingestion.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
+import { isToContact } from "../leads/lead-treatment.js";
 
 export const OPERATIONAL_RISK_VERSION = "operational-risk-v1";
-const interactionTypes = new Set(["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING"]);
 export interface OperationalRiskQuery extends InteractiveReportingQuery {
   noInteractionHours?: string; capacityWarningPercent?: string; loadGap?: string; sourceRiskPercent?: string; minSourceVolume?: string;
 }
@@ -63,11 +63,10 @@ export class OperationalRiskService {
     const leadIds = new Set(rows.map((row) => row.id));
     const active = rows.filter((row) => row.status !== "ENROLLED" && row.status !== "CLOSED_LOST");
     const cutoff = now.valueOf() - thresholds.noInteractionHours * 3_600_000;
-    const withoutFirstInteraction = active.filter((row) => new Date(row.createdAt).valueOf() <= cutoff
-      && !row.activities.some((activity) => interactionTypes.has(activity.type))).length;
+    const withoutFirstInteraction = active.filter((row) => isToContact(row) && new Date(row.createdAt).valueOf() < cutoff).length;
     const followUps = this.followUps.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId));
     const overdueFollowUps = followUps.filter((item) => (item.state === "DUE" || item.state === "SCHEDULED") && new Date(item.dueAt) < now).length;
-    const pendingClosures = this.closures.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.state === "PENDING").length;
+    const pendingClosures = this.closures.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.state === "PENDING" && ["ENROLLED", "CLOSED_LOST"].includes(item.target)).length;
     const pendingReassignments = this.reassignments.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.status === "PENDING").length;
     const visibleOwners = new Set(active.flatMap((row) => row.assignedToId ? [row.assignedToId] : []));
     const candidateCapacity = new Map<string, number>();
@@ -91,7 +90,7 @@ export class OperationalRiskService {
       return group.length >= thresholds.minSourceVolume && rate >= thresholds.sourceRiskPercent ? [{ source, volume: group.length, rejectedOrReview, rate }] : [];
     });
     const queues = { unassigned: active.filter((row) => !row.assignedToId).length, withoutFirstInteraction, overdueFollowUps, pendingClosures, pendingReassignments };
-    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds);
+    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds, new Date(cutoff).toISOString());
     const report: OperationalRiskReport = { definitionVersion: OPERATIONAL_RISK_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       thresholds, queues, capacity, sourceRisks, alerts, sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",
       safeguards: { disciplinaryScore: false, financialDecision: false } };
@@ -101,13 +100,13 @@ export class OperationalRiskService {
     return report;
   }
 
-  private alerts(queues: OperationalRiskReport["queues"], capacity: OperationalRiskReport["capacity"], sourceRisks: OperationalRiskReport["sourceRisks"], thresholds: OperationalRiskReport["thresholds"]): OperationalAlert[] {
+  private alerts(queues: OperationalRiskReport["queues"], capacity: OperationalRiskReport["capacity"], sourceRisks: OperationalRiskReport["sourceRisks"], thresholds: OperationalRiskReport["thresholds"], contactBefore: string): OperationalAlert[] {
     const alerts: OperationalAlert[] = [];
     const add = (code: string, count: number, drillDown: string, reason: string, severity: OperationalAlert["severity"] = "WARNING"): void => { if (count) alerts.push({ code, count, drillDown, reason, severity }); };
     add("unassigned_leads", queues.unassigned, "/leads?view=UNASSIGNED", "active lead has no primary adviser", "CRITICAL");
-    add("first_interaction_overdue", queues.withoutFirstInteraction, "/leads?view=NO_ACTIVITY", `no structured interaction within ${thresholds.noInteractionHours} hours`);
+    add("first_interaction_overdue", queues.withoutFirstInteraction, `/leads?view=TO_CONTACT&createdBefore=${encodeURIComponent(contactBefore)}`, `Prospects à prendre en charge créés depuis plus de ${thresholds.noInteractionHours} heures`);
     add("follow_up_overdue", queues.overdueFollowUps, "/leads?view=FOLLOW_UP", "scheduled follow-up due date is in the past", "CRITICAL");
-    add("closure_decision_pending", queues.pendingClosures, "/manager/closures", "controlled closure awaits a Manager/Admin decision", "INFO");
+    add("closure_decision_pending", queues.pendingClosures, "/manager/validations", "Demande finale en attente de décision distincte du Manager ou Admin habilité", "INFO");
     add("reassignment_decision_pending", queues.pendingReassignments, "/manager/assignment", "reassignment awaits a Manager/Admin decision", "INFO");
     for (const item of capacity.filter((row) => row.utilizationPercent !== null && row.utilizationPercent >= thresholds.capacityWarningPercent)) add(`capacity_warning:${item.adviserId}`, item.activeLeads, `/leads?assignedToId=${encodeURIComponent(item.adviserId)}`, `configured capacity utilization is ${item.utilizationPercent}%`);
     if (capacity.length > 1) { const loads = capacity.map((item) => item.activeLeads); const gap = Math.max(...loads) - Math.min(...loads); add("load_gap", gap >= thresholds.loadGap ? gap : 0, "/manager/reports/commercial-performance", `active load difference meets the explicit ${thresholds.loadGap} lead threshold`, "INFO"); }

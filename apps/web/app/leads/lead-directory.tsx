@@ -76,7 +76,7 @@ export function LeadDirectoryTable({ items, ariaLabel, context = "directory", to
     </header>
     <div className="lead-directory__table-wrap" role="region" tabIndex={0} aria-label="Tableau des leads, défilement horizontal si nécessaire">
       <table aria-label={ariaLabel}>
-        <thead><tr><th scope="col">Prospect</th><th scope="col">{followUp ? "Échéance" : "Situation"}</th><th scope="col">Formation / campus</th><th scope="col">Source</th><th scope="col">Conseiller</th><th scope="col">Dernière activité</th>{!followUp ? <th scope="col">Prochaine action</th> : null}<th scope="col"><span className="sr-only">Action</span></th></tr></thead>
+        <thead><tr><th scope="col">Prospect</th><th scope="col">{followUp ? "Échéance" : "Situation"}</th><th scope="col">Formation / campus</th><th scope="col">Source</th><th scope="col">Conseiller</th><th scope="col">Dernier traitement</th>{!followUp ? <th scope="col">Prochaine action</th> : null}<th scope="col"><span className="sr-only">Action</span></th></tr></thead>
         <tbody>{items.map((item, index) => {
           const id = apiString(item, "id");
           const code = leadDirectoryLabel(apiString(item, "leadCode"), `Lead ${index + 1}`);
@@ -90,7 +90,7 @@ export function LeadDirectoryTable({ items, ariaLabel, context = "directory", to
           const assigned = Boolean(apiString(item, "assignedToId"));
           const adviser = assigned ? leadDirectoryLabel(apiString(item, "assignedToLabel"), "Affecté · nom indisponible") : "Non affecté";
           const nextActionAt = apiString(item, "nextActionAt");
-          const lastActivityAt = apiString(item, "lastActivityAt");
+          const lastTreatmentAt = apiString(item, "lastTreatmentAt");
           return <tr key={id || code}>
             <th scope="row" data-label="Prospect"><span className="lead-directory__person">
               <span className="lead-directory__avatar" aria-hidden="true">{leadDirectoryInitials(item)}</span>
@@ -103,7 +103,7 @@ export function LeadDirectoryTable({ items, ariaLabel, context = "directory", to
             <td className="lead-directory__program" data-label="Formation / campus"><span>{program}</span><small>{campus}</small></td>
             <td className="lead-directory__source" data-label="Source">{sourceLabel}</td>
             <td className="lead-directory__assignment" data-label="Conseiller"><span data-assigned={assigned ? "true" : "false"}>{adviser}</span></td>
-            <td className="lead-directory__last-activity" data-label="Dernière activité"><LeadDate value={lastActivityAt} empty="Aucune activité enregistrée" /></td>
+            <td className="lead-directory__last-activity" data-label="Dernier traitement"><LeadDate value={lastTreatmentAt} empty={apiString(item, "treatmentState") === "NONE" ? "Aucun traitement connu" : "Date de traitement inconnue"} />{item.hasUndatedHistory === true && lastTreatmentAt ? <small>Historique également non daté</small> : null}</td>
             {!followUp ? <td className="lead-directory__next-action" data-label="Prochaine action"><LeadDate value={nextActionAt} empty="Non planifiée" /></td> : null}
             <td className="lead-directory__action" data-label="Action">{id ? <Link href={`/leads/${encodeURIComponent(id)}`} aria-label={`Ouvrir la fiche ${code}`}><span>Voir</span><ArrowRight size={16} weight="bold" aria-hidden="true" /></Link> : "—"}</td>
           </tr>;

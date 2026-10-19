@@ -29,6 +29,20 @@ const flush = (): Promise<void> => new Promise<void>((resolve) => setImmediate(r
 const requestUrl = (input: string | URL | Request): string => typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 const props = { endpoint: "/api/crm/leads?page=1&pageSize=25", ariaLabel: "Leads", emptyMessage: "Aucun lead filtré." };
 
+test("business treatment filters preserve Casablanca calendar dates, own dropdowns and oldest-first sort without duplicate fields", async (t) => {
+  const { host, root, act, createElement } = await mount(t);
+  const { LeadFilterForm } = await import("../app/leads/lead-filter-form.js");
+  t.mock.method(globalThis, "fetch", () => Promise.resolve(Response.json({ advisers: [{ id: "synthetic-adviser", label: "Conseillère synthétique" }] })));
+  const current = new URLSearchParams({ view: "TO_CONTACT", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-03", treatmentState: "UNKNOWN_DATE", sortBy: "lastTreatmentAt", sortDirection: "asc", assignedToId: "synthetic-adviser", campus: "CASABLANCA" });
+  await act(async () => { root.render(createElement(LeadFilterForm, { current, mode: "directory" })); await flush(); });
+  const form = host.querySelector("form")!;
+  const data = new FormData(form);
+  for (const key of ["view", "treatmentFrom", "treatmentTo", "treatmentState", "sortBy", "sortDirection", "assignedToId", "campus"]) assert.deepEqual(data.getAll(key), [current.get(key)]);
+  assert.match(form.textContent ?? "", /journées de Casablanca/u);
+  assert.match(form.textContent ?? "", /Une date inconnue ne signifie pas absence/u);
+  assert.equal(host.querySelector('select[name="assignedToId"] option:checked')?.textContent, "Conseillère synthétique");
+});
+
 test("list handles 401, 403, 503 and network failures distinctly without exposing a fabricated empty result", async (t) => {
   const cases = [
     { status: 401, expected: "Session expirée" }, { status: 403, expected: "Accès refusé" },

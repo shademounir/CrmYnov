@@ -19,7 +19,7 @@ const context = new URLSearchParams({
 });
 
 test("exposes every supported work queue and usable provenance without advertising import errors as a result queue", () => {
-  assert.deepEqual(leadWorkViews.map(([key]) => key), ["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"]);
+  assert.deepEqual(leadWorkViews.map(([key]) => key), ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"]);
   assert.ok(leadProvenanceViews.some(([key]) => key === "YNOV_COM"));
   assert.ok(leadProvenanceViews.some(([key]) => key === "LEGACY_RELAUNCH"));
   assert.equal(leadProvenanceViews.length, 9);
@@ -131,17 +131,17 @@ test("renders actual adviser, campus, provenance and both activity timestamps, h
   const id = "00000000-0000-4000-8000-000000000172";
   const item = { id: "synthetic-lead", leadCode: "LD-SYN", firstName: "Camille", lastName: "Essai", assignedToId: id,
     assignedToLabel: "Conseillère synthétique", campus: "Campus synthétique", program: "Formation synthétique", source: "YNOV_COM",
-    lastActivityAt: "2026-09-15T09:30:00.000Z", nextActionAt: "2026-09-16T10:30:00.000Z" };
+    lastTreatmentAt: "2026-09-15T09:30:00.000Z", treatmentState: "DATED", nextActionAt: "2026-09-16T10:30:00.000Z" };
   const html = renderToStaticMarkup(createElement(LeadDirectoryTable, { items: [item], total: 131, ariaLabel: "Leads" }));
-  for (const label of ["Conseillère synthétique", "Campus synthétique", "Formation synthétique", "Ynov.com", "Dernière activité", "Prochaine action", "sur 131"]) assert.ok(html.includes(label), label);
+  for (const label of ["Conseillère synthétique", "Campus synthétique", "Formation synthétique", "Ynov.com", "Dernier traitement", "Prochaine action", "sur 131"]) assert.ok(html.includes(label), label);
   const dom = new JSDOM(html);
   try {
     assert.deepEqual([...dom.window.document.querySelectorAll("time")].map((time) => time.getAttribute("datetime")), ["2026-09-15T09:30:00.000Z", "2026-09-16T10:30:00.000Z"]);
     assert.equal(dom.window.document.querySelector('[role="region"]')?.getAttribute("tabindex"), "0");
   } finally { dom.window.close(); }
   assert.ok(!html.includes(id));
-  const missing = renderToStaticMarkup(createElement(LeadDirectoryTable, { items: [{ ...item, assignedToLabel: id, campus: id, source: id, lastActivityAt: "", nextActionAt: "" }], ariaLabel: "Leads" }));
-  for (const label of ["Affecté · nom indisponible", "Campus à préciser", "Source à préciser", "Aucune activité enregistrée", "Non planifiée"]) assert.ok(missing.includes(label), label);
+  const missing = renderToStaticMarkup(createElement(LeadDirectoryTable, { items: [{ ...item, assignedToLabel: id, campus: id, source: id, lastTreatmentAt: "", treatmentState: "NONE", nextActionAt: "" }], ariaLabel: "Leads" }));
+  for (const label of ["Affecté · nom indisponible", "Campus à préciser", "Source à préciser", "Aucun traitement connu", "Non planifiée"]) assert.ok(missing.includes(label), label);
   assert.ok(!missing.includes(id));
 });
 

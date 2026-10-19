@@ -459,7 +459,8 @@ export class LeadService implements OnModuleInit {
     const historyGroups = new Map<string, Array<{ occurredAt: string | null }>>();
     for (const note of this.historicalTreatments) historyGroups.set(note.leadId, [...(historyGroups.get(note.leadId) ?? []), note]);
     const filtered = [...this.leads.values()].map((lead) => ({ ...lead,
-      ...treatmentSummary(activityGroups.get(lead.id) ?? [], historyGroups.get(lead.id) ?? []) }))
+      ...treatmentSummary(activityGroups.get(lead.id) ?? [], [...(historyGroups.get(lead.id) ?? []),
+        ...(lead.temperatureSource === "HUMAN_QUALIFICATION" && lead.qualifiedAt ? [{ occurredAt: lead.qualifiedAt }] : [])]) }))
       .filter((lead) => this.matchesListFilters(lead, query, validated, principal, now, global, allowedCampuses));
     const ordered = filtered.sort((left, right) => this.compareListedLeads(left, right, validated));
     const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));

@@ -12,6 +12,7 @@ type Datum = { value: string; count: number; key?: string };
 type ReportingCapabilities = { canCreateLead: boolean; canReadRecentLeads: boolean; canViewManagerDashboard: boolean; canExportReporting?: boolean };
 type ReportingEvidence = {
   generatedAt?: string; capabilities?: ReportingCapabilities;
+  toContact?: { count: number; href: string };
   persistence?: { countsObservability?: Record<string, { state: "OBSERVED" | "AUTHORIZED_SUBSET" | "UNAVAILABLE"; reason: string | null }> };
 };
 type DashboardReport = {
@@ -148,7 +149,12 @@ function PersonalDashboardContent({ report, showTables }: Readonly<{ report: Per
   const adviser = report.performance.advisers[0]; const contributor = report.contributions.contributors[0];
   const data = adviser ? [{ value: "Leads principaux", count: adviser.primaryLeadCount }, { value: "Collaborations", count: adviser.secondaryLeadCount }, { value: "Charge active", count: adviser.activeLoad }, { value: "Relances échues", count: adviser.followUps.overdue }] : [];
   const contributions = contributor ? [{ value: "Actions principales", count: contributor.primaryActionCount }, { value: "Actions secondaires", count: contributor.secondaryActionCount }] : [];
-  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p></section><div className="dashboard-personal-charts"><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></div><ReportingAvailability report={report} /></>;
+  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p><ToContactCard report={report} /></section><div className="dashboard-personal-charts"><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></div><ReportingAvailability report={report} /></>;
+}
+
+function ToContactCard({ report }: Readonly<{ report: ReportingEvidence }>): React.JSX.Element {
+  if (!report.toContact || safeInternalHref(report.toContact.href) === "#") return <p>File À contacter momentanément indisponible.</p>;
+  return <Link className="queue-item" href={report.toContact.href}><span className="icon-disc small blue"><UserPlus size={20} /></span><span>À contacter<strong>{displayCount(report.toContact.count)}</strong><small>Prospects à prendre en charge · distinct des relances et des retards.</small></span></Link>;
 }
 
 function ReportingAvailability({ report }: Readonly<{ report: ReportingReport }>): React.JSX.Element | null {
@@ -226,17 +232,17 @@ const recentLeadStatusClasses: Readonly<Record<string, string>> = {
 
 const attentionLabels: Readonly<Record<string, { label: string; hint: string }>> = {
   unassigned_leads: { label: "Leads actifs non affectés", hint: "Responsable principal non attribué" },
-  first_interaction_overdue: { label: "Première prise de contact en retard", hint: "Délai de première interaction dépassé" },
-  follow_up_overdue: { label: "Relances échues", hint: "Relances planifiées dont l’échéance est dépassée" },
-  closure_decision_pending: { label: "Décisions de clôture en attente", hint: "Décision contrôlée encore attendue" },
+  first_interaction_overdue: { label: "Premiers contacts en retard", hint: "Sous-ensemble des Prospects à contacter dont le délai de prise en charge est dépassé" },
+  follow_up_overdue: { label: "Relances en retard", hint: "Relances planifiées dont l’échéance est dépassée" },
+  closure_decision_pending: { label: "Demandes de clôture à valider", hint: "Décision distincte du Manager ou Admin habilité attendue" },
   reassignment_decision_pending: { label: "Décisions de réaffectation en attente", hint: "Décision contrôlée encore attendue" },
-  load_gap: { label: "Écart de charge commerciale", hint: "Différence de charge atteignant le seuil configuré" },
+  load_gap: { label: "Écart de charge commerciale", hint: "Différence entre la plus forte et la plus faible charge de Leads ouverts des conseillers représentés" },
 };
 
 function dashboardAttentionText(code: string): { label: string; hint: string } {
   if (code.startsWith("capacity_warning:")) return { label: "Capacité commerciale à examiner", hint: "Le seuil de capacité configuré est atteint" };
   if (code.startsWith("source_quality:")) return { label: "Qualité d’une source à vérifier", hint: "Rejets ou éléments à vérifier observés pour cette source" };
-  return Object.hasOwn(attentionLabels, code) ? attentionLabels[code]! : { label: "Signal à vérifier", hint: "Signal agrégé fourni par les contrôles API" };
+  return Object.hasOwn(attentionLabels, code) ? attentionLabels[code]! : { label: "Point à vérifier", hint: "Consultez le rapport autorisé pour comprendre ce point d’attention" };
 }
 
 function DashboardAttentionList({ alerts, sourceQualityAvailability }: Readonly<{ alerts: OperationalAlert[]; sourceQualityAvailability: DashboardReport["panels"]["operationalRisks"]["sourceQualityAvailability"] }>): React.JSX.Element {
@@ -299,13 +305,14 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
     </section>
     <p><small>Ces liens ouvrent des listes de travail avec les filtres de période et de périmètre conservés. Les Leads non affectés peuvent inclure des statuts terminaux ; la file des Leads à relancer n’est pas le compteur de relances ; la file sans activité est distincte du seuil de première interaction.</small></p>
     <section className="quick-queues" aria-label="Files rapides">
+      <ToContactCard report={report} />
       <Link className="queue-item" href={preserveFilters(report.drillDowns.find((item) => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED", query)}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Leads actifs non affectés<strong>{displayCount(report.cards.unassigned)}</strong><small>La file ouverte inclut aussi les statuts clos.</small></span></Link>
       <Link className="queue-item" href={followUpsHref}><span className="icon-disc small amber"><Alarm size={20} /></span><span>Relances échues<strong>{displayCount(report.cards.overdueFollowUps)}</strong><small>File de Leads distincte du compteur de relances.</small></span></Link>
-      <div className="queue-item"><span className="icon-disc small blue"><ChartBar size={20} /></span><span>Première interaction échue<strong>{displayCount(report.panels.operationalRisks.queues.withoutFirstInteraction, "Non observé")}</strong><small>Signal agrégé sans file équivalente disponible.</small></span></div>
+      <Link className="queue-item" href={preserveFilters(report.panels.operationalRisks.alerts.find((alert) => alert.code === "first_interaction_overdue")?.drillDown ?? "/leads?view=TO_CONTACT", query)}><span className="icon-disc small blue"><ChartBar size={20} /></span><span>Premiers contacts en retard<strong>{displayCount(report.panels.operationalRisks.queues.withoutFirstInteraction, "Non observé")}</strong><small>Sous-ensemble de la file À contacter. En l’absence de retard, le lien ouvre la file complète.</small></span></Link>
       <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
     </section>
     <p><Link className="text-button" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}>Ouvrir les Leads sans activité — file distincte du signal de première interaction échue</Link></p>
-    <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} signal(s) observé(s) par les contrôles API</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{alert.code}</b><small>Signal agrégé sans PII</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{operationalAlertHref(alert, query) === "#" ? unavailableAlertLabel(alert) : <Link href={operationalAlertHref(alert, query)}>{operationalAlertLinkLabel(alert)}</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{pipelineShare(item.count, report.cards.uniqueLeads)}</em></div>)}</section></div>
+    <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} point(s) d’attention dans le périmètre sélectionné. Les signaux peuvent se recouper ; leur somme n’est pas un nombre de Leads distincts.</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{dashboardAttentionText(alert.code).label}</b><small>{dashboardAttentionText(alert.code).hint}</small></span><span data-label="Volume">{displayCount(alert.count)}</span><span data-label="File">{operationalAlertHref(alert, query) === "#" ? unavailableAlertLabel() : <Link href={operationalAlertHref(alert, query)}>{operationalAlertLinkLabel(alert)}</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{pipelineShare(item.count, report.cards.uniqueLeads)}</em></div>)}</section></div>
     <div className="dashboard-secondary-grid dashboard-secondary-grid--refined">
       <section className="panel leads-panel"><div className="panel-heading"><div><h2>Derniers leads</h2><p>Créés récemment dans votre périmètre</p></div>{report.capabilities?.canReadRecentLeads === true && <Link className="text-button" href={preserveFilters(report.drillDowns.find((item) => item.key === "uniqueLeads")?.href ?? "/leads", query)}>Voir tous les leads</Link>}</div><RecentDashboardLeads query={query} canRead={report.capabilities?.canReadRecentLeads === true} onSessionExpired={onSessionExpired} /></section>
       <section className="panel activity-panel"><div className="panel-heading"><div><h2>Points d’attention</h2><p>Signaux agrégés — pas un historique d’activités</p></div></div><DashboardAttentionList alerts={report.panels.operationalRisks.alerts} sourceQualityAvailability={report.panels.operationalRisks.sourceQualityAvailability} /></section>
@@ -319,7 +326,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
     <AccessibleChart title="Charge commerciale" data={loads} showTable={showTables} />
     <p aria-live="polite">{loads.filter((item) => item.count >= operationalThreshold).length} charge(s) atteignent le seuil personnel d’affichage de {operationalThreshold}.</p>
     <AccessibleChart title="Contributions principales et secondaires" data={contributions} showTable={showTables} />
-    <section aria-label="Alertes opérationnelles"><h2>Relances et alertes</h2>{report.panels.operationalRisks.alerts.length ? <ul>{report.panels.operationalRisks.alerts.map((alert) => <li key={alert.code}>{operationalAlertHref(alert, query) === "#" ? <span>{alert.code} : {displayCount(alert.count)} — {unavailableAlertLabel(alert).toLocaleLowerCase("fr-FR")}</span> : <a href={operationalAlertHref(alert, query)}>{alert.code} : {displayCount(alert.count)} — {operationalAlertLinkLabel(alert)}</a>}</li>)}</ul> : <p>Aucune alerte observée dans les contrôles disponibles.</p>}{report.panels.operationalRisks.sourceQualityAvailability === "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" && <p>Qualité des sources : non observée durablement. L’absence de signal ne garantit pas l’absence d’erreur d’import.</p>}</section>
+    <section aria-label="Alertes opérationnelles"><h2>Relances et alertes</h2>{report.panels.operationalRisks.alerts.length ? <ul>{report.panels.operationalRisks.alerts.map((alert) => <li key={alert.code}>{operationalAlertHref(alert, query) === "#" ? <span>{dashboardAttentionText(alert.code).label} : {displayCount(alert.count)} — {unavailableAlertLabel().toLocaleLowerCase("fr-FR")}</span> : <a href={operationalAlertHref(alert, query)}>{dashboardAttentionText(alert.code).label} : {displayCount(alert.count)} — {operationalAlertLinkLabel(alert)}</a>}</li>)}</ul> : <p>Aucune alerte observée dans les contrôles disponibles.</p>}{report.panels.operationalRisks.sourceQualityAvailability === "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" && <p>Qualité des sources : non observée durablement. L’absence de signal ne garantit pas l’absence d’erreur d’import.</p>}</section>
     <ReportingAvailability report={report} />
     {report.capabilities?.canExportReporting === true && <p><a href={preserveFilters(report.export.href, query)} download="crm-manager-dashboard-v1.csv">Exporter les agrégats CSV</a></p>}
     <p><small>Contrat {report.definitionVersion} — export {report.export.schemaVersion} — {report.timezone}</small></p>
@@ -328,10 +335,11 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
 }
 
 type OperationalAlert = DashboardReport["panels"]["operationalRisks"]["alerts"][number];
-function operationalAlertHref(alert: OperationalAlert, query: URLSearchParams): string { return alert.code === "first_interaction_overdue" ? "#" : preserveFilters(alert.drillDown, query); }
-function unavailableAlertLabel(alert: OperationalAlert): string { return alert.code === "first_interaction_overdue" ? "Signal sans file équivalente" : "File indisponible"; }
+function operationalAlertHref(alert: OperationalAlert, query: URLSearchParams): string { return preserveFilters(alert.drillDown, query); }
+function unavailableAlertLabel(): string { return "Liste non disponible dans cette vue ; consultez votre responsable"; }
 function operationalAlertLinkLabel(alert: OperationalAlert): string {
   if (alert.code === "follow_up_overdue") return "Ouvrir la file distincte des Leads à relancer";
+  if (alert.code === "first_interaction_overdue") return "Ouvrir les Prospects à contacter en retard";
   if (alert.code === "unassigned_leads") return "Ouvrir la file non affectée (statuts clos inclus)";
   return "Ouvrir";
 }
@@ -360,7 +368,7 @@ function AccessibleTrend({ data, showTable }: Readonly<{ data: DashboardReport["
 }
 
 function preserveFilters(href: string, query: URLSearchParams): string {
-  const safe = safeInternalHref(href, ["/leads", "/manager/assignment", "/manager/reports/commercial-funnel", "/reports/manager-dashboard/export"]);
+  const safe = safeInternalHref(href, ["/leads", "/manager/assignment", "/manager/validations", "/manager/reports/commercial-performance", "/manager/reports/commercial-funnel", "/reports/manager-dashboard/export"]);
   if (safe === "#") return safe;
   const [path, current = ""] = safe.split("?");
   const params = new URLSearchParams(current);
@@ -368,7 +376,8 @@ function preserveFilters(href: string, query: URLSearchParams): string {
   for (const [key, value] of query) {
     if (!reportingFilterKeys.has(key) || (leadDestination && ["period", "view"].includes(key))) continue;
     const target = leadDestination ? filterTarget(key) : key;
-    if (!params.has(target)) params.set(target, value);
+    if (target === "createdBefore" && params.has(target)) params.set(target, [params.get(target)!, value].sort()[0]!);
+    else if (!params.has(target)) params.set(target, value);
   }
   if (leadDestination && params.has("createdBefore")) params.delete("createdTo");
   params.set("returnTo", `/manager/reports/dashboard?${query.toString()}`);

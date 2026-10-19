@@ -42,7 +42,7 @@ test("reports explicit workload, reactivity, approval and source alerts without 
   reassignments.request(assigned.id, { targetUserId: "adviser-b", reason: "Besoin synthétique", moveOpenTasks: true, idempotencyKey: "reassign_synth_1" }, adviser, "corr-reassign");
   for (let index = 0; index < 3; index += 1) ingestion.ingest({ idempotencyKey: `risk_batch_${index}`, profile: "FORMINATOR_ZAPIER", confirmed: true, assignment: { strategy: "UNASSIGNED" }, records: [{ lineNumber: 1, firstName: "Lead", lastName: "Synthétique", email: `risk-${index}@example.invalid`, campus: "", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM", technicalSystem: "SYNTHETIC", originalSource: "SYNTHETIC", externalId: `risk-${index}` }] }, manager, `corr-risk-${index}`);
   const report = service.read({ noInteractionHours: "1", capacityWarningPercent: "90", loadGap: "1", sourceRiskPercent: "30", minSourceVolume: "3" }, manager, "corr-report", reportingAt);
-  assert.equal(report.queues.unassigned >= 1, true); assert.equal(report.queues.withoutFirstInteraction >= 2, true);
+  assert.equal(report.queues.unassigned >= 1, true); assert.equal(report.queues.withoutFirstInteraction, 1); // Contacted is not a first-contact backlog.
   assert.equal(report.queues.overdueFollowUps, 1); assert.equal(report.queues.pendingClosures, 1); assert.equal(report.queues.pendingReassignments, 1);
   assert.equal(report.capacity.find((item) => item.adviserId === "adviser-a")?.utilizationPercent, 100);
   assert.equal(report.sourceRisks.find((item) => item.source === "WEB_FORM")?.rate, 100);
@@ -112,7 +112,7 @@ test("CRMY-178 configured Commercial pilotage uses the same bounded KPI projecti
     assert.deepEqual(followUps.reportingSnapshot(scopedCommercial).map((row) => row.leadId).sort(), [...authorized]);
     assert.deepEqual(reassignments.reportingSnapshot(scopedCommercial).map((row) => row.leadId).sort(), [...authorized]);
     assert.deepEqual(closures.reportingSnapshot(scopedCommercial).map((row) => row.leadId).sort(), [...authorized]);
-    assert.deepEqual(expectedRisks.queues, { unassigned: 0, withoutFirstInteraction: 2, overdueFollowUps: 2, pendingClosures: 2, pendingReassignments: 2 });
+    assert.deepEqual(expectedRisks.queues, { unassigned: 0, withoutFirstInteraction: 0, overdueFollowUps: 2, pendingClosures: 2, pendingReassignments: 2 });
     // The business queue and its decisions never adopt the reporting proof.
     assert.equal(closures.list(scopedCommercial).length, 0);
     assert.throws(() => reassignments.pendingForManager(scopedCommercial), hasCode("reassignment_approval_role_required"));
