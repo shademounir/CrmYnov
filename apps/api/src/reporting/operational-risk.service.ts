@@ -11,7 +11,7 @@ import { IngestionService } from "../ingestion/ingestion.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
-import { isToContact } from "../leads/lead-treatment.js";
+import { firstTreatmentState } from "../leads/first-treatment.js";
 
 export const OPERATIONAL_RISK_VERSION = "operational-risk-v1";
 export interface OperationalRiskQuery extends InteractiveReportingQuery {
@@ -58,12 +58,12 @@ export class OperationalRiskService {
       sourceRiskPercent: this.integer(query.sourceRiskPercent, 30, 1, 100, "operational_source_threshold_invalid"),
       minSourceVolume: this.integer(query.minSourceVolume, 3, 1, 1000, "operational_source_volume_invalid"),
     };
+    if (thresholds.noInteractionHours !== 24) throw new BadRequestException({ code: "first_treatment_fixed_24h" });
     const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
-    const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
+    const rows = this.leads.reportingSnapshot(principal, now).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const leadIds = new Set(rows.map((row) => row.id));
     const active = rows.filter((row) => row.status !== "ENROLLED" && row.status !== "CLOSED_LOST");
-    const cutoff = now.valueOf() - thresholds.noInteractionHours * 3_600_000;
-    const withoutFirstInteraction = active.filter((row) => isToContact(row) && new Date(row.createdAt).valueOf() < cutoff).length;
+    const withoutFirstInteraction = active.filter(row => firstTreatmentState(row, now).firstTreatmentOverdue).length;
     const followUps = this.followUps.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId));
     const overdueFollowUps = followUps.filter((item) => (item.state === "DUE" || item.state === "SCHEDULED") && new Date(item.dueAt) < now).length;
     const pendingClosures = this.closures.reportingSnapshot(principal).filter((item) => leadIds.has(item.leadId) && item.state === "PENDING" && ["ENROLLED", "CLOSED_LOST"].includes(item.target)).length;
@@ -90,7 +90,7 @@ export class OperationalRiskService {
       return group.length >= thresholds.minSourceVolume && rate >= thresholds.sourceRiskPercent ? [{ source, volume: group.length, rejectedOrReview, rate }] : [];
     });
     const queues = { unassigned: active.filter((row) => !row.assignedToId).length, withoutFirstInteraction, overdueFollowUps, pendingClosures, pendingReassignments };
-    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds, new Date(cutoff).toISOString());
+    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds);
     const report: OperationalRiskReport = { definitionVersion: OPERATIONAL_RISK_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       thresholds, queues, capacity, sourceRisks, alerts, sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",
       safeguards: { disciplinaryScore: false, financialDecision: false } };
@@ -100,11 +100,11 @@ export class OperationalRiskService {
     return report;
   }
 
-  private alerts(queues: OperationalRiskReport["queues"], capacity: OperationalRiskReport["capacity"], sourceRisks: OperationalRiskReport["sourceRisks"], thresholds: OperationalRiskReport["thresholds"], contactBefore: string): OperationalAlert[] {
+  private alerts(queues: OperationalRiskReport["queues"], capacity: OperationalRiskReport["capacity"], sourceRisks: OperationalRiskReport["sourceRisks"], thresholds: OperationalRiskReport["thresholds"]): OperationalAlert[] {
     const alerts: OperationalAlert[] = [];
     const add = (code: string, count: number, drillDown: string, reason: string, severity: OperationalAlert["severity"] = "WARNING"): void => { if (count) alerts.push({ code, count, drillDown, reason, severity }); };
     add("unassigned_leads", queues.unassigned, "/leads?view=UNASSIGNED", "active lead has no primary adviser", "CRITICAL");
-    add("first_interaction_overdue", queues.withoutFirstInteraction, `/leads?view=TO_CONTACT&createdBefore=${encodeURIComponent(contactBefore)}`, `Prospects à prendre en charge créés depuis plus de ${thresholds.noInteractionHours} heures`);
+    add("first_interaction_overdue", queues.withoutFirstInteraction, "/leads?view=FIRST_TREATMENT_OVERDUE", "Premier traitement attendu depuis strictement plus de 24 heures consécutives après réception source reconnue ou première observation CRM persistée");
     add("follow_up_overdue", queues.overdueFollowUps, "/leads?view=FOLLOW_UP", "scheduled follow-up due date is in the past", "CRITICAL");
     add("closure_decision_pending", queues.pendingClosures, "/manager/validations", "Demande finale en attente de décision distincte du Manager ou Admin habilité", "INFO");
     add("reassignment_decision_pending", queues.pendingReassignments, "/manager/assignment", "reassignment awaits a Manager/Admin decision", "INFO");

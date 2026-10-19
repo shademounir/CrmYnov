@@ -3,6 +3,7 @@ import { isCommercialContact } from "./commercial-progression.js";
 import type { LeadActivityRecord } from "./lead.service.js";
 
 export interface TreatmentSummary {
+  firstTreatmentAt?: string;
   lastTreatmentAt?: string;
   treatmentState: "DATED" | "UNKNOWN_DATE" | "NONE";
   hasUndatedHistory: boolean;
@@ -24,7 +25,7 @@ export function treatmentSummary(activities: readonly LeadActivityRecord[], hist
   dates.sort((first, second) => Date.parse(first) - Date.parse(second));
   const lastTreatmentAt = dates.at(-1);
   const hasUndatedHistory = history.some((note) => note.occurredAt === null);
-  return { ...(lastTreatmentAt ? { lastTreatmentAt } : {}), hasUndatedHistory,
+  return { ...(dates[0] ? { firstTreatmentAt: dates[0] } : {}), ...(lastTreatmentAt ? { lastTreatmentAt } : {}), hasUndatedHistory,
     treatmentState: hasUndatedHistory ? "UNKNOWN_DATE" : lastTreatmentAt ? "DATED" : "NONE" };
 }
 
@@ -41,5 +42,9 @@ export function validateTreatmentDay(value: string | undefined): string | undefi
   return value;
 }
 
-/** Historical state is not rewritten; new contact/manual Contacted leaves this queue. */
-export function isToContact(lead: { status: string }): boolean { return lead.status === "PROSPECT"; }
+/** Historical state is never rewritten to implement a queue. A known exchange
+ * without a date is not evidence that a Prospect has never been treated. */
+export function isToContact(lead: { status: string } & Partial<TreatmentSummary>): boolean {
+  return lead.status === "PROSPECT" && !lead.firstTreatmentAt && !lead.lastTreatmentAt
+    && !lead.hasUndatedHistory && !["DATED", "UNKNOWN_DATE"].includes(lead.treatmentState ?? "");
+}

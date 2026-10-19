@@ -13,6 +13,7 @@ import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown
 import { isCommercialContact, positiveQualificationEvidence, type CommercialStatusInput } from "./commercial-progression.js";
 import { isToContact, treatmentDay, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
 import { needsNextAction } from "../follow-up/next-action.contract.js";
+import { firstTreatmentState, receptionSummary, type ReceptionSummary, type FirstTreatmentIndicators } from "./first-treatment.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -39,7 +40,7 @@ const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = 
   CLOSED_LOST: [],
 };
 
-export interface LeadRecord extends Partial<TreatmentSummary> {
+export interface LeadRecord extends Partial<TreatmentSummary>, Partial<ReceptionSummary>, Partial<FirstTreatmentIndicators> {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
@@ -66,7 +67,7 @@ export interface LeadAssignmentSnapshot {
   total: number; assigned: number; unassigned: number; followUpDue: number;
   byAdviser: Array<{ userId: string; leadCount: number }>;
 }
-export interface LeadReportingRow {
+export interface LeadReportingRow extends Partial<TreatmentSummary>, Partial<ReceptionSummary>, Partial<FirstTreatmentIndicators> {
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
   assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
   assignedToLabel?: string;
@@ -84,7 +85,7 @@ export interface LeadListQuery {
   temperature?: string;
   treatmentFrom?: string; treatmentTo?: string; treatmentState?: string;
 }
-export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED" | "NEXT_ACTION_MISSING";
+export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FIRST_TREATMENT_OVERDUE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED" | "NEXT_ACTION_MISSING";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
 export type LeadSavedView = typeof leadSavedViews[number];
 type ValidatedLeadListQuery = Readonly<{
@@ -422,6 +423,8 @@ export class LeadService implements OnModuleInit {
 
   createLead(input: CreateLeadInput, principal: Principal, correlationId: string, deferAudit = false): CreateLeadResult {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
+    const derived = ["receivedAt", "receptionOrigin", "firstTreatmentAt", "lastTreatmentAt", "treatmentState", "hasUndatedHistory", "firstTreatmentPending", "firstTreatmentOverdue", "firstTreatmentAgeMinutes", "firstTreatmentDeadlineAt"];
+    if (derived.some(key => Object.hasOwn(input, key))) throw new BadRequestException({ code: "lead_server_field_forbidden" });
     const required = [input.firstName, input.lastName, input.campus, input.campaign, input.educationLevel, input.program, input.source];
     if (required.some((value) => !value?.trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
     const email = input.email?.trim().toLowerCase();
@@ -463,6 +466,7 @@ export class LeadService implements OnModuleInit {
     const filtered = [...this.leads.values()].map((lead) => ({ ...lead,
       ...treatmentSummary(activityGroups.get(lead.id) ?? [], [...(historyGroups.get(lead.id) ?? []),
         ...(lead.temperatureSource === "HUMAN_QUALIFICATION" && lead.qualifiedAt ? [{ occurredAt: lead.qualifiedAt }] : [])]) }))
+      .map(lead => ({ ...lead, ...firstTreatmentState(lead, new Date(now)) }))
       .filter((lead) => this.matchesListFilters(lead, query, validated, principal, now, global, allowedCampuses));
     const ordered = filtered.sort((left, right) => this.compareListedLeads(left, right, validated));
     const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
@@ -485,7 +489,7 @@ export class LeadService implements OnModuleInit {
     assertListDateRange(createdFrom, createdTo);
     if (createdFrom && createdBefore && createdFrom >= createdBefore) throw new BadRequestException({ code: "lead_date_range_invalid" });
     const search = query.search?.trim().toLocaleLowerCase("fr");
-    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING"], "lead_view_invalid");
+    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "TO_CONTACT", "FIRST_TREATMENT_OVERDUE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING"], "lead_view_invalid");
     const treatmentFrom = validateTreatmentDay(query.treatmentFrom);
     const treatmentTo = validateTreatmentDay(query.treatmentTo);
     assertListDateRange(treatmentFrom, treatmentTo);
@@ -559,6 +563,7 @@ export class LeadService implements OnModuleInit {
   }
 
   private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
+    if (view === "FIRST_TREATMENT_OVERDUE") return firstTreatmentState(lead, new Date(now)).firstTreatmentOverdue && this.matchesView(lead, "TO_CONTACT", principal, now);
     if (view === "NEXT_ACTION_MISSING") return needsNextAction(lead);
     if (view === "TO_CONTACT") {
       const elevated = hasPilotageReportingScope(principal) || principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
@@ -670,7 +675,7 @@ export class LeadService implements OnModuleInit {
     };
   }
 
-  reportingSnapshot(principal: Principal): LeadReportingRow[] {
+  reportingSnapshot(principal: Principal, now = new Date()): LeadReportingRow[] {
     if (!hasPilotageReportingScope(principal) && !principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
       throw new ForbiddenException({ code: "reporting_manager_required" });
     }
@@ -678,11 +683,18 @@ export class LeadService implements OnModuleInit {
       && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
     const campuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
+    const treatments = this.treatmentIndex();
     return [...this.leads.values()]
       .filter((lead) => (principal.permissionLeadIds ? principal.permissionLeadIds.has(lead.id) : global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, assignedToLabel, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, acquisitionKind, temperature, temperatureSource }) => ({
+      .map(lead => this.withTreatment(lead, now, treatments.get(lead.id)))
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, assignedToLabel, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, acquisitionKind, temperature, temperatureSource, receivedAt, receptionOrigin, firstTreatmentAt, lastTreatmentAt, treatmentState, hasUndatedHistory, firstTreatmentPending, firstTreatmentOverdue, firstTreatmentAgeMinutes, firstTreatmentDeadlineAt }) => ({
         id, status, campus, campaign, program, source, createdAt,
+          ...(receivedAt ? { receivedAt } : {}), ...(receptionOrigin ? { receptionOrigin } : {}),
+          ...(firstTreatmentAt ? { firstTreatmentAt } : {}), ...(lastTreatmentAt ? { lastTreatmentAt } : {}),
+          treatmentState: treatmentState ?? "NONE", hasUndatedHistory: hasUndatedHistory === true,
+          firstTreatmentPending: firstTreatmentPending === true, firstTreatmentOverdue: firstTreatmentOverdue === true,
+          firstTreatmentAgeMinutes: firstTreatmentAgeMinutes ?? null, firstTreatmentDeadlineAt: firstTreatmentDeadlineAt ?? null,
         acquisitionKind: acquisitionKind ?? "NEW",
         temperature: temperature ?? "UNEVALUATED",
         ...(temperatureSource ? { temperatureSource } : {}),
@@ -740,9 +752,28 @@ export class LeadService implements OnModuleInit {
   }
 
   private visibleLead(lead: Readonly<LeadRecord>, principal: Principal): LeadRecord {
-    const visible = { ...lead, temperature: lead.temperature ?? "UNEVALUATED", temperatureLabel: lead.temperatureLabel ?? leadTemperatureLabels[lead.temperature ?? "UNEVALUATED"], qualificationVersion: lead.qualificationVersion ?? 0 };
+    const visible = { ...this.withTreatment(lead), temperature: lead.temperature ?? "UNEVALUATED", temperatureLabel: lead.temperatureLabel ?? leadTemperatureLabels[lead.temperature ?? "UNEVALUATED"], qualificationVersion: lead.qualificationVersion ?? 0 };
     if (!principal.roles.includes("AUDITOR") || principal.roles.some((role) => role === "ADMIN" || role === "SUPER_ADMIN" || role === "ADMISSIONS" || role === "MANAGER")) return visible;
     return { ...visible, email: "***", phone: "***" };
+  }
+
+  private withTreatment(lead: Readonly<LeadRecord>, now = new Date(), summary?: TreatmentSummary): LeadRecord {
+    const treatment = summary ?? treatmentSummary(this.activities.filter(a => a.leadId === lead.id), [
+      ...this.historicalTreatments.filter(note => note.leadId === lead.id),
+      ...(lead.temperatureSource === "HUMAN_QUALIFICATION" && lead.qualifiedAt ? [{ occurredAt: lead.qualifiedAt }] : []),
+    ]);
+    const observed = { ...lead, ...treatment, ...(lead.receivedAt ? {} : receptionSummary(lead.createdAt, lead.acquisitionKind)) };
+    return { ...observed, ...firstTreatmentState(observed, now) };
+  }
+
+  private treatmentIndex(): Map<string, TreatmentSummary> {
+    const activities = new Map<string, Readonly<LeadActivityRecord>[]>();
+    const history = new Map<string, Array<{ occurredAt: string | null }>>();
+    for (const row of this.activities) { const group = activities.get(row.leadId) ?? []; group.push(row); activities.set(row.leadId, group); }
+    for (const row of this.historicalTreatments) { const group = history.get(row.leadId) ?? []; group.push(row); history.set(row.leadId, group); }
+    return new Map([...this.leads.values()].map(lead => [lead.id, treatmentSummary(activities.get(lead.id) ?? [], [
+      ...(history.get(lead.id) ?? []), ...(lead.temperatureSource === "HUMAN_QUALIFICATION" && lead.qualifiedAt ? [{ occurredAt: lead.qualifiedAt }] : []),
+    ])]));
   }
 
   addActivity(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string; clearNextAction?: boolean }, principal: Principal, correlationId: string): LeadActivityRecord {

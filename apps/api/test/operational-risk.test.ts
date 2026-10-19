@@ -41,7 +41,7 @@ test("reports explicit workload, reactivity, approval and source alerts without 
   closures.request(assigned.id, { target: "CLOSED_LOST", reason: "NOT_INTERESTED", comment: "Motif synthétique", evidence: ["EVIDENCE_SYNTHETIC"] }, adviser, "corr-close");
   reassignments.request(assigned.id, { targetUserId: "adviser-b", reason: "Besoin synthétique", moveOpenTasks: true, idempotencyKey: "reassign_synth_1" }, adviser, "corr-reassign");
   for (let index = 0; index < 3; index += 1) ingestion.ingest({ idempotencyKey: `risk_batch_${index}`, profile: "FORMINATOR_ZAPIER", confirmed: true, assignment: { strategy: "UNASSIGNED" }, records: [{ lineNumber: 1, firstName: "Lead", lastName: "Synthétique", email: `risk-${index}@example.invalid`, campus: "", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM", technicalSystem: "SYNTHETIC", originalSource: "SYNTHETIC", externalId: `risk-${index}` }] }, manager, `corr-risk-${index}`);
-  const report = service.read({ noInteractionHours: "1", capacityWarningPercent: "90", loadGap: "1", sourceRiskPercent: "30", minSourceVolume: "3" }, manager, "corr-report", reportingAt);
+  const report = service.read({ noInteractionHours: "24", capacityWarningPercent: "90", loadGap: "1", sourceRiskPercent: "30", minSourceVolume: "3" }, manager, "corr-report", reportingAt);
   assert.equal(report.queues.unassigned >= 1, true); assert.equal(report.queues.withoutFirstInteraction, 1); // Contacted is not a first-contact backlog.
   assert.equal(report.queues.overdueFollowUps, 1); assert.equal(report.queues.pendingClosures, 1); assert.equal(report.queues.pendingReassignments, 1);
   assert.equal(report.capacity.find((item) => item.adviserId === "adviser-a")?.utilizationPercent, 100);

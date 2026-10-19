@@ -12,7 +12,7 @@ const activity = (id: string, type: LeadActivityRecord["type"], occurredAt: stri
 
 test("business treatment ignores import and technical refresh dates, preserves unknown history", () => {
   const actions = [activity("business", "COMMENT", "2026-01-02T12:00:00.000Z"), activity("import", "LEGACY_IMPORT", "2026-10-19T12:00:00.000Z"), activity("assignment", "ASSIGNMENT_CHANGED", "2026-10-19T13:00:00.000Z")];
-  assert.deepEqual(treatmentSummary(actions, [{ occurredAt: null }]), { lastTreatmentAt: "2026-01-02T12:00:00.000Z", treatmentState: "UNKNOWN_DATE", hasUndatedHistory: true });
+  assert.deepEqual(treatmentSummary(actions, [{ occurredAt: null }]), { firstTreatmentAt: "2026-01-02T12:00:00.000Z", lastTreatmentAt: "2026-01-02T12:00:00.000Z", treatmentState: "UNKNOWN_DATE", hasUndatedHistory: true });
   assert.deepEqual(treatmentSummary([], [{ occurredAt: null }]), { treatmentState: "UNKNOWN_DATE", hasUndatedHistory: true });
   assert.deepEqual(treatmentSummary([], []), { treatmentState: "NONE", hasUndatedHistory: false });
   assert.equal(treatmentSummary([], [{ occurredAt: "2025-03-10T12:00:00.000Z" }]).lastTreatmentAt, "2025-03-10T12:00:00.000Z");
