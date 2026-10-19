@@ -5,6 +5,7 @@ import type { Principal } from "../auth/auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { createNotificationInTransaction } from "../notifications/notification-persistence.repository.js";
 import type { FollowUpRecord, FollowUpState } from "./follow-up.service.js";
+import { scheduleNextActionInTransaction } from "./schedule-next-action.js";
 
 type FollowUpMutationInput = Readonly<{
   idempotencyKey: string;
@@ -142,34 +143,7 @@ export class FollowUpPersistenceRepository {
     this.requireAuditActor(mutation.principal);
     const client = this.requiredClient();
     try {
-      return await client.$transaction(async (tx) => {
-        const receipt = await tx.leadFollowUpMutationReceipt.findUnique({ where: { idempotencyKey: mutation.idempotencyKey } });
-        if (receipt) return this.replay(receipt.fingerprint, mutation.fingerprint, receipt.result);
-        const pending = await tx.leadFollowUp.findFirst({ where: { leadId: record.leadId, state: { in: ["SCHEDULED", "DUE"] } }, select: { id: true } });
-        if (pending) throw new ConflictException({ code: "follow_up_pending" });
-        const updatedLead = await tx.lead.updateMany({
-          where: { id: record.leadId, version: mutation.expectedLeadVersion },
-          data: { nextActionAt: new Date(record.dueAt), lastActivityAt: new Date(record.createdAt), version: { increment: 1 } },
-        });
-        if (updatedLead.count !== 1) throw new ConflictException({ code: "lead_concurrent_mutation" });
-        const stored = await tx.leadFollowUp.create({ data: {
-          id: record.id, leadId: record.leadId, ownerId: record.ownerId, dueAt: new Date(record.dueAt), state: record.state,
-          reason: record.reason, version: record.version, idempotencyKey: mutation.idempotencyKey,
-          fingerprint: mutation.fingerprint, createdAt: new Date(record.createdAt), updatedAt: new Date(record.updatedAt),
-        } });
-        await tx.leadActivity.create({ data: {
-          id: randomUUID(), leadId: record.leadId, type: "COMMENT", result: "FOLLOW_UP_SCHEDULED", note: record.reason,
-          authorId: mutation.principal.userId, nextActionAt: new Date(record.dueAt), correlationId: mutation.correlationId,
-          idempotencyKey: `follow-up-activity:${mutation.idempotencyKey}`, occurredAt: new Date(record.createdAt),
-        } });
-        const result = this.map(stored);
-        await this.audit(tx, result, mutation, "FOLLOW_UP_SCHEDULED", mutation.expectedLeadVersion + 1);
-        await tx.leadFollowUpMutationReceipt.create({ data: {
-          idempotencyKey: mutation.idempotencyKey, followUpId: result.id, fingerprint: mutation.fingerprint,
-          result: result as unknown as Prisma.InputJsonValue,
-        } });
-        return result;
-      }, { isolationLevel: "Serializable" });
+      return await client.$transaction((tx) => scheduleNextActionInTransaction(tx, record, mutation), { isolationLevel: "Serializable" });
     } catch (error) {
       this.mapConcurrency(error);
     }

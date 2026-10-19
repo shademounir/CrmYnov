@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -43,10 +43,10 @@ const handlingTypes = new Set(["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSI
 @Injectable()
 export class CommercialPerformanceService {
   constructor(
-    private readonly leads: LeadService,
-    private readonly followUps: FollowUpService,
-    private readonly reassignments: ReassignmentService,
-    private readonly audit: AuditService,
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(FollowUpService) private readonly followUps: FollowUpService,
+    @Inject(ReassignmentService) private readonly reassignments: ReassignmentService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   read(query: CommercialPerformanceQuery, principal: Principal, correlationId: string, now = new Date()): CommercialPerformanceReport {

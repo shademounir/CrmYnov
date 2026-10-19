@@ -151,7 +151,8 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   assert.equal(addedAudit[0]?.sessionId, null); assert.equal(addedAudit[0]?.minimizedIp, null);
   report("Normal authenticated ADD retry: one member, one success audit, correct reviewer/campus/correlation and version increment.");
   if (additionRollbackOnly) return;
-  const contacted = await success<{ id: string }>(`/leads/${fixture.assignmentLeadId}/timeline`, "POST", { type: "CRM_CALL", result: "CONNECTED", note: "Contact synthétique" }, "cycle-edit-contact", 201);
+  const cycleNextAction = { mode: "SCHEDULE", dueAt: "2099-10-20T09:00:00Z", reason: "Suivi synthétique du dossier" };
+  const contacted = await success<{ id: string }>(`/leads/${fixture.assignmentLeadId}/timeline`, "POST", { type: "CRM_CALL", result: "CONNECTED", note: "Contact synthétique", idempotencyKey: "cycle-edit-contact", nextAction: cycleNextAction }, "cycle-edit-contact", 201);
   const beforeEdit = await client.lead.findUniqueOrThrow({ where: { id: fixture.assignmentLeadId } });
   const beforeEditAudit = await client.auditEvent.count({ where: { resourceId: fixture.assignmentLeadId } });
   const editBody = { lastName: "Corrigé", email: "edit-cycle@example.invalid", expectedVersion: beforeEdit.version, idempotencyKey: "cycle-edit-replay" };
@@ -189,10 +190,10 @@ export async function assertLeadAuditCycle(client: PrismaClient, base: string, f
   assert.equal(pendingAudit[0]?.actorId, actor.id); assert.equal(pendingAudit[0]?.sessionId, actor.sessionId);
   assert.equal(pendingAudit[0]?.campusId, fixture.accounts[0].campusId); assert.equal(pendingAudit[0]?.correlationId, "cycle-create");
   assert.deepEqual(pendingAudit[0]?.after, { outcome: "UNASSIGNED", reason: "assignment_automation_disabled", configurationVersion: 1, ruleId: null });
-  const interaction = await success<{ id: string }>(`/leads/${id}/timeline`, "POST", { type: "COMMENT", result: "SYNTHETIC_NOTE" }, "cycle-activity", 201);
-  const replay = await success<{ id: string }>(`/leads/${id}/timeline`, "POST", { type: "COMMENT", result: "SYNTHETIC_NOTE" }, "cycle-activity", 201);
-  assert.deepEqual(replay, interaction); assert.equal(await client.auditEvent.count({ where: { resourceId: id } }), 3, "authenticated replay creates no duplicate, including the unique initial pending audit");
-  report("HTTP interaction replay: identical result, two manual mutation audits and one unique initial pending-assignment audit.");
+  const interaction = await success<{ id: string }>(`/leads/${id}/timeline`, "POST", { type: "COMMENT", result: "SYNTHETIC_NOTE", idempotencyKey: "cycle-activity", nextAction: cycleNextAction }, "cycle-activity", 201);
+  const replay = await success<{ id: string }>(`/leads/${id}/timeline`, "POST", { type: "COMMENT", result: "SYNTHETIC_NOTE", idempotencyKey: "cycle-activity", nextAction: cycleNextAction }, "cycle-activity", 201);
+  assert.deepEqual(replay, interaction); assert.equal(await client.auditEvent.count({ where: { resourceId: id } }), 4, "authenticated replay creates no duplicate, including next action and initial pending assignment audits");
+  report("HTTP interaction replay: identical result, one next-action audit and one unique initial pending-assignment audit, without duplicate task.");
   await success(`/leads/${id}/timeline/${interaction.id}/corrections`, "POST", { idempotencyKey: "cycle-correction", expectedCorrectionCount: 0, operation: "CANCEL", reasonCode: "DUPLICATE_ENTRY" }, "cycle-correction", 201);
   await success(`/leads/${id}/status`, "PATCH", { status: "CONTACTED", reason: "Contact synthétique" }, "cycle-status", 200);
   await success(`/leads/${id}/assignment`, "POST", { targetUserId: fixture.assigneeId, confirmed: true, idempotencyKey: "cycle-assignment" }, "cycle-assignment", 201);

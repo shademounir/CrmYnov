@@ -6,11 +6,16 @@ import { LeadService } from "../leads/lead.service.js";
 import { NotificationService } from "../notifications/notification.service.js";
 import { FollowUpPersistenceRepository } from "./follow-up-persistence.repository.js";
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
+import { PrismaService } from "../persistence/prisma.service.js";
+import type { LeadActivityRecord } from "../leads/lead.service.js";
+import { strictBody } from "../references/reference.contract.js";
+import { assertConfirmedNextAction, assertFutureNextAction, parseNextActionIntent } from "./next-action.contract.js";
 
 export type FollowUpState = "SCHEDULED" | "DUE" | "COMPLETED" | "CANCELLED";
 export interface FollowUpRecord { id: string; leadId: string; ownerId: string; dueAt: string; state: FollowUpState; reason: string; version: number; createdAt: string; updatedAt: string }
+export interface ManualInteractionInput { type: string; result: string; note?: string; nextActionAt?: string; nextAction?: unknown; idempotencyKey?: string }
 type FollowUpDecisionAction = "POSTPONE" | "COMPLETE" | "CANCEL";
-type FollowUpDecisionInput = { action?: FollowUpDecisionAction; dueAt?: string; reason?: string; expectedVersion?: number; idempotencyKey?: string };
+export type FollowUpDecisionInput = { action?: FollowUpDecisionAction; dueAt?: string; reason?: string; expectedVersion?: number; idempotencyKey?: string; nextAction?: unknown };
 type ValidatedFollowUpDecision = Readonly<{ action: FollowUpDecisionAction; reason: string; due?: Date }>;
 const followUpDecisionStates: Readonly<Record<FollowUpDecisionAction, FollowUpState>> = {
   POSTPONE: "SCHEDULED",
@@ -21,12 +26,76 @@ const followUpDecisionStates: Readonly<Record<FollowUpDecisionAction, FollowUpSt
 @Injectable()
 export class FollowUpService implements OnModuleInit {
   private readonly items = new Map<string, Readonly<FollowUpRecord>>();
+  private readonly interactionReceipts = new Map<string, { fingerprint: string; result: LeadActivityRecord }>();
+  private readonly interactionLocks = new Set<string>();
+  private readonly completionReceipts = new Map<string, { fingerprint: string; result: FollowUpRecord }>();
   constructor(
     @Inject(LeadService) private readonly leads: LeadService,
     @Inject(NotificationService) private readonly notifications: NotificationService,
     @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(FollowUpPersistenceRepository) private readonly persistence?: FollowUpPersistenceRepository,
+    @Optional() @Inject(PrismaService) private readonly prisma?: PrismaService,
   ) {}
+
+  /** Only the human timeline command uses this obligation. SDK/import events
+   * keep their original append path and are never discarded for missing plans. */
+  async addManualActivityForApi(leadId: string, input: ManualInteractionInput, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
+    strictBody(input, ["type", "result", "note", "nextAction", "nextActionAt", "idempotencyKey"]);
+    if (!input.idempotencyKey || !/^[A-Za-z0-9:_-]{8,64}$/.test(input.idempotencyKey)) throw new BadRequestException({ code: "lead_action_idempotency_invalid" });
+    const rawKey = input.idempotencyKey;
+    const key = `commercial-interaction:${leadId}:${rawKey}`;
+    const fingerprint = JSON.stringify({ actorId: principal.userId, input });
+    const durable = this.persistence?.enabled === true;
+    if (durable && !this.prisma?.client) throw new Error("commercial_interaction_transaction_unavailable");
+    const perform = async (): Promise<LeadActivityRecord> => {
+      const receipt = durable ? await this.prisma!.client!.leadMutationReceipt.findUnique({ where: { idempotencyKey: key } }) : this.interactionReceipts.get(key);
+      if (receipt) {
+        const expected = durable ? this.persistence.fingerprint(fingerprint) : fingerprint;
+        if (receipt.fingerprint !== expected) throw new ConflictException({ code: "lead_idempotency_conflict" });
+        return structuredClone(receipt.result) as unknown as LeadActivityRecord;
+      }
+      const lead = await this.leads.getLeadForApi(leadId, principal, correlationId);
+      const open = !["ENROLLED", "CLOSED_LOST"].includes(lead.status);
+      if (open && !input.nextAction) throw new BadRequestException({ code: "next_action_required" });
+      if (!open && (input.nextAction || input.nextActionAt)) throw new BadRequestException({ code: "next_action_closed_lead" });
+      const intent = input.nextAction ? parseNextActionIntent(input.nextAction) : undefined;
+      if (input.nextActionAt && input.nextActionAt !== intent?.dueAt) throw new BadRequestException({ code: "next_action_intent_invalid" });
+      await this.refreshPersistentState();
+      if (intent) {
+        assertFutureNextAction(intent, new Date());
+        if (lead.assignedToId !== principal.userId && !this.isManager(principal)) throw new ForbiddenException({ code: "follow_up_forbidden" });
+        if (intent.mode === "CONFIRM") assertConfirmedNextAction(intent, this.items.get(intent.id), leadId, new Date());
+      }
+      // Validate the same scheduling command before appending anything in the
+      // in-memory fixture adapter. Persistent mode also rechecks inside its tx.
+      const ownerId = lead.assignedToId ?? principal.userId;
+      const prepared = intent?.mode === "SCHEDULE" ? this.buildSchedule(leadId, { ...intent, ownerId }, lead.assignedToId, principal) : undefined;
+      const result = await this.leads.addActivityForApi(leadId, {
+        type: input.type, result: input.result, ...(input.note !== undefined ? { note: input.note } : {}),
+        ...(intent ? { nextActionAt: intent.dueAt } : {}), idempotencyKey: rawKey,
+      }, principal, correlationId);
+      if (intent?.mode === "SCHEDULE") {
+        if (durable) await this.scheduleForApi(leadId, { dueAt: intent.dueAt, reason: intent.reason, ownerId, idempotencyKey: rawKey }, principal, correlationId);
+        else if (prepared) {
+          this.items.set(prepared.id, prepared);
+          this.leads.recordFollowUp(leadId, prepared.dueAt, principal, correlationId, "FOLLOW_UP_SCHEDULED");
+          this.recordAudit(prepared, principal, correlationId, "FOLLOW_UP_SCHEDULED");
+        }
+      }
+      if (durable) await this.prisma!.client!.leadMutationReceipt.create({ data: {
+        leadId, idempotencyKey: key, operation: "COMMERCIAL_INTERACTION", fingerprint: this.persistence.fingerprint(fingerprint),
+        result: result as unknown as import("@prisma/client").Prisma.InputJsonValue,
+      } });
+      else this.interactionReceipts.set(key, { fingerprint, result: structuredClone(result) });
+      return result;
+    };
+    if (!durable) {
+      if (this.interactionLocks.has(leadId)) throw new ConflictException({ code: "lead_concurrent_mutation" });
+      this.interactionLocks.add(leadId);
+      try { return await perform(); } finally { this.interactionLocks.delete(leadId); }
+    }
+    return this.prisma!.client!.$transaction(tx => this.prisma!.withTransaction(tx, perform), { isolationLevel: "Serializable" });
+  }
 
   async onModuleInit(): Promise<void> {
     await this.refreshPersistentState();
@@ -43,6 +112,7 @@ export class FollowUpService implements OnModuleInit {
     if (!this.persistence?.enabled) return this.schedule(leadId, input, principal, correlationId);
     await this.refreshPersistentState();
     const lead = await this.leads.getLeadForApi(leadId, principal, correlationId);
+    if (["ENROLLED", "CLOSED_LOST"].includes(lead.status)) throw new BadRequestException({ code: "next_action_closed_lead" });
     const due = new Date(input.dueAt ?? ""); const reason = input.reason?.trim(); const ownerId = input.ownerId ?? lead.assignedToId;
     if (Number.isNaN(due.valueOf()) || due <= new Date() || !reason || !ownerId) throw new BadRequestException({ code: "follow_up_invalid" });
     if (lead.assignedToId !== principal.userId && !this.isManager(principal)) throw new ForbiddenException({ code: "follow_up_forbidden" });
@@ -63,6 +133,7 @@ export class FollowUpService implements OnModuleInit {
 
   schedule(leadId: string, input: { dueAt?: string; reason?: string; ownerId?: string }, principal: Principal, correlationId: string): FollowUpRecord {
     const lead = this.leads.getLead(leadId, principal, correlationId);
+    if (["ENROLLED", "CLOSED_LOST"].includes(lead.status)) throw new BadRequestException({ code: "next_action_closed_lead" });
     const record = this.buildSchedule(leadId, input, lead.assignedToId, principal);
     this.items.set(record.id, record); this.leads.recordFollowUp(leadId, record.dueAt, principal, correlationId, "FOLLOW_UP_SCHEDULED"); this.recordAudit(record, principal, correlationId, "FOLLOW_UP_SCHEDULED");
     return { ...record };
@@ -122,13 +193,59 @@ export class FollowUpService implements OnModuleInit {
     principal: Principal,
     correlationId: string,
   ): Promise<FollowUpRecord> {
+    strictBody(input, ["action", "dueAt", "reason", "expectedVersion", "idempotencyKey", "nextAction"]);
+    if (input.nextAction !== undefined && input.action !== "COMPLETE") throw new BadRequestException({ code: "next_action_intent_invalid" });
+    this.validateDecision(input);
+    if (input.action === "COMPLETE") return this.completeAndPlanForApi(id, input, principal, correlationId);
+    return this.decideSingleForApi(id, input, principal, correlationId);
+  }
+
+  private async completeAndPlanForApi(id: string, input: FollowUpDecisionInput, principal: Principal, correlationId: string): Promise<FollowUpRecord> {
+    if (!input.idempotencyKey || !/^[A-Za-z0-9:_-]{8,64}$/.test(input.idempotencyKey)) throw new BadRequestException({ code: "follow_up_idempotency_invalid" });
+    const rawKey = input.idempotencyKey, key = this.mutationKey("decide", id, rawKey);
+    const fingerprint = this.decisionFingerprint(id, input, principal);
+    const durable = this.persistence?.enabled === true;
+    if (durable && !this.prisma?.client) throw new Error("follow_up_completion_transaction_unavailable");
+    const perform = async (): Promise<FollowUpRecord> => {
+      const replay = durable ? await this.persistence.findReplay(key, fingerprint) : this.completionReceipts.get(key)?.result;
+      if (replay) {
+        if (!durable && this.completionReceipts.get(key)?.fingerprint !== fingerprint) throw new ConflictException({ code: "follow_up_idempotency_conflict" });
+        return structuredClone(replay);
+      }
+      const plan = parseNextActionIntent(input.nextAction);
+      if (plan.mode !== "SCHEDULE") throw new BadRequestException({ code: "next_action_required" });
+      assertFutureNextAction(plan, new Date());
+      await this.refreshPersistentState();
+      const current = this.items.get(id); if (!current) throw new NotFoundException({ code: "follow_up_not_found" });
+      this.assertDecisionAccess(current, principal);
+      const lead = await this.leads.getLeadForApi(current.leadId, principal, correlationId);
+      if (["ENROLLED", "CLOSED_LOST"].includes(lead.status)) throw new BadRequestException({ code: "next_action_closed_lead" });
+      if (lead.assignedToId !== principal.userId && !this.isManager(principal)) throw new ForbiddenException({ code: "follow_up_forbidden" });
+      const completed = await this.decideSingleForApi(id, input, principal, correlationId);
+      await this.scheduleForApi(lead.id, { dueAt: plan.dueAt, reason: plan.reason, ownerId: lead.assignedToId ?? principal.userId, idempotencyKey: rawKey }, principal, correlationId);
+      if (!durable) this.completionReceipts.set(key, { fingerprint, result: structuredClone(completed) });
+      return completed;
+    };
+    if (!durable) return perform();
+    return this.prisma!.client!.$transaction(tx => this.prisma!.withTransaction(tx, perform), { isolationLevel: "Serializable" });
+  }
+
+  private decisionFingerprint(id: string, input: FollowUpDecisionInput, principal: Principal): string {
+    const payload = { id, action: input.action, dueAt: input.action === "POSTPONE" ? new Date(input.dueAt ?? "").toISOString() : undefined,
+      reason: typeof input.reason === "string" ? input.reason.trim() : input.reason, expectedVersion: input.expectedVersion, ...(input.nextAction ? { nextAction: input.nextAction, actorId: principal.userId } : {}) };
+    return this.persistence?.enabled ? this.persistence.fingerprint(payload) : JSON.stringify(payload);
+  }
+
+  private async decideSingleForApi(
+    id: string, input: FollowUpDecisionInput, principal: Principal, correlationId: string,
+  ): Promise<FollowUpRecord> {
     if (!this.persistence?.enabled) return this.decide(id, input, principal, correlationId);
     await this.refreshPersistentState();
     const current = this.items.get(id);
     if (!current) throw new NotFoundException({ code: "follow_up_not_found" });
     const { action, reason, due } = this.validateDecision(input);
     const idempotencyKey = this.mutationKey("decide", id, input.idempotencyKey ?? (correlationId === "missing-correlation" ? randomUUID() : correlationId));
-    const fingerprint = this.persistence.fingerprint({ id, action, dueAt: due?.toISOString(), reason, expectedVersion: input.expectedVersion });
+    const fingerprint = this.decisionFingerprint(id, input, principal);
     const replay = await this.persistence.findReplay(idempotencyKey, fingerprint);
     if (replay) return replay;
     this.assertDecisionAccess(current, principal);
@@ -146,8 +263,8 @@ export class FollowUpService implements OnModuleInit {
 
   private validateDecision(input: FollowUpDecisionInput): ValidatedFollowUpDecision {
     const action = input.action;
-    const reason = input.reason?.trim();
-    if (!action || !reason) throw new BadRequestException({ code: "follow_up_decision_invalid" });
+    const reason = typeof input.reason === "string" ? input.reason.trim() : "";
+    if (!action || !["POSTPONE", "COMPLETE", "CANCEL"].includes(action) || !reason || reason.length > 1000) throw new BadRequestException({ code: "follow_up_decision_invalid" });
     const due = action === "POSTPONE" ? new Date(input.dueAt ?? "") : undefined;
     if (due && (Number.isNaN(due.valueOf()) || due <= new Date())) throw new BadRequestException({ code: "follow_up_due_invalid" });
     return { action, reason, ...(due ? { due } : {}) };

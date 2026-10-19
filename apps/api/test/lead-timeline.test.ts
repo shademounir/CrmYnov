@@ -3,6 +3,8 @@ import test from "node:test";
 import { AuditService } from "../src/audit/audit.service.js";
 import { LeadService } from "../src/leads/lead.service.js";
 import { LeadTimelineController } from "../src/leads/lead.controller.js";
+import { FollowUpService } from "../src/follow-up/follow-up.service.js";
+import { NotificationService } from "../src/notifications/notification.service.js";
 
 const leadInput = { leadCode: "LD-SYNTH-001", firstName: "Camille", lastName: "Test", email: "camille@example.invalid", campus: "Synthetic Campus", campaign: "Synthetic 2026", educationLevel: "BAC", program: "Synthetic Program", source: "TEST" };
 const admissions = { userId: "synthetic-adviser", roles: ["ADMISSIONS" as const], scopes: [{ kind: "GLOBAL" as const }], sessionId: "00000000-0000-4000-8000-000000000001" };
@@ -30,12 +32,12 @@ test("refuses unauthorized writers and invalid activity types", () => {
 });
 
 test("controller delegates append and read without exposing another lead", async () => {
-  const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(leadInput);
-  const controller = new LeadTimelineController(service);
+  const service = new LeadService(new AuditService()); const lead = service.registerLocalLead({ ...leadInput, assignedToId: manager.userId });
+  const controller = new LeadTimelineController(service, new FollowUpService(service, new NotificationService(new AuditService()), new AuditService()));
   const request = { principal: admissions, header: (name: string) => name === "x-correlation-id" ? "corr-controller" : undefined } as never;
-  const created = await controller.create(lead.id, { type: "MEETING", result: "Scheduled", note: "Synthetic note" }, request);
+  const created = await controller.create(lead.id, { type: "MEETING", result: "Scheduled", note: "Synthetic note", idempotencyKey: "controller-interaction", nextAction: { mode: "SCHEDULE", dueAt: "2099-09-01T09:00:00Z", reason: "Suivi synthétique" } }, { principal: manager, header: () => "corr-controller" } as never);
   assert.equal(created.correlationId, "corr-controller");
-  assert.equal((await controller.list(lead.id, request)).events[0]?.id, created.id);
+  assert.ok((await controller.list(lead.id, request)).events.some(item => item.id === created.id));
   await assert.rejects(() => controller.list(lead.id, { header: () => undefined } as never), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("principal_missing"));
   await assert.rejects(() => controller.create(lead.id, { type: "COMMENT", result: "x" }, { header: () => undefined } as never), (error: unknown) => JSON.stringify((error as { getResponse(): unknown }).getResponse()).includes("principal_missing"));
 });
