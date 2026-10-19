@@ -186,7 +186,8 @@ export class LeadPersistenceRepository {
   async findActivity(idempotencyKey: string): Promise<LeadActivityRecord | undefined> {
     const client = this.prisma.client;
     if (!client) return undefined;
-    const row = await client.leadActivity.findUnique({ where: { idempotencyKey } });
+    const row = await client.leadActivity.findUnique({ where: { idempotencyKey } })
+      ?? await client.leadActivity.findUnique({ where: { idempotencyKey: `${idempotencyKey}:0` } });
     return row ? this.mapActivity(row) : undefined;
   }
 
@@ -207,6 +208,7 @@ export class LeadPersistenceRepository {
     principal: Principal,
     correlationId: string,
     assignmentAudit?: AssignmentAudit,
+    atomicEffect?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<StoredLead> {
     this.requireAuditActor(principal);
     const eventType = mutationEvents[operation];
@@ -216,7 +218,13 @@ export class LeadPersistenceRepository {
       before, after, activities, idempotencyKey, operation, fingerprint, principal, correlationId, eventType,
       ...(assignmentAudit ? { assignmentAudit } : {}),
     };
-    return client.$transaction((tx) => this.persistMutationInTransaction(tx, input), { isolationLevel: "Serializable" });
+    return client.$transaction(async (tx) => {
+      const receipt = await tx.leadMutationReceipt.findUnique({ where: { idempotencyKey } });
+      if (receipt) return this.replay(receipt.fingerprint, fingerprint, receipt.result);
+      const result = await this.persistMutationInTransaction(tx, input);
+      await atomicEffect?.(tx);
+      return result;
+    }, { isolationLevel: "Serializable" });
   }
 
   private mapStoredLead(row: SnapshotLeadRow): StoredLead {
@@ -333,6 +341,12 @@ export class LeadPersistenceRepository {
     if (input.operation === "COLLABORATOR") await this.replaceCollaboratorsInTransaction(tx, result.id, result.collaboratorIds ?? []);
     const assignment = input.operation === "ASSIGN" ? input.assignmentAudit : undefined;
     await this.auditMutation(tx, input.eventType, result.id, result.version, input.idempotencyKey, input.principal, input.correlationId, assignment);
+    if (input.operation === "ADD_ACTIVITY" && input.before.status === "PROSPECT" && result.status === "CONTACTED") {
+      await tx.auditEvent.create({ data: { eventType: "LEAD_STATUS_CHANGED", resourceType: "LEAD", resourceId: result.id,
+        campusId: result.campus, actorId: input.principal.userId, actorRoles: input.principal.roles, sessionId: input.principal.sessionId,
+        correlationId: input.correlationId, result: "SUCCESS", idempotencyKey: `first-contact:${input.idempotencyKey}`,
+        before: { status: "PROSPECT" }, after: { status: "CONTACTED", policy: "FIRST_COMMERCIAL_CONTACT_V1" } } });
+    }
     await tx.leadMutationReceipt.create({
       data: { leadId: result.id, idempotencyKey: input.idempotencyKey, fingerprint: input.fingerprint, operation: input.operation, result: result as unknown as Prisma.InputJsonValue },
     });

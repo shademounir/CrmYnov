@@ -11,9 +11,9 @@ export interface InteractionBody {
   nextActionAt?: string;
 }
 
-export interface StatusBody { status: string; reason: string }
+export interface StatusBody { status: string; reason: string; qualification?: { interestConfirmed: boolean; eligibilityConfirmed: boolean } }
 export interface FollowUpBody { dueAt: string; reason: string }
-export interface ClosureBody { target: string; reason: string; comment: string; evidence: string[] }
+export interface ClosureBody { target: string; reason: string; comment: string; evidence: string[]; qualification?: { interestConfirmed: boolean; eligibilityConfirmed: boolean } }
 export interface AssignmentCandidate { id: string; label: string; activeLeadCount: number; capacity: number }
 export interface FollowUpRecord { id: string; leadId: string; dueAt: string; state: "SCHEDULED" | "DUE" | "COMPLETED" | "CANCELLED"; reason: string; version: number }
 export interface ClosureRequestRecord {
@@ -21,6 +21,8 @@ export interface ClosureRequestRecord {
   leadId: string;
   target: "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
   canDecide?: boolean;
+  canCancel?: boolean;
+  canRetire?: boolean;
   reason: string;
   comment: string;
   evidence: string[];
@@ -60,7 +62,8 @@ export function interactionBody(form: FormData): InteractionBody {
 }
 
 export function statusBody(form: FormData): StatusBody {
-  return { status: formText(form, "status"), reason: formText(form, "reason") };
+  const status = formText(form, "status");
+  return { status, reason: formText(form, "reason"), ...(status === "QUALIFIED" ? { qualification: { interestConfirmed: form.get("interestConfirmed") === "on", eligibilityConfirmed: form.get("eligibilityConfirmed") === "on" } } : {}) };
 }
 
 export function followUpBody(form: FormData): FollowUpBody {
@@ -68,7 +71,8 @@ export function followUpBody(form: FormData): FollowUpBody {
 }
 
 export function closureBody(form: FormData): ClosureBody {
-  return { target: formText(form, "target"), reason: formText(form, "reason"), comment: formText(form, "comment"), evidence: formText(form, "evidence").split(/\r?\n/u).map((value) => value.trim()).filter(Boolean) };
+  const target = formText(form, "target");
+  return { target, reason: formText(form, "reason"), comment: formText(form, "comment"), evidence: formText(form, "evidence").split(/\r?\n/u).map((value) => value.trim()).filter(Boolean), ...(target === "ENROLLED" ? { qualification: { interestConfirmed: form.get("interestConfirmed") === "on", eligibilityConfirmed: form.get("eligibilityConfirmed") === "on" } } : {}) };
 }
 
 type Operation = "assignment" | "interaction" | "status" | "follow-up" | "closure-request" | "closure-decision";
@@ -93,6 +97,7 @@ const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Reco
     next_action_chronology_invalid: "La prochaine action doit être postérieure à l’interaction enregistrée maintenant.",
   },
   status: {
+    commercial_positive_qualification_required: "Confirmez l’intérêt et l’éligibilité, renseignez la formation et le niveau du dossier, puis motivez la qualification (8 caractères minimum). La température seule ne suffit pas.",
     lead_status_transition_forbidden: "Cette étape n’est pas disponible depuis l’étape actuelle. Utilisez le parcours de clôture pour « Inscrit » ou « Sans suite ».",
     lead_closure_approval_required: "Les étapes « Inscrit » et « Sans suite » nécessitent une demande de clôture validée.",
     lead_closure_reason_required: "Un motif de clôture conforme est obligatoire.",
@@ -104,12 +109,16 @@ const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Reco
     follow_up_concurrent: "Cette relance a changé depuis son affichage. Actualisez-la avant de réessayer.",
   },
   "closure-request": {
+    commercial_positive_qualification_required: "Pour une inscription, confirmez l’intérêt et l’éligibilité et renseignez la formation et le niveau. Les justificatifs restent obligatoires ; aucune qualification positive n’est requise pour Sans suite.",
+    commercial_stage_approval_retired: "Les étapes Contacté et Qualifié ne nécessitent plus de demande au Manager. Retirez l’ancienne demande, puis enregistrez l’étape sur la fiche.",
+    closure_idempotency_conflict: "Cette intention a déjà un autre contenu enregistré. Vérifiez la demande avant de la remplacer.",
     supervisor_unavailable: "Aucun superviseur autorisé n’est disponible pour ce dossier. La demande n’a pas été enregistrée ; contactez votre responsable.",
     closure_request_invalid: "La demande nécessite un motif, un commentaire et au moins une preuve métier.",
     closure_source_status_invalid: "Cette clôture n’est pas disponible depuis l’étape commerciale actuelle.",
     closure_pending: "Une demande de clôture est déjà en attente pour ce Lead.",
   },
   "closure-decision": {
+    commercial_stage_approval_retired: "Cette ancienne demande d’étape ne doit plus être approuvée. Utilisez son retrait explicite, sans changer le statut historique.",
     closure_self_approval_forbidden: "Le demandeur ne peut pas valider sa propre demande. Connectez un Manager ou un Administrateur distinct.",
     closure_approval_forbidden: "La décision est réservée à un Manager ou un Administrateur autorisé.",
     closure_concurrent_decision: "Cette demande a déjà changé. Actualisez son état avant de réessayer.",
@@ -312,15 +321,20 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
 export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps>): React.JSX.Element {
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const dirty = useDirty(onDirtyChange);
   const submissionLock = useRef(false);
+  const attempt = useRef<{ payload: string; key: string } | undefined>(undefined);
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault(); if (submissionLock.current) return;
     const body = interactionBody(new FormData(event.currentTarget));
+    const payload = JSON.stringify(body);
+    if (attempt.current && attempt.current.payload !== payload) { setFeedback({ kind: "error", message: "Vérifiez le résultat de la dernière interaction avant de changer de saisie. Réessayez la même intention si sa réponse a été perdue." }); return; }
     const chronologyError = nextActionChronologyError(body.nextActionAt ?? "");
     if (chronologyError) { setFeedback({ kind: "error", message: chronologyError }); return; }
+    attempt.current ??= { payload, key: crypto.randomUUID() };
     submissionLock.current = true; setBusy(true); setFeedback({ kind: "idle" });
     try {
-      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("interaction", response) }); return; }
+      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/timeline`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, idempotencyKey: attempt.current.key }) });
+      if (!response.ok) { if (response.status < 500) attempt.current = undefined; setFeedback({ kind: "error", message: await responseMessage("interaction", response) }); return; }
+      attempt.current = undefined;
       dirty.clearDirty(); setFeedback({ kind: "success", message: "Interaction enregistrée dans l’historique protégé." }); onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
     finally { submissionLock.current = false; setBusy(false); }
@@ -331,36 +345,45 @@ export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirty
     <label>Note de suivi<textarea name="note" disabled={busy} rows={5} maxLength={1000} placeholder="Ajoutez uniquement les informations utiles au suivi." /></label>
     <label>Prochaine action (facultative)<input name="nextActionAt" type="datetime-local" disabled={busy} aria-describedby="interaction-date-help" /></label>
     <p id="interaction-date-help" className="lead-assignment-dialog__help">Vous pouvez enregistrer l’interaction sans date. Si vous planifiez une action, choisissez une date future, en heure de Casablanca.</p>
-    <p className="lead-assignment-dialog__notice">Le résultat de contact reste distinct de l’étape commerciale. L’interaction est horodatée par le serveur et l’historique existant n’est jamais réécrit.</p>
+    <p className="lead-assignment-dialog__notice">Un premier échange ou appel commercial tracé fait passer un Prospect à Contacté, sans validation intermédiaire. Les imports et événements techniques ne constituent pas un contact. Une étape déjà qualifiée ou clôturée n’est jamais rétrogradée.</p>
     <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’interaction" {...(onCancel ? { onCancel } : {})} />
   </form>;
 }
 
 export function StatusWorkflowForm({ leadId, currentStatus, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps & { currentStatus: string }>): React.JSX.Element {
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const dirty = useDirty(onDirtyChange);
-  const options = ["PROSPECT", "CONTACTED", "QUALIFIED"].includes(currentStatus) ? statusJourney.filter((option) => option.value !== currentStatus) : [];
+  const options = statusTransitionOptions(currentStatus);
+  const submissionLock = useRef(false), attempt = useRef<{ payload: string; key: string } | undefined>(undefined);
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); if (busy) return; setBusy(true); setFeedback({ kind: "idle" });
+    event.preventDefault(); if (submissionLock.current) return;
+    const body = statusBody(new FormData(event.currentTarget)), payload = JSON.stringify(body);
+    if (attempt.current && attempt.current.payload !== payload) { setFeedback({ kind: "error", message: "Le résultat de la dernière soumission reste incertain. Vérifiez la fiche avant de changer d’intention." }); return; }
+    attempt.current ??= { payload, key: crypto.randomUUID() };
+    submissionLock.current = true; setBusy(true); setFeedback({ kind: "idle" });
     try {
-      const body = statusBody(new FormData(event.currentTarget));
-      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/closure-requests`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ target: body.status, reason: "COMMERCIAL_STAGE_REVIEW", comment: body.reason, evidence: ["COMMERCIAL_STAGE_REVIEW"] }) });
-      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("status", response) }); return; }
-      dirty.clearDirty(); setFeedback({ kind: "success", message: "Demande transmise au superviseur. L’étape sera modifiée après sa validation." }); onCompleted?.();
+      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/status`, { method: "PATCH", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, idempotencyKey: attempt.current.key }) });
+      if (!response.ok) { if (response.status < 500) attempt.current = undefined; setFeedback({ kind: "error", message: await responseMessage("status", response) }); return; }
+      attempt.current = undefined;
+      dirty.clearDirty(); setFeedback({ kind: "success", message: "Étape commerciale enregistrée, sans approbation intermédiaire." }); onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
-    finally { setBusy(false); }
+    finally { submissionLock.current = false; setBusy(false); }
   }
   return <form className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => void save(event)}>
     <section className="lead-status-dialog__journey" aria-labelledby="lead-status-journey-title">
       <h3 id="lead-status-journey-title">Parcours commercial</h3>
       <ol>{statusJourney.map((item) => <li key={item.value} data-state={statusJourneyState(currentStatus, item.value)} aria-current={item.value === currentStatus ? "step" : undefined}>{item.label}</li>)}</ol>
-      <p>Étapes de clôture distinctes : « Inscrit » après qualification, ou « Sans suite » après contact. Elles exigent un motif et les droits de validation prévus.</p>
+      <p>Les étapes commerciales ne nécessitent pas d’approbation intermédiaire. « Inscrit » et « Sans suite » restent soumis à une décision distincte du responsable.</p>
     </section>
     {options.length ? <>
       <label>Étape suivante autorisée<select name="status" required disabled={busy} defaultValue={options[0]?.value} autoFocus>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-      <label>Motif<textarea name="reason" required minLength={3} disabled={busy} rows={5} maxLength={1000} placeholder="Précisez le contexte utile à la validation du superviseur." /></label>
-      <p className="lead-assignment-dialog__notice">Le superviseur reçoit votre demande. Le statut actuel reste conservé jusqu’à sa décision. La température commerciale reste indépendante.</p>
-      {(currentStatus === "CONTACTED" || currentStatus === "QUALIFIED") ? <Link className="lead-assignment-dialog__details" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir le parcours « Inscrit / Sans suite »</Link> : null}
-      <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Soumettre au superviseur" {...(onCancel ? { onCancel } : {})} />
+      {currentStatus === "CONTACTED" ? <fieldset disabled={busy}><legend>Qualification positive du projet</legend>
+        <label><input type="checkbox" name="interestConfirmed" required /> L’intérêt pour la formation est confirmé par un échange métier.</label>
+        <label><input type="checkbox" name="eligibilityConfirmed" required /> L’éligibilité a été vérifiée à partir de la formation et du niveau renseignés.</label>
+      </fieldset> : null}
+      <label>Motif<textarea name="reason" required minLength={currentStatus === "CONTACTED" ? 8 : 3} disabled={busy} rows={5} maxLength={1000} placeholder="Précisez l’observation commerciale et les vérifications effectuées." /></label>
+      <p className="lead-assignment-dialog__notice">L’enregistrement valide applique l’étape et conserve ses preuves. La température commerciale reste indépendante.</p>
+      <Link className="lead-assignment-dialog__details" href={`/leads/${encodeURIComponent(leadId)}/closure`}>Ouvrir le parcours « Inscrit / Sans suite »</Link>
+      <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’étape" {...(onCancel ? { onCancel } : {})} />
     </> : <div className="lead-status-dialog__terminal" role="status">
       <p>Aucune transition directe n’est disponible depuis cette étape.</p>
       <p>Pour passer à « Inscrit » ou « Sans suite », créez une demande de clôture qui conservera les validations métier et l’historique.</p>
@@ -475,20 +498,30 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
 
 export function ClosureWorkflowForm({ leadId, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps>): React.JSX.Element {
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const [target, setTarget] = useState("CLOSED_LOST"); const dirty = useDirty(onDirtyChange);
+  const lock = useRef(false), attempt = useRef<{ payload: string; key: string } | undefined>(undefined);
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); if (busy) return; setBusy(true); setFeedback({ kind: "idle" });
+    event.preventDefault(); if (lock.current) return;
+    const body = closureBody(new FormData(event.currentTarget)), payload = JSON.stringify(body);
+    if (attempt.current && attempt.current.payload !== payload) { setFeedback({ kind: "error", message: "Vérifiez la dernière demande avant d’en changer le contenu ; sa réponse a pu être perdue." }); return; }
+    attempt.current ??= { payload, key: crypto.randomUUID() };
+    lock.current = true; setBusy(true); setFeedback({ kind: "idle" });
     try {
-      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/closure-requests`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(closureBody(new FormData(event.currentTarget))) });
-      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("closure-request", response) }); return; }
+      const response = await fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/closure-requests`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, idempotencyKey: attempt.current.key }) });
+      if (!response.ok) { if (response.status < 500) attempt.current = undefined; setFeedback({ kind: "error", message: await responseMessage("closure-request", response) }); return; }
+      attempt.current = undefined;
       dirty.clearDirty(); setFeedback({ kind: "success", message: "Demande envoyée au Manager. Le statut du Lead reste inchangé jusqu’à la décision." }); onCompleted?.();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
-    finally { setBusy(false); }
+    finally { lock.current = false; setBusy(false); }
   }
   return <form className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => void save(event)}>
     <label>Clôture demandée<select name="target" required disabled={busy} value={target} onChange={(event) => setTarget(event.target.value)} autoFocus><option value="ENROLLED">Inscrit</option><option value="CLOSED_LOST">Sans suite</option></select></label>
     <label>Motif normalisé<select key={target} name="reason" required disabled={busy} defaultValue={target === "ENROLLED" ? "ADMISSION_CONFIRMED" : "NOT_INTERESTED"}>{target === "ENROLLED" ? <><option value="ADMISSION_CONFIRMED">Admission confirmée</option><option value="REGISTRATION_COMPLETE">Inscription complète</option></> : <><option value="NOT_INTERESTED">Non intéressé</option><option value="UNREACHABLE">Injoignable après le parcours prévu</option><option value="OTHER_PROGRAM">Autre programme choisi</option></>}</select></label>
     <label>Commentaire<textarea name="comment" required maxLength={1000} disabled={busy} rows={4} placeholder="Expliquez la demande sans données superflues." /></label>
     <label>Preuves métier<textarea name="evidence" required disabled={busy} rows={3} placeholder="Une référence par ligne, sans joindre de document sensible." /></label>
+    {target === "ENROLLED" ? <fieldset disabled={busy}><legend>Conditions d’inscription à vérifier</legend>
+      <label><input type="checkbox" name="interestConfirmed" required /> Intérêt du candidat confirmé</label>
+      <label><input type="checkbox" name="eligibilityConfirmed" required /> Éligibilité vérifiée pour la formation et le niveau renseignés</label>
+    </fieldset> : null}
     <p className="lead-assignment-dialog__notice">La demande n’applique pas elle-même la clôture. La séparation des rôles et les validations serveur restent obligatoires.</p>
     <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Soumettre au Manager" {...(onCancel ? { onCancel } : {})} />
   </form>;
@@ -569,6 +602,18 @@ export function ClosureHistory({ leadId, onCompleted }: Readonly<{ leadId: strin
     finally { decisionLocks.current.delete(item.id); setBusyId(undefined); }
   }
 
+  async function cancel(item: ClosureRequestRecord): Promise<void> {
+    if (decisionLocks.current.has(item.id)) return;
+    decisionLocks.current.add(item.id); setBusyId(item.id); setFeedback({ kind: "idle" });
+    try {
+      const response = await fetch(`/api/crm/closure-requests/${encodeURIComponent(item.id)}/${item.canRetire ? "retire" : "cancel"}`, { method: "PATCH", credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("closure-request", response) }); return; }
+      setFeedback({ kind: "success", message: "Demande retirée, historique conservé. Vous pouvez soumettre une nouvelle demande si nécessaire." });
+      await load(); onCompleted?.();
+    } catch { setFeedback({ kind: "error", message: "Vérifiez le retrait avant de soumettre une nouvelle demande." }); }
+    finally { decisionLocks.current.delete(item.id); setBusyId(undefined); }
+  }
+
   if (state === "loading") return <p role="status">Chargement des demandes de clôture…</p>;
   if (state === "error") return <div className="lead-closure-history__state" role="alert"><p>Les demandes de clôture sont indisponibles.</p><button className="secondary-button" type="button" onClick={() => void load()}>Réessayer</button></div>;
   return <div className="lead-closure-history">
@@ -582,11 +627,12 @@ export function ClosureHistory({ leadId, onCompleted }: Readonly<{ leadId: strin
         <p>{item.comment}</p>
         {item.decisionReason ? <p><strong>Motif de décision :</strong> {item.decisionReason}</p> : null}
       </div>
-      {item.state === "PENDING" && item.canDecide === true ? <form onSubmit={(event) => void decide(event, item)}>
+      {item.state === "PENDING" && item.canDecide === true && ["ENROLLED", "CLOSED_LOST"].includes(item.target) ? <form onSubmit={(event) => void decide(event, item)}>
         <label>Décision du responsable<select name="decision" defaultValue="APPROVE" disabled={busyId === item.id}><option value="APPROVE">Approuver la demande</option><option value="REJECT">Refuser la demande</option></select></label>
         <label>Motif de la décision<textarea name="reason" required minLength={3} maxLength={1000} rows={3} disabled={busyId === item.id} placeholder="Justifiez la décision sans données superflues." /></label>
         <button className="secondary-button" type="submit" disabled={busyId === item.id}>{busyId === item.id ? "Décision en cours…" : "Confirmer la décision"}</button>
-      </form> : item.state === "PENDING" ? <p role="status">Demande en attente de validation du superviseur.</p> : null}
+      </form> : item.state === "PENDING" ? <p role="status">{["PROSPECT", "CONTACTED", "QUALIFIED"].includes(item.target) ? "Ancienne demande d’étape : retirez-la sans approbation. Les étapes commerciales s’enregistrent désormais directement." : "Demande en attente de validation du superviseur."}</p> : null}
+      {item.canCancel || item.canRetire ? <button className="secondary-button" type="button" disabled={busyId === item.id} onClick={() => void cancel(item)}>{["PROSPECT", "CONTACTED", "QUALIFIED"].includes(item.target) ? "Retirer l’ancienne demande d’étape" : "Annuler pour modifier la demande"}</button> : null}
     </li>)}</ol>}
     <p className="lead-assignment-dialog__notice">La décision est contrôlée par le serveur : le demandeur ne peut pas approuver sa propre clôture, et une version déjà décidée ne peut pas être rejouée.</p>
   </div>;

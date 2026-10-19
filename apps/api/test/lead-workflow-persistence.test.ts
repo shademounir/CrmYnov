@@ -21,6 +21,7 @@ function fakeRepository(): { repository: LeadWorkflowPersistenceRepository; rows
   const delegate = (items: Row[], kind: "reassignment" | "collaboration" | "closure") => ({
     findMany: async () => [...items],
     findUnique: async ({ where }: { where: Record<string, unknown> }) => items.find((item) => Object.entries(where).every(([key, value]) => item[key] === value)) ?? null,
+    findFirst: async ({ where }: { where: Record<string, unknown> }) => items.find((item) => Object.entries(where).every(([key, value]) => item[key] === value)) ?? null,
     findUniqueOrThrow: async ({ where }: { where: Record<string, unknown> }) => {
       const item = items.find((candidate) => Object.entries(where).every(([key, value]) => candidate[key] === value));
       if (!item) throw new Error("missing_test_row");
@@ -39,6 +40,7 @@ function fakeRepository(): { repository: LeadWorkflowPersistenceRepository; rows
     kind,
   });
   const client = {
+    $queryRaw: async () => [{ id: leadId }],
     reassignmentRequest: delegate(rows.reassignments, "reassignment"),
     leadCollaborationRequest: delegate(rows.collaborations, "collaboration"),
     leadClosureRequest: delegate(rows.closures, "closure"),

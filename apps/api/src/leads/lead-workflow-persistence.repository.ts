@@ -118,8 +118,20 @@ export class LeadWorkflowPersistenceRepository {
 
   async saveClosure(item: ClosureRequest, expectedVersion?: number, audit?: ClosureAuditContext): Promise<ClosureRequest> {
     const client = this.requiredClient();
-    return client.$transaction(async (tx) => {
+    return client.$transaction((tx) => this.saveClosureInTransaction(tx, item, expectedVersion, audit), { isolationLevel: "Serializable" });
+  }
+
+  async saveClosureInTransaction(tx: Prisma.TransactionClient, item: ClosureRequest, expectedVersion?: number, audit?: ClosureAuditContext): Promise<ClosureRequest> {
       if (expectedVersion === undefined) {
+        // Serialize creation against decisions, cancellation and other requests
+        // for this lead. Never allow two active closures from separate workers.
+        await tx.$queryRaw`SELECT id FROM leads WHERE id = ${item.leadId}::uuid FOR UPDATE`;
+        const replay = await tx.leadClosureRequest.findUnique({ where: { id: item.id } });
+        if (replay) {
+          if (replay.requesterId !== item.requesterId || replay.leadId !== item.leadId || replay.target !== item.target || replay.reason !== item.reason || replay.comment !== item.comment || JSON.stringify(replay.evidence) !== JSON.stringify(item.evidence)) throw new ConflictException({ code: "closure_idempotency_conflict" });
+          return this.mapClosure(replay);
+        }
+        if (await tx.leadClosureRequest.findFirst({ where: { leadId: item.leadId, state: "PENDING" } })) throw new ConflictException({ code: "closure_pending" });
         const row = await tx.leadClosureRequest.create({ data: this.closureData(item) });
         if (audit) await this.auditClosure(tx, item, audit);
         await this.notifyClosure(tx, item);
@@ -132,8 +144,8 @@ export class LeadWorkflowPersistenceRepository {
       if (updated.count !== 1) throw new ConflictException({ code: "closure_concurrent_decision" });
       const row = await tx.leadClosureRequest.findUniqueOrThrow({ where: { id: item.id } });
       if (audit) await this.auditClosure(tx, item, audit);
+      if (item.state === "APPROVED" || item.state === "REJECTED") await createNotificationInTransaction(tx, { id: randomUUID(), recipientId: item.requesterId, type: "CLOSURE_REQUEST", priority: "HIGH", resourceType: "LEAD", resourceId: item.leadId, href: `/leads/${item.leadId}/closure`, createdAt: new Date().toISOString() }, `closure-decision:${item.id}`);
       return this.mapClosure(row);
-    }, { isolationLevel: "Serializable" });
   }
 
   async reconcileClosureNotifications(item: ClosureRequest): Promise<void> {
@@ -170,7 +182,7 @@ export class LeadWorkflowPersistenceRepository {
       correlationId: context.correlationId.slice(0, 64),
       result: "SUCCESS",
       idempotencyKey: `closure-audit:${context.eventType}:${item.id}:${item.version}`,
-      after: { requestId: item.id, leadId: item.leadId, target: item.target, state: item.state, version: item.version, evidenceCount: item.evidence.length },
+      after: { requestId: item.id, leadId: item.leadId, target: item.target, state: item.state, version: item.version, evidenceCount: item.evidence.length, ...(item.decisionReason ? { decisionReason: item.decisionReason } : {}) },
     } });
   }
 

@@ -10,7 +10,7 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   LeadTimelineController: { list: ["interaction.view"], create: ["interaction.create"], correct: ["interaction.create"] },
   LeadAssignmentController: { candidates: [], assignOne: ["lead.assign"], preview: ["lead.assign"], assignBatch: ["lead.assign"] },
   ReassignmentController: { create: ["lead.reassign.request"], list: ["lead.view"], pending: [], decide: ["lead.reassign.approve"] },
-  ClosureController: { request: ["lead.close.request"], list: ["lead.view"], reconcileNotifications: ["lead.close.approve"], decide: ["lead.close.approve"], cancel: ["lead.close.request"] },
+  ClosureController: { request: ["lead.close.request"], list: ["lead.view"], reconcileNotifications: ["lead.close.approve"], decide: ["lead.close.approve"], retire: ["lead.close.approve"], cancel: ["lead.close.request"] },
   LeadCollaborationController: { request: ["lead.collaborators.manage"], list: ["lead.view"], decide: ["lead.collaborators.manage"] },
   UserController: { create: ["users.create"], list: ["users.view"], setStatus: ["users.disable"], updateAuthorization: ["users.roles.assign"], updateProfile: ["users.roles.assign"], issueTemporarySecret: ["users.roles.assign"], issueInvitation: ["users.roles.assign"] },
   QuickLeadController: { matches: ["lead.view"], submit: ["lead.create"] },
@@ -72,6 +72,7 @@ export function usesScopedReportingAuthorization(controller: string, handler: st
 export function contextualPermissions(controller: string, keys: readonly string[], body: unknown, query: Record<string, unknown>, globalActor: boolean): readonly string[] {
   const status = body && typeof body === "object" && "status" in body ? body.status : undefined;
   if (controller === "LeadStatusController" && (status === "ENROLLED" || status === "CLOSED_LOST")) return [...keys, "lead.close.approve"];
+  if (controller === "LeadStatusController" && status === "QUALIFIED") return [...keys, "lead.qualification.update"];
   if (keys.some((key) => key.startsWith("reporting.")) && globalActor && !query.campus && !query.campusId) return [...keys, "reporting.global.view"];
   return keys;
 }
