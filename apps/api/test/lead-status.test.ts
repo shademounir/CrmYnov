@@ -11,9 +11,8 @@ const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify((e
 
 test("applies the controlled pipeline and appends immutable status events", () => {
   const audit = new AuditService(); const service = new LeadService(audit); const lead = service.registerLocalLead(leadInput);
-  assert.throws(() => service.changeStatus(lead.id, { status: "CONTACTED" }, adviser, "corr-direct"), hasCode("lead_status_approval_required"));
-  assert.equal(service.changeStatus(lead.id, { status: "CONTACTED" }, manager, "corr-contacted").status, "CONTACTED");
-  assert.equal(service.changeStatus(lead.id, { status: "QUALIFIED" }, manager, "corr-qualified").status, "QUALIFIED");
+  assert.equal(service.changeStatus(lead.id, { status: "CONTACTED" }, adviser, "corr-contacted").status, "CONTACTED");
+  assert.equal(service.changeStatus(lead.id, { status: "QUALIFIED", qualification: { interestConfirmed: true, eligibilityConfirmed: true }, reason: "Projet et conditions vérifiés" }, adviser, "corr-qualified").status, "QUALIFIED");
   assert.equal(service.changeStatus(lead.id, { status: "ENROLLED", reason: "Dossier synthétique validé" }, manager, "corr-enrolled").status, "ENROLLED");
   assert.deepEqual(service.timeline(lead.id, manager).map((event) => event.type), ["STATUS_CHANGED", "STATUS_CHANGED", "STATUS_CHANGED"]);
   assert.equal(audit.list().filter((event) => event.eventType === "LEAD_STATUS_CHANGED").length, 3);
@@ -21,9 +20,9 @@ test("applies the controlled pipeline and appends immutable status events", () =
 
 test("fails closed for invalid transitions and controlled closures", () => {
   const service = new LeadService(new AuditService()); const lead = service.registerLocalLead(leadInput);
-  assert.throws(() => service.changeStatus(lead.id, { status: "QUALIFIED" }, adviser, "corr"), hasCode("lead_status_approval_required"));
+  assert.throws(() => service.changeStatus(lead.id, { status: "QUALIFIED" }, adviser, "corr"), hasCode("lead_status_transition_forbidden"));
   service.changeStatus(lead.id, { status: "CONTACTED" }, manager, "corr-contacted");
-  assert.throws(() => service.changeStatus(lead.id, { status: "CLOSED_LOST", reason: "Synthétique" }, adviser, "corr"), hasCode("lead_status_approval_required"));
+  assert.throws(() => service.changeStatus(lead.id, { status: "CLOSED_LOST", reason: "Synthétique" }, adviser, "corr"), hasCode("lead_closure_approval_required"));
   assert.throws(() => service.changeStatus(lead.id, { status: "CLOSED_LOST" }, manager, "corr"), hasCode("lead_closure_reason_required"));
   assert.throws(() => service.changeStatus(lead.id, { status: "UNKNOWN" }, manager, "corr"), hasCode("lead_status_invalid"));
 });

@@ -31,7 +31,7 @@ test("computes source evidence from synthetic ingestion without inventing financ
   ingestion.ingest(batch("source_batch_2", "external-1"), manager, "corr-duplicate");
   ingestion.ingest(batch("source_batch_3", "external-2", ""), manager, "corr-incomplete");
   const leadId = created.lines[0]!.leadId!; leads.addActivity(leadId, { type: "PHONE_CALL", result: "ANSWERED" }, manager, "corr-contact");
-  leads.changeStatus(leadId, { status: "CONTACTED" }, manager, "corr-status");
+  assert.equal(leads.findLocalLead(leadId)?.status, "CONTACTED");
   const report = service.read({ source: "WEB_FORM", campaign: "Campagne synthétique" }, manager, "corr-report");
   const source = report.breakdowns.source.find((item) => item.value === "WEB_FORM")!;
   assert.equal(source.volumeReceived, 3); assert.equal(source.uniqueLeadCount, 1); assert.equal(source.rates.duplicate, 0.3333);

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, OnModuleInit, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadPersistenceRepository } from "./lead-persistence.repository.js";
@@ -9,6 +10,7 @@ import { strictBody } from "../references/reference.contract.js";
 import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
+import { isCommercialContact, positiveQualificationEvidence, type CommercialStatusInput } from "./commercial-progression.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -28,9 +30,9 @@ export type LeadAcquisitionKind = "NEW" | "BASELINE";
 export type LeadTemperatureSource = "HUMAN_QUALIFICATION" | "HISTORICAL_BASELINE" | "UNEVALUATED";
 export const leadStatuses: readonly LeadStatus[] = ["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"];
 const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = {
-  PROSPECT: ["CONTACTED", "QUALIFIED"],
-  CONTACTED: ["PROSPECT", "QUALIFIED", "CLOSED_LOST"],
-  QUALIFIED: ["PROSPECT", "CONTACTED", "ENROLLED", "CLOSED_LOST"],
+  PROSPECT: ["CONTACTED", "ENROLLED", "CLOSED_LOST"],
+  CONTACTED: ["QUALIFIED", "ENROLLED", "CLOSED_LOST"],
+  QUALIFIED: ["ENROLLED", "CLOSED_LOST"],
   ENROLLED: [],
   CLOSED_LOST: [],
 };
@@ -123,6 +125,7 @@ export class LeadService implements OnModuleInit {
   private readonly leads = new Map<string, Readonly<LeadRecord>>();
   private activities: Readonly<LeadActivityRecord>[] = [];
   private readonly correctionReceipts = new Map<string, Readonly<LeadActivityRecord>>();
+  private readonly apiActionReceipts = new Map<string, { fingerprint: string; result: LeadRecord | LeadActivityRecord }>();
   constructor(
     @Inject(AuditService) private readonly audit: AuditService,
     @Optional() @Inject(LeadPersistenceRepository) private readonly persistence?: LeadPersistenceRepository,
@@ -256,11 +259,25 @@ export class LeadService implements OnModuleInit {
     return this.timeline(leadId, principal);
   }
 
-  async addActivityForApi(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string }, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
-    const idempotencyKey = `lead:activity:${leadId}:${correlationId}`;
-    const replay = await this.persistence?.findActivity(idempotencyKey);
-    if (replay) return replay;
-    return this.persistApiMutation(leadId, idempotencyKey, "ADD_ACTIVITY", input, () => this.addActivity(leadId, input, principal, correlationId), principal, correlationId);
+  async addActivityForApi(leadId: string, input: { type: string; result: string; note?: string; nextActionAt?: string; idempotencyKey?: string }, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
+    strictBody(input, ["type", "result", "note", "nextActionAt", "idempotencyKey"]);
+    if (!["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT"].includes(input.type)
+      || typeof input.result !== "string" || input.result.length > 1000 || (input.note !== undefined && (typeof input.note !== "string" || input.note.length > 10000))
+      || (input.nextActionAt !== undefined && typeof input.nextActionAt !== "string")) throw new BadRequestException({ code: "activity_invalid" });
+    this.assertActionKey(input.idempotencyKey);
+    const idempotencyKey = `lead:activity:${leadId}:${input.idempotencyKey ?? correlationId}`;
+    const bound = { actorId: principal.userId, input };
+    if (!this.persistence?.enabled) {
+      const fingerprint = JSON.stringify(bound), receipt = this.apiActionReceipts.get(idempotencyKey);
+      if (receipt) { if (receipt.fingerprint !== fingerprint) throw new ConflictException({ code: "lead_idempotency_conflict" }); return structuredClone(receipt.result) as LeadActivityRecord; }
+      const result = this.addActivity(leadId, input, principal, correlationId);
+      this.apiActionReceipts.set(idempotencyKey, { fingerprint, result: structuredClone(result) });return result;
+    }
+    if (this.persistence?.enabled) {
+      const receipt = await this.persistence.findMutationReplay(idempotencyKey, this.persistence.fingerprint({ input: bound, leadId, operation: "ADD_ACTIVITY" }));
+      if (receipt) { const replay = await this.persistence.findActivity(idempotencyKey); if (!replay) throw new ConflictException({ code: "lead_activity_receipt_incomplete" }); return replay; }
+    }
+    return this.persistApiMutation(leadId, idempotencyKey, "ADD_ACTIVITY", bound, () => this.addActivity(leadId, input, principal, correlationId), principal, correlationId);
   }
 
   async correctActivityForApi(leadId: string, originalEventId: string, input: InteractionCorrectionInput, principal: Principal, correlationId: string): Promise<LeadActivityRecord> {
@@ -270,8 +287,27 @@ export class LeadService implements OnModuleInit {
     return this.persistApiMutation(leadId, idempotencyKey, "CORRECT_ACTIVITY", { originalEventId, input }, () => this.correctActivity(leadId, originalEventId, input, principal, correlationId), principal, correlationId);
   }
 
-  async changeStatusForApi(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): Promise<LeadRecord> {
-    return this.persistApiMutation(leadId, `lead:status:${leadId}:${correlationId}`, "CHANGE_STATUS", input, () => this.changeStatus(leadId, input, principal, correlationId), principal, correlationId);
+  async changeStatusForApi(leadId: string, input: CommercialStatusInput, principal: Principal, correlationId: string): Promise<LeadRecord> {
+    strictBody(input, ["status", "reason", "qualification", "idempotencyKey"]);
+    this.assertActionKey(input.idempotencyKey);
+    // Final statuses are reachable only through the separate controlled decision.
+    if (input.status === "ENROLLED" || input.status === "CLOSED_LOST") throw new ForbiddenException({ code: "lead_closure_approval_required" });
+    const key = `lead:status:${leadId}:${input.idempotencyKey ?? correlationId}`, bound = { actorId: principal.userId, input };
+    if (!this.persistence?.enabled) {
+      const fingerprint = JSON.stringify(bound), receipt = this.apiActionReceipts.get(key);
+      if (receipt) { if (receipt.fingerprint !== fingerprint) throw new ConflictException({ code: "lead_idempotency_conflict" }); return structuredClone(receipt.result) as LeadRecord; }
+      const result = this.changeStatus(leadId, input, principal, correlationId);
+      this.apiActionReceipts.set(key, { fingerprint, result: structuredClone(result) });return result;
+    }
+    if (this.persistence?.enabled) {
+      const replay = await this.persistence.findMutationReplay(key, this.persistence.fingerprint({ input: bound, leadId, operation: "CHANGE_STATUS" }));
+      if (replay) return this.visibleLead(replay, principal);
+    }
+    return this.persistApiMutation(leadId, key, "CHANGE_STATUS", bound, () => this.changeStatus(leadId, input, principal, correlationId), principal, correlationId);
+  }
+
+  private assertActionKey(key: unknown): void {
+    if (key !== undefined && (typeof key !== "string" || !/^[A-Za-z0-9:_-]{8,128}$/.test(key))) throw new BadRequestException({ code: "lead_action_idempotency_invalid" });
   }
 
   async assignLocalLeadForApi(leadId: string, assignedToId: string, principal: Principal, correlationId: string, reason: string, assignmentMode = "MANUAL_FIXED", assignmentAudit?: AssignmentAudit): Promise<LeadRecord> {
@@ -308,8 +344,9 @@ export class LeadService implements OnModuleInit {
     mutate: () => T,
     auditActor: Principal,
     correlationId: string,
+    atomicEffect?: (tx: Prisma.TransactionClient, result: T) => Promise<void>,
   ): Promise<T> {
-    return this.persistApiMutation(leadId, idempotencyKey, operation, input, mutate, auditActor, correlationId);
+    return this.persistApiMutation(leadId, idempotencyKey, operation, input, mutate, auditActor, correlationId, undefined, atomicEffect);
   }
 
   private async persistApiMutation<T>(
@@ -321,6 +358,7 @@ export class LeadService implements OnModuleInit {
     auditActor: Principal,
     correlationId: string,
     assignmentAudit?: AssignmentAudit,
+    atomicEffect?: (tx: Prisma.TransactionClient, result: T) => Promise<void>,
   ): Promise<T> {
     if (!this.persistence?.enabled) return mutate();
     await this.refreshPersistentState();
@@ -344,8 +382,14 @@ export class LeadService implements OnModuleInit {
         auditActor,
         correlationId,
         assignmentAudit,
+        atomicEffect ? (tx): Promise<void> => atomicEffect(tx, result) : undefined,
       );
       await this.refreshPersistentState();
+      if (operation === "ADD_ACTIVITY") {
+        const saved = await this.persistence.findActivity(idempotencyKey);
+        if (!saved) throw new ConflictException({ code: "lead_activity_receipt_incomplete" });
+        return saved as T;
+      }
       if (typeof result === "object" && result !== null && "leadCode" in result) return this.visibleLead(this.leads.get(leadId)!, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;
       if (typeof result === "object" && result !== null && "id" in result) return (this.activities.find((item) => item.id === result.id) ?? result) as T;
       return result;
@@ -692,6 +736,9 @@ export class LeadService implements OnModuleInit {
     this.audit.record({ eventType: "LEAD_ACTIVITY_ADDED", actorId: principal.userId, actorRoles: principal.roles,
       sessionId: principal.sessionId, correlationId, after: { leadId, activityId: activity.id, type: activity.type }, result: "SUCCESS",
       idempotencyKey: `lead-activity:${activity.id}` });
+    if (lead.status === "PROSPECT" && isCommercialContact(activity)) {
+      this.changeStatus(leadId, { status: "CONTACTED", reason: "Premier traitement commercial enregistré" }, principal, correlationId);
+    }
     return { ...activity };
   }
 
@@ -744,17 +791,18 @@ export class LeadService implements OnModuleInit {
     return Object.freeze({ type: input.type as ActivityType, result: input.result, noteState: "ABSENT", ...(nextActionAt ? { nextActionAt: nextActionAt.toISOString() } : {}) });
   }
 
-  changeStatus(leadId: string, input: { status: string; reason?: string }, principal: Principal, correlationId: string): LeadRecord {
+  changeStatus(leadId: string, input: CommercialStatusInput, principal: Principal, correlationId: string): LeadRecord {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
     const current = this.leads.get(leadId);
     if (!current) throw new NotFoundException({ code: "lead_not_found" });
     if (!leadStatuses.includes(input.status as LeadStatus)) throw new BadRequestException({ code: "lead_status_invalid" });
     const status = input.status as LeadStatus;
-    if (!principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_status_approval_required" });
     if (!allowedTransitions[current.status].includes(status)) throw new BadRequestException({ code: "lead_status_transition_forbidden" });
     const terminal = status === "ENROLLED" || status === "CLOSED_LOST";
     if (terminal && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "lead_closure_approval_required" });
-    const reason = input.reason?.trim();
+    if (input.reason !== undefined && typeof input.reason !== "string") throw new BadRequestException({ code: "lead_status_invalid" });
+    const reason = status === "QUALIFIED" || (status === "ENROLLED" && current.status !== "QUALIFIED")
+      ? positiveQualificationEvidence(current, input.qualification, input.reason) : input.reason?.trim();
     if (terminal && !reason) throw new BadRequestException({ code: "lead_closure_reason_required" });
     const occurredAt = new Date().toISOString();
     const updated: Readonly<LeadRecord> = Object.freeze({ ...current, status, lastActivityAt: occurredAt });
