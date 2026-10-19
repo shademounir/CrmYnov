@@ -9,6 +9,7 @@ import type { BookingView, ResponsibilityView, WindowView } from "../src/admissi
 import { createApplication } from "../src/application.js";
 import { deriveSecret } from "../src/access-recovery/access-recovery.store.js";
 import { PrismaService } from "../src/persistence/prisma.service.js";
+import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
 
 const options = { skip: process.env.CRMY175_EPHEMERAL_TEST !== "true", timeout: 60_000 };
 interface HttpResult<T> { status: number; body: T }
@@ -66,6 +67,32 @@ test("CRMY-175 real Nest HTTP → API → PostgreSQL: request, distinct decision
     assert.equal((await http("GET", "/admissions/context", readerToken)).status, 403);
     const configured = await http<ResponsibilityView>("POST", "/admissions/responsibles", adminToken, { userId: responsible.id, campus: campus.id, active: true, expectedVersion: 0, idempotencyKey: `http-profile-${suffix}` });
     assert.equal(configured.status, 201); assert.equal(configured.body.userId, responsible.id); assert.equal(configured.body.campus, campus.code);
+    assert.equal(configured.body.readiness, "AVAILABILITY_REQUIRED");
+    assert.equal(configured.body.readinessLabel, "Disponibilités à renseigner");
+    const pendingIdentity = await identity("ADMIN", "PendingResponsible");
+    await db.collaborator.update({ where: { id: pendingIdentity.id }, data: { firstLoginRequired: true } });
+    const adminContext = await http<{ eligibleUsers: Array<{ id: string; activationRequired: boolean }> }>("GET", "/admissions/context", adminToken);
+    assert.equal(adminContext.body.eligibleUsers.find(user => user.id === pendingIdentity.id)?.activationRequired, true);
+    const designationBody = { userId: pendingIdentity.id, campus: campus.id, active: true, expectedVersion: 0, idempotencyKey: `http-pending-profile-${suffix}` };
+    const designated = await http<ResponsibilityView>("POST", "/admissions/responsibles", adminToken, designationBody);
+    assert.equal(designated.status, 201); assert.equal(designated.body.readiness, "ACTIVATION_REQUIRED");
+    assert.equal((await http<ResponsibilityView>("POST", "/admissions/responsibles", adminToken, designationBody)).body.id, designated.body.id);
+    assert.equal((await db.collaborator.findUniqueOrThrow({ where: { id: pendingIdentity.id } })).firstLoginRequired, true, "Designation must not activate an account or consume its invitation");
+    assert.equal(await db.admissionsWindow.count({ where: { responsibilityId: designated.body.id } }), 0, "No invented availability");
+    const pendingSlotPath = `/admissions/slots?leadId=${lead.id}&responsibilityId=${designated.body.id}&from=2099-10-03T09:00:00Z&to=2099-10-03T17:00:00Z&durationMinutes=30`;
+    assert.equal((await http("GET", pendingSlotPath, commercialToken)).status, 403);
+    let profiles = await http<{ items: ResponsibilityView[] }>("GET", `/admissions/responsibles?leadId=${lead.id}`, commercialToken);
+    assert.equal(profiles.body.items.find(item => item.id === designated.body.id)?.canConsultSlots, false);
+    // Synthetic activation fixture only; no real user's credential is touched.
+    await db.collaborator.update({ where: { id: pendingIdentity.id }, data: { firstLoginRequired: false } });
+    profiles = await http("GET", `/admissions/responsibles?leadId=${lead.id}`, commercialToken);
+    assert.equal(profiles.body.items.find(item => item.id === designated.body.id)?.readiness, "AVAILABILITY_REQUIRED");
+    const target = { kind: "ROLE" as const, role: "ADMIN" as const, campus: campus.id };
+    const grants = { ...defaultConfiguration(target), "appointment.manage": "NONE" };
+    await db.rolePermissionConfiguration.create({ data: { id: `ROLE:ADMIN:${campus.id}`, ...target, version: 1, versions: { create: { number: 1, grants: { create: Object.entries(grants).map(([permission, scope]) => ({ permission, scope })) } } } } });
+    profiles = await http("GET", `/admissions/responsibles?leadId=${lead.id}`, commercialToken);
+    assert.equal(profiles.body.items.find(item => item.id === designated.body.id)?.readiness, "PERMISSION_REQUIRED");
+    assert.equal((await http("GET", pendingSlotPath, commercialToken)).status, 403, "A designation never overrides a persisted target permission denial");
     const startsAt = "2099-10-03T09:00:00.000Z"; const endsAt = "2099-10-03T17:00:00.000Z";
     const available = await http<WindowView>("POST", "/admissions/windows", responsibleToken, { responsibilityId: configured.body.id, kind: "AVAILABLE", startsAt, endsAt, idempotencyKey: `http-window-${suffix}` });
     assert.equal(available.status, 201); assert.equal(available.body.active, true);
