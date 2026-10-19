@@ -44,8 +44,8 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   const superActorId = randomUUID(); const superEmail = `${superActorId}@example.invalid`; const superSalt = randomBytes(16).toString("hex");
   await client.collaborator.create({ data: { id: superActorId, professionalEmail: superEmail, roles: ["SUPER_ADMIN"], firstLoginRequired: false } });
   await client.localPasswordHash.create({ data: { collaboratorId: superActorId, identityDigest: createHash("sha256").update(superEmail).digest("hex"), passwordSalt: superSalt, passwordDigest: scryptSync(password, superSalt, 32).toString("hex"), mustChange: false } });
-  const commercialId = randomUUID(), supervisorId = randomUUID();
-  for (const [id, role] of [[commercialId, "ADMISSIONS"], [supervisorId, "MANAGER"]] as const) {
+  const commercialId = randomUUID(), supervisorId = randomUUID(), readerId = randomUUID();
+  for (const [id, role] of [[commercialId, "ADMISSIONS"], [supervisorId, "MANAGER"], [readerId, "AUDITOR"]] as const) {
     const identity = `${id}@example.invalid`, identitySalt = randomBytes(16).toString("hex");
     await client.collaborator.create({ data: { id, professionalEmail: identity, professionalDisplayName: role === "MANAGER" ? "Superviseure synthétique" : "Conseillère synthétique", roles: [role], campusId: campus, firstLoginRequired: false } });
     await client.localPasswordHash.create({ data: { collaboratorId: id, identityDigest: createHash("sha256").update(identity).digest("hex"), passwordSalt: identitySalt, passwordDigest: scryptSync(password, identitySalt, 32).toString("hex"), mustChange: false } });
@@ -106,7 +106,7 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
     const response = await fetch(`${base(firstPort)}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `${id}@example.invalid`, password }) });
     assert.equal(response.status, 201); return (await response.json() as { token: string }).token;
   };
-  const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId);
+  const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId), readerToken = await businessToken(readerId);
   const businessRequest = (actorToken: string, path: string, method = "GET", payload?: unknown, apiPort = firstPort): Promise<Response> => fetch(`${base(apiPort)}${path}`, { method, headers: { authorization: `Bearer ${actorToken}`, "content-type": "application/json", "x-correlation-id": `business-${randomUUID()}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
   const nextAction = { mode: "SCHEDULE", dueAt: "2099-10-20T09:00:00Z", reason: "Vérifier les pièces synthétiques" };
   const interactionBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nAvec prochaine action", idempotencyKey: "business:first-interaction", nextAction };
@@ -317,6 +317,13 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   const workDue = new Date(Date.now() - 60_000);
   await client.leadFollowUp.create({ data: { leadId: sourced.id, ownerId: commercialId, dueAt: workDue, createdAt: new Date(workDue.valueOf() - 60_000), state: "SCHEDULED", reason: "Suivi synthétique de cohérence des compteurs", idempotencyKey: "synthetic-work-counter", fingerprint: createHash("sha256").update("synthetic-work-counter").digest("hex") } });
   await client.lead.update({ where: { id: sourced.id }, data: { nextActionAt: workDue } });
+  const authorizedActions = await businessRequest(commercialToken, "/follow-ups"); assert.equal(authorizedActions.status, 200);
+  const readActions = await authorizedActions.json() as { items: Array<{ leadId: string; ownerId: string; reason: string }> };
+  assert.equal(readActions.items.find((item) => item.leadId === sourced.id)?.reason, "Suivi synthétique de cohérence des compteurs");
+  assert.ok(readActions.items.every((item) => item.ownerId === commercialId));
+  const leadOnly = await businessRequest(readerToken, `/leads/${sourced.id}`); assert.equal(leadOnly.status, 200);
+  assert.equal((await leadOnly.text()).includes("Suivi synthétique de cohérence des compteurs"), false, "Lead read alone does not disclose task reason");
+  assert.equal((await businessRequest(readerToken, "/follow-ups")).status, 403, "task reason remains behind existing reminder permission");
   type SlaQueue = { count: number; href: string };
   const dashboardSlaResponse = await businessRequest(supervisorToken, `/reports/manager-dashboard?${slaQuery}`);
   assert.equal(dashboardSlaResponse.status, 200, await dashboardSlaResponse.clone().text());

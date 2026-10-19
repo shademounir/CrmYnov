@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import { PipelineLeadCards, PipelineLeads, pipelineLeadEndpoint } from "../app/manager/reports/commercial-funnel/pipeline-leads";
+import { PipelineLeadCards, PipelineLeads, pipelineLeadEndpoint, parsePipelineActions } from "../app/manager/reports/commercial-funnel/pipeline-leads";
 
 test("Pipeline cards reuse directory cohort parameters without navigation context or untrusted filters", () => {
   const url = new URL(pipelineLeadEndpoint({ from: "2026-10-01T08:00:00Z", to: "2026-10-19T12:00:00Z", adviserId: "synthetic", status: "CONTACTED", campus: "Synthetic Campus", channel: "DIGITAL", treatmentFrom: "2026-01-02", treatmentState: "UNKNOWN_DATE", admin: "true" }, 2), "https://example.invalid");
@@ -30,6 +30,23 @@ test("Pipeline cards do not fabricate overdue actions or identities from missing
   assert.ok(!html.includes("En retard à la génération du rapport"));
 });
 
+test("Pipeline only joins authorized active page actions matching the persisted deadline, renders notes as inert excerpts", () => {
+  const dueAt = "2026-10-19T10:00:00Z", hostile = "<script>alert(1)</script>";
+  const task = { id: "task", leadId: "visible", dueAt, state: "DUE", reason: `${hostile}${"x".repeat(300)}`, version: 2 };
+  const actions = parsePipelineActions({ items: [task, { ...task, id: "foreign", leadId: "other", reason: "OFF_PAGE_SECRET" }, { ...task, id: "done", state: "COMPLETED", reason: "COMPLETED_REASON" }] }, new Set(["visible"]));
+  assert.equal(actions.kind, "ready"); if (actions.kind !== "ready") throw new Error("fixture");
+  assert.deepEqual(actions.items.map((item) => item.id), ["task"]);
+  const data = { items: [{ id: "visible", hasActiveNextAction: true, nextActionAt: dueAt }], total: 1, page: 1, pageSize: 12 };
+  const render = (value: typeof actions): string => renderToStaticMarkup(React.createElement(PipelineLeadCards, { data, generatedAt: "2026-10-19T12:00:00Z", actions: value }));
+  const html = render(actions); assert.ok(html.includes("Action à effectuer")); assert.ok(html.includes("(extrait)")); assert.ok(html.includes("&lt;script&gt;")); assert.ok(!html.includes("<script>")); assert.ok(!html.includes("OFF_PAGE_SECRET"));
+  const mismatch = render({ kind: "ready", items: [{ ...actions.items[0]!, dueAt: "2026-10-20T10:00:00Z" }] });
+  assert.ok(mismatch.includes("non concordante")); assert.ok(!mismatch.includes("alert(1)"));
+  const ambiguous = render({ kind: "ready", items: [...actions.items, { ...actions.items[0]!, id: "second" }] });
+  assert.ok(ambiguous.includes("non concordante")); assert.ok(!ambiguous.includes("alert(1)"));
+  assert.throws(() => parsePipelineActions({ items: [task, task] }, new Set(["visible"])));
+  assert.throws(() => parsePipelineActions({ items: [{ ...task, version: 0 }] }, new Set(["visible"])));
+});
+
 test("Pipeline dossiers paginate server totals, preserve scope, and clear cards on session or invalid response", async (t) => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://example.invalid/manager/reports/commercial-funnel" });
   const prior = new Map<string, PropertyDescriptor | undefined>();
@@ -39,15 +56,20 @@ test("Pipeline dossiers paginate server totals, preserve scope, and clear cards 
   const { act } = await import("react"); const { createRoot } = await import("react-dom/client");
   const host = dom.window.document.getElementById("root")!; const root = createRoot(host);
   t.after(async () => { await act(async () => { root.unmount(); await Promise.resolve(); }); dom.window.close(); for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
-  let mode: "ready" | "session" | "invalid" = "ready";
+  let mode: "ready" | "session" | "invalid" | "actionReady" | "actionForbidden" | "actionSession" = "ready";
   const requested: URL[] = [];
   t.mock.method(globalThis, "fetch", async (path: string): Promise<Response> => {
     await Promise.resolve();
     const url = new URL(path, "https://example.invalid"); requested.push(url);
+    if (url.pathname === "/api/crm/follow-ups") {
+      if (mode === "actionSession") return Response.json({}, { status: 401 });
+      if (mode === "actionForbidden") return Response.json({}, { status: 403 });
+      return Response.json({ items: [{ id: "task", leadId: "page-1", dueAt: "2026-10-19T10:00:00Z", state: "DUE", reason: "Relire le projet synthétique", version: 1 }] });
+    }
     if (mode === "session") return Response.json({}, { status: 401 });
     if (mode === "invalid") return Response.json({ items: [] });
     const page = Number(url.searchParams.get("page"));
-    return Response.json({ items: [{ id: `page-${page}`, firstName: "Synthetic", lastName: `Page ${page}`, status: "PROSPECT" }], total: 13, page, pageSize: 12 });
+    return Response.json({ items: [{ id: `page-${page}`, firstName: "Synthetic", lastName: `Page ${page}`, status: "PROSPECT", ...(mode.startsWith("action") ? { hasActiveNextAction: true, nextActionAt: "2026-10-19T10:00:00Z" } : {}) }], total: 13, page, pageSize: 12 });
   });
   const filters = { adviserId: "scope-synthetic", campus: "SYNTHETIC", status: "PROSPECT" };
   const render = async (key: string): Promise<void> => { await act(async () => { root.render(React.createElement(PipelineLeads, { key, filters, generatedAt: "2026-10-19T12:00:00Z" })); await new Promise<void>((resolve) => setImmediate(resolve)); }); };
@@ -65,4 +87,10 @@ test("Pipeline dossiers paginate server totals, preserve scope, and clear cards 
   const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Réessayer les dossiers")!;
   await act(async () => { retry.click(); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.ok(host.querySelector('[role="alert"]')); assert.ok(!host.textContent?.includes("0 dossiers affichés"));
+  mode = "actionReady"; await render("action-ready");
+  assert.match(host.textContent ?? "", /Relire le projet synthétique/u);
+  mode = "actionForbidden"; await render("action-forbidden");
+  assert.match(host.textContent ?? "", /Motif non accessible/u); assert.ok(!host.textContent?.includes("Relire le projet synthétique")); assert.equal(host.querySelectorAll(".pipeline-lead-card").length, 1);
+  mode = "actionSession"; await render("action-session");
+  assert.match(host.textContent ?? "", /Session expirée/u); assert.equal(host.querySelectorAll(".pipeline-lead-card").length, 0);
 });
