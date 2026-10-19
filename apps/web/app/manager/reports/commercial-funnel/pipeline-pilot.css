@@ -96,10 +96,10 @@
 }
 @media (max-width: 768px) {
   .app-shell .page-canvas > main.pipeline-pilot-page { padding-top: 0; }
-  .pipeline-pilot-page .ui-page-header { min-height: 82px; padding-left: 16px; }
+  .pipeline-pilot-page .ui-page-header { min-height: 82px; padding-left: 16px; grid-template-columns: minmax(0, 1fr); }
   .pipeline-pilot-page .ui-page-header::before { top: 16px; bottom: 16px; width: 5px; }
   .pipeline-pilot-page .ui-page-header__actions { width: 100%; }
-  .pipeline-pilot-page .ui-page-header__actions .secondary-button { width: 100%; }
+  .pipeline-pilot-page .ui-page-header__actions .secondary-button { width: 100%; min-width: 0; }
   .pipeline-pilot-summary { grid-template-columns: 1fr; padding: 0 15px; }
   .pipeline-pilot-summary > div, .pipeline-pilot-summary > div:first-child { min-height: 70px; padding: 11px 2px; border-top: 1px solid var(--border); border-left: 0; }
   .pipeline-pilot-summary > div:first-child { border-top: 0; }
