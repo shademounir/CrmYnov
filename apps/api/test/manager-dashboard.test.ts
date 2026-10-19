@@ -130,3 +130,36 @@ test("API reporting refreshes PostgreSQL-backed state and exposes scoped persist
   assert.equal(csv.includes('rate,enrolledConversionRatio,"UNAVAILABLE",'), true);
   assert.equal(csv.includes('rate,enrolledConversionRatio,"0",'), false);
 });
+
+test("first-treatment queue uses the shared strict threshold, excludes known history and retains zero-count scoped links", () => {
+  const adviser: Principal = { userId: "adviser-synthetic", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-adviser" };
+  const createdAt = "2026-10-18T10:00:00.000Z";
+  const common = { createdAt, status: "PROSPECT", campus: "campus-a", assignedToId: adviser.userId, collaboratorIds: [], activities: [] };
+  const rows = [
+    { ...common, id: "untreated", receivedAt: createdAt },
+    { ...common, id: "history", hasUndatedHistory: true, treatmentState: "UNKNOWN_DATE" },
+    { ...common, id: "treated", firstTreatmentAt: "2026-10-18T12:00:00.000Z", treatmentState: "DATED" },
+    { ...common, id: "other-adviser", assignedToId: "another" },
+    { ...common, id: "other-source", source: "PHONE_CALL" },
+  ].map(row => ({ source: "WEB_FORM", ...row }));
+  const service = new ManagerDashboardService(
+    dependency<CommercialFunnelService>("funnel", { cohort: { totalUniqueLeads: 0 }, currentState: { QUALIFIED: 0 }, attainment: { enrolled: 0 }, rates: { enrolled: null }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 0, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}), { reportingSnapshot: () => rows } as unknown as LeadService, new AuditService(),
+  );
+  const filters = { period: "30d", source: "WEB_FORM", campus: "campus-a" };
+  const equal = service.readPersonal(filters, adviser, "sla-equal", new Date("2026-10-19T10:00:00.000Z"));
+  assert.equal(equal.firstTreatmentOverdue.count, 0);
+  const late = service.readPersonal(filters, adviser, "sla-late", new Date("2026-10-19T10:00:00.001Z"));
+  assert.equal(late.firstTreatmentOverdue.count, 1); assert.equal(late.toContact.count, 1);
+  const global = service.read({ ...filters, adviserId: adviser.userId }, manager, "sla-manager", new Date("2026-10-19T10:00:00.001Z"));
+  assert.equal(global.firstTreatmentOverdue.count, late.firstTreatmentOverdue.count);
+  assert.equal(global.firstTreatmentOverdue.thresholdHours, late.firstTreatmentOverdue.thresholdHours);
+  for (const report of [equal, late]) {
+    const params = new URL(report.firstTreatmentOverdue.href, "http://localhost").searchParams;
+    assert.equal(params.get("view"), "FIRST_TREATMENT_OVERDUE"); assert.equal(params.get("adviserId"), adviser.userId);
+    assert.equal(params.get("source"), "WEB_FORM"); assert.equal(params.get("campus"), "campus-a");
+    assert.equal(report.firstTreatmentOverdue.thresholdHours, 24); assert.equal(report.firstTreatmentOverdue.comparison, "STRICTLY_GREATER");
+  }
+});

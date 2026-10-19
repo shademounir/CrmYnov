@@ -12,6 +12,7 @@ import { ReportingPersistenceService, type DashboardCapabilities, type Persisten
 import { matchesInteractiveFilters, normalizeReportingQuery, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { acquisitionPartition, isBaseline, observedEnrollment, type AcquisitionPartition } from "./acquisition-cohort.js";
 import { isToContact } from "../leads/lead-treatment.js";
+import { firstTreatmentState } from "../leads/first-treatment.js";
 
 export const MANAGER_DASHBOARD_VERSION = "manager-dashboard-v1";
 export type ManagerDashboardQuery = InteractiveReportingQuery;
@@ -33,6 +34,7 @@ export interface ManagerDashboardReport {
   persistence?: PersistentReportingEvidence;
   capabilities?: DashboardCapabilities;
   toContact: { count: number; href: string };
+  firstTreatmentOverdue: { count: number; href: string; thresholdHours: 24; comparison: "STRICTLY_GREATER" };
 }
 export interface PersonalDashboardReport {
   definitionVersion: "personal-dashboard-v1"; generatedAt: string; timezone: "Africa/Casablanca"; filters: ManagerDashboardQuery;
@@ -41,6 +43,7 @@ export interface PersonalDashboardReport {
   persistence?: PersistentReportingEvidence;
   capabilities?: DashboardCapabilities;
   toContact: { count: number; href: string };
+  firstTreatmentOverdue: { count: number; href: string; thresholdHours: 24; comparison: "STRICTLY_GREATER" };
 }
 
 @Injectable()
@@ -91,7 +94,7 @@ export class ManagerDashboardService {
       operationalRisks: persistedRisks ?? this.risks.read(common, principal, correlationId, now),
       sharedContributions: this.contributions.read(common, principal, correlationId, now),
     };
-    const rows = this.filteredRows(query, principal);
+    const rows = this.filteredRows(query, principal, now);
     const cards = { uniqueLeads: panels.funnel.cohort.totalUniqueLeads, enrolled: panels.funnel.attainment.enrolled,
       unassigned: panels.operationalRisks.queues.unassigned, overdueFollowUps: panels.operationalRisks.queues.overdueFollowUps,
       activeAlerts: panels.operationalRisks.alerts.length };
@@ -116,6 +119,7 @@ export class ManagerDashboardService {
     const report: ManagerDashboardReport = { definitionVersion: MANAGER_DASHBOARD_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       filters: common, panels, cards, acquisition: acquisitionPartition(rows), trends, distributions, navigation,
       toContact: { count: rows.filter(isToContact).length, href: this.leadHref(query, { view: "TO_CONTACT" }) },
+      firstTreatmentOverdue: this.firstTreatmentQueue(rows, query, now),
       drillDowns, export: { href: exportHref, schemaVersion: "manager-dashboard-export-v1", aggregatedOnly: true },
       safeguards: { singlePrimaryConversionAttribution: true, financialDecision: false, disciplinaryScore: false } };
     this.audit.record({ eventType: "MANAGER_DASHBOARD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
@@ -126,10 +130,12 @@ export class ManagerDashboardService {
 
   readPersonal(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date()): PersonalDashboardReport {
     const query = normalizeReportingQuery({ ...raw, view: "personal", adviserId: principal.userId }, principal, now);
+    const rows = this.filteredRows(query, principal, now);
     const report: PersonalDashboardReport = { definitionVersion: "personal-dashboard-v1", generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       filters: query, performance: this.performance.read(query, principal, `${correlationId}:performance`, now),
       contributions: this.contributions.read(query, principal, `${correlationId}:contributions`, now),
-      toContact: { count: this.filteredRows(query, principal).filter(isToContact).length, href: this.leadHref(query, { view: "TO_CONTACT" }) },
+      toContact: { count: rows.filter(isToContact).length, href: this.leadHref(query, { view: "TO_CONTACT" }) },
+      firstTreatmentOverdue: this.firstTreatmentQueue(rows, query, now),
       safeguards: { personalScopeOnly: true, aggregatedOnly: true, financialDecision: false, disciplinaryScore: false } };
     this.audit.record({ eventType: "PERSONAL_DASHBOARD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { definitionVersion: report.definitionVersion, activeFilterNames: this.sortedKeys(query) }, result: "SUCCESS",
@@ -152,6 +158,8 @@ export class ManagerDashboardService {
     lines.push(`definition,trendsLeadsCreated,${this.csv("NEW only; excludes BASELINE stored on import day")},`);
     lines.push(`definition,trendsLeadsEnrolled,${this.csv("Real STATUS_CHANGED to ENROLLED in period; later work on BASELINE included, imported status alone excluded")},`);
     lines.push(`kpi,qualifiedCurrentStatus,,${report.panels.funnel.currentState.QUALIFIED}`);
+    lines.push(`kpi,firstTreatmentOverdue,,${report.firstTreatmentOverdue.count}`);
+    lines.push(`definition,firstTreatmentOverdue,${this.csv("Distinct untreated leads; strictly more than 24 consecutive hours since qualified source reception or persisted CRM observation; known undated history excluded; same filtered portfolio cohort")},`);
     const enrolledRate = report.panels.funnel.rates.enrolled;
     // Ratios belong to value, not count. An empty cohort has no conversion rate.
     lines.push(`rate,enrolledConversionRatio,${this.csv(enrolledRate === null ? "UNAVAILABLE" : String(enrolledRate))},`);
@@ -162,7 +170,11 @@ export class ManagerDashboardService {
     return `${lines.join("\n")}\n`;
   }
 
-  private filteredRows(query: ManagerDashboardQuery, principal: Principal): LeadReportingRow[] { return this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, query)); }
+  private filteredRows(query: ManagerDashboardQuery, principal: Principal, now: Date): LeadReportingRow[] { return this.leads.reportingSnapshot(principal, now).filter((lead) => matchesInteractiveFilters(lead, query)); }
+  private firstTreatmentQueue(rows: LeadReportingRow[], query: ManagerDashboardQuery, now: Date): ManagerDashboardReport["firstTreatmentOverdue"] {
+    return { count: rows.filter((lead) => firstTreatmentState(lead, now).firstTreatmentOverdue).length,
+      href: this.leadHref(query, { view: "FIRST_TREATMENT_OVERDUE" }), thresholdHours: 24, comparison: "STRICTLY_GREATER" };
+  }
   private trends(rows: LeadReportingRow[], query: ManagerDashboardQuery): Array<{ date: string; leadsCreated: number; leadsEnrolled: number }> {
     const values = new Map<string, { leadsCreated: Set<string>; leadsEnrolled: Set<string> }>();
     const bucket = (date: string): { leadsCreated: Set<string>; leadsEnrolled: Set<string> } => { const key = this.localDate(date); const current = values.get(key) ?? { leadsCreated: new Set<string>(), leadsEnrolled: new Set<string>() }; values.set(key, current); return current; };
