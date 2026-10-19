@@ -112,7 +112,13 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
     if (path.startsWith("/api/crm/leads?")) return Promise.resolve(Response.json({ items: [], page: 1, pageSize: 12, total: 0 }));
     requested.push(new URL(path, dom.window.location.origin)); return Promise.resolve(Response.json(snapshot));
   });
-  await act(async () => { root.render(createElement(Pipeline, { initialFilters: { campus: filters.campus } })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  const { default: Page } = await import("../app/manager/reports/commercial-funnel/page");
+  const serverElement = await Page({ searchParams: Promise.resolve(filters) });
+  await act(async () => { root.render(createElement(Pipeline, serverElement.props as { initialFilters: Record<string, string> })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.ok(requested.length > 0);
+  for (const request of requested) for (const [key, value] of Object.entries(filters)) assert.equal(request.searchParams.get(key), value, "even the first request uses the full server cohort");
+  assert.equal(host.querySelector('.pipeline-first-treatment')?.getAttribute('data-overdue'), "true");
+  assert.equal(host.querySelector('.pipeline-first-treatment strong')?.getAttribute('aria-label'), "2 leads en retard");
   for (const [key, value] of Object.entries(filters)) assert.equal(requested.at(-1)!.searchParams.get(key), value);
   let form = host.querySelector<HTMLFormElement>("form")!;
   let values = new dom.window.FormData(form);

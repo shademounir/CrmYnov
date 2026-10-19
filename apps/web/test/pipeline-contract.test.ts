@@ -3,6 +3,14 @@ import test from "node:test";
 import { buildLeadListHref, parseSnapshot } from "../app/manager/reports/commercial-funnel/funnel-contract.js";
 
 const snapshot = { definitionVersion: "commercial-funnel-v1", timezone: "Africa/Casablanca", generatedAt: "2026-09-06T12:00:00.000Z", cohort: { totalUniqueLeads: 10 }, currentState: { PROSPECT: 4, CONTACTED: 3, QUALIFIED: 1, ENROLLED: 1, CLOSED_LOST: 1 }, temperatureDistribution: { UNEVALUATED: 6, COLD: 1, WARM: 2, HOT: 1 } };
+test("Pipeline server entry preserves the complete supported initial cohort without accepting repeated or unrelated parameters", async () => {
+  const { default: Page } = await import("../app/manager/reports/commercial-funnel/page.js");
+  const filters = { from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z", campus: "SYNTHETIC", campaign: "SYNTHETIC", program: "SYNTHETIC", source: "WEB_FORM", channel: "DIGITAL", adviserId: "synthetic", status: "CONTACTED", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-03", treatmentState: "DATED" };
+  const element = await Page({ searchParams: Promise.resolve({ ...filters, returnTo: "/ignored", unknown: "ignored" }) });
+  assert.deepEqual((element.props as { initialFilters: Record<string, string> }).initialFilters, filters);
+  const repeated = await Page({ searchParams: Promise.resolve({ adviserId: ["one", "two"], status: "INVALID_PRESERVED_FOR_API_VALIDATION" }) });
+  assert.deepEqual((repeated.props as { initialFilters: Record<string, string> }).initialFilters, { status: "INVALID_PRESERVED_FOR_API_VALIDATION" });
+});
 test("pipeline preserves each current-state volume without inventing transitions", () => {
   assert.deepEqual(parseSnapshot(snapshot), { definitionVersion: snapshot.definitionVersion, timezone: snapshot.timezone, generatedAt: snapshot.generatedAt, total: 10, counts: snapshot.currentState, temperatureDistribution: snapshot.temperatureDistribution });
 });

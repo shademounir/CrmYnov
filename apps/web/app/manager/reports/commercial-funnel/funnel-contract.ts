@@ -1,3 +1,4 @@
+export const pipelineFilterKeys = ["from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "treatmentFrom", "treatmentTo", "treatmentState"] as const;
 export const stages = [
   { key: "PROSPECT", label: "Prospects" }, { key: "CONTACTED", label: "Contactés" },
   { key: "QUALIFIED", label: "Qualifiés" }, { key: "ENROLLED", label: "Inscrits" },

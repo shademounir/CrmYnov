@@ -123,6 +123,14 @@
 }
 @media (prefers-reduced-motion: reduce) { .pipeline-pilot-skeleton { animation: none; } }
 .pipeline-leads { margin-top: 16px; padding: 16px; }
+.pipeline-pilot-page .pipeline-first-treatment { margin-top: 12px; padding: 18px 20px; }
+.pipeline-first-treatment header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.pipeline-first-treatment h2 { margin: 0; font-size: 18px; }
+.pipeline-first-treatment header strong { padding: 6px 12px; border-radius: 8px; background: var(--teal-soft); font-size: 26px; }
+.pipeline-first-treatment[data-overdue="true"] { border-left: 4px solid #b42318; }
+.pipeline-first-treatment[data-overdue="true"] header strong { background: #fff2f0; color: #8f1d14; }
+.pipeline-first-treatment p { margin: 12px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.pipeline-first-treatment > a { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 44px; max-width: 100%; color: var(--teal-dark); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
 .pipeline-leads > p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .pipeline-lead-cards { list-style: none; margin: 16px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
 .pipeline-lead-card { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; overflow-wrap: anywhere; }
