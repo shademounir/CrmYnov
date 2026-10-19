@@ -14,6 +14,7 @@ export interface FunnelSnapshot {
   total: number;
   counts: Record<(typeof stages)[number]["key"], number>;
   temperatureDistribution: Record<(typeof temperatures)[number]["key"], number>;
+  firstTreatmentOverdue?: { count: number; href: string; thresholdHours: 24; comparison: "STRICTLY_GREATER" };
 }
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function count(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
@@ -29,7 +30,13 @@ export function parseSnapshot(value: unknown): FunnelSnapshot {
   if (!count(UNEVALUATED) || !count(COLD) || !count(WARM) || !count(HOT)) throw new Error("invalid_report");
   if (PROSPECT + CONTACTED + QUALIFIED + ENROLLED + CLOSED_LOST !== value.cohort.totalUniqueLeads) throw new Error("inconsistent_report");
   if (UNEVALUATED + COLD + WARM + HOT !== value.cohort.totalUniqueLeads) throw new Error("inconsistent_report");
-  return { definitionVersion: value.definitionVersion, timezone: value.timezone, generatedAt: value.generatedAt, total: value.cohort.totalUniqueLeads, counts: { PROSPECT, CONTACTED, QUALIFIED, ENROLLED, CLOSED_LOST }, temperatureDistribution: { UNEVALUATED, COLD, WARM, HOT } };
+  const queue = value.firstTreatmentOverdue;
+  if (queue !== undefined && (!record(queue) || !count(queue.count) || queue.count > PROSPECT
+    || typeof queue.href !== "string" || !queue.href.startsWith("/leads?")
+    || new URLSearchParams(queue.href.slice(7)).get("view") !== "FIRST_TREATMENT_OVERDUE"
+    || queue.thresholdHours !== 24 || queue.comparison !== "STRICTLY_GREATER")) throw new Error("invalid_first_treatment_queue");
+  return { definitionVersion: value.definitionVersion, timezone: value.timezone, generatedAt: value.generatedAt, total: value.cohort.totalUniqueLeads, counts: { PROSPECT, CONTACTED, QUALIFIED, ENROLLED, CLOSED_LOST }, temperatureDistribution: { UNEVALUATED, COLD, WARM, HOT },
+    ...(record(queue) ? { firstTreatmentOverdue: queue as unknown as NonNullable<FunnelSnapshot["firstTreatmentOverdue"]> } : {}) };
 }
 
 export function buildLeadListHref(filters: Record<string, string>, dimension?: { status?: string; temperature?: string }): string {

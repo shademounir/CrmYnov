@@ -9,6 +9,13 @@ test("pipeline preserves each current-state volume without inventing transitions
 test("pipeline accepts a genuine zero cohort without manufacturing rates", () => {
   assert.equal(parseSnapshot({ ...snapshot, cohort: { totalUniqueLeads: 0 }, currentState: { PROSPECT: 0, CONTACTED: 0, QUALIFIED: 0, ENROLLED: 0, CLOSED_LOST: 0 }, temperatureDistribution: { UNEVALUATED: 0, COLD: 0, WARM: 0, HOT: 0 } }).total, 0);
 });
+
+test("pipeline first-treatment queue retains exact API scope even at zero and rejects false thresholds", () => {
+  const queue = { count: 0, href: "/leads?view=FIRST_TREATMENT_OVERDUE&adviserId=synthetic&source=WEB_FORM", thresholdHours: 24, comparison: "STRICTLY_GREATER" };
+  assert.deepEqual(parseSnapshot({ ...snapshot, firstTreatmentOverdue: queue }).firstTreatmentOverdue, queue);
+  for (const invalid of [{ ...queue, count: 5 }, { ...queue, count: -1 }, { ...queue, thresholdHours: 48 }, { ...queue, comparison: "GREATER_OR_EQUAL" }, { ...queue, href: "/leads?view=TO_CONTACT" }, { ...queue, href: "https://external.invalid/leads?view=FIRST_TREATMENT_OVERDUE" }]) assert.throws(() => parseSnapshot({ ...snapshot, firstTreatmentOverdue: invalid }));
+  assert.equal(parseSnapshot(snapshot).firstTreatmentOverdue, undefined);
+});
 test("pipeline refuses incomplete or inconsistent payloads instead of displaying zeros", () => {
   for (const payload of [null, {}, { ...snapshot, definitionVersion: "legacy" }, { ...snapshot, timezone: "UTC" }, { ...snapshot, generatedAt: "invalid" }, { ...snapshot, cohort: { totalUniqueLeads: 20 } }, { ...snapshot, currentState: { ...snapshot.currentState, PROSPECT: -1 } }, { ...snapshot, currentState: { ...snapshot.currentState, QUALIFIED: "1" } }, { ...snapshot, temperatureDistribution: { ...snapshot.temperatureDistribution, HOT: 4 } }, { ...snapshot, temperatureDistribution: { ...snapshot.temperatureDistribution, COLD: -1 } }]) {
     assert.throws(() => parseSnapshot(payload));

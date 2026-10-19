@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
 import { LeadService, leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
-import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { matchesInteractiveFilters, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { firstTreatmentState } from "../leads/first-treatment.js";
 import { leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
 import { acquisitionPartition, isBaseline, type AcquisitionPartition } from "./acquisition-cohort.js";
@@ -17,6 +18,7 @@ export interface CommercialFunnel {
   currentState: Record<LeadStatus, number>;
   temperatureDistribution: Record<LeadTemperature, number>;
   attainment: { contactedOrBeyond: number; qualifiedOrBeyond: number; enrolled: number };
+  firstTreatmentOverdue: { count: number; href: string; thresholdHours: 24; comparison: "STRICTLY_GREATER" };
   rates: { contactedOrBeyond: number | null; qualifiedOrBeyond: number | null; enrolled: number | null };
   acquisition: AcquisitionPartition & { currentNewEnrolledCount: number; currentNewEnrollmentRate: number | null };
   breakdowns: Record<"campus" | "campaign" | "program" | "source", Array<{ value: string; count: number }>>;
@@ -27,7 +29,7 @@ export interface CommercialFunnel {
 export class CommercialFunnelService {
   constructor(@Inject(LeadService) private readonly leads: LeadService, @Inject(AuditService) private readonly audit: AuditService) {}
 
-  read(query: CommercialFunnelQuery, principal: Principal, correlationId: string): CommercialFunnel {
+  read(query: CommercialFunnelQuery, principal: Principal, correlationId: string, now = new Date()): CommercialFunnel {
     if (!hasPilotageReportingScope(principal) && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) {
       throw new ForbiddenException({ code: "reporting_manager_required" });
     }
@@ -35,7 +37,7 @@ export class CommercialFunnelService {
     const to = this.boundary(query.to, "funnel_to_invalid");
     if (from && to && from >= to) throw new BadRequestException({ code: "funnel_period_invalid" });
     const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
-    const unique = new Map(this.leads.reportingSnapshot(principal)
+    const unique = new Map(this.leads.reportingSnapshot(principal, now)
       .filter((lead) => matchesInteractiveFilters(lead, normalized))
       .map((lead) => [lead.id, lead]));
     const rows = [...unique.values()];
@@ -51,13 +53,16 @@ export class CommercialFunnelService {
     };
     const rate = (value: number): number | null => total === 0 ? null : Number((value / total).toFixed(4));
     const result: CommercialFunnel = {
-      definitionVersion: FUNNEL_DEFINITION_VERSION, timezone: FUNNEL_TIMEZONE, generatedAt: new Date().toISOString(),
+      definitionVersion: FUNNEL_DEFINITION_VERSION, timezone: FUNNEL_TIMEZONE, generatedAt: now.toISOString(),
+      firstTreatmentOverdue: { count: rows.filter((lead) => firstTreatmentState(lead, now).firstTreatmentOverdue).length,
+        href: this.firstTreatmentHref(normalized), thresholdHours: 24, comparison: "STRICTLY_GREATER" },
       cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), totalUniqueLeads: total }, currentState, temperatureDistribution, attainment,
       rates: { contactedOrBeyond: rate(attainment.contactedOrBeyond), qualifiedOrBeyond: rate(attainment.qualifiedOrBeyond), enrolled: rate(attainment.enrolled) },
       acquisition: { ...partition, currentNewEnrolledCount, currentNewEnrollmentRate: partition.newAcquisitionCount
         ? Number((currentNewEnrolledCount / partition.newAcquisitionCount).toFixed(4)) : null },
       breakdowns: { campus: this.breakdown(rows, "campus"), campaign: this.breakdown(rows, "campaign"), program: this.breakdown(rows, "program"), source: this.breakdown(rows, "source") },
       definitions: [
+        { key: "firstTreatmentOverdue", formula: "count(distinct untreated lead.id) strictly more than 24 consecutive hours since qualified source reception or persisted CRM observation", denominator: "same selected authorized portfolio cohort", exclusions: ["known undated historical treatment", "technical events as treatment", "exactly 24 hours", "unknown reception"] },
         { key: "currentState", formula: "count(distinct lead.id) grouped by current portfolio status, including reconciled BASELINE dossiers", denominator: "selected authorized portfolio cohort by stored createdAt", exclusions: ["source rows not reconciled to a dossier", "deleted records"] },
         { key: "temperatureDistribution", formula: "latest human qualification per lead; otherwise explicit historical baseline temperature; otherwise UNEVALUATED", denominator: "selected portfolio cohort", exclusions: ["automatic inference", "formula-derived spreadsheet values", "invented qualification author/date"] },
         { key: "contactedOrBeyond", formula: "CONTACTED + QUALIFIED + ENROLLED", denominator: "total unique leads in selected cohort", exclusions: ["CLOSED_LOST", "PROSPECT"] },
@@ -79,6 +84,16 @@ export class CommercialFunnelService {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.valueOf())) throw new BadRequestException({ code });
     return parsed.toISOString();
+  }
+  private firstTreatmentHref(query: CommercialFunnelQuery): string {
+    const params = new URLSearchParams({ view: "FIRST_TREATMENT_OVERDUE" });
+    const mapping = { from: "createdFrom", to: "createdBefore", campus: "campus", campaign: "campaign", program: "program", source: "source", channel: "channel", adviserId: "adviserId", status: "status" } as const;
+    for (const [source, target] of Object.entries(mapping)) {
+      const value = query[source as keyof typeof mapping];
+      if (value) params.set(target, value);
+    }
+    params.set("returnTo", `/manager/reports/commercial-funnel?${reportingSearchParams(query).toString()}`);
+    return `/leads?${params.toString()}`;
   }
   private breakdown(rows: LeadReportingRow[], field: "campus" | "campaign" | "program" | "source"): Array<{ value: string; count: number }> {
     const counts = new Map<string, number>();

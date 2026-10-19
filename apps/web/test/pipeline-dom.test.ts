@@ -7,6 +7,7 @@ const snapshot = {
   cohort: { totalUniqueLeads: 10 },
   currentState: { PROSPECT: 7, CONTACTED: 1, QUALIFIED: 2, ENROLLED: 0, CLOSED_LOST: 0 },
   temperatureDistribution: { UNEVALUATED: 7, COLD: 1, WARM: 0, HOT: 2 },
+  firstTreatmentOverdue: { count: 2, href: "/leads?view=FIRST_TREATMENT_OVERDUE&adviserId=synthetic", thresholdHours: 24, comparison: "STRICTLY_GREATER" },
 };
 
 test("Pipeline renders API-confirmed values, keeps URL context and distinguishes empty, loading and unavailable states", async (t) => {
@@ -42,7 +43,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
     }
     await Promise.resolve();
     if (mode === "session") return Response.json({ code: "authentication_required" }, { status: 401 });
-    if (mode === "empty") return Response.json({ ...snapshot, cohort: { totalUniqueLeads: 0 }, currentState: { PROSPECT: 0, CONTACTED: 0, QUALIFIED: 0, ENROLLED: 0, CLOSED_LOST: 0 }, temperatureDistribution: { UNEVALUATED: 0, COLD: 0, WARM: 0, HOT: 0 } });
+    if (mode === "empty") return Response.json({ ...snapshot, firstTreatmentOverdue: { ...snapshot.firstTreatmentOverdue, count: 0 }, cohort: { totalUniqueLeads: 0 }, currentState: { PROSPECT: 0, CONTACTED: 0, QUALIFIED: 0, ENROLLED: 0, CLOSED_LOST: 0 }, temperatureDistribution: { UNEVALUATED: 0, COLD: 0, WARM: 0, HOT: 0 } });
     return Response.json(snapshot);
   });
   const settle = async (): Promise<void> => { await act(async () => { await new Promise<void>((resolve) => setImmediate(resolve)); }); };
@@ -53,6 +54,8 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   const text = dom.window.document.body.textContent ?? "";
   for (const expected of ["10", "Prospects", "7", "Contactés", "1", "Qualifiés", "2", "Non évalué", "Froid", "Chaud", "Quatre dimensions indépendantes"]) assert.match(text, new RegExp(expected, "u"));
   assert.equal(requested, "/api/crm/reports/commercial-funnel?");
+  assert.match(text, /Premiers traitements en retard/u);
+  assert.equal(dom.window.document.querySelector<HTMLAnchorElement>('a[href*="FIRST_TREATMENT_OVERDUE"]')?.getAttribute("href"), snapshot.firstTreatmentOverdue.href);
   const prospectLink = [...dom.window.document.querySelectorAll<HTMLAnchorElement>("a")].find((item) => item.href.includes("status=PROSPECT"));
   assert.ok(prospectLink); assert.match(prospectLink.href, /\/leads\?status=PROSPECT&returnTo=%2Fmanager%2Freports%2Fcommercial-funnel$/u);
 
@@ -63,6 +66,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   await settle();
   assert.equal(dom.window.location.search, "?from=2026-09-01");
   assert.match(dom.window.document.body.textContent ?? "", /0 lead confirmé par l’API/u);
+  assert.equal(dom.window.document.querySelector<HTMLAnchorElement>('a[href*="FIRST_TREATMENT_OVERDUE"]')?.getAttribute("href"), snapshot.firstTreatmentOverdue.href, "zero remains a targeted queue, not all prospects");
 
   mode = "session";
   const refresh = dom.window.document.querySelector<HTMLButtonElement>('form button[type="submit"]'); assert.ok(refresh);

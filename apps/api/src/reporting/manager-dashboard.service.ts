@@ -88,7 +88,7 @@ export class ManagerDashboardService {
     const query = normalizeReportingQuery(raw, principal, now);
     const common = { ...query };
     const panels = {
-      funnel: this.funnel.read(common, principal, correlationId),
+      funnel: this.funnel.read(common, principal, correlationId, now),
       performance: this.performance.read(common, principal, correlationId, now),
       sourceEffectiveness: this.sources.read(common, principal, correlationId, now),
       operationalRisks: persistedRisks ?? this.risks.read(common, principal, correlationId, now),
