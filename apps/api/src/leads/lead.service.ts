@@ -68,6 +68,7 @@ export interface LeadAssignmentSnapshot {
   byAdviser: Array<{ userId: string; leadCount: number }>;
 }
 export interface LeadReportingRow extends Partial<TreatmentSummary>, Partial<ReceptionSummary>, Partial<FirstTreatmentIndicators> {
+  hasActiveNextAction?: boolean;
   id: string; status: LeadStatus; campus: string; campaign: string; program: string; source: string; createdAt: string;
   assignedToId?: string; collaboratorIds: string[]; lastActivityAt?: string; nextActionAt?: string; importBatchId?: string;
   assignedToLabel?: string;
@@ -688,7 +689,7 @@ export class LeadService implements OnModuleInit {
       .filter((lead) => (principal.permissionLeadIds ? principal.permissionLeadIds.has(lead.id) : global || campuses.has(lead.campus))
         && (!adviserOnly || lead.assignedToId === principal.userId || lead.collaboratorIds?.includes(principal.userId)))
       .map(lead => this.withTreatment(lead, now, treatments.get(lead.id)))
-      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, assignedToLabel, collaboratorIds, lastActivityAt, nextActionAt, importBatchId, acquisitionKind, temperature, temperatureSource, receivedAt, receptionOrigin, firstTreatmentAt, lastTreatmentAt, treatmentState, hasUndatedHistory, firstTreatmentPending, firstTreatmentOverdue, firstTreatmentAgeMinutes, firstTreatmentDeadlineAt }) => ({
+      .map(({ id, status, campus, campaign, program, source, createdAt, assignedToId, assignedToLabel, collaboratorIds, lastActivityAt, nextActionAt, hasActiveNextAction, importBatchId, acquisitionKind, temperature, temperatureSource, receivedAt, receptionOrigin, firstTreatmentAt, lastTreatmentAt, treatmentState, hasUndatedHistory, firstTreatmentPending, firstTreatmentOverdue, firstTreatmentAgeMinutes, firstTreatmentDeadlineAt }) => ({
         id, status, campus, campaign, program, source, createdAt,
           ...(receivedAt ? { receivedAt } : {}), ...(receptionOrigin ? { receptionOrigin } : {}),
           ...(firstTreatmentAt ? { firstTreatmentAt } : {}), ...(lastTreatmentAt ? { lastTreatmentAt } : {}),
@@ -700,6 +701,7 @@ export class LeadService implements OnModuleInit {
         ...(temperatureSource ? { temperatureSource } : {}),
         ...(assignedToId ? { assignedToId } : {}), ...(assignedToLabel ? { assignedToLabel } : {}), collaboratorIds: [...(collaboratorIds ?? [])],
         ...(lastActivityAt ? { lastActivityAt } : {}), ...(nextActionAt ? { nextActionAt } : {}),
+        ...(typeof hasActiveNextAction === "boolean" ? { hasActiveNextAction } : {}),
         ...(importBatchId ? { importBatchId } : {}),
         activities: this.activities.filter((activity) => activity.leadId === id)
           .map(({ type, result, authorId, occurredAt }) => ({ type, result, authorId, occurredAt })),

@@ -122,3 +122,16 @@
   .pipeline-pilot-freshness { text-align: left; line-height: 1.5; }
 }
 @media (prefers-reduced-motion: reduce) { .pipeline-pilot-skeleton { animation: none; } }
+.pipeline-leads { margin-top: 16px; padding: 16px; }
+.pipeline-leads > p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.pipeline-lead-cards { list-style: none; margin: 16px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.pipeline-lead-card { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; overflow-wrap: anywhere; }
+.pipeline-lead-card header, .pipeline-lead-card dd { display: grid; gap: 6px; }
+.pipeline-lead-card p, .pipeline-lead-card dl { font-size: 12px; line-height: 1.6; }
+.pipeline-lead-card dl > div { margin-bottom: 12px; }
+.pipeline-lead-card dt { color: var(--muted); }
+.pipeline-lead-card dd { margin: 0; }
+.pipeline-lead-card small { display: block; color: var(--muted); }
+.pipeline-lead-overdue { color: #9b2525; }
+.pipeline-lead-card > a { display: inline-flex; min-height: 44px; align-items: center; }
+.pipeline-leads nav { display: flex; gap: 12px; flex-wrap: wrap; }

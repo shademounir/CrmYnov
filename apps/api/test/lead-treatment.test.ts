@@ -5,10 +5,24 @@ import { LeadService, type LeadActivityRecord, type LeadRecord } from "../src/le
 import type { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import type { Principal } from "../src/auth/auth.types.js";
+import { needsNextAction } from "../src/follow-up/next-action.contract.js";
 
 const manager: Principal = { userId: "manager-fixture", sessionId: "fixture", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }] };
 const commercial: Principal = { ...manager, userId: "commercial-fixture", roles: ["ADMISSIONS"] };
 const activity = (id: string, type: LeadActivityRecord["type"], occurredAt: string): LeadActivityRecord => ({ id, leadId: "lead-a", type, result: "COMPLETED", note: "Échange synthétique", occurredAt, authorId: commercial.userId, correlationId: "fixture" });
+
+test("reporting retains explicit persistent action evidence instead of trusting a legacy deadline", async () => {
+  const base: LeadRecord = { id: "legacy", leadCode: "SYNTH", firstName: "Synthetic", lastName: "Fixture", campus: "CASABLANCA", campaign: "Fixture", program: "Fixture", educationLevel: "Bac", source: "FIXTURE", status: "CONTACTED", createdAt: "2026-01-01T00:00:00Z", assignedToId: commercial.userId, nextActionAt: "2026-10-25T09:00:00Z" };
+  const repository = { enabled: true, snapshot: () => Promise.resolve({ leads: [{ ...base, hasActiveNextAction: false }, { ...base, id: "active", hasActiveNextAction: true }, { ...base, id: "unknown" }], activities: [], historicalTreatments: [] }) } as unknown as LeadPersistenceRepository;
+  const leads = new LeadService(new AuditService(), repository); await leads.onModuleInit();
+  const rows = leads.reportingSnapshot(manager);
+  assert.equal(rows.find((row) => row.id === "legacy")?.hasActiveNextAction, false);
+  assert.equal(rows.find((row) => row.id === "active")?.hasActiveNextAction, true);
+  assert.equal(Object.hasOwn(rows.find((row) => row.id === "unknown")!, "hasActiveNextAction"), false);
+  assert.equal(needsNextAction(rows.find((row) => row.id === "legacy")!), true);
+  assert.equal(needsNextAction(rows.find((row) => row.id === "active")!), false);
+  assert.equal(leads.reportingSnapshot({ ...commercial, userId: "other" }).length, 0);
+});
 
 test("business treatment ignores import and technical refresh dates, preserves unknown history", () => {
   const actions = [activity("business", "COMMENT", "2026-01-02T12:00:00.000Z"), activity("import", "LEGACY_IMPORT", "2026-10-19T12:00:00.000Z"), activity("assignment", "ASSIGNMENT_CHANGED", "2026-10-19T13:00:00.000Z")];

@@ -36,6 +36,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   let firstRequest = true;
   let releaseInitial: (() => void) | undefined;
   t.mock.method(globalThis, "fetch", async (path: string): Promise<Response> => {
+    if (path.startsWith("/api/crm/leads?")) return Response.json({ items: [], page: 1, pageSize: 12, total: 0 });
     requested = path;
     if (firstRequest) {
       firstRequest = false;
@@ -105,7 +106,10 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
     for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
   });
   const requested: URL[] = [];
-  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => { requested.push(new URL(path, dom.window.location.origin)); return Promise.resolve(Response.json(snapshot)); });
+  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => {
+    if (path.startsWith("/api/crm/leads?")) return Promise.resolve(Response.json({ items: [], page: 1, pageSize: 12, total: 0 }));
+    requested.push(new URL(path, dom.window.location.origin)); return Promise.resolve(Response.json(snapshot));
+  });
   await act(async () => { root.render(createElement(Pipeline, { initialFilters: { campus: filters.campus } })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   for (const [key, value] of Object.entries(filters)) assert.equal(requested.at(-1)!.searchParams.get(key), value);
   let form = host.querySelector<HTMLFormElement>("form")!;
