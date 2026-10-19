@@ -1,10 +1,10 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { AdmissionsResponsibility, Prisma } from "@prisma/client";
-import type { Principal } from "../auth/auth.types.js";
+import type { Principal, Role } from "../auth/auth.types.js";
 import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
 import { currentPrincipal, resourceEvaluationContext } from "../permissions/dynamic-context.js";
 import { canonicalCampus, leadResource } from "../permissions/dynamic-resources.js";
-import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
+import { admissionsResponsibleCapability, evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { appointmentModes, appointmentTypes, interviewResults } from "../appointments/appointment.service.js";
 import { appointmentOccupations, assertAppointmentFree, lockAppointmentParticipants } from "../appointments/appointment-locks.js";
 import { assertDuration, assertKey, assertUuid, assertVersion, freeSlots, hashAdmissions, instant, interval, invalidAdmissions, strictInput, type AdmissionsReportInput, type BookingDecisionInput, type BookingInput, type BookingView, type ResponsibilityInput, type ResponsibilityView, type WindowInput, type WindowView, type WithdrawWindowInput } from "./admissions.contract.js";
@@ -34,18 +34,18 @@ export class AdmissionsService {
     }, read ? "read" : "write");
   }
 
-  async context(principal: Principal, requestedCampus?: string): Promise<{ timezone: "Africa/Casablanca"; ownResponsibilities: ResponsibilityView[]; canManageResponsibilities: boolean; canUseAgenda: boolean; campuses: Array<{ id: string; code: string; label: string; canManageResponsibilities: boolean }>; eligibleUsers: Array<{ id: string; label: string; campus: string }> }> {
+  async context(principal: Principal, requestedCampus?: string): Promise<{ timezone: "Africa/Casablanca"; ownResponsibilities: ResponsibilityView[]; canManageResponsibilities: boolean; canUseAgenda: boolean; campuses: Array<{ id: string; code: string; label: string; canManageResponsibilities: boolean }>; eligibleUsers: Array<{ id: string; label: string; campus: string; activationRequired: boolean }> }> {
     return this.transaction(principal, true, async (tx, actor) => {
       const accessible = await this.accessibleCampuses(tx, actor, requestedCampus);
       const campuses = accessible.map(({ id, code, label, canManage }) => ({ id, code, label, canManageResponsibilities: canManage }));
       const managed = accessible.filter((campus) => campus.canManage);
       const canUseAgenda = accessible.some((campus) => campus.canUseAgenda);
       const profiles = await tx.admissionsResponsibility.findMany({ where: { userId: actor.userId, active: true, campus: { in: campuses.map((item) => item.code) } }, include: { user: true } });
-      const users = managed.length ? await tx.collaborator.findMany({ where: { active: true, firstLoginRequired: false, campusId: { in: managed.flatMap((item) => item.keys) } }, orderBy: { professionalDisplayName: "asc" } }) : [];
+      const users = managed.length ? await tx.collaborator.findMany({ where: { active: true, campusId: { in: managed.flatMap((item) => item.keys) } }, orderBy: { professionalDisplayName: "asc" } }) : [];
       const ownResponsibilities: ResponsibilityView[] = [];
-      for (const profile of profiles) if (this.profileActive(profile) && accessible.find((campus) => campus.code === profile.campus)?.canUseAgenda) ownResponsibilities.push(this.profileView(profile, campuses.find((campus) => campus.code === profile.campus)?.label));
+      for (const profile of profiles) if (this.profileActive(profile) && accessible.find((campus) => campus.code === profile.campus)?.canUseAgenda) ownResponsibilities.push(...await this.profileViews(tx, [profile], campuses.find((campus) => campus.code === profile.campus)?.label));
       return { timezone: "Africa/Casablanca", ownResponsibilities, canManageResponsibilities: managed.length > 0, canUseAgenda,
-        campuses, eligibleUsers: users.filter((user) => user.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN"].includes(role))).map((user) => ({ id: user.id, label: user.professionalDisplayName?.trim() || "Collaborateur", campus: managed.find((item) => user.campusId && item.keys.includes(user.campusId))!.code })) };
+        campuses, eligibleUsers: users.filter((user) => user.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN"].includes(role))).map((user) => ({ id: user.id, label: user.professionalDisplayName?.trim() || user.professionalEmail, campus: managed.find((item) => user.campusId && item.keys.includes(user.campusId))!.code, activationRequired: user.firstLoginRequired })) };
     });
   }
 
@@ -54,7 +54,7 @@ export class AdmissionsService {
       const campus = leadId ? await this.authorizeLead(tx, actor, leadId) : await this.authorizeCampus(tx, actor, requestedCampus);
       const includeInactive = !leadId && await this.can(tx, actor, "settings.campus.manage", campus.keys);
       const profiles = await tx.admissionsResponsibility.findMany({ where: { campus: campus.code, ...(!includeInactive ? { active: true } : {}) }, include: { user: true }, orderBy: { userId: "asc" } });
-      return { items: profiles.filter((profile) => (includeInactive || this.profileActive(profile)) && profile.user.campusId && campus.keys.includes(profile.user.campusId)).map((profile) => this.profileView(profile, campus.label)) };
+      return { items: await this.profileViews(tx, profiles.filter((profile) => (includeInactive || profile.active && profile.user.active && this.eligibleRole(profile)) && profile.user.campusId && campus.keys.includes(profile.user.campusId)), campus.label) };
     });
   }
 
@@ -64,14 +64,14 @@ export class AdmissionsService {
       const campus = await this.campus(tx, input.campus);
       if (!await this.can(tx, actor, "settings.campus.manage", campus.keys)) this.denied();
       const target = await tx.collaborator.findUnique({ where: { id: input.userId } });
-      if (!target || !target.active || target.firstLoginRequired || !target.campusId || !campus.keys.includes(target.campusId) || !target.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN"].includes(role))) this.denied();
+      if (!target || !target.active || !target.campusId || !campus.keys.includes(target.campusId) || !target.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN"].includes(role))) this.denied();
       return this.mutation(tx, actor, "RESPONSIBILITY", { ...input, campus: campus.code }, async (key) => {
         await lockAppointmentParticipants(tx, [target.id]);
         const current = await tx.admissionsResponsibility.findUnique({ where: { userId_campus: { userId: target.id, campus: campus.code } } });
         if ((current?.version ?? 0) !== input.expectedVersion) this.versionConflict();
         const row = await tx.admissionsResponsibility.upsert({ where: { userId_campus: { userId: target.id, campus: campus.code } }, create: { userId: target.id, campus: campus.code, active: input.active }, update: { active: input.active, version: { increment: 1 } }, include: { user: true } });
         await this.audit(tx, actor, "ADMISSIONS_RESPONSIBILITY_CHANGED", row.id, campus.code, key, correlationId, { active: row.active, userId: row.userId, version: row.version });
-        return this.profileView(row, campus.label);
+        return (await this.profileViews(tx, [row], campus.label))[0]!;
       });
     });
   }
@@ -317,18 +317,35 @@ export class AdmissionsService {
     const context = await resourceEvaluationContext(tx, actor, { scope: "CAMPUS", campusKeys, active: true });
     return evaluatePermission(actor, permission, await this.snapshots(tx), context).allowed;
   }
-  private profileActive(profile: Profile): boolean { return profile.active && profile.user.active && !profile.user.firstLoginRequired && profile.user.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN"].includes(role)); }
+  private eligibleRole(profile: Profile): boolean { return profile.user.roles.some((role) => ["ADMISSIONS", "MANAGER", "ADMIN"].includes(role)); }
+  private profileActive(profile: Profile): boolean { return profile.active && profile.user.active && !profile.user.firstLoginRequired && this.eligibleRole(profile); }
+  private async profileCanUseAgenda(tx: Tx, profile: Profile, campus: Campus): Promise<boolean> {
+    return admissionsResponsibleCapability(profile.user.roles as Role[], await this.snapshots(tx), { campus: campus.id, active: profile.active && profile.user.active, own: false, team: false,
+      campusAllowed: Boolean(profile.user.campusId && campus.keys.includes(profile.user.campusId)), globalAllowed: false });
+  }
   private async activeProfile(tx: Tx, id: string, campus?: string): Promise<Profile> {
     const row = await tx.admissionsResponsibility.findUnique({ where: { id }, include: { user: true } });
     if (!row || !this.profileActive(row) || campus && row.campus !== campus) throw new ForbiddenException({ code: "admissions_profile_inactive" });
     const canonical = await this.campus(tx, row.campus);
-    if (!row.user.campusId || !canonical.keys.includes(row.user.campusId)) this.denied(); return row;
+    if (!row.user.campusId || !canonical.keys.includes(row.user.campusId) || !await this.profileCanUseAgenda(tx, row, canonical)) this.denied(); return row;
   }
   private async ownOrAdminProfile(tx: Tx, id: string, actor: Principal): Promise<Profile> {
     const row = await this.activeProfile(tx, id); const campus = await this.campus(tx, row.campus);
     if (!await this.can(tx, actor, "appointment.manage", campus.keys) || row.userId !== actor.userId && !await this.can(tx, actor, "settings.campus.manage", campus.keys)) this.denied(); return row;
   }
-  private profileView(profile: Profile, campusLabel = profile.campus): ResponsibilityView { return { id: profile.id, userId: profile.userId, label: profile.user.professionalDisplayName?.trim() || "Responsable Admissions", campus: profile.campus, campusLabel, active: profile.active, version: profile.version }; }
+  private async profileViews(tx: Tx, profiles: Profile[], campusLabel?: string): Promise<ResponsibilityView[]> {
+    const windows = profiles.length ? await tx.admissionsWindow.findMany({ where: { responsibilityId: { in: profiles.map(profile => profile.id) }, active: true, kind: "AVAILABLE", endsAt: { gt: new Date() } }, select: { responsibilityId: true } }) : [];
+    const declared = new Set(windows.map(row => row.responsibilityId));
+    return Promise.all(profiles.map(async (profile): Promise<ResponsibilityView> => {
+      const campus = await this.campus(tx, profile.campus);
+      const enabled = profile.active && profile.user.active && this.eligibleRole(profile);
+      const allowed = enabled && await this.profileCanUseAgenda(tx, profile, campus);
+      const readiness = !enabled ? "INACTIVE" : profile.user.firstLoginRequired ? "ACTIVATION_REQUIRED" : !allowed ? "PERMISSION_REQUIRED" : !declared.has(profile.id) ? "AVAILABILITY_REQUIRED" : "SLOTS_TO_CHECK";
+      const labels = { INACTIVE: "Désignation ou compte inactif", ACTIVATION_REQUIRED: "Activation personnelle en attente", PERMISSION_REQUIRED: "Accès à l’agenda indisponible", AVAILABILITY_REQUIRED: "Disponibilités à renseigner", SLOTS_TO_CHECK: "Plages déclarées · créneaux à consulter" };
+      return { id: profile.id, userId: profile.userId, label: profile.user.professionalDisplayName?.trim() || "Responsable Admissions", campus: profile.campus, campusLabel: campusLabel ?? campus.label, active: profile.active, version: profile.version,
+        readiness, readinessLabel: labels[readiness], canConsultSlots: readiness === "SLOTS_TO_CHECK" };
+    }));
+  }
   private participants(raw?: string[]): string[] { if (raw !== undefined && (!Array.isArray(raw) || raw.length > 20)) invalidAdmissions(); for (const id of raw ?? []) assertUuid(id); return [...new Set(raw ?? [])].sort((a, b) => a.localeCompare(b, "en")); }
   private async assertParticipants(tx: Tx, ids: string[], campusKeys: string[]): Promise<void> { for (const id of ids) { const row = await tx.collaborator.findUnique({ where: { id } }); if (!row?.active || row.firstLoginRequired || !row.campusId || !campusKeys.includes(row.campusId) || row.roles.every((role) => role === "AUDITOR")) this.denied(); } }
   private involved(row: BookingRow): string[] { return [row.appointment.adviserId, row.appointment.organizerId, ...row.appointment.participants.map((item) => item.userId), ...(row.appointment.evaluatorId ? [row.appointment.evaluatorId] : [])]; }

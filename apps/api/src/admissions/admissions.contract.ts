@@ -1,7 +1,9 @@
 import { BadRequestException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 
-export interface ResponsibilityView { id: string; userId: string; label: string; campus: string; campusLabel: string; active: boolean; version: number }
+export interface ResponsibilityView { id: string; userId: string; label: string; campus: string; campusLabel: string; active: boolean; version: number;
+  readiness?: "ACTIVATION_REQUIRED" | "PERMISSION_REQUIRED" | "AVAILABILITY_REQUIRED" | "SLOTS_TO_CHECK" | "INACTIVE";
+  readinessLabel?: string; canConsultSlots?: boolean }
 export interface WindowView { id: string; responsibilityId: string; campus: string; kind: "AVAILABLE" | "BLOCKED"; startsAt: string; endsAt: string; version: number; active: boolean }
 export interface BookingView {
   id: string; leadId: string; leadIdentifier: string; leadLabel: string; responsibilityId: string;
