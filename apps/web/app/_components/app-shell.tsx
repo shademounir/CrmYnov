@@ -27,6 +27,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "
 import { useEffect, useRef, useState } from "react";
 import { apiString, resourceObjects, type ApiValue } from "./connected-resource";
 import { publicInformationPaths } from "./public-information";
+import { withSessionDeadline } from "./session-deadline";
 
 export type SearchState =
   | { kind: "closed"; items: never[] }
@@ -119,23 +120,25 @@ export function sessionLoginHref(pathname: string, locationSearch = ""): string 
   return `/?reason=session-expired&returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-export async function loadShellSession(request: typeof fetch = fetch): Promise<Exclude<ShellSessionState, { kind: "loading" }>> {
-  const response = await request("/api/crm/sessions/current", { credentials: "same-origin", cache: "no-store" });
-  if (response.status === 401) return { kind: "expired" };
-  if (!response.ok) return { kind: "unavailable" };
-  const value = await response.json() as { roles?: unknown; scopes?: unknown; professionalEmail?: unknown; mustChangeSecret?: boolean; campusLabel?: unknown };
-  if (value.mustChangeSecret) return { kind: "first-login" };
-  const allowed: readonly string[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"];
-  const scopes: unknown[] = Array.isArray(value.scopes) ? value.scopes : [];
-  const hasScopeKind = (kind: string): boolean => scopes.some((scope) => typeof scope === "object" && scope !== null && "kind" in scope && scope.kind === kind);
-  const scopeLabel = hasScopeKind("GLOBAL") ? "Tous les campus"
-    : hasScopeKind("CAMPUS") ? "Campus attribué"
-      : hasScopeKind("TEAM") ? "Équipe attribuée" : "Périmètre contrôlé";
-  return { kind: "ready", profile: {
-    roles: Array.isArray(value.roles) ? value.roles.filter((role): role is SessionRole => typeof role === "string" && allowed.includes(role)) : [],
-    scopeLabel: typeof value.campusLabel === "string" ? value.campusLabel : scopeLabel,
-    ...(typeof value.professionalEmail === "string" ? { professionalEmail: value.professionalEmail } : {}),
-  } };
+export async function loadShellSession(request: typeof fetch = fetch, signal?: AbortSignal): Promise<Exclude<ShellSessionState, { kind: "loading" }>> {
+  return withSessionDeadline(async (boundedSignal) => {
+    const response = await request("/api/crm/sessions/current", { credentials: "same-origin", cache: "no-store", signal: boundedSignal });
+    if (response.status === 401) return { kind: "expired" };
+    if (!response.ok) return { kind: "unavailable" };
+    const value = await response.json() as { roles?: unknown; scopes?: unknown; professionalEmail?: unknown; mustChangeSecret?: boolean; campusLabel?: unknown };
+    if (value.mustChangeSecret) return { kind: "first-login" };
+    const allowed: readonly string[] = ["SUPER_ADMIN", "ADMIN", "MANAGER", "ADMISSIONS", "AUDITOR"];
+    const scopes: unknown[] = Array.isArray(value.scopes) ? value.scopes : [];
+    const hasScopeKind = (kind: string): boolean => scopes.some((scope) => typeof scope === "object" && scope !== null && "kind" in scope && scope.kind === kind);
+    const scopeLabel = hasScopeKind("GLOBAL") ? "Tous les campus"
+      : hasScopeKind("CAMPUS") ? "Campus attribué"
+        : hasScopeKind("TEAM") ? "Équipe attribuée" : "Périmètre contrôlé";
+    return { kind: "ready", profile: {
+      roles: Array.isArray(value.roles) ? value.roles.filter((role): role is SessionRole => typeof role === "string" && allowed.includes(role)) : [],
+      scopeLabel: typeof value.campusLabel === "string" ? value.campusLabel : scopeLabel,
+      ...(typeof value.professionalEmail === "string" ? { professionalEmail: value.professionalEmail } : {}),
+    } };
+  }, signal);
 }
 
 export function isActive(pathname: string, href: string, locationSearch = ""): boolean {
@@ -207,14 +210,15 @@ export function AppShellClient({ pathname, locationSearch = "", children }: Read
   useEffect(() => {
     if (isAuthPath) return;
     let current = true;
+    const controller = new AbortController();
     setShellSession({ kind: "loading" });
-    void loadShellSession().then((state) => {
+    void loadShellSession(fetch, controller.signal).then((state) => {
       if (!current) return;
       setShellSession(state);
       if (state.kind === "expired") globalThis.location.assign(sessionLoginHref(pathname, globalThis.location.search.replace(/^\?/, "")));
       if (state.kind === "first-login") globalThis.location.assign("/first-login");
     }).catch(() => { if (current) setShellSession({ kind: "unavailable" }); });
-    return (): void => { current = false; };
+    return (): void => { current = false; controller.abort(); };
   }, [isAuthPath, pathname]);
 
   useEffect(() => {

@@ -55,7 +55,20 @@ function assertRetryAvailable(b: Awaited<ReturnType<typeof browser>>): void {
   assert.equal(b.uncaught.length, 0, "request failures must not escape the form");
 }
 
-test("a rejected login fetch shows a generic error and permits a deliberate retry", async (t) => {
+function assertUncertain(b: Awaited<ReturnType<typeof browser>>): void {
+  assert.match(b.form.textContent ?? "", /Vérifiez votre session avant de renvoyer vos identifiants/u);
+  assert.equal(b.form.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled, true);
+  assert.doesNotMatch(b.form.textContent ?? "", /Synthetic-Only-Password|internal transport detail|backend stack detail/u);
+  assert.equal(b.uncaught.length, 0);
+}
+
+function checkSession(b: Awaited<ReturnType<typeof browser>>): void {
+  const button = Array.from(b.form.querySelectorAll("button")).find((item) => item.textContent === "Vérifier ma session");
+  assert.ok(button);
+  b.interact(() => button.click());
+}
+
+test("a rejected login fetch checks the current session before a deliberate credential retry", async (t) => {
   const b = await browser(t);
   const requests: Array<{ target: string; init?: RequestInit }> = [];
   t.mock.method(globalThis, "fetch", (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -64,12 +77,21 @@ test("a rejected login fetch shows a generic error and permits a deliberate retr
   });
   b.submit();
   await b.settle();
+  assertUncertain(b);
+  b.submit();
+  await b.settle();
+  assert.equal(requests.length, 1, "uncertain login must never be automatically or manually replayed before checking");
+  checkSession(b);
+  await b.settle();
   assertRetryAvailable(b);
+  assert.equal(requests[1]?.target, "/api/crm/sessions/current");
+  assert.equal(requests[1]?.init?.body, undefined);
+  assert.equal(requests[1]?.init?.cache, "no-store");
   b.submit();
   await b.settle();
   assertRetryAvailable(b);
-  assert.equal(requests.length, 2);
-  for (const request of requests) {
+  assert.equal(requests.length, 3);
+  for (const request of [requests[0]!, requests[2]!]) {
     assert.equal(request.target, "/api/crm/sessions");
     assert.equal(request.init?.method, "POST");
     assert.equal(request.init?.credentials, "same-origin");
@@ -79,14 +101,17 @@ test("a rejected login fetch shows a generic error and permits a deliberate retr
   }
 });
 
-test("an invalid session JSON response is generic and never locks submission", async (t) => {
+test("invalid session JSON requires a read-only session check without leaking the response", async (t) => {
   const b = await browser(t);
   let requests = 0;
-  t.mock.method(globalThis, "fetch", (): Promise<Response> => { requests += 1; return Promise.resolve(new Response("backend stack detail", { status: 200, headers: { "content-type": "application/json" } })); });
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => { requests += 1; return Promise.resolve(input === "/api/crm/sessions/current" ? new Response(null, { status: 401 }) : new Response("backend stack detail", { status: 200, headers: { "content-type": "application/json" } })); });
   b.submit();
   await b.settle();
-  assertRetryAvailable(b);
+  assertUncertain(b);
   b.submit();
+  await b.settle();
+  assert.equal(requests, 1);
+  checkSession(b);
   await b.settle();
   assert.equal(requests, 2);
   assertRetryAvailable(b);
@@ -152,6 +177,94 @@ for (const [mustChangeSecret, path] of [[true, "/first-login"], [false, "/leads"
     assert.equal(b.uncaught.length, 0);
   });
 }
+
+test("a stalled login is bounded, ignores a late success and resumes only through a read-only session check", async (t) => {
+  const b = await browser(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let resolveLogin!: (value: Response) => void;
+  let posts = 0;
+  let signal: AbortSignal | null | undefined;
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    if (input === "/api/crm/sessions/current") {
+      assert.equal(init?.body, undefined);
+      assert.equal(init?.cache, "no-store");
+      return Promise.resolve(Response.json({ mustChangeSecret: false }));
+    }
+    posts += 1;
+    signal = init?.signal;
+    return new Promise<Response>((resolve) => { resolveLogin = resolve; });
+  });
+  b.submit();
+  await b.settle();
+  t.mock.timers.tick(20_000);
+  await b.settle();
+  assertUncertain(b);
+  assert.equal(signal?.aborted, true);
+  b.interact(() => resolveLogin(Response.json({ mustChangeSecret: true })));
+  await b.settle();
+  assert.deepEqual(b.navigation, [], "late login responses cannot redirect or override a newer result");
+  checkSession(b);
+  await b.settle();
+  assert.equal(posts, 1);
+  assert.deepEqual(b.navigation, ["/leads"]);
+  assert.equal(b.form.querySelector("a[href='/leads']")?.textContent, "Ouvrir mon espace CRM");
+  b.submit();
+  assert.equal(posts, 1, "confirmed session never replays credentials even if browser navigation is delayed");
+});
+
+test("the session deadline also covers a stalled successful JSON body", async (t) => {
+  const b = await browser(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const response = Response.json({ mustChangeSecret: false });
+  t.mock.method(response, "json", (): Promise<never> => new Promise<never>(() => undefined));
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(response));
+  b.submit();
+  await b.settle();
+  t.mock.timers.tick(20_000);
+  await b.settle();
+  assertUncertain(b);
+  assert.deepEqual(b.navigation, []);
+});
+
+test("a session check that stalls or is forbidden never unlocks another credential submission", async (t) => {
+  const b = await browser(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let posts = 0;
+  let reads = 0;
+  t.mock.method(globalThis, "fetch", (input: string | URL | Request): Promise<Response> => {
+    if (input === "/api/crm/sessions/current") {
+      reads += 1;
+      return reads === 1 ? new Promise<never>(() => undefined) : Promise.resolve(new Response(null, { status: 403 }));
+    }
+    posts += 1;
+    return Promise.reject(new Error("internal transport detail"));
+  });
+  b.submit();
+  await b.settle();
+  checkSession(b);
+  await b.settle();
+  b.submit();
+  t.mock.timers.tick(20_000);
+  await b.settle();
+  assertUncertain(b);
+  checkSession(b);
+  await b.settle();
+  assertUncertain(b);
+  b.submit();
+  assert.equal(posts, 1);
+  assert.equal(reads, 2);
+  assert.deepEqual(b.navigation, []);
+});
+
+test("confirmed login renders a safe resume link instead of an endless navigation spinner", async (t) => {
+  const b = await browser(t);
+  t.mock.method(globalThis, "fetch", (): Promise<Response> => Promise.resolve(Response.json({ mustChangeSecret: false })));
+  b.submit();
+  await b.settle();
+  assert.match(b.form.textContent ?? "", /Connexion confirmée/u);
+  assert.doesNotMatch(b.form.textContent ?? "", /Connexion…/u);
+  assert.equal(b.form.querySelector("a[href='/leads']")?.textContent, "Ouvrir mon espace CRM");
+});
 
 test("a successful reconnection resumes a safe internal URL and rejects unsafe return targets", async () => {
   const { loginRedirectPath } = await import("../app/_components/login-form.js");
