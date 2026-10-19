@@ -134,6 +134,12 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-closure-history__state--rejected, .lead-closure-history__state--cancelled { background: #eef1f3; color: #53616a; }
 .lead-closure-history li form { display: grid; gap: 10px; }
 .lead-assignment-dialog__footer { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 9px; }
+.lead-assignment-dialog__footer .primary-button { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.lead-next-action-fields { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 14px; background: #f8fdfc; }
+.lead-next-action-fields legend { padding-inline: 6px; font-size: 13px; font-weight: 750; }
+.lead-next-action-fields > label { min-width: 0; display: grid; gap: 8px; font-size: 12px; font-weight: 700; }
+.lead-next-action-fields > .lead-next-action-confirm { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.lead-next-action-confirm input[type="checkbox"] { width: 20px; height: 20px; min-height: 20px; flex: 0 0 20px; margin: 0; }
 .lead-assignment-dialog__details { width: fit-content; min-height: 40px; color: var(--teal-dark); display: inline-flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; }
 .lead-assignment-only-dialog .lead-assignment-dialog__footer { display: grid; grid-template-columns: auto 1fr; }
 .lead-assignment-only-dialog .lead-assignment-dialog__footer .primary-button { grid-column: 1 / -1; }

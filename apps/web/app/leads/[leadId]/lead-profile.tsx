@@ -45,6 +45,7 @@ export interface LeadProfileRecord {
   assignedToLabel?: string;
   collaboratorIds: string[];
   nextActionAt?: string;
+  hasActiveNextAction?: boolean;
   createdAt?: string;
   temperature: "UNEVALUATED" | "COLD" | "WARM" | "HOT";
   temperatureLabel: string;
@@ -165,6 +166,7 @@ function parseLead(value: unknown): LeadProfileRecord | undefined {
   if (assignedToId) lead.assignedToId = assignedToId;
   if (assignedToLabel) lead.assignedToLabel = assignedToLabel;
   if (nextActionAt) lead.nextActionAt = nextActionAt;
+  if (typeof value.hasActiveNextAction === "boolean") lead.hasActiveNextAction = value.hasActiveNextAction;
   if (createdAt) lead.createdAt = createdAt;
   return lead;
 }
@@ -337,7 +339,7 @@ function CommercialPanel({ lead, lastContact }: Readonly<{ lead: LeadProfileReco
     <ProfileFact icon={<PhoneCall size={20} />} label="Dernier résultat" value={lastContact} emphasized={lastContact.startsWith("Injoignable")} />
     <ProfileFact icon={<UserCircle size={20} />} label="Conseiller principal" value={lead.assignedToId ? lead.assignedToLabel ?? "Conseiller attribué" : "Non affecté"} />
     <ProfileFact icon={<ThermometerSimple size={20} />} label="Température" value={lead.temperatureSource === "HISTORICAL_BASELINE" ? `${lead.temperatureLabel} · reprise historique` : lead.temperatureLabel} emphasized={lead.temperature === "HOT"} />
-    <ProfileFact icon={<CalendarBlank size={20} />} label="Prochaine action" value={formatDate(lead.nextActionAt)} />
+    <ProfileFact icon={<CalendarBlank size={20} />} label="Prochaine action" value={lead.hasActiveNextAction === false && ["CONTACTED", "QUALIFIED"].includes(lead.status) ? `À planifier${lead.nextActionAt ? ` · date précédente à confirmer : ${formatDate(lead.nextActionAt)}` : ""}` : formatDate(lead.nextActionAt)} />
   </dl></section>;
 }
 

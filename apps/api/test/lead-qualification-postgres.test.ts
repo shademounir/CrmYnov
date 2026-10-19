@@ -108,7 +108,19 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   };
   const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId);
   const businessRequest = (actorToken: string, path: string, method = "GET", payload?: unknown, apiPort = firstPort): Promise<Response> => fetch(`${base(apiPort)}${path}`, { method, headers: { authorization: `Bearer ${actorToken}`, "content-type": "application/json", "x-correlation-id": `business-${randomUUID()}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
-  const interactionBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nSans prochaine action", idempotencyKey: "business:first-interaction" };
+  const nextAction = { mode: "SCHEDULE", dueAt: "2099-10-20T09:00:00Z", reason: "Vérifier les pièces synthétiques" };
+  const interactionBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nAvec prochaine action", idempotencyKey: "business:first-interaction", nextAction };
+  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`, "POST", { ...interactionBody, nextAction: undefined })).status, 400);
+  assert.equal(await client.leadActivity.count({ where: { leadId: businessLead.id } }), 0);
+  await client.$executeRawUnsafe("CREATE FUNCTION fail_next_action_audit() RETURNS trigger AS $$ BEGIN IF NEW.event_type = 'FOLLOW_UP_SCHEDULED' THEN RAISE EXCEPTION 'synthetic_next_action_audit_failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+  await client.$executeRawUnsafe("CREATE TRIGGER next_action_audit_failure BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_next_action_audit()");
+  assert.equal((await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`, "POST", interactionBody)).status, 503);
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "PROSPECT");
+  assert.equal(await client.leadActivity.count({ where: { leadId: businessLead.id } }), 0);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: businessLead.id } }), 0);
+  assert.equal(await client.leadMutationReceipt.count({ where: { leadId: businessLead.id } }), 0);
+  await client.$executeRawUnsafe("DROP TRIGGER next_action_audit_failure ON audit_events");
+  await client.$executeRawUnsafe("DROP FUNCTION fail_next_action_audit()");
   const interaction = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`, "POST", interactionBody);
   assert.equal(interaction.status, 201);
   const interactionId = (await interaction.json() as { id: string }).id;
@@ -119,7 +131,8 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(await client.auditEvent.count({ where: { resourceId: businessLead.id, eventType: "LEAD_STATUS_CHANGED" } }), 1);
   const timeline = await businessRequest(commercialToken, `/leads/${businessLead.id}/timeline`);
   assert.equal(timeline.status, 200);
-  assert((await timeline.json() as { events: Array<{ note?: string }> }).events.some(event => event.note === "Commentaire synthétique visible\nSans prochaine action"));
+  assert((await timeline.json() as { events: Array<{ note?: string }> }).events.some(event => event.note === "Commentaire synthétique visible\nAvec prochaine action"));
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: businessLead.id } }), 1);
   const commercialQualification = await businessRequest(commercialToken, `/leads/${businessLead.id}/qualification`, "PATCH", { temperature: "WARM", reason: "Projet commercial confirmé", expectedVersion: 0, idempotencyKey: "business:qualification-owned" });
   assert.equal(commercialQualification.status, 200);
   assert.equal((await businessRequest(commercialToken, `/leads/${outside.id}/qualification`, "PATCH", { temperature: "WARM", reason: "Dossier hors périmètre", expectedVersion: 1, idempotencyKey: "business:qualification-outside" })).status, 403);
@@ -160,6 +173,9 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   const decision = await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", decisionBody);
   assert.equal(decision.status, 200, await decision.clone().text());
   assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).status, "ENROLLED");
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: businessLead.id } })).nextActionAt, null);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: businessLead.id, state: "CANCELLED" } }), 1);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: businessLead.id, state: "COMPLETED" } }), 0);
   assert.equal((await businessRequest(supervisorToken, `/closure-requests/${proposed.id}/decision`, "PATCH", decisionBody)).status, 200);
   assert.equal(await client.auditEvent.count({ where: { resourceId: businessLead.id, eventType: "CLOSURE_APPROVED" } }), 1);
   assert.equal(await client.internalNotification.count({ where: { recipientId: commercialId, resourceId: businessLead.id, type: "CLOSURE_REQUEST" } }), 1);
@@ -198,25 +214,49 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(allHistory.items.find(item => item.id === historyLeads[2]!.id)?.treatmentState, "NONE");
   assert.equal((await readHistory({ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" })).total, 1);
   assert.equal((await readHistory({ treatmentState: "UNKNOWN_DATE" })).total, 1);
+  const missingActions = await businessRequest(supervisorToken, `/leads?view=NEXT_ACTION_MISSING&campaign=${encodeURIComponent(historyCampaign)}`);
+  assert.equal(missingActions.status, 200);
+  assert.deepEqual((await missingActions.json() as HistoryPage).items.map(item => item.id).sort(), [historyLeads[0]!.id, historyLeads[1]!.id].sort());
+  assert.equal(await client.lead.count({ where: { id: { in: historyLeads.map(item => item.id) }, nextActionAt: { not: null } } }), 0, "no fictitious date is added to historical open leads");
   const dashboard = await businessRequest(supervisorToken, `/reports/manager-dashboard?period=30d&campaign=${encodeURIComponent(historyCampaign)}`);
   assert.equal(dashboard.status, 200, await dashboard.clone().text());
   const contactCard = (await dashboard.json() as { toContact: { count: number; href: string } }).toContact;
   assert.equal(contactCard.count, allHistory.total);
   const fromCard = await businessRequest(supervisorToken, contactCard.href);
   assert.equal(fromCard.status, 200); assert.equal((await fromCard.json() as { total: number }).total, contactCard.count);
-  assert.equal((await businessRequest(commercialToken, `/leads/${historyLeads[2]!.id}/timeline`, "POST", { type: "COMMENT", result: "COMPLETED", note: "Premier échange synthétique daté", idempotencyKey: "treatment:first-contact" })).status, 201);
+  assert.equal((await businessRequest(commercialToken, `/leads/${historyLeads[2]!.id}/timeline`, "POST", { type: "COMMENT", result: "COMPLETED", note: "Premier échange synthétique daté", idempotencyKey: "treatment:first-contact", nextAction })).status, 201);
   assert.equal((await readHistory()).total, 2);
   assert.equal(await client.importedHistoricalNote.count({ where: { leadId: { in: historyLeads.map(item => item.id) } } }), 2);
 
   const fresh = await client.lead.create({ data: { leadCode: "LD-PROGRESSION-CONCURRENT", firstName: "Test", lastName: "Synthétique", campus, campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique", source: "TEST", assignedToId: commercialId } });
-  const concurrentBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Premier échange synthétique", idempotencyKey: "business:concurrent-first-contact" };
+  const concurrentBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Premier échange synthétique", idempotencyKey: "business:concurrent-first-contact", nextAction };
   const simultaneous = await Promise.all([firstPort, secondPort].map(apiPort => businessRequest(commercialToken, `/leads/${fresh.id}/timeline`, "POST", concurrentBody, apiPort)));
   const ids: string[] = [];
   for (const response of simultaneous) { assert.equal(response.status, 201, await response.clone().text()); ids.push((await response.json() as { id: string }).id); }
   assert.equal(ids[0], ids[1]);
-  assert.equal(await client.leadActivity.count({ where: { leadId: fresh.id } }), 2);
+  assert.equal(await client.leadActivity.count({ where: { leadId: fresh.id } }), 3);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: fresh.id } }), 1);
+  assert.equal(await client.leadMutationReceipt.count({ where: { leadId: fresh.id, operation: "COMMERCIAL_INTERACTION" } }), 1);
   assert.equal(await client.leadMutationReceipt.count({ where: { leadId: fresh.id, operation: "ADD_ACTIVITY" } }), 1);
   assert.equal(await client.auditEvent.count({ where: { resourceId: fresh.id, eventType: "LEAD_STATUS_CHANGED" } }), 1);
+
+  const task = await client.leadFollowUp.findFirstOrThrow({ where: { leadId: fresh.id, state: "SCHEDULED" } });
+  const completion = { action: "COMPLETE", reason: "Pièces synthétiques vérifiées", expectedVersion: task.version, idempotencyKey: "business:complete-successor",
+    nextAction: { mode: "SCHEDULE", dueAt: "2099-10-21T09:00:00Z", reason: "Suivre la décision du responsable" } };
+  assert.equal((await businessRequest(commercialToken, `/follow-ups/${task.id}`, "PATCH", { ...completion, nextAction: undefined })).status, 400);
+  await client.$executeRawUnsafe("CREATE FUNCTION fail_successor_audit() RETURNS trigger AS $$ BEGIN IF NEW.event_type = 'FOLLOW_UP_SCHEDULED' THEN RAISE EXCEPTION 'synthetic_successor_audit_failure'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+  await client.$executeRawUnsafe("CREATE TRIGGER successor_audit_failure BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION fail_successor_audit()");
+  assert.equal((await businessRequest(commercialToken, `/follow-ups/${task.id}`, "PATCH", completion)).status, 503);
+  assert.equal((await client.leadFollowUp.findUniqueOrThrow({ where: { id: task.id } })).state, "SCHEDULED");
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: fresh.id } }), 1);
+  assert.equal(await client.leadActivity.count({ where: { leadId: fresh.id, result: "FOLLOW_UP_COMPLETE" } }), 0);
+  await client.$executeRawUnsafe("DROP TRIGGER successor_audit_failure ON audit_events");
+  await client.$executeRawUnsafe("DROP FUNCTION fail_successor_audit()");
+  for (const apiPort of [firstPort, secondPort]) assert.equal((await businessRequest(commercialToken, `/follow-ups/${task.id}`, "PATCH", completion, apiPort)).status, 200);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: fresh.id, state: "COMPLETED" } }), 1);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: fresh.id, state: "SCHEDULED" } }), 1);
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: fresh.id } })).nextActionAt?.toISOString(), "2099-10-21T09:00:00.000Z");
+  assert.equal(await client.leadActivity.count({ where: { leadId: fresh.id, result: "FOLLOW_UP_COMPLETE" } }), 1);
 
   const legacy = await client.leadClosureRequest.create({ data: { leadId: fresh.id, target: "QUALIFIED", reason: "COMMERCIAL_STAGE_REVIEW", comment: "Ancienne demande synthétique", evidence: ["LEGACY_FIXTURE"], requesterId: commercialId } });
   assert.equal((await businessRequest(commercialToken, `/closure-requests/${legacy.id}/retire`, "PATCH")).status, 403);

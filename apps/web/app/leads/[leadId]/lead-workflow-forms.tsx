@@ -3,12 +3,14 @@
 import Link from "next/link";
 import React, { useEffect, useId, useRef, useState } from "react";
 import { parseReassignmentRecords, type ReassignmentRecord } from "../../_components/reassignment-history";
+import { casablancaNextActionIso } from "../next-action-time";
 
 export interface InteractionBody {
   type: string;
   result: string;
   note?: string;
   nextActionAt?: string;
+  nextAction?: { mode: "SCHEDULE"; dueAt: string; reason: string } | { mode: "CONFIRM"; id: string; expectedVersion: number; dueAt: string };
 }
 
 export interface StatusBody { status: string; reason: string; qualification?: { interestConfirmed: boolean; eligibilityConfirmed: boolean } }
@@ -48,9 +50,7 @@ function formText(form: FormData, key: string): string {
 }
 
 function localDateTimeIso(value: string): string {
-  if (!value) return "";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.valueOf()) ? value : parsed.toISOString();
+  return casablancaNextActionIso(value);
 }
 
 export function interactionBody(form: FormData): InteractionBody {
@@ -58,7 +58,11 @@ export function interactionBody(form: FormData): InteractionBody {
   const result = formText(form, "result");
   const note = formText(form, "note");
   const nextActionAt = localDateTimeIso(formText(form, "nextActionAt"));
-  return { type, result, ...(note ? { note } : {}), ...(nextActionAt ? { nextActionAt } : {}) };
+  const mode = formText(form, "nextActionMode");
+  const nextAction: InteractionBody["nextAction"] = mode === "SCHEDULE"
+    ? { mode, dueAt: localDateTimeIso(formText(form, "nextActionDueAt")), reason: formText(form, "nextActionReason") }
+    : mode === "CONFIRM" ? { mode, id: formText(form, "nextActionId"), expectedVersion: Number(formText(form, "nextActionVersion")), dueAt: formText(form, "nextActionDueAt") } : undefined;
+  return { type, result, ...(note ? { note } : {}), ...(nextAction ? { nextAction } : nextActionAt ? { nextActionAt } : {}) };
 }
 
 export function statusBody(form: FormData): StatusBody {
@@ -93,6 +97,12 @@ const operationFailureMessages: Readonly<Partial<Record<Operation, Readonly<Reco
     assignment_target_ineligible: "Le conseiller proposé n’est plus éligible. Actualisez les conseillers avant toute nouvelle intention.",
   },
   interaction: {
+    next_action_required: "Confirmez une prochaine action encore pertinente ou programmez une action avec son échéance.",
+    next_action_intent_invalid: "La prochaine action nécessite une échéance explicite et un objectif compréhensible.",
+    next_action_confirmation_stale: "La relance affichée a changé. Actualisez la fiche et confirmez sa nouvelle échéance.",
+    next_action_closed_lead: "Ce dossier est clôturé : aucune nouvelle relance commerciale ne peut être programmée.",
+    follow_up_pending: "Une relance active existe déjà. Confirmez-la, ou traitez-la depuis le suivi avant de programmer la suite.",
+    follow_up_forbidden: "Le conseiller responsable ou un responsable habilité doit confirmer cette prochaine action.",
     next_action_invalid: "La date de prochaine action est invalide.",
     next_action_chronology_invalid: "La prochaine action doit être postérieure à l’interaction enregistrée maintenant.",
   },
@@ -162,7 +172,7 @@ export function statusJourneyState(currentStatus: string, value: string): "compl
 export function nextActionChronologyError(nextActionAt: string, now = new Date()): string | undefined {
   if (!nextActionAt) return undefined;
   const candidate = new Date(nextActionAt);
-  if (Number.isNaN(candidate.valueOf())) return "La date de prochaine action est invalide.";
+  if (Number.isNaN(candidate.valueOf()) || !/(?:Z|[+-]\d{2}:\d{2})$/.test(nextActionAt)) return "La date de prochaine action est invalide ou ambiguë en heure de Casablanca.";
   if (candidate.valueOf() <= now.valueOf()) return "La prochaine action doit être postérieure à l’interaction enregistrée maintenant.";
   return undefined;
 }
@@ -322,12 +332,31 @@ export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirty
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const dirty = useDirty(onDirtyChange);
   const submissionLock = useRef(false);
   const attempt = useRef<{ payload: string; key: string } | undefined>(undefined);
+  const [context, setContext] = useState<"loading" | "open" | "closed" | "error">("loading");
+  const [active, setActive] = useState<FollowUpRecord>();
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async (): Promise<void> => {
+      try {
+        const responses = await Promise.all([fetch(`/api/crm/leads/${encodeURIComponent(leadId)}`, { cache: "no-store", credentials: "same-origin", signal: controller.signal }), fetch("/api/crm/follow-ups", { cache: "no-store", credentials: "same-origin", signal: controller.signal })]);
+        if (responses.some(response => !response.ok)) throw new Error("next_action_context_unavailable");
+        const [lead, followUps] = await Promise.all(responses.map(response => response.json())) as [Record<string, unknown>, unknown];
+        if (controller.signal.aborted) return;
+        if (!followUps || typeof followUps !== "object" || !Array.isArray((followUps as { items?: unknown }).items)) throw new Error("next_action_list_unavailable");
+        if (typeof lead.status !== "string" || !["PROSPECT", "CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST"].includes(lead.status)) throw new Error("next_action_status_unavailable");
+        setActive(parseFollowUps(followUps, leadId).find(item => item.state === "SCHEDULED" || item.state === "DUE"));
+        setContext(["ENROLLED", "CLOSED_LOST"].includes(lead.status) ? "closed" : "open");
+      } catch { if (!controller.signal.aborted) setContext("error"); }
+    })();
+    return (): void => controller.abort();
+  }, [leadId]);
+  const overdueActive = Boolean(active && Date.parse(active.dueAt) <= Date.now());
   async function save(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault(); if (submissionLock.current) return;
+    event.preventDefault(); if (submissionLock.current || !["open", "closed"].includes(context) || context === "open" && overdueActive) return;
     const body = interactionBody(new FormData(event.currentTarget));
     const payload = JSON.stringify(body);
     if (attempt.current && attempt.current.payload !== payload) { setFeedback({ kind: "error", message: "Vérifiez le résultat de la dernière interaction avant de changer de saisie. Réessayez la même intention si sa réponse a été perdue." }); return; }
-    const chronologyError = nextActionChronologyError(body.nextActionAt ?? "");
+    const chronologyError = nextActionChronologyError(body.nextAction?.dueAt ?? body.nextActionAt ?? "");
     if (chronologyError) { setFeedback({ kind: "error", message: chronologyError }); return; }
     attempt.current ??= { payload, key: crypto.randomUUID() };
     submissionLock.current = true; setBusy(true); setFeedback({ kind: "idle" });
@@ -343,10 +372,20 @@ export function InteractionWorkflowForm({ leadId, onCancel, onCompleted, onDirty
     <label>Type d’interaction<select name="type" required disabled={busy} defaultValue="CRM_CALL" autoFocus><option value="CRM_CALL">Appel depuis le CRM</option><option value="PHONE_CALL">Appel téléphonique</option><option value="PHYSICAL_VISIT">Visite du campus</option><option value="WHATSAPP">Échange WhatsApp</option><option value="MANUAL_EMAIL">Email de suivi</option><option value="MEETING">Rendez-vous</option><option value="COMMENT">Note de suivi</option></select></label>
     <label>Résultat<select name="result" required disabled={busy} defaultValue="NO_ANSWER"><option value="CONNECTED">Contact établi</option><option value="NO_ANSWER">Injoignable</option><option value="COMPLETED">Action terminée</option><option value="FOLLOW_UP_REQUIRED">Relance nécessaire</option><option value="INFORMATION_RECORDED">Information enregistrée</option></select></label>
     <label>Note de suivi<textarea name="note" disabled={busy} rows={5} maxLength={1000} placeholder="Ajoutez uniquement les informations utiles au suivi." /></label>
-    <label>Prochaine action (facultative)<input name="nextActionAt" type="datetime-local" disabled={busy} aria-describedby="interaction-date-help" /></label>
-    <p id="interaction-date-help" className="lead-assignment-dialog__help">Vous pouvez enregistrer l’interaction sans date. Si vous planifiez une action, choisissez une date future, en heure de Casablanca.</p>
+    <fieldset className="lead-next-action-fields" disabled={busy || context === "loading" || context === "error"}><legend>Après cette interaction</legend>
+      {context === "loading" ? <p role="status">Vérification de la prochaine action enregistrée…</p> : context === "error" ? <p role="alert">La prochaine action ne peut pas être vérifiée. Votre saisie est conservée ; actualisez la fiche avant d’enregistrer.</p> : context === "closed" ? <p>Le dossier est clôturé. La note reste dans l’historique, sans nouvelle relance commerciale.</p> : active ? <>
+        <p><strong>{active.reason}</strong> · {new Intl.DateTimeFormat("fr-MA", { timeZone: "Africa/Casablanca", dateStyle: "medium", timeStyle: "short" }).format(new Date(active.dueAt))}</p>
+        {overdueActive ? <p role="alert">Cette action est échue. Enregistrez son traitement et la prochaine étape dans le suivi des relances.</p> : <>
+          <label className="lead-next-action-confirm"><input type="checkbox" required disabled={busy} /> Je confirme que cette prochaine action reste pertinente.</label>
+          <input type="hidden" name="nextActionMode" value="CONFIRM" /><input type="hidden" name="nextActionId" value={active.id} /><input type="hidden" name="nextActionVersion" value={active.version} /><input type="hidden" name="nextActionDueAt" value={active.dueAt} />
+        </>}
+        <Link href={`/leads/${encodeURIComponent(leadId)}/follow-ups`}>Consulter ou modifier la relance enregistrée</Link>
+      </> : <><input type="hidden" name="nextActionMode" value="SCHEDULE" /><NextActionScheduleFields busy={busy} dateName="nextActionDueAt" reasonName="nextActionReason" /></>}
+    </fieldset>
+    <p id="interaction-date-help" className="lead-assignment-dialog__help">Sur un dossier ouvert, l’interaction et la prochaine action sont enregistrées ensemble. Aucune date fictive n’est ajoutée.</p>
     <p className="lead-assignment-dialog__notice">Un premier échange ou appel commercial tracé fait passer un Prospect à Contacté, sans validation intermédiaire. Les imports et événements techniques ne constituent pas un contact. Une étape déjà qualifiée ou clôturée n’est jamais rétrogradée.</p>
-    <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Enregistrer l’interaction" {...(onCancel ? { onCancel } : {})} />
+    <Link className="lead-assignment-dialog__details" href={`/leads/${encodeURIComponent(leadId)}/timeline`}>Ouvrir tout l’historique</Link>
+    <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitDisabled={context === "loading" || context === "error" || context === "open" && overdueActive} submitLabel="Enregistrer le suivi" {...(onCancel ? { onCancel } : {})} />
   </form>;
 }
 
@@ -393,6 +432,11 @@ export function StatusWorkflowForm({ leadId, currentStatus, onCancel, onComplete
   </form>;
 }
 
+function NextActionScheduleFields({ busy, dateName = "dueAt", reasonName = "reason" }: Readonly<{ busy: boolean; dateName?: string; reasonName?: string }>): React.JSX.Element {
+  return <><label>Date et heure de la prochaine action (Casablanca)<input name={dateName} type="datetime-local" required disabled={busy} /></label>
+    <label>Objectif de la prochaine action<textarea name={reasonName} required minLength={3} maxLength={1000} disabled={busy} rows={4} placeholder="Précisez l’action à réaliser, par exemple vérifier les pièces." /></label></>;
+}
+
 export function FollowUpWorkflowForm({ leadId, onCancel, onCompleted, onDirtyChange }: Readonly<CommonProps>): React.JSX.Element {
   const [busy, setBusy] = useState(false); const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" }); const dirty = useDirty(onDirtyChange);
   const submissionLock = useRef(false); const attempt = useRef<{ payload: string; key: string } | undefined>(undefined);
@@ -410,8 +454,7 @@ export function FollowUpWorkflowForm({ leadId, onCancel, onCompleted, onDirtyCha
     finally { submissionLock.current = false; setBusy(false); }
   }
   return <form className="lead-assignment-dialog__form" onChange={dirty.markDirty} onSubmit={(event) => void save(event)}>
-    <label>Date et heure<input name="dueAt" type="datetime-local" required disabled={busy} autoFocus /></label>
-    <label>Motif<textarea name="reason" required minLength={3} maxLength={1000} disabled={busy} rows={5} placeholder="Indiquez l’objectif de la prochaine prise de contact." /></label>
+    <NextActionScheduleFields busy={busy} />
     <p className="lead-assignment-dialog__notice">La relance prépare une notification interne unique à l’échéance et ajoute une trace d’audit, sans réécrire l’historique existant.</p>
     <FormFeedback feedback={feedback} /><FormFooter busy={busy} submitLabel="Planifier la relance" {...(onCancel ? { onCancel } : {})} />
   </form>;
@@ -424,12 +467,12 @@ function parseFollowUps(value: unknown, leadId: string): FollowUpRecord[] {
   return items.filter((item): item is FollowUpRecord => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
     const row = item as Partial<FollowUpRecord>;
-    return row.leadId === leadId && typeof row.id === "string" && typeof row.dueAt === "string" && typeof row.reason === "string" && typeof row.version === "number" && ["SCHEDULED", "DUE", "COMPLETED", "CANCELLED"].includes(row.state ?? "");
+    return row.leadId === leadId && typeof row.id === "string" && typeof row.dueAt === "string" && Number.isFinite(Date.parse(row.dueAt)) && typeof row.reason === "string" && typeof row.version === "number" && ["SCHEDULED", "DUE", "COMPLETED", "CANCELLED"].includes(row.state ?? "");
   });
 }
 
 function followUpStateLabel(state: FollowUpRecord["state"]): string {
-  return { SCHEDULED: "Planifiée", DUE: "À traiter", COMPLETED: "Clôturée", CANCELLED: "Annulée" }[state];
+  return { SCHEDULED: "Planifiée", DUE: "À traiter", COMPLETED: "Réalisée", CANCELLED: "Annulée" }[state];
 }
 
 export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React.JSX.Element {
@@ -439,6 +482,7 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
   const [feedback, setFeedback] = useState<Feedback>({ kind: "idle" });
   const attempts = useRef(new Map<string, { payload: string; key: string }>());
   const decisionLocks = useRef(new Set<string>());
+  const [actions, setActions] = useState<Record<string, string>>({});
 
   async function load(): Promise<void> {
     setState("loading");
@@ -459,7 +503,8 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
     const action = formText(form, "action") as "POSTPONE" | "COMPLETE" | "CANCEL";
     const reason = formText(form, "reason");
     const dueAt = localDateTimeIso(formText(form, "dueAt"));
-    const body = { action, reason, expectedVersion: item.version, ...(action === "POSTPONE" ? { dueAt } : {}) };
+    const body = { action, reason, expectedVersion: item.version, ...(action === "POSTPONE" ? { dueAt } : {}),
+      ...(action === "COMPLETE" ? { nextAction: { mode: "SCHEDULE", dueAt: localDateTimeIso(formText(form, "nextActionDueAt")), reason: formText(form, "nextActionReason") } } : {}) };
     const payload = JSON.stringify(body);
     const previous = attempts.current.get(item.id);
     const attempt = previous?.payload === payload ? previous : { payload, key: crypto.randomUUID() };
@@ -470,7 +515,7 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
       const response = await fetch(`/api/crm/follow-ups/${encodeURIComponent(item.id)}`, { method: "PATCH", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, idempotencyKey: attempt.key }) });
       if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("follow-up", response) }); return; }
       attempts.current.delete(item.id);
-      setFeedback({ kind: "success", message: action === "POSTPONE" ? "Relance modifiée et enregistrée." : action === "COMPLETE" ? "Relance clôturée et ajoutée à l’historique." : "Relance annulée et ajoutée à l’historique." });
+      setFeedback({ kind: "success", message: action === "POSTPONE" ? "Relance modifiée et enregistrée." : action === "COMPLETE" ? "Relance réalisée et prochaine étape enregistrées ensemble." : "Relance annulée et ajoutée à l’historique ; elle n’est pas comptée comme réalisée." });
       await load();
     } catch { setFeedback({ kind: "error", message: "Le service est indisponible. Votre saisie est conservée." }); }
     finally { decisionLocks.current.delete(item.id); setBusyId(undefined); }
@@ -485,8 +530,9 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
       return <li key={item.id}>
         <div><span className={`lead-follow-up-history__state lead-follow-up-history__state--${item.state.toLowerCase()}`}>{followUpStateLabel(item.state)}</span><time dateTime={item.dueAt}>{new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.dueAt))}</time><p>{item.reason}</p></div>
         {active ? <form onSubmit={(event) => void decide(event, item)}>
-          <label>Action<select name="action" defaultValue="POSTPONE" disabled={busyId === item.id}><option value="POSTPONE">Modifier l’échéance</option><option value="COMPLETE">Clôturer la relance</option><option value="CANCEL">Annuler la relance</option></select></label>
-          <label>Nouvelle échéance<input name="dueAt" type="datetime-local" disabled={busyId === item.id} /></label>
+          <label>Action<select name="action" value={actions[item.id] ?? "POSTPONE"} onChange={event => { const value = event.currentTarget.value; setActions(previous => ({ ...previous, [item.id]: value })); }} disabled={busyId === item.id}><option value="POSTPONE">Modifier l’échéance</option><option value="COMPLETE">Relance réalisée, programmer la suite</option><option value="CANCEL">Annuler la relance</option></select></label>
+          {(actions[item.id] ?? "POSTPONE") === "POSTPONE" ? <label>Nouvelle échéance<input name="dueAt" type="datetime-local" required disabled={busyId === item.id} /></label> : null}
+          {actions[item.id] === "COMPLETE" ? <NextActionScheduleFields busy={busyId === item.id} dateName="nextActionDueAt" reasonName="nextActionReason" /> : null}
           <label>Motif<textarea name="reason" required minLength={3} maxLength={1000} rows={3} disabled={busyId === item.id} defaultValue={item.reason} /></label>
           <button className="secondary-button" type="submit" disabled={busyId === item.id}>{busyId === item.id ? "Enregistrement…" : "Enregistrer l’action"}</button>
         </form> : null}
