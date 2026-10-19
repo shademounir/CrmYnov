@@ -68,8 +68,8 @@ async function postgresProofs() {
 }
 
 function leadWorkflowPostgresProofs() {
+  run(process.execPath, ["scripts/ci/lead-qualification-postgres.mjs"]);
   for (const [testFile, enabledFlag] of [
-    ["lead-qualification-postgres.test.ts", "CRMY_QUALIFICATION_POSTGRES"],
     ["follow-up-postgres.test.ts", "CRMY_FOLLOW_UP_POSTGRES"],
   ]) {
     run(process.execPath, ["--import", "tsx", "--test", `test/${testFile}`], {
