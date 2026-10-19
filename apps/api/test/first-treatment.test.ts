@@ -37,10 +37,11 @@ test("technical events, reads, imports and follow-up bookkeeping do not constitu
   assert.equal(summary.firstTreatmentAt, receivedAt); assert.equal(isToContact({ ...prospect, ...summary }), false);
 });
 test("first reception uses only a recognized source contract; historical and future dates remain CRM observations", () => {
-  const first = { sourceType: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER", occurredAt: "2026-10-18T07:30:00Z" };
-  assert.deepEqual(receptionSummary(receivedAt, "NEW", first), { receivedAt: "2026-10-18T07:30:00.000Z", receptionOrigin: "SOURCE_CONTRACT" });
-  for (const evidence of [{ ...first, occurredAt: "2099-01-01T00:00:00Z" }, { ...first, technicalSystem: "UNQUALIFIED" }, { ...first, occurredAt: null }]) assert.deepEqual(receptionSummary(receivedAt, "NEW", evidence), { receivedAt, receptionOrigin: "CRM_OBSERVATION" });
-  assert.deepEqual(receptionSummary(receivedAt, "BASELINE", first), { receivedAt, receptionOrigin: "CRM_OBSERVATION_BASELINE" });
+  const first = { batchId: "creation", sourceType: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER", occurredAt: "2026-10-18T07:30:00Z" };
+  assert.deepEqual(receptionSummary(receivedAt, "NEW", first, "creation"), { receivedAt: "2026-10-18T07:30:00.000Z", receptionOrigin: "SOURCE_CONTRACT" });
+  for (const evidence of [{ ...first, occurredAt: "2099-01-01T00:00:00Z" }, { ...first, technicalSystem: "UNQUALIFIED" }, { ...first, occurredAt: null }, { ...first, batchId: "later-attachment" }]) assert.deepEqual(receptionSummary(receivedAt, "NEW", evidence, "creation"), { receivedAt, receptionOrigin: "CRM_OBSERVATION" });
+  assert.deepEqual(receptionSummary(receivedAt, "NEW", first), { receivedAt, receptionOrigin: "CRM_OBSERVATION" }, "a manually created Lead cannot acquire a new source clock on later attachment");
+  assert.deepEqual(receptionSummary(receivedAt, "BASELINE", first, "creation"), { receivedAt, receptionOrigin: "CRM_OBSERVATION_BASELINE" });
 });
 test("re-evaluation never rewrites reception; invalid evidence is unavailable, never a fake epoch", () => {
   const before = structuredClone(prospect);

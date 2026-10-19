@@ -5,7 +5,7 @@ export const firstTreatmentSchemas = {
     description: "Projection of the scoped Lead. First treatment is a recorded business interaction (including an exchange note, traced call, email, WhatsApp or meeting), not a read, login, import, source attachment or follow-up bookkeeping event. Known historical exchanges with an unknown date exclude the Lead from never-treated queues. Reception is persisted source evidence recognized by contract, otherwise persisted CRM creation/observation; imports and deployments never supply a new clock.",
     required: ["receivedAt", "receptionOrigin", "treatmentState", "hasUndatedHistory", "firstTreatmentPending", "firstTreatmentOverdue", "firstTreatmentAgeMinutes", "firstTreatmentDeadlineAt"],
     properties: {
-      receivedAt: { type: "string", format: "date-time", readOnly: true, description: "First recognized WEB_FORM/FORMINATOR source reception, otherwise persisted CRM observation. Historical BASELINE import observation is not the old prospect reception." },
+      receivedAt: { type: "string", format: "date-time", readOnly: true, description: "First recognized WEB_FORM/FORMINATOR provenance bound to the immutable creation batch, otherwise persisted CRM observation. A later provenance attachment never replaces that clock. Historical BASELINE import observation is not the old prospect reception." },
       receptionOrigin: { type: "string", readOnly: true, enum: ["SOURCE_CONTRACT", "CRM_OBSERVATION", "CRM_OBSERVATION_BASELINE"] },
       firstTreatmentAt: { type: "string", format: "date-time", readOnly: true, description: "Earliest known effective dated business treatment; absent when no date is known, never fabricated." },
       lastTreatmentAt: { type: "string", format: "date-time", readOnly: true },

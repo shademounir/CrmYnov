@@ -239,7 +239,7 @@ export class LeadPersistenceRepository {
       ? row.baselineTemperature : undefined;
     const temperature = (qualification?.temperature ?? historicalTemperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>;
     return {
-      ...receptionSummary(row.createdAt.toISOString(), acquisitionKind, row.provenances?.[0] ? { ...row.provenances[0], occurredAt: row.provenances[0].occurredAt?.toISOString() ?? null } : undefined),
+      ...receptionSummary(row.createdAt.toISOString(), acquisitionKind, row.provenances?.[0] ? { ...row.provenances[0], occurredAt: row.provenances[0].occurredAt?.toISOString() ?? null } : undefined, row.importBatchId ?? undefined),
       hasActiveNextAction: row.followUps?.length === 1 && Boolean(row.followUps[0]?.reason.trim()) && Number.isFinite(row.followUps[0]?.dueAt.valueOf()),
       id: row.id,
       leadCode: row.leadCode,

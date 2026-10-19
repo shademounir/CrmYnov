@@ -6,18 +6,22 @@ export type ReceptionOrigin = "SOURCE_CONTRACT" | "CRM_OBSERVATION" | "CRM_OBSER
 export interface ReceptionSummary { receivedAt: string; receptionOrigin: ReceptionOrigin }
 export interface FirstTreatmentIndicators { firstTreatmentPending: boolean; firstTreatmentOverdue: boolean; firstTreatmentAgeMinutes: number | null; firstTreatmentDeadlineAt: string | null }
 export interface FirstReceptionEvidence {
-  sourceType: string; technicalSystem: string; occurredAt: string | null;
+  batchId: string; sourceType: string; technicalSystem: string; occurredAt: string | null;
 }
 
-/** Only the FIRST persisted provenance is eligible: later arrivals/duplicate
- * feeds never reset a counter. Currently the append contract authenticates
+/** Only the FIRST persisted provenance of the immutable creation batch is
+ * eligible: later arrivals/duplicate feeds never reset a counter. Currently
+ * the append contract authenticates
  * WEB_FORM/FORMinator events. Other source timestamps remain explicitly
  * unqualified, not guessed from arbitrary spreadsheet cells or note dates.
  * createdAt is the persisted CRM reception, never a job/deployment timestamp. */
-export function receptionSummary(createdAt: string, acquisitionKind?: string, first?: FirstReceptionEvidence): ReceptionSummary {
+export function receptionSummary(createdAt: string, acquisitionKind?: string, first?: FirstReceptionEvidence, creationBatchId?: string): ReceptionSummary {
   const observed = Date.parse(createdAt);
   const source = first?.occurredAt ? Date.parse(first.occurredAt) : Number.NaN;
-  const accepted = acquisitionKind !== "BASELINE" && first?.sourceType === "WEB_FORM"
+  // importBatchId is the immutable creation binding. A later first provenance
+  // attached to a manually created Lead cannot retroactively change its clock.
+  const accepted = Boolean(creationBatchId) && first?.batchId === creationBatchId
+    && acquisitionKind !== "BASELINE" && first?.sourceType === "WEB_FORM"
     && first.technicalSystem === "FORMINATOR_ZAPIER" && Number.isFinite(source)
     && Number.isFinite(observed) && source <= observed;
   return accepted
