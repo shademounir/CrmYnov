@@ -42,7 +42,7 @@ export function parseSnapshot(value: unknown): FunnelSnapshot {
 export function buildLeadListHref(filters: Record<string, string>, dimension?: { status?: string; temperature?: string }): string {
   const query = new URLSearchParams();
   const pipelineQuery = new URLSearchParams();
-  const mapping = { from: "createdFrom", campus: "campus", campaign: "campaign", program: "program", source: "source", channel: "channel", adviserId: "adviserId", status: "status" } as const;
+  const mapping = { from: "createdFrom", campus: "campus", campaign: "campaign", program: "program", source: "source", channel: "channel", adviserId: "adviserId", status: "status", treatmentFrom: "treatmentFrom", treatmentTo: "treatmentTo", treatmentState: "treatmentState" } as const;
   for (const [pipelineKey, leadKey] of Object.entries(mapping)) {
     const value = filters[pipelineKey]?.trim();
     if (value) { query.set(leadKey, value); pipelineQuery.set(pipelineKey, value); }

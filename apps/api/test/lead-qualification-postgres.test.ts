@@ -214,6 +214,19 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(allHistory.items.find(item => item.id === historyLeads[2]!.id)?.treatmentState, "NONE");
   assert.equal((await readHistory({ view: "ALL", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" })).total, 1);
   assert.equal((await readHistory({ view: "ALL", treatmentState: "UNKNOWN_DATE" })).total, 1);
+  for (const filter of [{ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" }, { treatmentState: "UNKNOWN_DATE" }, { treatmentState: "NONE" }]) {
+    const params = new URLSearchParams({ campaign: historyCampaign, adviserId: commercialId, ...filter });
+    const funnelResponse = await businessRequest(supervisorToken, `/reports/commercial-funnel?${params}`);
+    assert.equal(funnelResponse.status, 200, await funnelResponse.clone().text());
+    const report = await funnelResponse.json() as { cohort: { totalUniqueLeads: number }; firstTreatmentOverdue: { href: string; count: number } };
+    const listResponse = await businessRequest(supervisorToken, `/leads?${params}`); assert.equal(listResponse.status, 200);
+    const list = await listResponse.json() as HistoryPage;
+    assert.equal(report.cohort.totalUniqueLeads, list.total); assert.equal(list.total, 1);
+    const slaResponse = await businessRequest(supervisorToken, report.firstTreatmentOverdue.href);
+    assert.equal(slaResponse.status, 200); assert.equal((await slaResponse.json() as HistoryPage).total, report.firstTreatmentOverdue.count);
+    for (const [key, value] of Object.entries(filter)) assert.equal(new URL(report.firstTreatmentOverdue.href, "https://example.invalid").searchParams.get(key), value);
+  }
+  for (const filter of ["treatmentFrom=2026-02-30", "treatmentState=INVALID", "treatmentFrom=2026-01-03&treatmentTo=2026-01-02"]) assert.equal((await businessRequest(supervisorToken, `/reports/commercial-funnel?${filter}`)).status, 400);
   const untreatedHistory = await readHistory();
   assert.deepEqual(untreatedHistory.items.map(item => item.id), [historyLeads[2]!.id], "known dated and undated historical exchanges are not never-treated");
   const missingActions = await businessRequest(supervisorToken, `/leads?view=NEXT_ACTION_MISSING&campaign=${encodeURIComponent(historyCampaign)}`);

@@ -12,6 +12,7 @@ import { buildLeadListHref, temperatures } from "./funnel-contract";
 export function pipelineLeadEndpoint(filters: Record<string, string>, page: number): string {
   const query = new URLSearchParams(buildLeadListHref(filters).split("?")[1]);
   query.delete("returnTo"); query.set("page", String(page)); query.set("pageSize", "12");
+  query.set("sortBy", "lastTreatmentAt"); query.set("sortDirection", "asc");
   return `/api/crm/leads?${query}`;
 }
 

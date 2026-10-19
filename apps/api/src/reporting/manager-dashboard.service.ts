@@ -189,7 +189,7 @@ export class ManagerDashboardService {
   private sortedKeys(value: object): string[] { const keys = Object.keys(value); keys.sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" })); return keys; }
   private leadHref(query: ManagerDashboardQuery, overrides: Record<string, string> = {}): string {
     const params = new URLSearchParams();
-    const mapping: Array<[keyof ManagerDashboardQuery, string]> = [["from", "createdFrom"], ["to", "createdBefore"], ["campus", "campus"], ["campaign", "campaign"], ["program", "program"], ["source", "source"], ["channel", "channel"], ["adviserId", "adviserId"], ["status", "status"]];
+    const mapping: Array<[keyof ManagerDashboardQuery, string]> = [["from", "createdFrom"], ["to", "createdBefore"], ["campus", "campus"], ["campaign", "campaign"], ["program", "program"], ["source", "source"], ["channel", "channel"], ["adviserId", "adviserId"], ["status", "status"], ["treatmentFrom", "treatmentFrom"], ["treatmentTo", "treatmentTo"], ["treatmentState", "treatmentState"]];
     for (const [source, target] of mapping) {
       const value = query[source];
       if (value) params.set(target, value);

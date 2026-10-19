@@ -6,12 +6,14 @@ import { JSDOM } from "jsdom";
 import { PipelineLeadCards, PipelineLeads, pipelineLeadEndpoint } from "../app/manager/reports/commercial-funnel/pipeline-leads";
 
 test("Pipeline cards reuse directory cohort parameters without navigation context or untrusted filters", () => {
-  const url = new URL(pipelineLeadEndpoint({ from: "2026-10-01T08:00:00Z", to: "2026-10-19T12:00:00Z", adviserId: "synthetic", status: "CONTACTED", campus: "Synthetic Campus", channel: "DIGITAL", admin: "true" }, 2), "https://example.invalid");
+  const url = new URL(pipelineLeadEndpoint({ from: "2026-10-01T08:00:00Z", to: "2026-10-19T12:00:00Z", adviserId: "synthetic", status: "CONTACTED", campus: "Synthetic Campus", channel: "DIGITAL", treatmentFrom: "2026-01-02", treatmentState: "UNKNOWN_DATE", admin: "true" }, 2), "https://example.invalid");
   assert.equal(url.pathname, "/api/crm/leads");
   assert.equal(url.searchParams.get("createdFrom"), "2026-10-01T08:00:00Z");
   assert.equal(url.searchParams.get("createdBefore"), "2026-10-19T12:00:00Z");
   for (const [key, value] of Object.entries({ adviserId: "synthetic", status: "CONTACTED", campus: "Synthetic Campus", channel: "DIGITAL", page: "2", pageSize: "12" })) assert.equal(url.searchParams.get(key), value);
   assert.equal(url.searchParams.has("returnTo"), false); assert.equal(url.searchParams.has("admin"), false);
+  assert.equal(url.searchParams.get("treatmentFrom"), "2026-01-02"); assert.equal(url.searchParams.get("treatmentState"), "UNKNOWN_DATE");
+  assert.equal(url.searchParams.get("sortBy"), "lastTreatmentAt"); assert.equal(url.searchParams.get("sortDirection"), "asc");
 });
 
 test("Pipeline cards separate status, temperature, historical deadline, persistent plan and SLA", () => {

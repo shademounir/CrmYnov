@@ -400,7 +400,7 @@ function filterTarget(key: string): string {
   return key;
 }
 
-const reportingFilterKeys = new Set(["period", "from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "view"]);
+const reportingFilterKeys = new Set(["period", "from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "view", "treatmentFrom", "treatmentTo", "treatmentState"]);
 
 function dashboardPeriodHref(query: URLSearchParams, period: PreferredPeriod | "custom", calendar?: DashboardCalendar): string {
   const params = new URLSearchParams([...query].filter(([key]) => reportingFilterKeys.has(key)));

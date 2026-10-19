@@ -36,6 +36,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   let firstRequest = true;
   let releaseInitial: (() => void) | undefined;
   t.mock.method(globalThis, "fetch", async (path: string): Promise<Response> => {
+    if (path === "/api/crm/leads/filter-options") return Response.json({ advisers: [{ id: "adviser-synthetic", label: "Conseiller synthétique" }] });
     if (path.startsWith("/api/crm/leads?")) return Response.json({ items: [], page: 1, pageSize: 12, total: 0 });
     requested = path;
     if (firstRequest) {
@@ -88,7 +89,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
 });
 
 test("Pipeline direct navigation and applying filters preserve the Dashboard cohort until dates are explicitly edited", async (t) => {
-  const filters = { from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z", campus: "CAMPUS-SYNTHETIC", source: "SYNTHETIC", channel: "DIGITAL", adviserId: "adviser-synthetic", status: "QUALIFIED" };
+  const filters = { from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z", campus: "CAMPUS-SYNTHETIC", source: "SYNTHETIC", channel: "DIGITAL", adviserId: "adviser-synthetic", status: "QUALIFIED", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-03", treatmentState: "UNKNOWN_DATE" };
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: `https://dev.example.invalid/manager/reports/commercial-funnel?${new URLSearchParams(filters)}` });
   const prior = new Map<string, PropertyDescriptor | undefined>();
   for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator,
@@ -107,6 +108,7 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
   });
   const requested: URL[] = [];
   t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => {
+    if (path === "/api/crm/leads/filter-options") return Promise.resolve(Response.json({ advisers: [{ id: "adviser-synthetic", label: "Conseiller synthétique" }] }));
     if (path.startsWith("/api/crm/leads?")) return Promise.resolve(Response.json({ items: [], page: 1, pageSize: 12, total: 0 }));
     requested.push(new URL(path, dom.window.location.origin)); return Promise.resolve(Response.json(snapshot));
   });
@@ -114,6 +116,7 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
   for (const [key, value] of Object.entries(filters)) assert.equal(requested.at(-1)!.searchParams.get(key), value);
   let form = host.querySelector<HTMLFormElement>("form")!;
   let values = new dom.window.FormData(form);
+  assert.equal(form.querySelector('select[name="adviserId"] option[value="adviser-synthetic"]')?.textContent, "Conseiller synthétique");
   for (const [key, value] of Object.entries(filters)) assert.deepEqual(values.getAll(key), [value], "submit each original boundary or scope exactly once");
   const dates = form.querySelectorAll<HTMLInputElement>('input[type="date"]');
   assert.equal(dates[0]?.value, "2026-10-01"); assert.equal(dates[1]?.value, "2026-10-05");
@@ -128,6 +131,7 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
   assert.equal(allLeads.searchParams.get("adviserId"), filters.adviserId);
   assert.equal(allLeads.searchParams.get("channel"), filters.channel);
   assert.equal(allLeads.searchParams.get("status"), filters.status);
+  for (const key of ["treatmentFrom", "treatmentTo", "treatmentState"] as const) assert.equal(allLeads.searchParams.get(key), filters[key]);
   form = host.querySelector<HTMLFormElement>("form")!;
   const from = form.querySelector<HTMLInputElement>('input[type="date"]')!;
   act(() => {
@@ -141,4 +145,10 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.equal(requested.at(-1)!.searchParams.get("from"), "2026-10-02");
   assert.equal(requested.at(-1)!.searchParams.get("to"), filters.to);
+  form = host.querySelector<HTMLFormElement>("form")!;
+  await act(async () => { form.dispatchEvent(new dom.window.Event("reset", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.equal(dom.window.location.search, "");
+  assert.equal(host.querySelector<HTMLSelectElement>('select[name="adviserId"]')?.value, "");
+  assert.equal(host.querySelector<HTMLSelectElement>('select[name="status"]')?.value, "");
+  assert.equal(host.querySelector<HTMLInputElement>('input[name="treatmentFrom"]')?.value, "");
 });

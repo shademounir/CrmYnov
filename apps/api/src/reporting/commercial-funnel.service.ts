@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadService, leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { firstTreatmentState } from "../leads/first-treatment.js";
+import { normalizeTreatmentFilters } from "../leads/lead-treatment.js";
 import { leadTemperatures, type LeadTemperature } from "../qualification/lead-qualification.service.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
 import { acquisitionPartition, isBaseline, type AcquisitionPartition } from "./acquisition-cohort.js";
@@ -36,7 +37,7 @@ export class CommercialFunnelService {
     const from = this.boundary(query.from, "funnel_from_invalid");
     const to = this.boundary(query.to, "funnel_to_invalid");
     if (from && to && from >= to) throw new BadRequestException({ code: "funnel_period_invalid" });
-    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}), ...normalizeTreatmentFilters(query) };
     const unique = new Map(this.leads.reportingSnapshot(principal, now)
       .filter((lead) => matchesInteractiveFilters(lead, normalized))
       .map((lead) => [lead.id, lead]));
@@ -87,7 +88,7 @@ export class CommercialFunnelService {
   }
   private firstTreatmentHref(query: CommercialFunnelQuery): string {
     const params = new URLSearchParams({ view: "FIRST_TREATMENT_OVERDUE" });
-    const mapping = { from: "createdFrom", to: "createdBefore", campus: "campus", campaign: "campaign", program: "program", source: "source", channel: "channel", adviserId: "adviserId", status: "status" } as const;
+    const mapping = { from: "createdFrom", to: "createdBefore", campus: "campus", campaign: "campaign", program: "program", source: "source", channel: "channel", adviserId: "adviserId", status: "status", treatmentFrom: "treatmentFrom", treatmentTo: "treatmentTo", treatmentState: "treatmentState" } as const;
     for (const [source, target] of Object.entries(mapping)) {
       const value = query[source as keyof typeof mapping];
       if (value) params.set(target, value);

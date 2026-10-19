@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { treatmentSummary, treatmentDay, validateTreatmentDay } from "../src/leads/lead-treatment.js";
+import { treatmentSummary, treatmentDay, validateTreatmentDay, normalizeTreatmentFilters } from "../src/leads/lead-treatment.js";
+import { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
+import { normalizeReportingQuery } from "../src/reporting/reporting-filter.js";
 import { LeadService, type LeadActivityRecord, type LeadRecord } from "../src/leads/lead.service.js";
 import type { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
 import { AuditService } from "../src/audit/audit.service.js";
@@ -81,5 +83,15 @@ test("persistent treatment projection combines filters, inclusive Casablanca day
   assert.equal(leads.listLeads({ ...query, treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02", campus: "CASABLANCA", source: "FIXTURE", assignedToId: commercial.userId }, manager, "read").total, 1);
   assert.equal(leads.listLeads({ ...query, treatmentState: "NONE" }, manager, "read").total, 1);
   assert.equal(leads.listLeads({ ...query, treatmentState: "UNKNOWN_DATE" }, manager, "read").total, 1);
+  const funnel = new CommercialFunnelService(leads, new AuditService());
+  for (const treatment of [{ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" }, { treatmentState: "UNKNOWN_DATE" }, { treatmentState: "NONE" }]) {
+    const filter = { campus: "CASABLANCA", source: "FIXTURE", adviserId: commercial.userId, ...treatment };
+    assert.equal(funnel.read(filter, manager, "funnel").cohort.totalUniqueLeads, leads.listLeads({ ...query, ...filter }, manager, "list").total);
+    const normalized = normalizeReportingQuery({ ...filter, period: "custom", from: "2026-01-01", to: "2027-01-01" }, manager);
+    for (const [key, value] of Object.entries(treatment)) assert.equal(normalized[key as keyof typeof normalized], value);
+  }
+  assert.throws(() => normalizeTreatmentFilters({ treatmentFrom: "2026-02-30" }));
+  assert.throws(() => normalizeTreatmentFilters({ treatmentFrom: "2026-01-03", treatmentTo: "2026-01-02" }));
+  assert.throws(() => normalizeTreatmentFilters({ treatmentState: "UNKNOWN" }));
   assert.throws(() => leads.listLeads({ ...query, treatmentFrom: "2026-01-03", treatmentTo: "2026-01-02" }, manager, "read"));
 });

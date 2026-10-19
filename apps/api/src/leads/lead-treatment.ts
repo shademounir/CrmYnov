@@ -42,6 +42,21 @@ export function validateTreatmentDay(value: string | undefined): string | undefi
   return value;
 }
 
+export interface TreatmentFilters { treatmentFrom?: string | undefined; treatmentTo?: string | undefined; treatmentState?: string | undefined }
+export function normalizeTreatmentFilters(query: TreatmentFilters): TreatmentFilters {
+  const treatmentFrom = validateTreatmentDay(query.treatmentFrom), treatmentTo = validateTreatmentDay(query.treatmentTo);
+  if (treatmentFrom && treatmentTo && treatmentFrom > treatmentTo) throw new BadRequestException({ code: "lead_treatment_range_invalid" });
+  if (query.treatmentState && !["DATED", "UNKNOWN_DATE", "NONE"].includes(query.treatmentState)) throw new BadRequestException({ code: "lead_treatment_state_invalid" });
+  return { ...(treatmentFrom ? { treatmentFrom } : {}), ...(treatmentTo ? { treatmentTo } : {}), ...(query.treatmentState ? { treatmentState: query.treatmentState } : {}) };
+}
+/** Inclusive Casablanca days; an unknown historical date is never invented. A
+ * mixed history may still have a known last dated treatment within the range. */
+export function matchesTreatmentFilters(lead: Partial<TreatmentSummary>, query: TreatmentFilters): boolean {
+  return (!query.treatmentState || lead.treatmentState === query.treatmentState)
+    && (!query.treatmentFrom || Boolean(lead.lastTreatmentAt && treatmentDay(lead.lastTreatmentAt) >= query.treatmentFrom))
+    && (!query.treatmentTo || Boolean(lead.lastTreatmentAt && treatmentDay(lead.lastTreatmentAt) <= query.treatmentTo));
+}
+
 /** Historical state is never rewritten to implement a queue. A known exchange
  * without a date is not evidence that a Prospect has never been treated. */
 export function isToContact(lead: { status: string } & Partial<TreatmentSummary>): boolean {

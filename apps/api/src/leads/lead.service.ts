@@ -11,7 +11,7 @@ import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from ".
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 import { isCommercialContact, positiveQualificationEvidence, type CommercialStatusInput } from "./commercial-progression.js";
-import { isToContact, treatmentDay, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
+import { isToContact, matchesTreatmentFilters, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
 import { needsNextAction } from "../follow-up/next-action.contract.js";
 import { firstTreatmentState, receptionSummary, type ReceptionSummary, type FirstTreatmentIndicators } from "./first-treatment.js";
 
@@ -547,9 +547,7 @@ export class LeadService implements OnModuleInit {
       && (!validated.createdFrom || lead.createdAt >= validated.createdFrom)
       && (!validated.createdTo || lead.createdAt <= validated.createdTo)
       && (!validated.createdBefore || lead.createdAt < validated.createdBefore)
-      && (!validated.treatmentState || lead.treatmentState === validated.treatmentState)
-      && (!validated.treatmentFrom || Boolean(lead.lastTreatmentAt && treatmentDay(lead.lastTreatmentAt) >= validated.treatmentFrom))
-      && (!validated.treatmentTo || Boolean(lead.lastTreatmentAt && treatmentDay(lead.lastTreatmentAt) <= validated.treatmentTo));
+      && matchesTreatmentFilters(lead, validated);
   }
 
   private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {

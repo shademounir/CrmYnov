@@ -142,6 +142,11 @@ test("allows only explicit internal reporting destinations", () => {
   assert.equal(preserved.includes("createdBefore=2026-08-24"), true);
   assert.equal(preserved.includes("createdTo="), false);
   assert.equal(preserveFilters("javascript:alert(1)", new URLSearchParams()), "#");
+  const treatment = { treatmentFrom: "2026-01-02", treatmentTo: "2026-01-03", treatmentState: "UNKNOWN_DATE" };
+  for (const destination of ["/leads", "/manager/reports/commercial-funnel", "/manager/reports/commercial-work"]) {
+    const url = new URL(preserveFilters(destination, new URLSearchParams(treatment)), "https://crm.invalid");
+    for (const [key, value] of Object.entries(treatment)) assert.equal(url.searchParams.get(key), value);
+  }
 });
 
 test("detects ASCII control characters without rejecting international code points", () => {
