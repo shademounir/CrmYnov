@@ -8,7 +8,7 @@ import { LeadService, type LeadPage, type LeadReportingRow } from "../leads/lead
 import { firstTreatmentState } from "../leads/first-treatment.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { commercialWorkQueues, projectCommercialWork, type CommercialWorkQueue, type WorkProjection } from "./commercial-work.js";
-import { commercialWorkHref, workAdviserScope, type WorkAdviserScope } from "./commercial-work-query.js";
+import { commercialWorkHref, workAdviserScope, workTaskOwner, type WorkAdviserScope } from "./commercial-work-query.js";
 
 export interface WorkQueueSummary {
   key: CommercialWorkQueue; label: string; leadCount: number; itemCount: number; itemUnit: "LEADS" | "ACTIONS" | "REQUESTS"; href: string;
@@ -21,6 +21,7 @@ export interface CommercialWorkReport {
   advisers: Array<{ adviserId: string; adviserLabel?: string; leadCount: number; queues: WorkQueueSummary[]; actions: WorkProjection["actions"] }>;
   selectedQueue: CommercialWorkQueue; page: LeadPage;
   definitions: string[];
+  taskOwnerId?: string;
 }
 export function workQueueKey(value = "TO_CONTACT"): CommercialWorkQueue {
   if (!Object.hasOwn(commercialWorkQueues, value)) throw new BadRequestException({ code: "commercial_work_queue_invalid" });
@@ -32,11 +33,11 @@ function pagination(value: string | undefined, fallback: number, max: number): n
   if (!/^\d+$/u.test(value) || !Number.isSafeInteger(number) || number < 1 || number > max) throw new BadRequestException({ code: "commercial_work_pagination_invalid" });
   return number;
 }
-function summaries(projection: WorkProjection, rows: readonly LeadReportingRow[], query: InteractiveReportingQuery, adviserScope: WorkAdviserScope): WorkQueueSummary[] {
+function summaries(projection: WorkProjection, rows: readonly LeadReportingRow[], query: InteractiveReportingQuery, adviserScope: WorkAdviserScope, taskOwnerId?: string): WorkQueueSummary[] {
   return (Object.keys(commercialWorkQueues) as CommercialWorkQueue[]).map((key) => {
     const queue = projection.queues[key], numerator = queue.leadIds.length, denominator = rows.length;
     return { key, label: commercialWorkQueues[key], leadCount: numerator, itemCount: queue.itemCount, itemUnit: queue.itemUnit,
-      href: commercialWorkHref(query, key, adviserScope), leadShare: { numerator, denominator, value: denominator ? numerator / denominator : null } };
+      href: commercialWorkHref(query, key, adviserScope, taskOwnerId), leadShare: { numerator, denominator, value: denominator ? numerator / denominator : null } };
   });
 }
 
@@ -45,12 +46,13 @@ export class CommercialWorkService {
   constructor(@Inject(LeadService) private readonly leads: LeadService, @Inject(FollowUpService) private readonly followUps: FollowUpService,
     @Inject(ClosureService) private readonly closures: ClosureService, @Inject(AuditService) private readonly audit: AuditService) {}
 
-  read(query: InteractiveReportingQuery, selection: { queue?: string | undefined; page?: string | undefined; pageSize?: string | undefined; adviserScope?: string | undefined }, principal: Principal, correlationId: string, now = new Date()): CommercialWorkReport {
+  read(query: InteractiveReportingQuery, selection: { queue?: string | undefined; page?: string | undefined; pageSize?: string | undefined; adviserScope?: string | undefined; taskOwnerId?: string | undefined }, principal: Principal, correlationId: string, now = new Date()): CommercialWorkReport {
     const queue = workQueueKey(selection.queue), page = pagination(selection.page, 1, 1_000_000), pageSize = pagination(selection.pageSize, 25, 100);
     const { adviserId, ...filters } = query;
     const adviserScope = workAdviserScope(selection.adviserScope);
+    const taskOwnerId = workTaskOwner(selection.taskOwnerId, query, principal);
     const rows = this.leads.reportingSnapshot(principal, now).filter((row) => adviserScope === "INVOLVED" ? matchesInteractiveFilters(row, query) : matchesInteractiveFilters(row, filters) && (!adviserId || row.assignedToId === adviserId));
-    const tasks = this.followUps.reportingSnapshot(principal), requests = this.closures.reportingSnapshot(principal);
+    const tasks = this.followUps.reportingSnapshot(principal).filter((task) => !taskOwnerId || task.ownerId === taskOwnerId), requests = this.closures.reportingSnapshot(principal);
     const projection = projectCommercialWork(rows, tasks, requests, now);
     const ids = projection.queues[queue].leadIds;
     const byId = new Map(rows.map((row) => [row.id, row]));
@@ -62,18 +64,19 @@ export class CommercialWorkService {
       const primary = rows.filter((row) => row.assignedToId === id), data = projectCommercialWork(primary, tasks, requests, now);
       const label = primary.find((row) => row.assignedToLabel)?.assignedToLabel;
       return { adviserId: id, ...(label ? { adviserLabel: label } : {}), leadCount: primary.length,
-        queues: summaries(data, primary, { ...query, adviserId: id }, "PRIMARY"), actions: data.actions };
+        queues: summaries(data, primary, { ...query, adviserId: id }, "PRIMARY", taskOwnerId), actions: data.actions };
     });
     this.audit.record({ eventType: "COMMERCIAL_WORK_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId,
-      after: { queue, leadCount: rows.length, selectedCount: ids.length, page, pageSize }, result: "SUCCESS", idempotencyKey: `commercial-work:${randomUUID()}` });
+      after: { queue, leadCount: rows.length, selectedCount: ids.length, page, pageSize, taskOwnerFilter: taskOwnerId !== undefined }, result: "SUCCESS", idempotencyKey: `commercial-work:${randomUUID()}` });
     return { definitionVersion: "commercial-work-v1", generatedAt: now.toISOString(), timezone: "Africa/Casablanca", filters: query,
       cohort: { leadCount: rows.length, attribution: adviserScope === "PRIMARY" ? "CURRENT_PRIMARY_ADVISER" : "INVOLVED_ADVISER", dateBasis: "LEAD_CREATED_COHORT_CURRENT_STATE", ...(query.from ? { from: query.from } : {}), ...(query.to ? { to: query.to } : {}) },
-      queues: summaries(projection, rows, query, adviserScope), actions: projection.actions, advisers, selectedQueue: queue, page: { items, page, pageSize, total: ids.length },
+      queues: summaries(projection, rows, query, adviserScope, taskOwnerId), actions: projection.actions, advisers, selectedQueue: queue, page: { items, page, pageSize, total: ids.length }, ...(taskOwnerId ? { taskOwnerId } : {}),
       definitions: [
         "Stock actuel des dossiers autorisés créés dans la période, pas un nombre de traitements réalisés aujourd’hui. Historique importé conservé, non attribué au travail contemporain.",
         adviserScope === "PRIMARY" ? "Filtre conseiller : portefeuille principal actuel. Les tableaux sont par responsable principal, sans doubler les contributions secondaires." : "Filtre conseiller : dossiers impliqués comme responsable principal ou collaborateur, dédoublonnés. Les sous-tableaux restent par responsable principal actuel et leurs liens l’indiquent.",
         "Relances : actions visibles rattachées au portefeuille, pas nécessairement réalisées par son conseiller actuel. Actives = SCHEDULED ou DUE sur dossier ouvert ; retard strictement après échéance. Égalité = échue maintenant, pas encore en retard.",
         "Réalisées et annulées sont des états distincts des tâches du portefeuille, sans attribution à une période de performance. Date invalide conservée dans les actives et signalée séparément.",
+        taskOwnerId ? "Filtre propriétaire de tâche actif : seuls les états et files de relances sont restreints à ce propriétaire, sur les dossiers toujours autorisés de la cohorte. Il ne change ni le conseiller principal ni les autres files." : "Aucun filtre propriétaire de tâche : relances de tous les propriétaires visibles dans cette cohorte.",
         "Part = leads distincts de la file / leads distincts de la cohorte affichée ; période from incluse/to exclue sur création. Dénominateur zéro : taux non calculable. Les files se recouvrent, leur somme n’est pas un total distinct.",
         "Clôtures : demandes finales en attente, pas approbations automatiques ni preuve d’un droit de décision. Les droits de demande et de décision restent contrôlés sur la fiche.",
       ] };

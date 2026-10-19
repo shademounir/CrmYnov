@@ -9,6 +9,10 @@ import { LeadService } from "../src/leads/lead.service.js";
 import { NotificationService } from "../src/notifications/notification.service.js";
 import { CommercialPerformanceController } from "../src/reporting/commercial-performance.controller.js";
 import { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
+import { CommercialWorkService } from "../src/reporting/commercial-work.service.js";
+import { normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
+import type { ClosureService } from "../src/closure/closure.service.js";
+import type { FollowUpRecord } from "../src/follow-up/follow-up.service.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviserA: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-a" };
@@ -47,6 +51,12 @@ test("computes distinct primary KPIs and keeps secondary contributions separate"
   assert.equal(b.secondaryLeadCount, 1); assert.equal(a.statusVolumes.enrolled, 1); assert.equal(b.statusVolumes.contacted, 1);
   assert.equal(a.rates.enrollment, 1); assert.equal(b.rates.contact, 1); assert.equal(a.followUps.overdue, 1);
   assert.equal(a.adviserLabel, "Conseillère A");
+  const work = new CommercialWorkService(leads, followUps, { reportingSnapshot: () => [] } as unknown as ClosureService, audit);
+  const { queue, adviserScope, taskOwnerId, ...filters } = Object.fromEntries(new URL(a.drillDown.overdue, "https://crm.invalid").searchParams);
+  const detail = work.read(normalizeWorkQuery(filters, manager, new Date()), { queue, adviserScope, taskOwnerId }, manager, "corr-owner-detail", new Date(result.generatedAt));
+  assert.equal(taskOwnerId, adviserA.userId); assert.equal(detail.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!.itemCount, a.followUps.overdue);
+  assert.deepEqual(detail.page.items.map((item) => item.id), [contacted.id], "task owner A still links to authorized Lead now assigned to B");
+  assert.ok(detail.queues.every((item) => new URL(item.href, "https://crm.invalid").searchParams.get("taskOwnerId") === adviserA.userId));
   assert.equal(new URL(a.drillDown.assigned, "https://crm.invalid").searchParams.get("assignedToLabel"), "Conseillère A");
   assert.deepEqual(a.reassignments, { requested: 1, approved: 1, rejected: 0 });
   assert.ok(result.definitions.every((definition) => definition.numerator && definition.denominator));
@@ -71,4 +81,16 @@ test("controller fails closed without a principal", async () => {
   const { service } = setup(); const controller = new CommercialPerformanceController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
   assert.equal((await controller.read({}, { principal: manager, header: () => "corr-controller" } as never)).cohort.uniqueLeadCount, 0);
+});
+
+test("task owner counts share strict overdue, due-now, future, invalid, completed and cancelled semantics", () => {
+  const { leads, followUps, service } = setup(); const now = new Date("2026-10-20T12:00:00Z");
+  const lead = leads.registerLocalLead({ id: "owner-test", leadCode: "SYN-OWNER", firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "CAMPAIGN", educationLevel: "Bac", program: "PROGRAM", source: "WEB_FORM", status: "CONTACTED", assignedToId: adviserB.userId });
+  const record = (id: string, dueAt: string, state: FollowUpRecord["state"] = "SCHEDULED"): FollowUpRecord => ({ id, leadId: lead.id, ownerId: adviserA.userId, dueAt, state, reason: "Synthetic", version: 1, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
+  followUps.reportingSnapshot = (): FollowUpRecord[] => [record("late", "2026-10-20T11:59:59.999Z"), record("equal", "2026-10-20T13:00:00+01:00", "DUE"), record("future", "2026-10-21T00:00:00Z", "DUE"), record("invalid", "invalid"), record("done", "2026-10-19T00:00:00Z", "COMPLETED"), record("cancel", "2026-10-19T00:00:00Z", "CANCELLED")];
+  const result = service.read({ campus: "CAMPUS" }, manager, "owner-states", now);
+  const owner = result.advisers.find((item) => item.adviserId === adviserA.userId)!;
+  assert.equal(owner.primaryLeadCount, 0, "former owner not silently made current principal adviser");
+  assert.deepEqual(owner.followUps, { planned: 1, completed: 1, overdue: 1, cancelled: 1, active: 4, dueNow: 1, invalidDeadline: 1 });
+  assert.equal(result.advisers.find((item) => item.adviserId === adviserB.userId)!.followUps.overdue, 0);
 });

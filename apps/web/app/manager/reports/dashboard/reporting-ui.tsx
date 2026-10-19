@@ -32,7 +32,7 @@ type DashboardReport = {
 } & ReportingEvidence;
 type PersonalDashboardReport = {
   definitionVersion: "personal-dashboard-v1"; timezone: string; filters: Record<string, string>;
-  performance: { advisers: Array<{ adviserId: string; adviserLabel?: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number; followUps: { overdue: number } }> };
+    performance: { advisers: Array<{ adviserId: string; adviserLabel?: string; activeLoad: number; primaryLeadCount: number; secondaryLeadCount: number; followUps: { overdue: number }; drillDown?: { overdue: string } }> };
   contributions: { contributors: Array<{ contributorId: string; primaryActionCount: number; secondaryActionCount: number }> };
   safeguards: { personalScopeOnly: true; aggregatedOnly: true };
 } & ReportingEvidence;
@@ -149,9 +149,10 @@ function ReportingState({ state, report, showTables, query, operationalThreshold
 
 function PersonalDashboardContent({ report, showTables }: Readonly<{ report: PersonalDashboardReport; showTables: boolean }>): React.JSX.Element {
   const adviser = report.performance.advisers[0]; const contributor = report.contributions.contributors[0];
-  const data = adviser ? [{ value: "Leads principaux", count: adviser.primaryLeadCount }, { value: "Collaborations", count: adviser.secondaryLeadCount }, { value: "Charge active", count: adviser.activeLoad }, { value: "Relances échues", count: adviser.followUps.overdue }] : [];
+  const data = adviser ? [{ value: "Leads principaux", count: adviser.primaryLeadCount }, { value: "Collaborations", count: adviser.secondaryLeadCount }, { value: "Charge active", count: adviser.activeLoad }, { value: "Relances en retard", count: adviser.followUps.overdue }] : [];
   const contributions = contributor ? [{ value: "Actions principales", count: contributor.primaryActionCount }, { value: "Actions secondaires", count: contributor.secondaryActionCount }] : [];
-  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p><ToContactCard report={report} /><FirstTreatmentCard report={report} /></section><div className="dashboard-personal-charts"><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></div><ReportingAvailability report={report} /></>;
+  const overdueHref = adviser?.drillDown?.overdue ? safeInternalHref(adviser.drillDown.overdue, ["/manager/reports/commercial-work"]) : "#";
+  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p><ToContactCard report={report} /><FirstTreatmentCard report={report} />{adviser && overdueHref !== "#" ? <Link className="queue-item" href={overdueHref}>Mes actions en retard : {displayCount(adviser.followUps.overdue)} · ouvrir les actions et dossiers autorisés</Link> : <p>File de mes actions en retard indisponible.</p>}</section><div className="dashboard-personal-charts"><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></div><ReportingAvailability report={report} /></>;
 }
 
 function ToContactCard({ report }: Readonly<{ report: ReportingEvidence }>): React.JSX.Element {
@@ -315,7 +316,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
     <section className="quick-queues" aria-label="Files rapides">
       <ToContactCard report={report} />
       <Link className="queue-item" href={preserveFilters(report.drillDowns.find((item) => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED", query)}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Leads actifs non affectés<strong>{displayCount(report.cards.unassigned)}</strong><small>La file ouverte inclut aussi les statuts clos.</small></span></Link>
-      <Link className="queue-item" href={followUpsHref}><span className="icon-disc small amber"><Alarm size={20} /></span><span>Relances échues<strong>{displayCount(report.cards.overdueFollowUps)}</strong><small>File de Leads distincte du compteur de relances.</small></span></Link>
+      <Link className="queue-item" href={followUpsHref}><span className="icon-disc small amber"><Alarm size={20} /></span><span>Relances en retard<strong>{displayCount(report.cards.overdueFollowUps)}</strong><small>Actions en retard et dossiers distincts dans la même file filtrée.</small></span></Link>
       <FirstTreatmentCard report={report} />
       <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
     </section>

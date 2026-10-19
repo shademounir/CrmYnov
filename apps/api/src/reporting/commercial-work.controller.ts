@@ -15,11 +15,11 @@ export class CommercialWorkController {
   @Get()
   async read(@Query() raw: Record<string, string | undefined>, @Req() request: AuthenticatedRequest): Promise<CommercialWorkReport> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    const { queue, page, pageSize, adviserScope, ...filters } = raw;
+    const { queue, page, pageSize, adviserScope, taskOwnerId, ...filters } = raw;
     return this.persistence.withReportingScope(request.principal, async (principal) => {
       const canonical = await this.persistence.normalizeCampusQuery(principal, filters);
       const now = new Date(), normalized = normalizeWorkQuery(canonical, principal, now);
-      return this.work.read(normalized, { queue, page, pageSize, adviserScope }, principal, request.header("x-correlation-id") ?? "missing-correlation", now);
+      return this.work.read(normalized, { queue, page, pageSize, adviserScope, taskOwnerId }, principal, request.header("x-correlation-id") ?? "missing-correlation", now);
     }, (principal) => reportingScopeRequirements(filters, principal));
   }
 }

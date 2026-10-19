@@ -10,7 +10,7 @@ import { projectCommercialWork } from "../src/reporting/commercial-work.js";
 import { CommercialWorkService, workQueueKey } from "../src/reporting/commercial-work.service.js";
 import { commercialWorkPaths } from "../src/reporting/commercial-work.openapi.js";
 import { routePermissions, usesScopedReportingAuthorization } from "../src/permissions/dynamic-routes.js";
-import { commercialWorkHref, normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
+import { commercialWorkHref, normalizeWorkQuery, workTaskOwner } from "../src/reporting/commercial-work-query.js";
 
 const now = new Date("2026-10-20T12:00:00Z");
 const manager: Principal = { userId: "manager", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "synthetic" };
@@ -42,7 +42,7 @@ async function setup(): Promise<CommercialWorkService> {
   const records: LeadRecord[] = [row("a"), row("b", { assignedToId: "adviser-b", assignedToLabel: "Conseiller B" }), row("secondary", { assignedToId: "adviser-b", collaboratorIds: ["adviser-a"] }), row("elsewhere", { campus: "OTHER" })].map((lead) => ({ ...lead, leadCode: `SYNTH-${lead.id}`, firstName: "Synthetic", lastName: "Fixture", educationLevel: "Bac" }));
   const repository = { enabled: true, snapshot: () => Promise.resolve({ leads: records, activities: [], historicalTreatments: [] }) } as unknown as LeadPersistenceRepository;
   const leads = new LeadService(audit, repository); await leads.onModuleInit();
-  const followUps = { reportingSnapshot: () => [task("foreign", "invisible", "2026-10-20T10:00:00Z")] } as unknown as FollowUpService;
+  const followUps = { reportingSnapshot: () => [task("foreign", "invisible", "2026-10-20T10:00:00Z"), task("owned-a", "a", "2026-10-20T10:00:00Z"), { ...task("owned-b", "a", "2026-10-20T10:00:00Z"), ownerId: "adviser-b" }] } as unknown as FollowUpService;
   const closures = { reportingSnapshot: () => [closure("foreign", "invisible")] } as unknown as ClosureService;
   return new CommercialWorkService(leads, followUps, closures, audit);
 }
@@ -73,6 +73,22 @@ test("every summary and adviser drilldown reuses the exact paginated selection a
   assert.deepEqual(own.page.items.map((lead) => lead.id), ["a"]);
   const fenced = service.read(query, {}, { ...manager, permissionLeadIds: new Set(["a"]) }, "fixture", now);
   assert.equal(fenced.cohort.leadCount, 1); assert.equal(JSON.stringify(fenced).includes("Conseiller B"), false);
+});
+
+test("task-owner filter keeps cohort/RBAC, exact links and personal owner separation", async () => {
+  const service = await setup();
+  const query = { campus: "CAMPUS", view: "global" };
+  const report = service.read(query, { queue: "OVERDUE_FOLLOW_UP", taskOwnerId: "adviser-a" }, manager, "owner", now);
+  assert.equal(report.actions.overdue, 1); assert.equal(report.cohort.leadCount, 3); assert.deepEqual(report.page.items.map((item) => item.id), ["a"]);
+  const summary = report.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!;
+  const { queue, adviserScope, taskOwnerId, ...filters } = Object.fromEntries(new URL(summary.href, "https://crm.invalid").searchParams);
+  const detail = service.read(normalizeWorkQuery(filters, manager, now), { queue, adviserScope, taskOwnerId }, manager, "owner-detail", now);
+  assert.equal(detail.actions.overdue, summary.itemCount); assert.equal(detail.page.total, summary.leadCount);
+  assert.equal(service.read(query, { taskOwnerId: "adviser-a" }, { ...manager, permissionLeadIds: new Set(["b"]) }, "fenced", now).actions.overdue, 0);
+  const personal: Principal = { ...manager, userId: "adviser-a", roles: ["ADMISSIONS"] };
+  assert.equal(workTaskOwner("adviser-a", { view: "personal" }, personal), "adviser-a");
+  assert.throws(() => workTaskOwner("adviser-b", { view: "personal" }, personal), (error: unknown) => JSON.stringify(error).includes("commercial_work_task_owner_forbidden"));
+  assert.throws(() => workTaskOwner("", query, manager), (error: unknown) => JSON.stringify(error).includes("commercial_work_task_owner_invalid"));
 });
 
 test("explicit involved mode preserves collaborations without widening the authorized fence", async () => {

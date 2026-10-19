@@ -90,7 +90,7 @@ for (const zeroCounts of [false, true]) {
     const values = zeroCounts ? [0, 0, 0, 0] : [3, 1, 2, 1];
     const personal: PersonalDashboardReport = {
       definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" },
-      performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0]!, secondaryLeadCount: values[1]!, activeLoad: values[2]!, followUps: { overdue: values[3]! } }] },
+      performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0]!, secondaryLeadCount: values[1]!, activeLoad: values[2]!, followUps: { overdue: values[3]! }, drillDown: { overdue: "/manager/reports/commercial-work?view=personal&queue=OVERDUE_FOLLOW_UP&taskOwnerId=adviser-synthetic&adviserScope=INVOLVED&period=open" } }] },
       contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: zeroCounts ? 0 : 4, secondaryActionCount: zeroCounts ? 0 : 2 }] },
       safeguards: { personalScopeOnly: true, aggregatedOnly: true },
     };
@@ -102,12 +102,15 @@ for (const zeroCounts of [false, true]) {
     assert.equal(figures[0]?.querySelector("h2")?.textContent, "Ma performance");
     const chart = figures[0]?.querySelector<HTMLButtonElement>("button.reporting-chart");
     assert.equal(chart?.type, "button");
-    assert.deepEqual([...chart.querySelectorAll("div > span")].map((label) => label.textContent), ["Leads principaux", "Collaborations", "Charge active", "Relances échues"]);
+    assert.deepEqual([...chart.querySelectorAll("div > span")].map((label) => label.textContent), ["Leads principaux", "Collaborations", "Charge active", "Relances en retard"]);
     assert.deepEqual([...chart.querySelectorAll("meter")].map((meter) => meter.value), values);
     assert.deepEqual([...chart.querySelectorAll("strong")].map((count) => count.textContent), values.map(String));
     assert.deepEqual([...figures[0].querySelectorAll("tbody td")].map((count) => count.textContent), values.map(String));
-    assert.equal(chart?.getAttribute("aria-label")?.includes(`Relances échues: ${values[3]}`), true);
+    assert.equal(chart?.getAttribute("aria-label")?.includes(`Relances en retard: ${values[3]}`), true);
     assert.equal(personalCharts.textContent?.includes("adviser-synthetic"), false);
+    const ownerLink = [...dom.window.document.querySelectorAll("a")].find((link) => link.textContent?.includes("Mes actions en retard"));
+    assert.ok(ownerLink); assert.equal(ownerLink.textContent?.includes(String(values[3])), true);
+    assert.equal(new URL(ownerLink.href, "https://crm.invalid").searchParams.get("taskOwnerId"), "adviser-synthetic");
     dom.window.close();
   });
 }

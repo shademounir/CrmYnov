@@ -1,6 +1,6 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import type { Principal } from "../auth/auth.types.js";
-import { normalizeScopedReportingQuery, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
+import { isPersonalReportingRequest, normalizeScopedReportingQuery, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
 import type { CommercialWorkQueue } from "./commercial-work.js";
 
 export type WorkAdviserScope = "PRIMARY" | "INVOLVED";
@@ -8,12 +8,19 @@ export function workAdviserScope(value = "PRIMARY"): WorkAdviserScope {
   if (value !== "PRIMARY" && value !== "INVOLVED") throw new BadRequestException({ code: "commercial_work_adviser_scope_invalid" });
   return value;
 }
+export function workTaskOwner(value: string | undefined, query: InteractiveReportingQuery, principal: Principal): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^[\p{L}\p{N}_.-]{1,100}$/u.test(value)) throw new BadRequestException({ code: "commercial_work_task_owner_invalid" });
+  if (isPersonalReportingRequest(query, principal) && value !== principal.userId) throw new ForbiddenException({ code: "commercial_work_task_owner_forbidden" });
+  return value;
+}
 /** Preserve even an all-time or one-sided older reporting cohort, without fake
  * date bounds and without reinterpreting involvement as primary ownership. */
-export function commercialWorkHref(query: InteractiveReportingQuery, queue: CommercialWorkQueue, adviserScope: WorkAdviserScope): string {
+export function commercialWorkHref(query: InteractiveReportingQuery, queue: CommercialWorkQueue, adviserScope: WorkAdviserScope, taskOwnerId?: string): string {
   const params = reportingSearchParams(query);
   params.set("period", query.from && query.to ? "custom" : "open");
   params.set("queue", queue); params.set("adviserScope", adviserScope);
+  if (taskOwnerId) params.set("taskOwnerId", taskOwnerId);
   return `/manager/reports/commercial-work?${params.toString()}`;
 }
 export function normalizeWorkQuery(raw: Record<string, string | undefined>, principal: Principal, now: Date): InteractiveReportingQuery {

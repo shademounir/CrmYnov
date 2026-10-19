@@ -317,7 +317,17 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   }
   const personalSlaResponse = await businessRequest(commercialToken, `/reports/personal-dashboard?${slaQuery}`);
   assert.equal(personalSlaResponse.status, 200, await personalSlaResponse.clone().text());
-  assert.equal((await personalSlaResponse.json() as { firstTreatmentOverdue: SlaQueue }).firstTreatmentOverdue.count, 2);
+  const personalSla = await personalSlaResponse.json() as { firstTreatmentOverdue: SlaQueue; performance: { advisers: Array<{ adviserId: string; followUps: { overdue: number }; drillDown: { overdue: string } }> } };
+  assert.equal(personalSla.firstTreatmentOverdue.count, 2);
+  const personalOwner = personalSla.performance.advisers.find((item) => item.adviserId === commercialId)!;
+  const personalOwnerLink = personalOwner.drillDown.overdue.replace("/manager/reports/commercial-work?", "/reports/commercial-work?");
+  const ownerWorkResponse = await businessRequest(commercialToken, personalOwnerLink);
+  assert.equal(ownerWorkResponse.status, 200, await ownerWorkResponse.clone().text());
+  const ownerWork = await ownerWorkResponse.json() as { queues: Array<{ key: string; itemCount: number }>; page: { total: number; items: Array<{ id: string }> } };
+  assert.equal(personalOwner.followUps.overdue, 1); assert.equal(ownerWork.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!.itemCount, personalOwner.followUps.overdue);
+  assert.deepEqual(ownerWork.page.items.map((item) => item.id), [sourced.id]);
+  const forbiddenOwnerLink = new URL(personalOwnerLink, "https://example.invalid"); forbiddenOwnerLink.searchParams.set("taskOwnerId", supervisorId);
+  assert.equal((await businessRequest(commercialToken, `${forbiddenOwnerLink.pathname}?${forbiddenOwnerLink.searchParams}`)).status, 403, "personal caller cannot select another task owner");
   const foreignSla = await businessRequest(commercialToken, `/leads?view=FIRST_TREATMENT_OVERDUE&campaign=${slaCampaign}&adviserId=${actorId}`);
   assert.equal(foreignSla.status, 200, "list filters refine the already authorized scope rather than granting another adviser's scope");
   assert.deepEqual(await foreignSla.json(), { items: [], page: 1, pageSize: 25, total: 0 }, "another adviser's filter must not expose a single foreign Lead or inflate its total");
