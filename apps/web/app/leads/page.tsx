@@ -43,8 +43,8 @@ function LeadsPageContent(): React.JSX.Element {
   return <main className={`leads-page${followUp ? " leads-page--follow-up" : ""}`}>
     <PageHeader
       eyebrow={followUp ? "Suivi commercial" : "Base prospects"}
-      title={followUp ? "Relances" : "Tous les leads"}
-      description={followUp ? "Traitez les échéances arrivées à terme, de la plus ancienne à la plus récente." : "Centralisez, qualifiez et affectez chaque opportunité."}
+      title={followUp ? "Relances" : activeView === "TO_CONTACT" ? "À contacter" : "Tous les leads"}
+      description={followUp ? "Traitez les échéances arrivées à terme, de la plus ancienne à la plus récente." : activeView === "TO_CONTACT" ? "Prospects à prendre en charge dans votre périmètre. Une nouvelle interaction métier ou le passage manuel à Contacté les retire de cette file, distincte des relances." : "Centralisez, qualifiez et affectez chaque opportunité."}
       actions={<>{followUp ? <Link className="secondary-button" href={leadListHref(current, { view: "ALL", sharedViewId: null })}><ArrowLeft size={18} aria-hidden="true" /> Tous les leads</Link> : null}<LeadCreateAccess /></>}
     />
     <DashboardReturnLink />

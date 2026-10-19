@@ -11,6 +11,7 @@ import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from ".
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 import { isCommercialContact, positiveQualificationEvidence, type CommercialStatusInput } from "./commercial-progression.js";
+import { isToContact, treatmentDay, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -37,7 +38,7 @@ const allowedTransitions: Readonly<Record<LeadStatus, readonly LeadStatus[]>> = 
   CLOSED_LOST: [],
 };
 
-export interface LeadRecord {
+export interface LeadRecord extends Partial<TreatmentSummary> {
   id: string; leadCode: string; firstName: string; lastName: string; email?: string; phone?: string;
   campus: string; campaign: string; educationLevel: string; program: string; source: string;
   status: LeadStatus; assignedToId?: string; collaboratorIds?: string[]; assignmentMode?: string; importBatchId?: string;
@@ -72,15 +73,16 @@ export interface LeadReportingRow {
   temperature: LeadTemperature;
   temperatureSource?: LeadTemperatureSource;
 }
-export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status";
+export type LeadSortField = "createdAt" | "leadCode" | "lastName" | "status" | "lastTreatmentAt";
 export interface LeadListQuery {
   page: number; pageSize: number; search?: string; assignedToId?: string; collaboratorId?: string; adviserId?: string; status?: string; source?: string; channel?: string;
   program?: string; campaign?: string; campus?: string; createdFrom?: string; createdTo?: string; createdBefore?: string;
   assignmentMode?: string; importBatchId?: string; view?: string; sortBy?: string; sortDirection?: string;
   savedView?: string;
   temperature?: string;
+  treatmentFrom?: string; treatmentTo?: string; treatmentState?: string;
 }
-export type LeadWorkView = "ALL" | "MINE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
+export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
 export type LeadSavedView = typeof leadSavedViews[number];
 type ValidatedLeadListQuery = Readonly<{
@@ -97,6 +99,7 @@ type ValidatedLeadListQuery = Readonly<{
   view: LeadWorkView;
   savedView?: LeadSavedView | undefined;
   channel?: string | undefined;
+  treatmentFrom?: string | undefined; treatmentTo?: string | undefined; treatmentState?: TreatmentSummary["treatmentState"] | undefined;
 }>;
 
 function assertListPagination(page: number, pageSize: number): void {
@@ -124,6 +127,7 @@ function assertListDateRange(createdFrom: string | undefined, createdTo: string 
 export class LeadService implements OnModuleInit {
   private readonly leads = new Map<string, Readonly<LeadRecord>>();
   private activities: Readonly<LeadActivityRecord>[] = [];
+  private historicalTreatments: Array<{ leadId: string; occurredAt: string | null }> = [];
   private readonly correctionReceipts = new Map<string, Readonly<LeadActivityRecord>>();
   private readonly apiActionReceipts = new Map<string, { fingerprint: string; result: LeadRecord | LeadActivityRecord }>();
   constructor(
@@ -405,6 +409,7 @@ export class LeadService implements OnModuleInit {
     this.leads.clear();
     for (const lead of snapshot.leads) this.leads.set(lead.id, Object.freeze({ ...lead, collaboratorIds: [...(lead.collaboratorIds ?? [])] }));
     this.activities = snapshot.activities.map((activity) => Object.freeze(structuredClone(activity)));
+    this.historicalTreatments = snapshot.historicalTreatments ?? [];
   }
 
   registerLocalLead(input: Omit<LeadRecord, "id" | "createdAt" | "status"> & { id?: string; status?: LeadStatus }): LeadRecord {
@@ -449,7 +454,14 @@ export class LeadService implements OnModuleInit {
     const now = new Date().toISOString();
     const global = principal.scopes.some((scope) => scope.kind === "GLOBAL");
     const allowedCampuses = new Set(principal.scopes.flatMap((scope) => scope.kind === "CAMPUS" ? [scope.id] : []));
-    const filtered = [...this.leads.values()].filter((lead) => this.matchesListFilters(lead, query, validated, principal, now, global, allowedCampuses));
+    const activityGroups = new Map<string, Readonly<LeadActivityRecord>[]>();
+    for (const activity of this.activities) activityGroups.set(activity.leadId, [...(activityGroups.get(activity.leadId) ?? []), activity]);
+    const historyGroups = new Map<string, Array<{ occurredAt: string | null }>>();
+    for (const note of this.historicalTreatments) historyGroups.set(note.leadId, [...(historyGroups.get(note.leadId) ?? []), note]);
+    const filtered = [...this.leads.values()].map((lead) => ({ ...lead,
+      ...treatmentSummary(activityGroups.get(lead.id) ?? [], [...(historyGroups.get(lead.id) ?? []),
+        ...(lead.temperatureSource === "HUMAN_QUALIFICATION" && lead.qualifiedAt ? [{ occurredAt: lead.qualifiedAt }] : [])]) }))
+      .filter((lead) => this.matchesListFilters(lead, query, validated, principal, now, global, allowedCampuses));
     const ordered = filtered.sort((left, right) => this.compareListedLeads(left, right, validated));
     const items = ordered.slice((page - 1) * pageSize, page * pageSize).map((lead) => this.visibleLead(lead, principal));
     this.audit.record({ eventType: "LEADS_LISTED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
@@ -463,7 +475,7 @@ export class LeadService implements OnModuleInit {
     assertListPagination(page, pageSize);
     const status = normalizedOptionalChoice<LeadStatus>(query.status, leadStatuses, "lead_status_filter_invalid");
     const temperature = normalizedOptionalChoice<LeadTemperature>(query.temperature, leadTemperatures, "lead_temperature_filter_invalid");
-    const sortBy = requiredChoice<LeadSortField>(query.sortBy as LeadSortField | undefined, "createdAt", ["createdAt", "leadCode", "lastName", "status"], "lead_sort_invalid");
+    const sortBy = requiredChoice<LeadSortField>(query.sortBy as LeadSortField | undefined, "createdAt", ["createdAt", "leadCode", "lastName", "status", "lastTreatmentAt"], "lead_sort_invalid");
     const sortDirection = requiredChoice<"asc" | "desc">(query.sortDirection as "asc" | "desc" | undefined, "desc", ["asc", "desc"], "lead_sort_direction_invalid");
     const createdFrom = this.parseBoundary(query.createdFrom, "lead_created_from_invalid");
     const createdTo = this.parseBoundary(query.createdTo, "lead_created_to_invalid");
@@ -471,7 +483,11 @@ export class LeadService implements OnModuleInit {
     assertListDateRange(createdFrom, createdTo);
     if (createdFrom && createdBefore && createdFrom >= createdBefore) throw new BadRequestException({ code: "lead_date_range_invalid" });
     const search = query.search?.trim().toLocaleLowerCase("fr");
-    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"], "lead_view_invalid");
+    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"], "lead_view_invalid");
+    const treatmentFrom = validateTreatmentDay(query.treatmentFrom);
+    const treatmentTo = validateTreatmentDay(query.treatmentTo);
+    assertListDateRange(treatmentFrom, treatmentTo);
+    const treatmentState = normalizedOptionalChoice<TreatmentSummary["treatmentState"]>(query.treatmentState, ["DATED", "UNKNOWN_DATE", "NONE"], "lead_treatment_state_invalid");
     const savedView = normalizedOptionalChoice<LeadSavedView>(query.savedView, leadSavedViews, "lead_saved_view_invalid");
     const channel = normalizedOptionalChoice<string>(query.channel, ["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"], "lead_channel_filter_invalid");
     return {
@@ -488,6 +504,7 @@ export class LeadService implements OnModuleInit {
       search,
       savedView,
       channel,
+      treatmentFrom, treatmentTo, treatmentState,
     };
   }
 
@@ -522,7 +539,10 @@ export class LeadService implements OnModuleInit {
       && matches(lead.importBatchId, query.importBatchId)
       && (!validated.createdFrom || lead.createdAt >= validated.createdFrom)
       && (!validated.createdTo || lead.createdAt <= validated.createdTo)
-      && (!validated.createdBefore || lead.createdAt < validated.createdBefore);
+      && (!validated.createdBefore || lead.createdAt < validated.createdBefore)
+      && (!validated.treatmentState || lead.treatmentState === validated.treatmentState)
+      && (!validated.treatmentFrom || Boolean(lead.lastTreatmentAt && treatmentDay(lead.lastTreatmentAt) >= validated.treatmentFrom))
+      && (!validated.treatmentTo || Boolean(lead.lastTreatmentAt && treatmentDay(lead.lastTreatmentAt) <= validated.treatmentTo));
   }
 
   private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {
@@ -530,10 +550,17 @@ export class LeadService implements OnModuleInit {
       return (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr");
     }
     const direction = query.sortDirection === "asc" ? 1 : -1;
-    return direction * left[query.sortBy].localeCompare(right[query.sortBy], "fr") || left.leadCode.localeCompare(right.leadCode, "fr");
+    // Undated dossiers stay after known dates in either direction; never sort
+    // them as an invented epoch, creation or import date.
+    if (query.sortBy === "lastTreatmentAt" && Boolean(left.lastTreatmentAt) !== Boolean(right.lastTreatmentAt)) return left.lastTreatmentAt ? -1 : 1;
+    return direction * (left[query.sortBy] ?? "").localeCompare(right[query.sortBy] ?? "", "fr") || left.leadCode.localeCompare(right.leadCode, "fr");
   }
 
   private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
+    if (view === "TO_CONTACT") {
+      const elevated = hasPilotageReportingScope(principal) || principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+      return isToContact(lead) && (elevated || lead.assignedToId === principal.userId || Boolean(lead.collaboratorIds?.includes(principal.userId)));
+    }
     if (view === "MINE") return lead.assignedToId === principal.userId || Boolean(lead.collaboratorIds?.includes(principal.userId));
     if (view === "FOLLOW_UP") return Boolean(lead.nextActionAt && lead.nextActionAt <= now && lead.status !== "ENROLLED" && lead.status !== "CLOSED_LOST");
     if (view === "UNASSIGNED") return !lead.assignedToId;

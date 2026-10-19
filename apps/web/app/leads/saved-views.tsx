@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { SharedViewControls } from "./shared-views";
 import { createPrivateViewReader } from "./shared-view-client";
+import { leadListFilterLabels } from "./lead-list-query";
 
 type View = { id: string; name: string; filters: Record<string, string>; version: number };
 
@@ -14,7 +15,8 @@ export function savedLeadViewHref(filters: Record<string, string>): string {
 export function SavedViews({ current, resetHref = "/leads" }: Readonly<{ current: Record<string, string>; resetHref?: string }>): React.JSX.Element {
   const [views, setViews] = useState<View[]>([]); const [name, setName] = useState(""); const [state, setState] = useState<"idle" | "saving" | "error" | "success">("idle");
   const privateViews = useMemo(() => createPrivateViewReader<View>(), []);
-  const filters = useMemo(() => Object.fromEntries(Object.entries(current).filter(([key, value]) => key !== "page" && key !== "sharedViewId" && value)), [current]);
+  const filters = useMemo(() => Object.fromEntries(Object.entries(current).filter(([key, value]) => key !== "sharedViewId"
+    && (Object.hasOwn(leadListFilterLabels, key) || ["pageSize", "sortBy", "sortDirection"].includes(key)) && value)), [current]);
   useEffect(() => {
     let generation = 0;
     const load = (): void => {

@@ -5,7 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { persistViewAudit } from "./saved-view-audit.js";
 
-const allowedKeys = ["search", "assignedToId", "status", "source", "program", "campaign", "campus", "assignmentMode", "createdFrom", "createdTo", "sortBy", "sortDirection", "pageSize"] as const;
+const allowedKeys = ["search", "assignedToId", "collaboratorId", "adviserId", "status", "temperature", "source", "channel", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "createdBefore", "treatmentFrom", "treatmentTo", "treatmentState", "view", "savedView", "sortBy", "sortDirection", "pageSize"] as const;
 type FilterKey = typeof allowedKeys[number];
 export type SavedLeadView = { id: string; name: string; filters: Partial<Record<FilterKey, string>>; version: number; createdAt: string; updatedAt: string };
 export type SavedLeadViewInput = { name: string; filters: Record<string, unknown>; expectedVersion?: number };
