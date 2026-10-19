@@ -212,6 +212,20 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.equal(allHistory.items[0]?.lastTreatmentAt, "2026-01-01T23:30:00.000Z");
   assert.equal(allHistory.items.find(item => item.id === historyLeads[1]!.id)?.treatmentState, "UNKNOWN_DATE");
   assert.equal(allHistory.items.find(item => item.id === historyLeads[2]!.id)?.treatmentState, "NONE");
+  const performanceFilters = new URLSearchParams({ campaign: historyCampaign, campus, source: "TEST", channel: "OTHER", adviserId: commercialId, from: "2026-01-01T00:00:00.000Z", to: "2099-01-01T00:00:00.000Z", inactivityHours: "72" });
+  const historyPerformanceResponse = await businessRequest(supervisorToken, `/reports/commercial-performance?${performanceFilters}`);
+  assert.equal(historyPerformanceResponse.status, 200, await historyPerformanceResponse.clone().text());
+  const historyPerformance = await historyPerformanceResponse.json() as { generatedAt: string; advisers: Array<{ adviserId: string; primaryLeadCount: number; inactiveLeadCount: number; drillDown: { assigned: string; inactive: string } }> };
+  const historyOwner = historyPerformance.advisers.find(item => item.adviserId === commercialId)!;
+  assert.equal(historyOwner.primaryLeadCount, 3); assert.equal(historyOwner.inactiveLeadCount, 1, "dated old treatment counted despite recent technical import; unknown and never-treated excluded");
+  for (const key of ["assigned", "inactive"] as const) {
+    const response = await businessRequest(supervisorToken, historyOwner.drillDown[key]); assert.equal(response.status, 200, await response.clone().text());
+    const list = await response.json() as HistoryPage;
+    assert.equal(list.total, key === "assigned" ? historyOwner.primaryLeadCount : historyOwner.inactiveLeadCount);
+    if (key === "inactive") { assert.deepEqual(list.items.map(item => item.id), [historyLeads[0]!.id]); assert.equal(new URL(historyOwner.drillDown[key], "https://fixture.invalid").searchParams.get("inactiveTreatmentBefore"), new Date(Date.parse(historyPerformance.generatedAt) - 72 * 3600000).toISOString()); }
+  }
+  assert.equal((await businessRequest(supervisorToken, "/leads?inactiveTreatmentBefore=invalid")).status, 400);
+  assert.equal((await businessRequest(supervisorToken, "/leads?portfolioState=INVALID")).status, 400);
   assert.equal((await readHistory({ view: "ALL", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" })).total, 1);
   assert.equal((await readHistory({ view: "ALL", treatmentState: "UNKNOWN_DATE" })).total, 1);
   for (const filter of [{ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" }, { treatmentState: "UNKNOWN_DATE" }, { treatmentState: "NONE" }]) {

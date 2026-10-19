@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { treatmentSummary, treatmentDay, validateTreatmentDay, normalizeTreatmentFilters } from "../src/leads/lead-treatment.js";
+import { treatmentSummary, treatmentDay, validateTreatmentDay, normalizeTreatmentFilters, isTreatmentInactive, inactiveTreatmentBoundary } from "../src/leads/lead-treatment.js";
 import { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
 import { normalizeReportingQuery } from "../src/reporting/reporting-filter.js";
 import { LeadService, type LeadActivityRecord, type LeadRecord } from "../src/leads/lead.service.js";
@@ -12,6 +12,14 @@ import { needsNextAction } from "../src/follow-up/next-action.contract.js";
 const manager: Principal = { userId: "manager-fixture", sessionId: "fixture", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }] };
 const commercial: Principal = { ...manager, userId: "commercial-fixture", roles: ["ADMISSIONS"] };
 const activity = (id: string, type: LeadActivityRecord["type"], occurredAt: string): LeadActivityRecord => ({ id, leadId: "lead-a", type, result: "COMPLETED", note: "Échange synthétique", occurredAt, authorId: commercial.userId, correlationId: "fixture" });
+test("old dated business treatment uses a strict frozen instant and excludes terminal, never-treated and unknown history", () => {
+  const cutoff = "2026-10-17T12:00:00.000Z";
+  const row = { status: "CONTACTED", treatmentState: "DATED" as const, hasUndatedHistory: false, lastTreatmentAt: "2026-10-17T11:59:59.999Z", lastActivityAt: "2026-10-20T12:00:00.000Z" };
+  assert.equal(isTreatmentInactive(row, cutoff), true, "technical lastActivityAt does not rejuvenate treatment");
+  for (const change of [{ lastTreatmentAt: cutoff }, { lastTreatmentAt: "2026-10-18T12:00:00.000Z" }, { lastTreatmentAt: "invalid" }, { status: "CLOSED_LOST" }, { status: "ENROLLED" }, { treatmentState: "NONE" as const }, { treatmentState: "UNKNOWN_DATE" as const }, { hasUndatedHistory: true }]) assert.equal(isTreatmentInactive({ ...row, ...change }, cutoff), false);
+  assert.equal(inactiveTreatmentBoundary(cutoff), cutoff);
+  for (const invalid of ["", "invalid", "2026-02-30T12:00:00.000Z", "2026-10-17", "2026-10-17T13:00:00+01:00"]) assert.throws(() => inactiveTreatmentBoundary(invalid));
+});
 
 test("reporting retains explicit persistent action evidence instead of trusting a legacy deadline", async () => {
   const base: LeadRecord = { id: "legacy", leadCode: "SYNTH", firstName: "Synthetic", lastName: "Fixture", campus: "CASABLANCA", campaign: "Fixture", program: "Fixture", educationLevel: "Bac", source: "FIXTURE", status: "CONTACTED", createdAt: "2026-01-01T00:00:00Z", assignedToId: commercial.userId, nextActionAt: "2026-10-25T09:00:00Z" };

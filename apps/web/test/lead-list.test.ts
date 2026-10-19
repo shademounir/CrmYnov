@@ -13,6 +13,7 @@ const context = new URLSearchParams({
   status: "CONTACTED", temperature: "HOT", source: "YNOV_COM", channel: "DIGITAL", program: "Programme synthétique",
   campus: "Campus synthétique", campaign: "Campagne synthétique", assignmentMode: "RULE", importBatchId: "batch-synthetic",
   createdFrom: "2026-09-01T10:15:00.000Z", createdTo: "2026-09-30T18:45:00.000Z", createdBefore: "2026-10-01T00:00:00.000Z",
+  inactiveTreatmentBefore: "2026-09-15T12:00:00.000Z", portfolioState: "OPEN",
   view: "MINE", savedView: "YNOV_COM", sortBy: "lastName", sortDirection: "asc", page: "7", pageSize: "50",
   returnTo: "/manager/reports/dashboard?period=30d",
   assignedToLabel: "Conseillère synthétique",
@@ -115,6 +116,9 @@ test("removing a filter chip preserves all other criteria and avoids technical I
     assert.equal(query.get("page"), "1");
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /adviser-synthetic|collaborator-synthetic|involved-synthetic|batch-synthetic/u);
     assert.match(dom.window.document.body.textContent ?? "", /Conseillère synthétique/u);
+    assert.match(dom.window.document.body.textContent ?? "", /Traitement daté ancien — seuil figé avant/u);
+    assert.match(dom.window.document.body.textContent ?? "", /Casablanca/u);
+    assert.match(dom.window.document.body.textContent ?? "", /Dossiers ouverts/u);
     const ownerRemove = dom.window.document.querySelector('a[aria-label="Retirer le filtre Conseiller principal"]'); assert.ok(ownerRemove);
     const ownerQuery = new URL(ownerRemove.getAttribute("href") ?? "", "http://crm.test").searchParams;
     assert.equal(ownerQuery.has("assignedToId"), false);

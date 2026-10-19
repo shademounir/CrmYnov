@@ -13,11 +13,39 @@ import { CommercialWorkService } from "../src/reporting/commercial-work.service.
 import { normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
 import type { ClosureService } from "../src/closure/closure.service.js";
 import type { FollowUpRecord } from "../src/follow-up/follow-up.service.js";
+import type { LeadRecord } from "../src/leads/lead.service.js";
+import type { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviserA: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-a" };
 const adviserB: Principal = { userId: "adviser-b", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-b" };
 const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify(error).includes(code);
+test("primary and old-treatment drilldowns retain the exact involved cohort, frozen cutoff and permission fence", async () => {
+  const audit = new AuditService(), now = new Date("2026-10-20T12:00:00.000Z");
+  const row = (id: string, extra: Partial<LeadRecord> = {}): LeadRecord => ({ id, leadCode: `SYN-${id}`, firstName: "Synthetic", lastName: "Fixture", status: "CONTACTED", campus: "CASABLANCA", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z", lastActivityAt: now.toISOString(), assignedToId: adviserA.userId, collaboratorIds: [adviserB.userId], ...extra });
+  const rows = [row("old"), row("equal"), row("recent"), row("unknown"), row("mixed"), row("none"), row("closed", { status: "ENROLLED" }), row("outside", { source: "PHONE" }), row("other", { assignedToId: adviserB.userId, collaboratorIds: [] })];
+  const historicalTreatments = [{ leadId: "old", occurredAt: "2026-10-16T12:00:00.000Z" }, { leadId: "equal", occurredAt: "2026-10-17T12:00:00.000Z" }, { leadId: "recent", occurredAt: "2026-10-18T12:00:00.000Z" }, { leadId: "unknown", occurredAt: null }, { leadId: "mixed", occurredAt: null }, ...["mixed", "closed", "outside", "other"].map(leadId => ({ leadId, occurredAt: "2026-10-10T12:00:00.000Z" }))];
+  const repository = { enabled: true, snapshot: () => Promise.resolve({ leads: rows, activities: [], historicalTreatments }) } as unknown as LeadPersistenceRepository;
+  const leads = new LeadService(audit, repository); await leads.onModuleInit();
+  const followUps = new FollowUpService(leads, new NotificationService(audit), audit);
+  const service = new CommercialPerformanceService(leads, followUps, new ReassignmentService(leads, new AssignmentService(audit), audit), audit);
+  const query = { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "CASABLANCA", source: "WEB_FORM", channel: "DIGITAL", campaign: "COHORT", program: "PROGRAM", adviserId: adviserB.userId, inactivityHours: "72" };
+  const report = service.read(query, manager, "frozen", now), adviser = report.advisers.find(item => item.adviserId === adviserA.userId)!;
+  assert.equal(adviser.primaryLeadCount, 7); assert.equal(adviser.inactiveLeadCount, 1);
+  for (const key of ["assigned", "inactive"] as const) {
+    const url = new URL(adviser.drillDown[key], "https://crm.invalid");
+    for (const field of ["campus", "source", "channel", "campaign", "program", "adviserId"] as const) assert.equal(url.searchParams.get(field), query[field]);
+    assert.equal(url.searchParams.get("assignedToId"), adviserA.userId, "primary intersection does not replace involved-adviser cohort");
+    assert.equal(url.searchParams.get("createdFrom"), query.from); assert.equal(url.searchParams.get("createdBefore"), query.to);
+    const filters = Object.fromEntries(url.searchParams), page = leads.listLeads({ ...filters, page: 1, pageSize: 25 }, manager, "drilldown");
+    assert.equal(page.total, key === "assigned" ? adviser.primaryLeadCount : adviser.inactiveLeadCount);
+    if (key === "inactive") { assert.deepEqual(page.items.map(item => item.id), ["old"]); assert.equal(filters.inactiveTreatmentBefore, "2026-10-17T12:00:00.000Z"); }
+    assert.equal(leads.listLeads({ ...filters, page: 1, pageSize: 25 }, { ...manager, permissionLeadIds: new Set(["recent"]) }, "fenced").items.some(item => item.id === "old"), false);
+  }
+  assert.equal(leads.listLeads({ page: 1, pageSize: 25, portfolioState: "OPEN" }, manager, "open").items.some(item => item.id === "closed"), false);
+  assert.throws(() => leads.listLeads({ page: 1, pageSize: 25, portfolioState: "INVALID" }, manager, "bad"), hasCode("lead_portfolio_state_invalid"));
+  assert.throws(() => leads.listLeads({ page: 1, pageSize: 25, inactiveTreatmentBefore: "invalid" }, manager, "bad"), hasCode("lead_inactive_treatment_boundary_invalid"));
+});
 
 function setup(): { audit: AuditService; leads: LeadService; followUps: FollowUpService; engine: AssignmentService;
   reassignments: ReassignmentService; service: CommercialPerformanceService } {

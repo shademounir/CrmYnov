@@ -4,6 +4,7 @@ const metricDefinitions = [
   ["Taux d’inscription", "Leads principaux uniques inscrits / leads principaux uniques."],
   ["Taux de perte", "Leads principaux uniques actuellement Sans suite / leads principaux uniques."],
   ["Charge active", "Leads principaux uniques actuellement Prospect, Contacté ou Qualifié."],
+  ["Traitements anciens", "Dossiers principaux ouverts dont le dernier traitement commercial daté connu précède strictement le seuil figé. Historiques non datés, dossiers jamais traités et clôturés exclus. Les affectations et écritures techniques ne rajeunissent pas ce délai."],
 ] as const;
 
 export default function CommercialPerformancePage(): React.JSX.Element {
@@ -13,11 +14,11 @@ export default function CommercialPerformancePage(): React.JSX.Element {
     <form method="get" action="/manager/reports/commercial-performance" aria-label="Filtres de performance">
       <label>Du <input name="from" type="date" /></label><label>Au <input name="to" type="date" /></label>
       <label>Campus <input name="campus" /></label>
-      <label>Inactivité après <input name="inactivityHours" type="number" min="1" max="2160" defaultValue="72" /> heures</label>
+      <label>Traitement daté ancien après <input name="inactivityHours" type="number" min="1" max="2160" defaultValue="72" /> heures</label>
       <button type="submit">Actualiser</button>
     </form>
     <section aria-label="Performance par commercial"><h2>Tableau par commercial</h2>
-      <table><thead><tr><th>Commercial</th><th>Leads principaux</th><th>Contributions secondaires</th><th>Charge active</th><th>Relances en retard</th><th>Sans interaction</th></tr></thead>
+      <table><thead><tr><th>Commercial</th><th>Leads principaux</th><th>Contributions secondaires</th><th>Charge active</th><th>Relances en retard</th><th>Traitements datés anciens</th></tr></thead>
         <tbody><tr><td colSpan={6}>Les données autorisées sont chargées depuis l’API sécurisée.</td></tr></tbody></table>
     </section>
     <section aria-label="Définitions des KPI"><h2>Définitions — commercial-performance-v1</h2>

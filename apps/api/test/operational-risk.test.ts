@@ -141,3 +141,23 @@ test("applies the consolidated period and campus scope and rejects invalid bound
   assert.throws(() => service.read({ from: "invalid" }, manager, "corr-invalid"), hasCode("operational_from_invalid"));
   assert.throws(() => service.read({ from: "2026-09-01", to: "2026-08-01" }, manager, "corr-order"), hasCode("operational_period_invalid"));
 });
+
+test("unassigned and capacity drilldowns retain the authorized active creation cohort rather than closed or outside dossiers", () => {
+  const { leads, assignments, service } = setup();
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z" };
+  for (const id of ["one", "two"]) leads.registerLocalLead({ ...base, id, leadCode: id, status: "CONTACTED", assignedToId: adviser.userId });
+  leads.registerLocalLead({ ...base, id: "unassigned-open", leadCode: "U-OPEN" });
+  leads.registerLocalLead({ ...base, id: "unassigned-closed", leadCode: "U-CLOSED", status: "CLOSED_LOST" });
+  leads.registerLocalLead({ ...base, id: "assigned-closed", leadCode: "A-CLOSED", status: "ENROLLED", assignedToId: adviser.userId });
+  leads.registerLocalLead({ ...base, source: "TEST", id: "outside", leadCode: "OUTSIDE", assignedToId: adviser.userId });
+  assignments.configure([{ id: "capacity", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [{ userId: adviser.userId, active: true, capacity: 1, activeLeadCount: 2 }] }], manager, "fixture");
+  const filters = { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", channel: "DIGITAL" };
+  const report = service.read(filters, manager, "scoped", new Date("2026-10-20T12:00:00Z"));
+  assert.equal(report.queues.unassigned, 1);
+  for (const alert of report.alerts.filter(item => item.code === "unassigned_leads" || item.code.startsWith("capacity_warning:"))) {
+    const query = Object.fromEntries(new URL(alert.drillDown, "https://fixture.invalid").searchParams);
+    const list = leads.listLeads({ ...query, page: 1, pageSize: 25 }, manager, "drilldown");
+    assert.equal(list.total, alert.count); assert.equal(query.portfolioState, "OPEN"); assert.equal(query.source, "WEB_FORM"); assert.equal(query.createdBefore, filters.to);
+    assert.equal(list.items.some(item => item.id.includes("closed") || item.id === "outside"), false);
+  }
+});

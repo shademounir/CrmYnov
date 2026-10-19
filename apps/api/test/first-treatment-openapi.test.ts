@@ -21,4 +21,6 @@ test("queue contract names the strict threshold and list documents the same targ
   assert.match(schema.properties.count.description, /Distinct authorized Leads.*not actions/);
   assert.match(treatmentListParameters.find((parameter) => parameter.name === "view")!.description, /FIRST_TREATMENT_OVERDUE/);
   assert.equal(new Set(treatmentListParameters.map((parameter) => parameter.name)).size, treatmentListParameters.length);
+  assert.match(treatmentListParameters.find(parameter => parameter.name === "inactiveTreatmentBefore")!.description, /strictly before|Unknown\/mixed/);
+  assert.deepEqual(treatmentListParameters.find(parameter => parameter.name === "portfolioState")!.schema, { type: "string", enum: ["OPEN", "CLOSED"] });
 });

@@ -12,7 +12,7 @@ import { LeadService } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, sourceChannel, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
 import { projectCommercialWork } from "./commercial-work.js";
-import { commercialWorkHref } from "./commercial-work-query.js";
+import { commercialWorkHref, portfolioLeadHref } from "./commercial-work-query.js";
 
 export const OPERATIONAL_RISK_VERSION = "operational-risk-v1";
 export interface OperationalRiskQuery extends InteractiveReportingQuery {
@@ -93,6 +93,9 @@ export class OperationalRiskService {
     });
     const queues = { unassigned: active.filter((row) => !row.assignedToId).length, withoutFirstInteraction, overdueFollowUps, pendingClosures, pendingReassignments };
     const alerts = this.alerts(queues, capacity, sourceRisks, thresholds).map((alert) => ({ ...alert,
+      ...(alert.code === "unassigned_leads" ? { drillDown: portfolioLeadHref(normalized, { view: "UNASSIGNED", portfolioState: "OPEN" }) } : {}),
+      ...(alert.code === "first_interaction_overdue" ? { drillDown: portfolioLeadHref(normalized, { view: "FIRST_TREATMENT_OVERDUE" }) } : {}),
+      ...(alert.code.startsWith("capacity_warning:") ? { drillDown: portfolioLeadHref(normalized, { assignedToId: alert.code.slice("capacity_warning:".length), portfolioState: "OPEN" }) } : {}),
       ...(alert.code === "follow_up_overdue" ? { drillDown: commercialWorkHref(normalized, "OVERDUE_FOLLOW_UP", "INVOLVED") } : {}),
       ...(alert.code === "closure_decision_pending" ? { drillDown: commercialWorkHref(normalized, "PENDING_CLOSURE", "INVOLVED") } : {}),
     }));

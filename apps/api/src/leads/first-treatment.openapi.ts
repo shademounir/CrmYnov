@@ -29,6 +29,8 @@ export const firstTreatmentSchemas = {
 } as const;
 
 export const treatmentListParameters = [
+  { name: "inactiveTreatmentBefore", in: "query", required: false, schema: { type: "string", format: "date-time" }, description: "Frozen canonical UTC ISO instant including milliseconds. Selects only OPEN dossiers with entirely dated known business treatment strictly before this cutoff. Unknown/mixed history, never-treated and terminal dossiers excluded; technical lastActivityAt is not used. Same predicate as CommercialPerformance inactiveLeadCount." },
+  { name: "portfolioState", in: "query", required: false, schema: { type: "string", enum: ["OPEN", "CLOSED"] }, description: "OPEN excludes ENROLLED/CLOSED_LOST. Intersected with every existing filter and authorization, never a grant." },
   { name: "view", in: "query", required: false, schema: { type: "string" }, description: "Includes TO_CONTACT, FIRST_TREATMENT_OVERDUE and NEXT_ACTION_MISSING; each uses the common server business rule and current authorized scope." },
   { name: "treatmentState", in: "query", required: false, schema: { type: "string", enum: ["DATED", "UNKNOWN_DATE", "NONE"] }, description: "Unknown historical treatment date is distinct from no treatment." },
   ...["treatmentFrom", "treatmentTo"].map((name) => ({ name, in: "query", required: false, schema: { type: "string", format: "date" }, description: "Inclusive business-treatment civil date in Africa/Casablanca, combinable with adviser, campus, status and source." })),

@@ -63,3 +63,19 @@ export function isToContact(lead: { status: string } & Partial<TreatmentSummary>
   return lead.status === "PROSPECT" && !lead.firstTreatmentAt && !lead.lastTreatmentAt
     && !lead.hasUndatedHistory && !["DATED", "UNKNOWN_DATE"].includes(lead.treatmentState ?? "");
 }
+
+/** A known old treatment is not an absence of treatment. Unknown dated history
+ * and never-treated dossiers keep their own queues; technical writes do not
+ * supply a new business clock. The cutoff is frozen by the report, not a read. */
+export function isTreatmentInactive(lead: { status: string } & Partial<TreatmentSummary>, before: string): boolean {
+  return !["ENROLLED", "CLOSED_LOST"].includes(lead.status) && lead.treatmentState === "DATED"
+    && lead.hasUndatedHistory === false && Boolean(lead.lastTreatmentAt)
+    && Date.parse(lead.lastTreatmentAt!) < Date.parse(before);
+}
+export function inactiveTreatmentBoundary(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) {
+    throw new BadRequestException({ code: "lead_inactive_treatment_boundary_invalid" });
+  }
+  return value;
+}

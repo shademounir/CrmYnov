@@ -11,7 +11,7 @@ import { leadTemperatureLabels, leadTemperatures, type LeadTemperature } from ".
 import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 import { isCommercialContact, positiveQualificationEvidence, type CommercialStatusInput } from "./commercial-progression.js";
-import { isToContact, matchesTreatmentFilters, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
+import { inactiveTreatmentBoundary, isToContact, isTreatmentInactive, matchesTreatmentFilters, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
 import { needsNextAction } from "../follow-up/next-action.contract.js";
 import { firstTreatmentState, receptionSummary, type ReceptionSummary, type FirstTreatmentIndicators } from "./first-treatment.js";
 
@@ -85,6 +85,7 @@ export interface LeadListQuery {
   savedView?: string;
   temperature?: string;
   treatmentFrom?: string; treatmentTo?: string; treatmentState?: string;
+  inactiveTreatmentBefore?: string; portfolioState?: string;
 }
 export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FIRST_TREATMENT_OVERDUE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED" | "NEXT_ACTION_MISSING";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
@@ -104,6 +105,7 @@ type ValidatedLeadListQuery = Readonly<{
   savedView?: LeadSavedView | undefined;
   channel?: string | undefined;
   treatmentFrom?: string | undefined; treatmentTo?: string | undefined; treatmentState?: TreatmentSummary["treatmentState"] | undefined;
+  inactiveTreatmentBefore?: string | undefined; portfolioState?: "OPEN" | "CLOSED" | undefined;
 }>;
 
 function assertListPagination(page: number, pageSize: number): void {
@@ -495,6 +497,9 @@ export class LeadService implements OnModuleInit {
     const treatmentTo = validateTreatmentDay(query.treatmentTo);
     assertListDateRange(treatmentFrom, treatmentTo);
     const treatmentState = normalizedOptionalChoice<TreatmentSummary["treatmentState"]>(query.treatmentState, ["DATED", "UNKNOWN_DATE", "NONE"], "lead_treatment_state_invalid");
+    const inactiveTreatmentBefore = inactiveTreatmentBoundary(query.inactiveTreatmentBefore);
+    if (query.portfolioState !== undefined && !["OPEN", "CLOSED"].includes(query.portfolioState)) throw new BadRequestException({ code: "lead_portfolio_state_invalid" });
+    const portfolioState = query.portfolioState as "OPEN" | "CLOSED" | undefined;
     const savedView = normalizedOptionalChoice<LeadSavedView>(query.savedView, leadSavedViews, "lead_saved_view_invalid");
     const channel = normalizedOptionalChoice<string>(query.channel, ["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"], "lead_channel_filter_invalid");
     return {
@@ -511,7 +516,7 @@ export class LeadService implements OnModuleInit {
       search,
       savedView,
       channel,
-      treatmentFrom, treatmentTo, treatmentState,
+      treatmentFrom, treatmentTo, treatmentState, inactiveTreatmentBefore, portfolioState,
     };
   }
 
@@ -547,7 +552,9 @@ export class LeadService implements OnModuleInit {
       && (!validated.createdFrom || lead.createdAt >= validated.createdFrom)
       && (!validated.createdTo || lead.createdAt <= validated.createdTo)
       && (!validated.createdBefore || lead.createdAt < validated.createdBefore)
-      && matchesTreatmentFilters(lead, validated);
+      && matchesTreatmentFilters(lead, validated)
+      && (!validated.inactiveTreatmentBefore || isTreatmentInactive(lead, validated.inactiveTreatmentBefore))
+      && (!validated.portfolioState || (["ENROLLED", "CLOSED_LOST"].includes(lead.status) === (validated.portfolioState === "CLOSED")));
   }
 
   private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {
