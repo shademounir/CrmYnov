@@ -1,8 +1,8 @@
-export interface AdmissionsResponsibility { id: string; userId: string; label: string; campus: string; campusLabel?: string; active: boolean; version: number }
+export interface AdmissionsResponsibility { id: string; userId: string; label: string; campus: string; campusLabel?: string; active: boolean; version: number; readiness?: "ACTIVATION_REQUIRED" | "PERMISSION_REQUIRED" | "AVAILABILITY_REQUIRED" | "SLOTS_TO_CHECK" | "INACTIVE"; readinessLabel?: string; canConsultSlots?: boolean }
 export interface AdmissionsContext {
   timezone: string; ownResponsibilities: AdmissionsResponsibility[]; canManageResponsibilities: boolean; canUseAgenda: boolean;
   campuses: Array<{ id: string; code: string; label: string; canManageResponsibilities: boolean }>;
-  eligibleUsers: Array<{ id: string; label: string; campus: string }>;
+  eligibleUsers: Array<{ id: string; label: string; campus: string; activationRequired?: boolean }>;
 }
 export interface AdmissionsWindow { id: string; responsibilityId: string; campus: string; kind: "AVAILABLE" | "BLOCKED"; startsAt: string; endsAt: string; active: boolean; version: number }
 export interface AdmissionsSlot { startsAt: string; endsAt: string }
