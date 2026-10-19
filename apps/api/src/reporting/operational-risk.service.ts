@@ -20,6 +20,10 @@ export interface OperationalRiskQuery extends InteractiveReportingQuery {
 }
 export interface OperationalAlert {
   code: string; severity: "INFO" | "WARNING" | "CRITICAL"; count: number; reason: string; drillDown: string;
+  unit?: "LEADS" | "ACTIONS" | "REQUESTS" | "OCCURRENCES" | "ACTIVE_LEAD_GAP";
+  drillDownAvailability?: "EXACT_QUEUE" | "INLINE_COMPARISON" | "UNAVAILABLE";
+  drillDownReason?: string;
+  loadComparison?: { minimum: number; maximum: number; adviserCount: number; population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" };
 }
 export interface OperationalRiskReport {
   definitionVersion: string; generatedAt: string; timezone: "Africa/Casablanca";
@@ -92,12 +96,21 @@ export class OperationalRiskService {
       return group.length >= thresholds.minSourceVolume && rate >= thresholds.sourceRiskPercent ? [{ source, volume: group.length, rejectedOrReview, rate }] : [];
     });
     const queues = { unassigned: active.filter((row) => !row.assignedToId).length, withoutFirstInteraction, overdueFollowUps, pendingClosures, pendingReassignments };
-    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds).map((alert) => ({ ...alert,
+    const alerts = this.alerts(queues, capacity, sourceRisks, thresholds).map((alert): OperationalAlert => ({ ...alert,
+      unit: alert.code === "follow_up_overdue" ? "ACTIONS" : ["closure_decision_pending", "reassignment_decision_pending"].includes(alert.code) ? "REQUESTS" : alert.code === "load_gap" ? "ACTIVE_LEAD_GAP" : alert.code.startsWith("source_quality:") ? "OCCURRENCES" : "LEADS",
+      drillDownAvailability: "EXACT_QUEUE",
       ...(alert.code === "unassigned_leads" ? { drillDown: portfolioLeadHref(normalized, { view: "UNASSIGNED", portfolioState: "OPEN" }) } : {}),
       ...(alert.code === "first_interaction_overdue" ? { drillDown: portfolioLeadHref(normalized, { view: "FIRST_TREATMENT_OVERDUE" }) } : {}),
       ...(alert.code.startsWith("capacity_warning:") ? { drillDown: portfolioLeadHref(normalized, { assignedToId: alert.code.slice("capacity_warning:".length), portfolioState: "OPEN" }) } : {}),
       ...(alert.code === "follow_up_overdue" ? { drillDown: commercialWorkHref(normalized, "OVERDUE_FOLLOW_UP", "INVOLVED") } : {}),
       ...(alert.code === "closure_decision_pending" ? { drillDown: commercialWorkHref(normalized, "PENDING_CLOSURE", "INVOLVED") } : {}),
+      ...(alert.code === "load_gap" ? {
+        drillDown: "#", drillDownAvailability: "INLINE_COMPARISON" as const,
+        drillDownReason: "Écart maximum moins minimum, pas un nombre de dossiers à ouvrir. Comparaison de la même cohorte, parmi les conseillers ayant un portefeuille principal actif visible ; les conseillers sans dossier actif sont exclus.",
+        loadComparison: { minimum: Math.min(...capacity.map(item => item.activeLeads)), maximum: Math.max(...capacity.map(item => item.activeLeads)), adviserCount: capacity.length, population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" as const },
+      } : {}),
+      ...(alert.code === "reassignment_decision_pending" ? { drillDown: "#", drillDownAvailability: "UNAVAILABLE" as const, drillDownReason: "Demandes en attente dans cette cohorte. La file de décision filtrée correspondante n’est pas disponible ici ; aucune décision n’est effectuée par ce rapport." } : {}),
+      ...(alert.code.startsWith("source_quality:") ? { drillDown: "#", drillDownAvailability: "UNAVAILABLE" as const, drillDownReason: "Occurrences d’import rejetées ou à vérifier, pas dossiers distincts. La liste de Leads d’une source ne constitue pas cette file d’occurrences." } : {}),
     }));
     const report: OperationalRiskReport = { definitionVersion: OPERATIONAL_RISK_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       thresholds, queues, capacity, sourceRisks, alerts, sourceQualityAvailability: persistent ? "UNAVAILABLE_NOT_DURABLY_RECONSTRUCTED" : "LOCAL_SYNTHETIC_OCCURRENCES",

@@ -16,6 +16,7 @@ import { withPilotageReportingScope } from "../src/reporting/reporting-authority
 import { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
 import { CommercialWorkService } from "../src/reporting/commercial-work.service.js";
 import { normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
+import { operationalRiskPaths, operationalRiskSchemas } from "../src/reporting/operational-risk.openapi.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviser: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-adviser" };
@@ -57,9 +58,30 @@ test("reports explicit workload, reactivity, approval and source alerts without 
   assert.equal(report.capacity.find((item) => item.adviserId === "adviser-a")?.utilizationPercent, 100);
   assert.equal(report.sourceRisks.find((item) => item.source === "WEB_FORM")?.rate, 100);
   assert.equal(report.alerts.some((item) => item.code === "unassigned_leads"), true);
+  for (const alert of report.alerts.filter(item => item.code.startsWith("source_quality:") || item.code === "reassignment_decision_pending")) {
+    assert.equal(alert.drillDown, "#"); assert.equal(alert.drillDownAvailability, "UNAVAILABLE");
+    assert.equal(alert.unit, alert.code.startsWith("source_quality:") ? "OCCURRENCES" : "REQUESTS");
+  }
   assert.deepEqual(report.safeguards, { disciplinaryScore: false, financialDecision: false });
   const serialized = JSON.stringify(report); assert.equal(serialized.includes("Prénom"), false); assert.equal(serialized.includes("example.invalid"), false);
   const event = audit.list().find((item) => item.eventType === "OPERATIONAL_RISK_VIEWED"); assert.equal(event?.after?.definitionVersion, "operational-risk-v1");
+});
+
+test("load gap compares only current active primary owners of the same authorized cohort, never links a different Lead population", () => {
+  const { leads, service } = setup();
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "BAC", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z" };
+  for (let index = 0; index < 4; index += 1) leads.registerLocalLead({ ...base, id: `visible-${index}`, leadCode: `VISIBLE-${index}`, assignedToId: index < 3 ? "owner-a" : "owner-b", collaboratorIds: ["secondary-zero"] });
+  leads.registerLocalLead({ ...base, id: "closed", leadCode: "CLOSED", assignedToId: "owner-c", status: "CLOSED_LOST" });
+  leads.registerLocalLead({ ...base, source: "TEST", id: "outside-source", leadCode: "OUTSIDE", assignedToId: "owner-b" });
+  leads.registerLocalLead({ ...base, id: "outside-permission", leadCode: "FENCED", assignedToId: "owner-b" });
+  const scoped = { ...manager, permissionLeadIds: new Set(["visible-0", "visible-1", "visible-2", "visible-3", "closed", "outside-source"]) };
+  const report = service.read({ campus: "CAMPUS", source: "WEB_FORM", loadGap: "1", from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z" }, scoped, "gap", new Date("2026-10-20T12:00:00Z"));
+  const alert = report.alerts.find(item => item.code === "load_gap")!;
+  assert.equal(alert.count, 2); assert.equal(alert.unit, "ACTIVE_LEAD_GAP"); assert.equal(alert.drillDown, "#"); assert.equal(alert.drillDownAvailability, "INLINE_COMPARISON");
+  assert.deepEqual(alert.loadComparison, { minimum: 1, maximum: 3, adviserCount: 2, population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" });
+  assert.ok(!JSON.stringify(alert).includes("owner-a"));
+  assert.ok(operationalRiskSchemas.OperationalAlert.required.includes("unit"));
+  assert.equal(operationalRiskPaths["/reports/operational-risks"].get.responses["200"].content["application/json"].schema.properties.alerts.items.$ref, "#/components/schemas/OperationalAlert");
 });
 
 test("fails closed for advisers and invalid thresholds", () => {

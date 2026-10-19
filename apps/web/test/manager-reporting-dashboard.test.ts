@@ -209,7 +209,9 @@ test("first-treatment backlog uses its own shared SLA view and keeps the selecte
   assert.equal(url.searchParams.get("createdFrom"), filters.from);
   assert.equal(url.searchParams.get("adviserId"), filters.adviserId);
   assert.ok(document.querySelector('a[href^="/manager/validations?"]'));
-  assert.ok(document.querySelector('a[href^="/manager/reports/commercial-performance?"]'));
+  assert.equal(document.querySelector('a[href^="/manager/reports/commercial-performance?"]'), null, "a load difference is not a selectable Lead queue");
+  assert.match(priority.textContent ?? "", /Écart de charge commerciale/u);
+  assert.match(priority.textContent ?? "", /Dossiers d’écart/u);
   const earlier = new URL(preserveFilters(`/leads?view=TO_CONTACT&createdBefore=${cutoff}`, new URLSearchParams({ ...filters, to: "2026-10-03T00:00:00.000Z" })), "https://dev.example.invalid");
   assert.equal(earlier.searchParams.get("createdBefore"), "2026-10-03T00:00:00.000Z");
   const offset = new URL(preserveFilters(`/leads?view=TO_CONTACT&createdBefore=${cutoff}`, new URLSearchParams({ ...filters, to: "2026-10-03T23:30:00-02:00" })), "https://dev.example.invalid");
@@ -589,6 +591,25 @@ test("Points d’attention keep five observed signals and do not turn an observe
     assert.deepEqual([...panel.querySelectorAll(".dashboard-attention-item__count")].map((item) => item.textContent), ["0 élément(s) concerné(s)", "11 élément(s) concerné(s)", "12 élément(s) concerné(s)", "13 élément(s) concerné(s)", "14 élément(s) concerné(s)"]);
     assert.doesNotMatch(panel.textContent ?? "", /Aucun point d’attention|Écart de charge commerciale|Qualité d’une source/u);
     assert.equal(panel.querySelector("a"), null);
+  } finally { dom.window.close(); }
+});
+
+test("operational alerts state mixed units and decline unqualified legacy destinations, load comparison remains in the same report", () => {
+  const alerts = [
+    { code: "load_gap", count: 2, drillDown: "/manager/reports/commercial-performance", loadComparison: { minimum: 1, maximum: 3, adviserCount: 2, population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" } },
+    { code: "source_quality:synthetic", count: 3, drillDown: "/leads?source=PRIVATE_SOURCE" },
+    { code: "reassignment_decision_pending", count: 4, drillDown: "/manager/assignment" },
+  ];
+  const scoped: DashboardReport = { ...report, panels: { ...report.panels, operationalRisks: { alerts, queues: {} } } };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { source: "WEB_FORM" }, initialReport: scoped, initialCalendar })));
+  try {
+    const section = dom.window.document.querySelector('[aria-label="Alertes opérationnelles"]')!;
+    assert.equal(section.querySelectorAll("a").length, 0);
+    for (const expected of ["Dossiers d’écart", "Maximum 3, minimum 1", "2 conseillers", "Conseillers sans dossier actif exclus", "Occurrences d’import", "Demandes, pas dossiers distincts", "File de décision filtrée indisponible", "Aucune décision automatique"]) assert.ok(section.textContent?.includes(expected), expected);
+    assert.ok(!section.innerHTML.includes("PRIVATE_SOURCE"));
+    const broken = { ...scoped, panels: { ...scoped.panels, operationalRisks: { alerts: [{ ...alerts[0]!, count: 9 }], queues: {} } } };
+    const invalid = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: broken, initialCalendar }));
+    assert.ok(!invalid.includes("Maximum 3"));
   } finally { dom.window.close(); }
 });
 
