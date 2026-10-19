@@ -19,7 +19,7 @@ const context = new URLSearchParams({
 });
 
 test("exposes every supported work queue and usable provenance without advertising import errors as a result queue", () => {
-  assert.deepEqual(leadWorkViews.map(([key]) => key), ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"]);
+  assert.deepEqual(leadWorkViews.map(([key]) => key), ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING"]);
   assert.ok(leadProvenanceViews.some(([key]) => key === "YNOV_COM"));
   assert.ok(leadProvenanceViews.some(([key]) => key === "LEGACY_RELAUNCH"));
   assert.equal(leadProvenanceViews.length, 9);

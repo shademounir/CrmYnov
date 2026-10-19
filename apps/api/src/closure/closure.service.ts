@@ -12,6 +12,7 @@ import { DynamicPermissionRepository } from "../permissions/dynamic-repository.j
 import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { leadResource } from "../permissions/dynamic-resources.js";
 import { resourceEvaluationContext } from "../permissions/dynamic-context.js";
+import { cancelFollowUpsForClosure } from "../follow-up/cancel-follow-ups-for-closure.js";
 
 export type ClosureState = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 export type ClosureTarget = "PROSPECT" | "CONTACTED" | "QUALIFIED" | "ENROLLED" | "CLOSED_LOST";
@@ -61,7 +62,7 @@ export class ClosureService implements OnModuleInit {
       () => this.decide(id, input, principal, correlationId),
       principal, correlationId, async (tx, updated) => { await this.persistence!.saveClosureInTransaction(tx, updated, current.version, {
         eventType: updated.state === "APPROVED" ? "CLOSURE_APPROVED" : "CLOSURE_REJECTED", principal, correlationId,
-      }); },
+      }); if (updated.state === "APPROVED" && finalTarget(updated.target)) await cancelFollowUpsForClosure(tx, updated, principal, correlationId); },
     );
     } finally { await this.refreshPersistentState(); }
     return this.copy(this.requests.get(id)!);

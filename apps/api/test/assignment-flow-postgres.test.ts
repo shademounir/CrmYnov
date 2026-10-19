@@ -343,8 +343,10 @@ test("CRMY-94 optional transfer changes only scheduled reminder ownership/versio
     const terminal = await effects(f, lead.id);
     assert.equal((await f.http("PATCH", `/reassignment-requests/${request.body.id}/decision`, f.managerSession.token, decisionInput, 1)).status, 200);
     assert.deepEqual(await effects(f, lead.id), terminal);
-    const stale = await f.http("PATCH", `/follow-ups/${scheduled.id}`, f.commercialSession.token, { action: "COMPLETE", reason: "Synthetic obsolete owner", expectedVersion: 1, idempotencyKey: f.key("stale-complete") });
+    const stale = await f.http("PATCH", `/follow-ups/${scheduled.id}`, f.commercialSession.token, { action: "COMPLETE", reason: "Synthetic obsolete owner", expectedVersion: 1, idempotencyKey: f.key("stale-complete"),
+      nextAction: { mode: "SCHEDULE", dueAt: new Date(Date.now() + 86_400_000).toISOString(), reason: "Synthetic next dossier review" } });
     assert.ok([403, 409].includes(stale.status));
+    assert.deepEqual(await effects(f, lead.id), terminal, "A valid successor intent never grants the obsolete owner access or creates another action");
     await setGrant(f, "ADMISSIONS", "reminder.manage", "NONE");
     const blockedLead = await f.ownedLead("blocked-transfer");
     assert.equal((await f.http("POST", `/leads/${blockedLead.id}/reassignment-requests`, f.commercialSession.token, requestInput(f, "blocked-transfer", true))).status, 409, "A selected target must retain the capability to manage the transferred reminder");
@@ -362,7 +364,8 @@ test("CRMY-94 real reminder due/complete races never transfer terminal rows or d
       assert.equal(request.status, 201);
       const raceOperation = race === "due"
         ? f.apps[1]!.get(FollowUpService).notifyDueForApi(new Date(Date.now() + 120_000))
-        : f.http("PATCH", `/follow-ups/${item.id}`, f.commercialSession.token, { action: "COMPLETE", reason: "Synthetic completion race", expectedVersion: 1, idempotencyKey: f.key("race-complete") }, 1);
+        : f.http("PATCH", `/follow-ups/${item.id}`, f.commercialSession.token, { action: "COMPLETE", reason: "Synthetic completion race", expectedVersion: 1, idempotencyKey: f.key("race-complete"),
+          nextAction: { mode: "SCHEDULE", dueAt: new Date(Date.now() + 86_400_000).toISOString(), reason: "Synthetic subsequent dossier review" } }, 1);
       const results = await Promise.allSettled([f.http("PATCH", `/reassignment-requests/${request.body.id}/decision`, f.managerSession.token, decisionInput), raceOperation]);
       assert.equal(results[0]?.status, "fulfilled");
       const decision = results[0] as PromiseFulfilledResult<Result<{ code?: string }>>;
@@ -382,10 +385,13 @@ test("CRMY-94 real reminder due/complete races never transfer terminal rows or d
         assert.deepEqual(await effects(f, lead.id), delivered, "A canonical delivered occurrence remains a no-op after legitimate Lead reassignment retains DUE ownership");
       } else {
         assert.equal(results[1]?.status, "fulfilled");
+        const completion = results[1] as PromiseFulfilledResult<Result<{ code?: string }>>;
+        assert.ok([200, 403, 409].includes(completion.value.status), "The race must exercise a valid atomic completion or current authorization/version refusal, never a malformed request");
         const current = await f.db.leadFollowUp.findUniqueOrThrow({ where: { id: item.id } });
         assert.ok(["SCHEDULED", "COMPLETED"].includes(current.state));
         assert.equal(current.ownerId, current.state === "COMPLETED" ? f.commercial.id : f.target.id);
         assert.equal(current.version, 2, "Exactly one winning state/ownership mutation increments the reminder version");
+        assert.equal(await f.db.leadFollowUp.count({ where: { leadId: lead.id, state: { in: ["SCHEDULED", "DUE"] } } }), 1, "Completion creates one successor; reassignment never duplicates the active action");
       }
       assert.equal((await f.db.lead.findUniqueOrThrow({ where: { id: lead.id } })).assignedToId, f.target.id);
     }

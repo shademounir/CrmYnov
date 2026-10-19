@@ -19,7 +19,7 @@ import { BASELINE_OPTIONAL_INFORMATION, mayPreserveBaselineUnknown } from "../bo
 
 type StoredLead = LeadRecord & { version: number };
 type PersistentSnapshot = Readonly<{ leads: StoredLead[]; activities: LeadActivityRecord[]; historicalTreatments?: Array<{ leadId: string; occurredAt: string | null }> }>;
-type SnapshotLeadRow = Prisma.LeadGetPayload<{ include: { collaborators: true; commercialQualifications: true } }>;
+type SnapshotLeadRow = Prisma.LeadGetPayload<{ include: { collaborators: true; commercialQualifications: true; followUps: true } }>;
 type PersistMutationInput = Readonly<{
   before: StoredLead;
   after: StoredLead;
@@ -68,6 +68,7 @@ export class LeadPersistenceRepository {
       client.lead.findMany({ include: {
         collaborators: { where: { active: true }, orderBy: { userId: "asc" } },
         commercialQualifications: { orderBy: [{ version: "desc" }, { id: "desc" }], take: 1 },
+        followUps: { where: { state: { in: ["SCHEDULED", "DUE"] } }, take: 2, orderBy: { id: "asc" } },
       } }),
       client.leadActivity.findMany({ orderBy: [{ occurredAt: "asc" }, { id: "asc" }] }),
       client.importedHistoricalNote.findMany({ select: { leadId: true, occurredAt: true } }),
@@ -236,6 +237,7 @@ export class LeadPersistenceRepository {
       ? row.baselineTemperature : undefined;
     const temperature = (qualification?.temperature ?? historicalTemperature ?? "UNEVALUATED") as NonNullable<LeadRecord["temperature"]>;
     return {
+      hasActiveNextAction: row.followUps?.length === 1 && Boolean(row.followUps[0]?.reason.trim()) && Number.isFinite(row.followUps[0]?.dueAt.valueOf()),
       id: row.id,
       leadCode: row.leadCode,
       firstName: row.firstName,

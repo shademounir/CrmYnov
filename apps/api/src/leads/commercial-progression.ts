@@ -4,6 +4,7 @@ import { BadRequestException } from "@nestjs/common";
  * call dispatch lifecycle markers are not commercial contact evidence. */
 export function isCommercialContact(activity: { type: string; result: string; note?: string }): boolean {
   const result = activity.result.trim().toUpperCase();
+  if (/^FOLLOW_UP_(?:SCHEDULED|POSTPONED?|COMPLETED?|CANCEL(?:LED)?|DUE)(?:_|$)/.test(result)) return false;
   if (["WHATSAPP", "MANUAL_EMAIL", "PHYSICAL_VISIT"].includes(activity.type)) return Boolean(result);
   if (activity.type === "COMMENT") return Boolean(activity.note?.trim());
   if (activity.type === "MEETING") return ["CONNECTED", "COMPLETED", "INFORMATION_RECORDED"].includes(result) || result.startsWith("INTERVIEW_");
