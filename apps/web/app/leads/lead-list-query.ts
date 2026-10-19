@@ -1,7 +1,7 @@
 import type { ApiObject, ApiValue } from "../_components/connected-resource";
 
 export const leadWorkViews = [
-  ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["FOLLOW_UP", "À relancer"],
+  ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["TO_CONTACT", "À contacter"], ["FOLLOW_UP", "À relancer"],
   ["UNASSIGNED", "Non affectés"], ["NO_ACTIVITY", "Sans activité"], ["CLOSED", "Clôturés"],
 ] as const;
 
@@ -17,6 +17,7 @@ export const leadListFilterLabels: Readonly<Record<string, string>> = {
   adviserId: "Conseiller impliqué", status: "Statut", temperature: "Température", source: "Source",
   channel: "Canal", program: "Formation", campaign: "Campagne", campus: "Campus",
   createdFrom: "Créés à partir du", createdTo: "Créés jusqu’au", createdBefore: "Créés avant le",
+  treatmentFrom: "Dernier traitement à partir du", treatmentTo: "Dernier traitement jusqu’au", treatmentState: "Historique de traitement",
   assignmentMode: "Mode d’affectation", importBatchId: "Lot d’import", view: "File",
   savedView: "Provenance", sharedViewId: "Vue partagée",
 };
@@ -47,6 +48,7 @@ export function leadListFilterValue(key: string, value: string, current?: URLSea
     QUALIFIED: "Qualifié", ENROLLED: "Inscrit", CLOSED_LOST: "Sans suite", UNEVALUATED: "Non évalué",
     COLD: "Froid", WARM: "Tiède", HOT: "Chaud", DIGITAL: "Digital", PHONE: "Téléphone",
     IN_PERSON: "Présentiel", PARTNER: "Partenaire", OTHER: "Autre",
+    DATED: "Historique daté", UNKNOWN_DATE: "Historique avec date inconnue", NONE: "Aucun traitement connu",
   };
   const labelKey: Readonly<Record<string, string>> = { assignedToId: "assignedToLabel", collaboratorId: "collaboratorLabel", adviserId: "adviserLabel" };
   const label = labelKey[key] ? current?.get(labelKey[key])?.normalize("NFC").trim() : undefined;

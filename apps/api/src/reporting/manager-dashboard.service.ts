@@ -11,6 +11,7 @@ import { SourceEffectivenessService, type SourceEffectivenessReport } from "./so
 import { ReportingPersistenceService, type DashboardCapabilities, type PersistentReportingEvidence } from "./reporting-persistence.service.js";
 import { matchesInteractiveFilters, normalizeReportingQuery, reportingSearchParams, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { acquisitionPartition, isBaseline, observedEnrollment, type AcquisitionPartition } from "./acquisition-cohort.js";
+import { isToContact } from "../leads/lead-treatment.js";
 
 export const MANAGER_DASHBOARD_VERSION = "manager-dashboard-v1";
 export type ManagerDashboardQuery = InteractiveReportingQuery;
@@ -31,6 +32,7 @@ export interface ManagerDashboardReport {
   safeguards: { singlePrimaryConversionAttribution: true; financialDecision: false; disciplinaryScore: false };
   persistence?: PersistentReportingEvidence;
   capabilities?: DashboardCapabilities;
+  toContact: { count: number; href: string };
 }
 export interface PersonalDashboardReport {
   definitionVersion: "personal-dashboard-v1"; generatedAt: string; timezone: "Africa/Casablanca"; filters: ManagerDashboardQuery;
@@ -38,6 +40,7 @@ export interface PersonalDashboardReport {
   safeguards: { personalScopeOnly: true; aggregatedOnly: true; financialDecision: false; disciplinaryScore: false };
   persistence?: PersistentReportingEvidence;
   capabilities?: DashboardCapabilities;
+  toContact: { count: number; href: string };
 }
 
 @Injectable()
@@ -112,6 +115,7 @@ export class ManagerDashboardService {
     const exportHref = `/reports/manager-dashboard/export?${suffix}`;
     const report: ManagerDashboardReport = { definitionVersion: MANAGER_DASHBOARD_VERSION, generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       filters: common, panels, cards, acquisition: acquisitionPartition(rows), trends, distributions, navigation,
+      toContact: { count: rows.filter(isToContact).length, href: this.leadHref(query, { view: "TO_CONTACT" }) },
       drillDowns, export: { href: exportHref, schemaVersion: "manager-dashboard-export-v1", aggregatedOnly: true },
       safeguards: { singlePrimaryConversionAttribution: true, financialDecision: false, disciplinaryScore: false } };
     this.audit.record({ eventType: "MANAGER_DASHBOARD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
@@ -125,6 +129,7 @@ export class ManagerDashboardService {
     const report: PersonalDashboardReport = { definitionVersion: "personal-dashboard-v1", generatedAt: now.toISOString(), timezone: "Africa/Casablanca",
       filters: query, performance: this.performance.read(query, principal, `${correlationId}:performance`, now),
       contributions: this.contributions.read(query, principal, `${correlationId}:contributions`, now),
+      toContact: { count: this.filteredRows(query, principal).filter(isToContact).length, href: this.leadHref(query, { view: "TO_CONTACT" }) },
       safeguards: { personalScopeOnly: true, aggregatedOnly: true, financialDecision: false, disciplinaryScore: false } };
     this.audit.record({ eventType: "PERSONAL_DASHBOARD_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId,
       correlationId, after: { definitionVersion: report.definitionVersion, activeFilterNames: this.sortedKeys(query) }, result: "SUCCESS",
