@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -31,7 +31,7 @@ const handlingTypes = new Set(["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSI
 
 @Injectable()
 export class SourceEffectivenessService {
-  constructor(private readonly leads: LeadService, private readonly ingestion: IngestionService, private readonly audit: AuditService) {}
+  constructor(@Inject(LeadService) private readonly leads: LeadService, @Inject(IngestionService) private readonly ingestion: IngestionService, @Inject(AuditService) private readonly audit: AuditService) {}
 
   read(query: SourceEffectivenessQuery, principal: Principal, correlationId: string, now = new Date()): SourceEffectivenessReport {
     const from = this.boundary(query.from, "source_report_from_invalid"); const to = this.boundary(query.to, "source_report_to_invalid");

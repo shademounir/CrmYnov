@@ -12,6 +12,7 @@ import { hasPilotageReportingScope } from "../reporting/reporting-authority.js";
 import { mayPreserveBaselineUnknown } from "../bootstrap-import/baseline-unknown-fields.js";
 import { isCommercialContact, positiveQualificationEvidence, type CommercialStatusInput } from "./commercial-progression.js";
 import { isToContact, treatmentDay, treatmentSummary, validateTreatmentDay, type TreatmentSummary } from "./lead-treatment.js";
+import { needsNextAction } from "../follow-up/next-action.contract.js";
 
 export const activityTypes = ["CRM_CALL", "EXTERNAL_CALL", "PHONE_CALL", "PHYSICAL_VISIT", "WHATSAPP", "MANUAL_EMAIL", "MEETING", "COMMENT", "CORRECTION", "STATUS_CHANGED", "LEAD_CREATED", "ASSIGNMENT_CHANGED", "REASSIGNMENT_REQUESTED", "REASSIGNMENT_REJECTED", "LEGACY_IMPORT", "PROVENANCE_ATTACHED"] as const;
 export type ActivityType = (typeof activityTypes)[number] | "TAGS_CHANGED";
@@ -45,6 +46,7 @@ export interface LeadRecord extends Partial<TreatmentSummary> {
   acquisitionKind?: LeadAcquisitionKind;
   assignedToLabel?: string;
   nextActionAt?: string; lastActivityAt?: string; createdAt: string; version?: number;
+  hasActiveNextAction?: boolean;
   temperature?: LeadTemperature; temperatureLabel?: string; qualificationVersion?: number;
   temperatureSource?: LeadTemperatureSource;
   qualificationReason?: string; qualificationComment?: string; qualifiedAt?: string; qualifiedBy?: string;
@@ -82,7 +84,7 @@ export interface LeadListQuery {
   temperature?: string;
   treatmentFrom?: string; treatmentTo?: string; treatmentState?: string;
 }
-export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED";
+export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED" | "NEXT_ACTION_MISSING";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
 export type LeadSavedView = typeof leadSavedViews[number];
 type ValidatedLeadListQuery = Readonly<{
@@ -483,7 +485,7 @@ export class LeadService implements OnModuleInit {
     assertListDateRange(createdFrom, createdTo);
     if (createdFrom && createdBefore && createdFrom >= createdBefore) throw new BadRequestException({ code: "lead_date_range_invalid" });
     const search = query.search?.trim().toLocaleLowerCase("fr");
-    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED"], "lead_view_invalid");
+    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING"], "lead_view_invalid");
     const treatmentFrom = validateTreatmentDay(query.treatmentFrom);
     const treatmentTo = validateTreatmentDay(query.treatmentTo);
     assertListDateRange(treatmentFrom, treatmentTo);
@@ -557,6 +559,7 @@ export class LeadService implements OnModuleInit {
   }
 
   private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
+    if (view === "NEXT_ACTION_MISSING") return needsNextAction(lead);
     if (view === "TO_CONTACT") {
       const elevated = hasPilotageReportingScope(principal) || principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
       return isToContact(lead) && (elevated || lead.assignedToId === principal.userId || Boolean(lead.collaboratorIds?.includes(principal.userId)));
@@ -832,7 +835,9 @@ export class LeadService implements OnModuleInit {
       ? positiveQualificationEvidence(current, input.qualification, input.reason) : input.reason?.trim();
     if (terminal && !reason) throw new BadRequestException({ code: "lead_closure_reason_required" });
     const occurredAt = new Date().toISOString();
-    const updated: Readonly<LeadRecord> = Object.freeze({ ...current, status, lastActivityAt: occurredAt });
+    const nextLead: LeadRecord = { ...current, status, lastActivityAt: occurredAt };
+    if (terminal) delete nextLead.nextActionAt;
+    const updated: Readonly<LeadRecord> = Object.freeze(nextLead);
     this.leads.set(leadId, updated);
     const activity: Readonly<LeadActivityRecord> = Object.freeze({
       id: randomUUID(), leadId, type: "STATUS_CHANGED", result: `${current.status}->${status}`,

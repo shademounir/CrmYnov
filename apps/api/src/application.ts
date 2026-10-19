@@ -17,6 +17,7 @@ import { ownTelephonyPaths } from "./telephony/telephony-own.openapi.js";
 import { dashboardCapabilityPaths } from "./reporting/dashboard-capabilities.openapi.js";
 import { bootstrapImportPaths, bootstrapImportSchemas } from "./bootstrap-import/bootstrap-import.openapi.js";
 import { cutoverPaths, cutoverSchemas } from "./cutover/cutover.openapi.js";
+import { manualInteractionSchema, followUpDecisionSchema } from "./follow-up/next-action.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -129,7 +130,7 @@ export function configureApplication(app: INestApplication): void {
         responses: { "201": { description: "Follow-up, Lead next action, activity, receipt and audit committed atomically" }, "400": { description: "Date, reason or idempotency invalid" }, "403": { description: "Owner, scope or permission required" }, "409": { description: "Active follow-up, replay conflict or concurrent Lead mutation" } },
       } },
       "/follow-ups": { get: { summary: "List authorized follow-ups in deterministic due order", responses: { "200": { description: "Authorized follow-ups" } } } },
-      "/follow-ups/{id}": { patch: { summary: "Postpone, complete or cancel persistently with idempotence and optimistic concurrency", responses: { "200": { description: "Follow-up, Lead next action, activity, receipt and audit committed atomically" }, "409": { description: "Concurrent, final or idempotency decision refused" } } } },
+      "/follow-ups/{id}": { patch: { summary: "Postpone, complete with a successor, or cancel with an explicit reason", requestBody: { required: true, content: { "application/json": { schema: followUpDecisionSchema } } }, responses: { "200": { description: "Follow-up, Lead next action, activity, receipt and audit committed atomically" }, "400": { description: "A valid next action is required after completion" }, "409": { description: "Concurrent, final or idempotency decision refused" } } } },
       "/leads/{leadId}/closure-requests": { post: { summary: "Request an ENROLLED or CLOSED_LOST transition without changing status", responses: { "201": { description: "Pending closure request" }, "400": { description: "Invalid controlled evidence" }, "409": { description: "Pending request exists" } } } },
       "/closure-requests": { get: { summary: "List authorized closure requests", responses: { "200": { description: "Requests and decision history" } } } },
       "/closure-requests/{id}/decision": { patch: { summary: "Approve or reject as a distinct Manager/Admin", responses: { "200": { description: "Decision recorded" }, "403": { description: "Role separation refused" }, "409": { description: "Concurrent decision" } } } },
@@ -157,7 +158,7 @@ export function configureApplication(app: INestApplication): void {
       },
       "/leads/{leadId}/timeline": {
         get: { summary: "List immutable lead activities", responses: { "200": { description: "Reverse chronological timeline" }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } },
-        post: { summary: "Append a lead activity", responses: { "201": { description: "Activity appended" }, "400": { description: "Invalid activity" }, "403": { description: "Role refused" } } },
+        post: { summary: "Record a manual commercial interaction and its next action atomically", requestBody: { required: true, content: { "application/json": { schema: manualInteractionSchema } } }, responses: { "201": { description: "Interaction and shared next action committed once" }, "400": { description: "Invalid activity or missing, ambiguous or expired next action" }, "403": { description: "Effective interaction.create and reminder.manage permissions required" }, "409": { description: "Stale confirmation, concurrent change or conflicting replay" } } },
       },
       "/leads/{leadId}/status": {
         patch: { summary: "Apply a controlled lead status transition", responses: { "200": { description: "Status changed and timeline event appended" }, "400": { description: "Transition or closure reason refused" }, "403": { description: "Role or closure approval refused" }, "404": { description: "Lead not found" } } },

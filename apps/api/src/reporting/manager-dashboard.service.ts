@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { Principal } from "../auth/auth.types.js";
 import { AuditService } from "../audit/audit.service.js";
@@ -46,14 +46,14 @@ export interface PersonalDashboardReport {
 @Injectable()
 export class ManagerDashboardService {
   constructor(
-    private readonly funnel: CommercialFunnelService,
-    private readonly performance: CommercialPerformanceService,
-    private readonly sources: SourceEffectivenessService,
-    private readonly risks: OperationalRiskService,
-    private readonly contributions: SharedContributionService,
-    private readonly leads: LeadService,
-    private readonly audit: AuditService,
-    private readonly persistence?: ReportingPersistenceService,
+    @Inject(CommercialFunnelService) private readonly funnel: CommercialFunnelService,
+    @Inject(CommercialPerformanceService) private readonly performance: CommercialPerformanceService,
+    @Inject(SourceEffectivenessService) private readonly sources: SourceEffectivenessService,
+    @Inject(OperationalRiskService) private readonly risks: OperationalRiskService,
+    @Inject(SharedContributionService) private readonly contributions: SharedContributionService,
+    @Inject(LeadService) private readonly leads: LeadService,
+    @Inject(AuditService) private readonly audit: AuditService,
+    @Optional() @Inject(ReportingPersistenceService) private readonly persistence?: ReportingPersistenceService,
   ) {}
 
   async readForApi(raw: Record<string, string | undefined>, principal: Principal, correlationId: string, now = new Date(), additionalKeys: readonly string[] = []): Promise<ManagerDashboardReport> {

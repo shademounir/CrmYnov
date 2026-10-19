@@ -59,6 +59,7 @@ async function mountProfile(t: TestContext, rereadFails: boolean): Promise<{ hos
       if (written && rereadFails) return Promise.resolve(Response.json({ code: "temporary" }, { status: 503 }));
       return Promise.resolve(Response.json({ events: written ? [{ id: "interaction-readback", type: "CRM_CALL", result: "CONNECTED", note: "Commentaire commercial conservé\nSeconde ligne", occurredAt: "2026-09-11T14:00:00.000Z" }] : [] }));
     }
+    if (url.endsWith("/follow-ups")) return Promise.resolve(Response.json({ items: written ? [{ id: "00000000-0000-4000-8000-000000000194", leadId: lead.id, state: "SCHEDULED", dueAt: "2099-10-20T10:00:00Z", reason: "Suivi synthétique déjà enregistré", version: 1 }] : [] }));
     return Promise.resolve(Response.json(lead));
   });
   await act(async () => {
@@ -67,9 +68,13 @@ async function mountProfile(t: TestContext, rereadFails: boolean): Promise<{ hos
   });
   const trigger = [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("Ajouter une interaction"));
   assert.ok(trigger);
-  act(() => trigger.click());
+  await act(async () => { trigger.click(); await new Promise<void>((resolve) => setImmediate(resolve)); });
   const form = host.querySelector<HTMLFormElement>(".lead-interaction-dialog form");
   assert.ok(form);
+  const due = form.querySelector<HTMLInputElement>('[name="nextActionDueAt"]');
+  const objective = form.querySelector<HTMLTextAreaElement>('[name="nextActionReason"]');
+  assert.ok(due); assert.ok(objective);
+  due.value = "2099-10-20T10:00"; objective.value = "Suivi synthétique du dossier";
   await act(async () => {
     form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -91,6 +96,13 @@ test("profile announces success only after the interaction is reread and display
   assert.match(mounted.host.textContent ?? "", /Commentaire commercial conservé\s*Seconde ligne/u);
   assert.match(mounted.host.textContent ?? "", /Appel depuis le CRM/u);
   assert.match(mounted.host.textContent ?? "", /fiche et l’historique ont été relus depuis le serveur/u);
+  const { act } = await import("react");
+  const close = mounted.host.querySelector<HTMLButtonElement>('[aria-label="Fermer le panneau d’interaction"]'); assert.ok(close);
+  await act(async () => { close.click(); await Promise.resolve(); });
+  const reopen = [...mounted.host.querySelectorAll("button")].find(button => button.textContent?.includes("Ajouter une interaction")); assert.ok(reopen);
+  await act(async () => { reopen.click(); await new Promise<void>(resolve => setImmediate(resolve)); });
+  assert.match(mounted.host.querySelector(".lead-interaction-dialog")?.textContent ?? "", /Je confirme que cette prochaine action reste pertinente/u);
+  assert.equal(mounted.host.querySelector('.lead-interaction-dialog input[name="nextActionMode"]')?.getAttribute("value"), "CONFIRM");
 });
 
 test("profile preserves context and distinguishes a confirmed write from a failed reread", async (t) => {

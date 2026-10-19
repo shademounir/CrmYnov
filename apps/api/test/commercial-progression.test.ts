@@ -25,6 +25,13 @@ test("imports, dispatch markers, planned appointments and technical metadata nev
     assert.equal(service.getLead(lead.id, actor, "read").status, "PROSPECT");
   }
 });
+
+test("planning, completion metadata and closure cancellation are not commercial exchanges even with an objective note", () => {
+  for (const result of ["FOLLOW_UP_SCHEDULED", "FOLLOW_UP_POSTPONE", "FOLLOW_UP_COMPLETE", "FOLLOW_UP_CANCEL", "FOLLOW_UP_CANCELLED_FOR_CLOSURE", "FOLLOW_UP_DUE"]) {
+    assert.equal(isCommercialContact({ type: "COMMENT", result, note: "Objectif de suivi technique synthétique" }), false);
+  }
+  assert.equal(isCommercialContact({ type: "COMMENT", result: "FOLLOW_UP_REQUIRED", note: "Échange commercial déclaré" }), true);
+});
 test("first-contact classification includes real notes, emails, WhatsApp and traced call results", () => {
   for (const type of ["MANUAL_EMAIL", "WHATSAPP", "PHYSICAL_VISIT", "PHONE_CALL", "EXTERNAL_CALL", "CRM_CALL", "MEETING", "COMMENT"]) {
     assert.equal(isCommercialContact({ type, result: "COMPLETED", note: "Échange synthétique" }), true);

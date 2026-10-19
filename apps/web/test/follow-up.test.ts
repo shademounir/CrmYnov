@@ -50,13 +50,17 @@ test("loads a persisted follow-up and blocks repeated completion submissions", a
   t.mock.method(globalThis, "fetch", (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     requests.push({ ...(init ? { init } : {}) });
     if (init?.method === "PATCH") return Promise.resolve(Response.json({ ...scheduled, state: "COMPLETED", version: 2 }));
-    return Promise.resolve(Response.json({ items: requests.some((request) => request.init?.method === "PATCH") ? [{ ...scheduled, state: "COMPLETED", version: 2 }] : [scheduled] }));
+    return Promise.resolve(Response.json({ items: requests.some((request) => request.init?.method === "PATCH") ? [{ ...scheduled, state: "COMPLETED", version: 2 }, { ...scheduled, id: "follow-up-successor", dueAt: "2099-09-11T10:30:00.000Z", reason: "Suivre la décision synthétique" }] : [scheduled] }));
   });
   await act(async () => { root.render(createElement(FollowUpHistory, { leadId: "synthetic-lead" })); await new Promise<void>((resolve) => setImmediate(resolve)); });
-  const form = host.querySelector<HTMLFormElement>("form"); const action = host.querySelector<HTMLSelectElement>('select[name="action"]'); assert.ok(form && action); action.value = "COMPLETE";
+  const form = host.querySelector<HTMLFormElement>("form"); const action = host.querySelector<HTMLSelectElement>('select[name="action"]'); assert.ok(form && action);
+  await act(async () => { action.value = "COMPLETE"; action.dispatchEvent(new dom.window.Event("change", { bubbles: true })); await Promise.resolve(); });
+  const due = form.querySelector<HTMLInputElement>('[name="nextActionDueAt"]'), objective = form.querySelector<HTMLTextAreaElement>('[name="nextActionReason"]');
+  assert.ok(due && objective); due.value = "2099-09-11T10:30"; objective.value = "Suivre la décision synthétique";
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   const patches = requests.filter((request) => request.init?.method === "PATCH"); assert.equal(patches.length, 1);
   const body = patches[0]?.init?.body; if (typeof body !== "string") assert.fail("expected_string_request_body"); const parsed = JSON.parse(body) as Record<string, unknown>;
   assert.equal(parsed.action, "COMPLETE"); assert.equal(parsed.expectedVersion, 1); assert.match(String(parsed.idempotencyKey), /^[a-f\d-]{36}$/u);
-  assert.match(host.textContent ?? "", /Relance clôturée/u); assert.match(host.textContent ?? "", /Clôturée/u); assert.doesNotMatch(host.textContent ?? "", /Enregistrer l.action/u);
+  assert.deepEqual(parsed.nextAction, { mode: "SCHEDULE", dueAt: "2099-09-11T10:30:00.000Z", reason: "Suivre la décision synthétique" });
+  assert.match(host.textContent ?? "", /Relance réalisée et prochaine étape/u); assert.match(host.textContent ?? "", /Réalisée/u); assert.match(host.textContent ?? "", /Suivre la décision synthétique/u);
 });

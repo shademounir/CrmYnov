@@ -41,10 +41,14 @@ test("interaction chronology fails before transport and same-tick submits produc
 
   const transport = deferred<Response>();
   let writes = 0;
-  t.mock.method(globalThis, "fetch", (): Promise<Response> => { writes += 1; return transport.promise; });
-  act(() => root.render(createElement(InteractionWorkflowForm, { leadId: "synthetic-lead" })));
+  t.mock.method(globalThis, "fetch", (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const address = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+    if (init?.method !== "POST") return Promise.resolve(Response.json(address.endsWith("/follow-ups") ? { items: [] } : { status: "CONTACTED" }));
+    writes += 1; return transport.promise;
+  });
+  await act(async () => { root.render(createElement(InteractionWorkflowForm, { leadId: "synthetic-lead" })); await Promise.resolve(); });
   const form = host.querySelector("form");
-  const nextAction = host.querySelector<HTMLInputElement>('input[name="nextActionAt"]');
+  const nextAction = host.querySelector<HTMLInputElement>('input[name="nextActionDueAt"]');
   assert.ok(form); assert.ok(nextAction);
 
   nextAction.value = "2020-01-01T00:00";

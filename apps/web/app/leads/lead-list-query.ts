@@ -3,6 +3,7 @@ import type { ApiObject, ApiValue } from "../_components/connected-resource";
 export const leadWorkViews = [
   ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["TO_CONTACT", "À contacter"], ["FOLLOW_UP", "À relancer"],
   ["UNASSIGNED", "Non affectés"], ["NO_ACTIVITY", "Sans activité"], ["CLOSED", "Clôturés"],
+  ["NEXT_ACTION_MISSING", "Prochaine action à planifier"],
 ] as const;
 
 export const leadProvenanceViews = [

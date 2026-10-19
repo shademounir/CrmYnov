@@ -70,14 +70,17 @@ test("Lead follow-ups persist atomically, replay exactly and remain safe across 
   ]); assert.deepEqual(concurrentSchedules.map((response) => response.status).sort(), [201, 409]); assert.equal(await client.leadFollowUp.count({ where: { leadId: concurrentLead.id } }), 1);
 
   const decisionBodies = [
-    { action: "COMPLETE", reason: "Dossier reçu", expectedVersion: 1, idempotencyKey: "follow-up-decision-a" },
+    { action: "COMPLETE", reason: "Dossier reçu", expectedVersion: 1, idempotencyKey: "follow-up-decision-a",
+      nextAction: { mode: "SCHEDULE", dueAt: "2099-10-21T09:00:00.000Z", reason: "Vérifier la décision synthétique" } },
     { action: "CANCEL", reason: "Relance annulée", expectedVersion: 1, idempotencyKey: "follow-up-decision-b" },
   ];
   const decisions = await Promise.all([decide(firstPort, createdItem.id, decisionBodies[0], "follow-up-decision-a"), decide(secondPort, createdItem.id, decisionBodies[1], "follow-up-decision-b")]);
   assert.deepEqual(decisions.map((response) => response.status).sort(), [200, 409]); const winningIndex = decisions.findIndex((response) => response.status === 200); assert.notEqual(winningIndex, -1); const winning = await decisions[winningIndex]!.json() as Record<string, unknown>;
   const decisionReplay = await decide(winningIndex === 0 ? secondPort : firstPort, createdItem.id, decisionBodies[winningIndex]!, "follow-up-decision-replay"); assert.equal(decisionReplay.status, 200); assert.deepEqual(await decisionReplay.json(), winning);
-  assert.equal(await client.leadFollowUpMutationReceipt.count({ where: { followUpId: createdItem.id } }), 2); assert.equal(await client.auditEvent.count({ where: { resourceId: lead.id, eventType: { startsWith: "FOLLOW_UP_" } } }), 2);
-  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: lead.id } })).nextActionAt, null);
+  assert.equal(await client.leadFollowUpMutationReceipt.count({ where: { followUpId: createdItem.id } }), 2);
+  assert.equal(await client.auditEvent.count({ where: { resourceId: lead.id, eventType: { startsWith: "FOLLOW_UP_" } } }), winningIndex === 0 ? 3 : 2);
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: lead.id } })).nextActionAt?.toISOString() ?? null, winningIndex === 0 ? "2099-10-21T09:00:00.000Z" : null);
+  assert.equal(await client.leadFollowUp.count({ where: { leadId: lead.id, state: { in: ["SCHEDULED", "DUE"] } } }), winningIndex === 0 ? 1 : 0);
 
   const outsideResponse = await schedule(firstPort, outside.id, { ...body, idempotencyKey: "follow-up-outside" }, "follow-up-outside"); assert.equal(outsideResponse.status, 403); assert.equal(await client.leadFollowUp.count({ where: { leadId: outside.id } }), 0);
 

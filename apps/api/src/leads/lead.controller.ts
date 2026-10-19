@@ -5,12 +5,14 @@ import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { LeadService, type CreateLeadInput, type CreateLeadResult, type InteractionCorrectionInput, type LeadActivityRecord, type LeadListQuery, type LeadPage, type LeadRecord, type UpdateLeadInput } from "./lead.service.js";
 import type { CommercialStatusInput } from "./commercial-progression.js";
+import { FollowUpService, type ManualInteractionInput } from "../follow-up/follow-up.service.js";
 
 @Controller("leads/:leadId/timeline")
 @UseGuards(RbacGuard)
 @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN", "AUDITOR")
 export class LeadTimelineController {
-  constructor(@Inject(LeadService) private readonly leads: LeadService) {}
+  constructor(@Inject(LeadService) private readonly leads: LeadService,
+    @Optional() @Inject(FollowUpService) private readonly followUps?: FollowUpService) {}
 
   @Get()
   async list(@Param("leadId") leadId: string, @Req() request: AuthenticatedRequest): Promise<{ events: LeadActivityRecord[] }> {
@@ -20,9 +22,10 @@ export class LeadTimelineController {
 
   @Post()
   @RequireRoles("ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN")
-  async create(@Param("leadId") leadId: string, @Body() body: { type: string; result: string; note?: string; nextActionAt?: string; idempotencyKey?: string }, @Req() request: AuthenticatedRequest): Promise<LeadActivityRecord> {
+  async create(@Param("leadId") leadId: string, @Body() body: ManualInteractionInput, @Req() request: AuthenticatedRequest): Promise<LeadActivityRecord> {
     if (!request.principal) throw new BadRequestException({ code: "principal_missing" });
-    return this.leads.addActivityForApi(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
+    if (!this.followUps) throw new Error("commercial_interaction_service_unavailable");
+    return this.followUps.addManualActivityForApi(leadId, body, request.principal, request.header("x-correlation-id") ?? "missing-correlation");
   }
 
   @Post(":eventId/corrections")
