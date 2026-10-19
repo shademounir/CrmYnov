@@ -1065,3 +1065,8 @@ input, select, textarea { color: var(--onyx); }
 @media (max-width: 600px) {
   .leads-page .lead-directory tbody { grid-template-columns: minmax(0, 1fr); }
 }
+.first-treatment-overdue { display: flex; flex-direction: column; gap: 4px; max-width: 100%; margin-top: 6px; padding: 8px; border-left: 3px solid #b42318; background: #fff2f0; color: #8f1d14; overflow-wrap: anywhere; white-space: normal; }
+.first-treatment-overdue strong { color: #8f1d14; font-size: 11px; }
+.first-treatment-overdue small { color: #8f1d14; line-height: 1.5; }
+.first-treatment-queue[data-overdue="true"] { border-left: 3px solid #b42318; background: #fff2f0; }
+.first-treatment-queue[data-overdue="true"] strong { color: #8f1d14; }

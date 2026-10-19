@@ -1,6 +1,6 @@
 "use client";
 
-import { Alarm, CaretRight, ChartBar, CheckCircle, Plus, Student, TrendUp, User, UserPlus, WarningCircle } from "@phosphor-icons/react";
+import { Alarm, CaretRight, CheckCircle, Plus, Student, TrendUp, User, UserPlus, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../../../_components/ui/page-header";
@@ -13,6 +13,7 @@ type ReportingCapabilities = { canCreateLead: boolean; canReadRecentLeads: boole
 type ReportingEvidence = {
   generatedAt?: string; capabilities?: ReportingCapabilities;
   toContact?: { count: number; href: string };
+  firstTreatmentOverdue?: { count: number; href: string; thresholdHours: 24; comparison: "STRICTLY_GREATER" };
   persistence?: { countsObservability?: Record<string, { state: "OBSERVED" | "AUTHORIZED_SUBSET" | "UNAVAILABLE"; reason: string | null }> };
 };
 type DashboardReport = {
@@ -149,12 +150,18 @@ function PersonalDashboardContent({ report, showTables }: Readonly<{ report: Per
   const adviser = report.performance.advisers[0]; const contributor = report.contributions.contributors[0];
   const data = adviser ? [{ value: "Leads principaux", count: adviser.primaryLeadCount }, { value: "Collaborations", count: adviser.secondaryLeadCount }, { value: "Charge active", count: adviser.activeLoad }, { value: "Relances échues", count: adviser.followUps.overdue }] : [];
   const contributions = contributor ? [{ value: "Actions principales", count: contributor.primaryActionCount }, { value: "Actions secondaires", count: contributor.secondaryActionCount }] : [];
-  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p><ToContactCard report={report} /></section><div className="dashboard-personal-charts"><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></div><ReportingAvailability report={report} /></>;
+  return <><section aria-label="Vue personnelle"><h2>Mes indicateurs autorisés</h2><p>Cette vue est limitée au collaborateur connecté et à ses contributions autorisées.</p><ToContactCard report={report} /><FirstTreatmentCard report={report} /></section><div className="dashboard-personal-charts"><AccessibleChart title="Ma performance" data={data} showTable={showTables} /><AccessibleChart title="Mes contributions" data={contributions} showTable={showTables} /></div><ReportingAvailability report={report} /></>;
 }
 
 function ToContactCard({ report }: Readonly<{ report: ReportingEvidence }>): React.JSX.Element {
   if (!report.toContact || safeInternalHref(report.toContact.href) === "#") return <p>File À contacter momentanément indisponible.</p>;
   return <Link className="queue-item" href={report.toContact.href}><span className="icon-disc small blue"><UserPlus size={20} /></span><span>À contacter<strong>{displayCount(report.toContact.count)}</strong><small>Prospects à prendre en charge · distinct des relances et des retards.</small></span></Link>;
+}
+
+export function FirstTreatmentCard({ report }: Readonly<{ report: ReportingEvidence }>): React.JSX.Element {
+  const queue = report.firstTreatmentOverdue;
+  if (!queue || safeInternalHref(queue.href) === "#") return <p>Premiers traitements en retard : compteur indisponible.</p>;
+  return <Link className="queue-item first-treatment-queue" data-overdue={queue.count > 0 ? "true" : "false"} href={queue.href}><span className="icon-disc small red"><Alarm size={20} /></span><span>Premiers traitements en retard<strong>{displayCount(queue.count)}</strong><small>Sans premier traitement après strictement plus de 24 h consécutives. Même sélection et même périmètre que la liste, y compris lorsqu’elle est vide.</small></span></Link>;
 }
 
 function ReportingAvailability({ report }: Readonly<{ report: ReportingReport }>): React.JSX.Element | null {
@@ -232,7 +239,7 @@ const recentLeadStatusClasses: Readonly<Record<string, string>> = {
 
 const attentionLabels: Readonly<Record<string, { label: string; hint: string }>> = {
   unassigned_leads: { label: "Leads actifs non affectés", hint: "Responsable principal non attribué" },
-  first_interaction_overdue: { label: "Premiers contacts en retard", hint: "Sous-ensemble des Prospects à contacter dont le délai de prise en charge est dépassé" },
+  first_interaction_overdue: { label: "Premiers traitements en retard", hint: "Prospects à contacter reçus depuis strictement plus de 24 heures consécutives sans traitement commercial connu" },
   follow_up_overdue: { label: "Relances en retard", hint: "Relances planifiées dont l’échéance est dépassée" },
   closure_decision_pending: { label: "Demandes de clôture à valider", hint: "Décision distincte du Manager ou Admin habilité attendue" },
   reassignment_decision_pending: { label: "Décisions de réaffectation en attente", hint: "Décision contrôlée encore attendue" },
@@ -308,7 +315,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
       <ToContactCard report={report} />
       <Link className="queue-item" href={preserveFilters(report.drillDowns.find((item) => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED", query)}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Leads actifs non affectés<strong>{displayCount(report.cards.unassigned)}</strong><small>La file ouverte inclut aussi les statuts clos.</small></span></Link>
       <Link className="queue-item" href={followUpsHref}><span className="icon-disc small amber"><Alarm size={20} /></span><span>Relances échues<strong>{displayCount(report.cards.overdueFollowUps)}</strong><small>File de Leads distincte du compteur de relances.</small></span></Link>
-      <Link className="queue-item" href={preserveFilters(report.panels.operationalRisks.alerts.find((alert) => alert.code === "first_interaction_overdue")?.drillDown ?? "/leads?view=TO_CONTACT", query)}><span className="icon-disc small blue"><ChartBar size={20} /></span><span>Premiers contacts en retard<strong>{displayCount(report.panels.operationalRisks.queues.withoutFirstInteraction, "Non observé")}</strong><small>Sous-ensemble de la file À contacter. En l’absence de retard, le lien ouvre la file complète.</small></span></Link>
+      <FirstTreatmentCard report={report} />
       <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
     </section>
     <p><Link className="text-button" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}>Ouvrir les Leads sans activité — file distincte du signal de première interaction échue</Link></p>

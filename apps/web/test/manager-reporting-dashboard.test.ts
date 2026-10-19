@@ -164,9 +164,10 @@ test("period, preferred period and reset preserve the personal view and selected
   dom.window.close();
 });
 
-test("quick queues retain the selected cohort and show the backend first-interaction count", () => {
-  const scoped = { ...report, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, queues: { withoutFirstInteraction: 2 } } } };
+test("quick queues retain the selected cohort and show the backend shared first-treatment count", () => {
   const filters = { view: "global", period: "custom", campus: "campus-a", source: "SYNTHETIC", from: "2026-10-01T00:00:00.000Z", to: "2026-10-05T00:00:00.000Z" };
+  const href = `/leads?${new URLSearchParams({ view: "FIRST_TREATMENT_OVERDUE", campus: filters.campus, source: filters.source, createdFrom: filters.from, createdBefore: filters.to, returnTo: `/manager/reports/dashboard?${new URLSearchParams(filters)}` })}`;
+  const scoped: DashboardReport = { ...report, firstTreatmentOverdue: { count: 2, href, thresholdHours: 24, comparison: "STRICTLY_GREATER" }, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, queues: { withoutFirstInteraction: 2 } } } };
   const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: filters, initialReport: scoped, initialCalendar })));
   for (const link of dom.window.document.querySelectorAll<HTMLAnchorElement>(".quick-queues a")) {
     const url = new URL(link.getAttribute("href")!, "https://dev.example.invalid");
@@ -176,15 +177,15 @@ test("quick queues retain the selected cohort and show the backend first-interac
     assert.equal(url.searchParams.has("createdTo"), false);
     assert.equal(new URL(url.searchParams.get("returnTo")!, "https://dev.example.invalid").searchParams.get("source"), "SYNTHETIC");
   }
-  assert.match(dom.window.document.querySelector(".quick-queues")?.textContent ?? "", /Premiers contacts en retard2/u);
+  assert.match(dom.window.document.querySelector(".quick-queues")?.textContent ?? "", /Premiers traitements en retard2/u);
   dom.window.close();
 });
 
-test("first-contact backlog links exactly to À contacter while keeping cutoff and selected cohort", () => {
+test("first-treatment backlog uses its own shared SLA view and keeps the selected cohort", () => {
   const cutoff = "2026-10-04T00:00:00.000Z";
   const scoped = { ...report, toContact: { count: 4, href: "/leads?view=TO_CONTACT&adviserId=adviser-synthetic" },
     panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, queues: { withoutFirstInteraction: 2 },
-      alerts: [{ code: "first_interaction_overdue", count: 2, drillDown: `/leads?view=TO_CONTACT&createdBefore=${encodeURIComponent(cutoff)}` },
+      alerts: [{ code: "first_interaction_overdue", count: 2, drillDown: "/leads?view=FIRST_TREATMENT_OVERDUE" },
         { code: "closure_decision_pending", count: 1, drillDown: "/manager/validations" },
         { code: "load_gap", count: 7, drillDown: "/manager/reports/commercial-performance" }] } } };
   const filters = { period: "custom", campus: "campus-a", adviserId: "adviser-synthetic", from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z" };
@@ -193,10 +194,10 @@ test("first-contact backlog links exactly to À contacter while keeping cutoff a
   const priority = document.querySelector(".priority-panel")!;
   assert.doesNotMatch(priority.textContent ?? "", /first_interaction_overdue|closure_decision_pending|load_gap|Signal agrégé sans PII|contrôles API/u);
   assert.match(priority.textContent ?? "", /leur somme n’est pas un nombre de Leads distincts/u);
-  const row = [...priority.querySelectorAll("article")].find((item) => item.textContent?.includes("Premiers contacts en retard"))!;
+  const row = [...priority.querySelectorAll("article")].find((item) => item.textContent?.includes("Premiers traitements en retard"))!;
   const url = new URL(row.querySelector("a")!.href);
-  assert.equal(url.searchParams.get("view"), "TO_CONTACT");
-  assert.equal(url.searchParams.get("createdBefore"), cutoff);
+  assert.equal(url.searchParams.get("view"), "FIRST_TREATMENT_OVERDUE");
+  assert.equal(url.searchParams.get("createdBefore"), filters.to);
   assert.equal(url.searchParams.get("createdFrom"), filters.from);
   assert.equal(url.searchParams.get("adviserId"), filters.adviserId);
   assert.ok(document.querySelector('a[href^="/manager/validations?"]'));
@@ -546,7 +547,7 @@ test("an otherwise valid recent Lead cannot manufacture an unsafe destination", 
 
 test("Points d’attention translate known aggregate signals without links, raw codes or a fabricated timeline", () => {
   const cases = [
-    ["unassigned_leads", "Leads actifs non affectés"], ["first_interaction_overdue", "Premiers contacts en retard"],
+    ["unassigned_leads", "Leads actifs non affectés"], ["first_interaction_overdue", "Premiers traitements en retard"],
     ["follow_up_overdue", "Relances en retard"], ["closure_decision_pending", "Demandes de clôture à valider"],
     ["reassignment_decision_pending", "Décisions de réaffectation en attente"], ["capacity_warning:synthetic-internal-id", "Capacité commerciale à examiner"],
     ["load_gap", "Écart de charge commerciale"], ["source_quality:synthetic-internal-source", "Qualité d’une source à vérifier"],
@@ -564,7 +565,7 @@ test("Points d’attention translate known aggregate signals without links, raw 
       assert.equal(panel.textContent?.includes(code!), false); assert.equal(panel.querySelector("a, time"), null);
       assert.equal(panel.textContent?.includes("2026-"), false);
       assert.equal(panel.textContent?.includes("PRIVATE_DESTINATION"), false);
-      if (code === "first_interaction_overdue") assert.match(panel.textContent ?? "", /délai de prise en charge est dépassé/u);
+      if (code === "first_interaction_overdue") assert.match(panel.textContent ?? "", /strictement plus de 24 heures consécutives/u);
       if (code === "follow_up_overdue") assert.match(panel.textContent ?? "", /Relances planifiées dont l’échéance est dépassée/u);
     } finally { dom.window.close(); }
   }

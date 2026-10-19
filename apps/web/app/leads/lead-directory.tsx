@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { apiString, type ApiObject, type ApiValue } from "../_components/connected-resource";
 import { sessionLoginHref } from "../_components/app-shell";
 import { leadListFailureForStatus, leadListHref, readLeadListPage, type LeadListFailure, type LeadListPage } from "./lead-list-query";
+import { FirstTreatmentIndicator } from "./first-treatment-indicator";
 
 const statusLabels: Readonly<Record<string, string>> = {
   PROSPECT: "Prospect",
@@ -103,7 +104,7 @@ export function LeadDirectoryTable({ items, ariaLabel, context = "directory", to
             <td className="lead-directory__program" data-label="Formation / campus"><span>{program}</span><small>{campus}</small></td>
             <td className="lead-directory__source" data-label="Source">{sourceLabel}</td>
             <td className="lead-directory__assignment" data-label="Conseiller"><span data-assigned={assigned ? "true" : "false"}>{adviser}</span></td>
-            <td className="lead-directory__last-activity" data-label="Dernier traitement"><LeadDate value={lastTreatmentAt} empty={apiString(item, "treatmentState") === "NONE" ? "Aucun traitement connu" : "Date de traitement inconnue"} />{item.hasUndatedHistory === true && lastTreatmentAt ? <small>Historique également non daté</small> : null}</td>
+            <td className="lead-directory__last-activity" data-label="Dernier traitement"><LeadDate value={lastTreatmentAt} empty={apiString(item, "treatmentState") === "NONE" ? "Aucun traitement connu" : "Date de traitement inconnue"} />{item.hasUndatedHistory === true && lastTreatmentAt ? <small>Historique également non daté</small> : null}<FirstTreatmentIndicator lead={item} /></td>
             {!followUp ? <td className="lead-directory__next-action" data-label="Prochaine action"><LeadDate value={nextActionAt} empty="Non planifiée" />{item.hasActiveNextAction === false && ["CONTACTED", "QUALIFIED"].includes(apiString(item, "status")) ? <small>Prochaine action à planifier</small> : null}</td> : null}
             <td className="lead-directory__action" data-label="Action">{id ? <Link href={`/leads/${encodeURIComponent(id)}`} aria-label={`Ouvrir la fiche ${code}`}><span>Voir</span><ArrowRight size={16} weight="bold" aria-hidden="true" /></Link> : "—"}</td>
           </tr>;

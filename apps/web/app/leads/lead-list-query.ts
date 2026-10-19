@@ -4,6 +4,7 @@ export const leadWorkViews = [
   ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["TO_CONTACT", "À contacter"], ["FOLLOW_UP", "À relancer"],
   ["UNASSIGNED", "Non affectés"], ["NO_ACTIVITY", "Sans activité"], ["CLOSED", "Clôturés"],
   ["NEXT_ACTION_MISSING", "Prochaine action à planifier"],
+  ["FIRST_TREATMENT_OVERDUE", "Premier traitement >24 h"],
 ] as const;
 
 export const leadProvenanceViews = [
