@@ -21,7 +21,7 @@ export function treatmentSummary(activities: readonly LeadActivityRecord[], hist
     const evidence = correction?.replacement ? { ...correction.replacement, ...(activity.note ? { note: activity.note } : {}) } : activity;
     if (isCommercialContact(evidence) || evidence.type === "STATUS_CHANGED") dates.push(activity.occurredAt);
   }
-  dates.sort();
+  dates.sort((first, second) => Date.parse(first) - Date.parse(second));
   const lastTreatmentAt = dates.at(-1);
   const hasUndatedHistory = history.some((note) => note.occurredAt === null);
   return { ...(lastTreatmentAt ? { lastTreatmentAt } : {}), hasUndatedHistory,

@@ -25,6 +25,14 @@ test("compensation never replaces original business date with a recent correctio
   assert.equal(treatmentSummary([original, { ...correction, correction: { ...correction.correction!, operation: "CANCEL" } }], []).treatmentState, "NONE");
 });
 
+test("last treatment compares instants rather than the spelling of timezone offsets", () => {
+  const latest = "2026-01-01T23:30:00-02:00";
+  const earlier = "2026-01-02T00:00:00.000Z";
+  assert.equal(treatmentSummary([], [{ occurredAt: latest }, { occurredAt: earlier }]).lastTreatmentAt, latest);
+  assert.equal(treatmentSummary([activity("latest", "COMMENT", latest), activity("earlier", "COMMENT", earlier)], []).lastTreatmentAt, latest);
+  assert.equal(treatmentDay(latest), "2026-01-02");
+});
+
 test("calendar boundaries follow Casablanca and reject impossible days", () => {
   assert.equal(treatmentDay("2026-01-01T23:30:00.000Z"), "2026-01-02");
   assert.equal(validateTreatmentDay("2026-01-02"), "2026-01-02");

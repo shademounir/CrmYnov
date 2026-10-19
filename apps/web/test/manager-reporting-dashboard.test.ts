@@ -203,6 +203,8 @@ test("first-contact backlog links exactly to À contacter while keeping cutoff a
   assert.ok(document.querySelector('a[href^="/manager/reports/commercial-performance?"]'));
   const earlier = new URL(preserveFilters(`/leads?view=TO_CONTACT&createdBefore=${cutoff}`, new URLSearchParams({ ...filters, to: "2026-10-03T00:00:00.000Z" })), "https://dev.example.invalid");
   assert.equal(earlier.searchParams.get("createdBefore"), "2026-10-03T00:00:00.000Z");
+  const offset = new URL(preserveFilters(`/leads?view=TO_CONTACT&createdBefore=${cutoff}`, new URLSearchParams({ ...filters, to: "2026-10-03T23:30:00-02:00" })), "https://dev.example.invalid");
+  assert.equal(offset.searchParams.get("createdBefore"), cutoff, "the earlier instant wins, not the earlier-looking calendar spelling");
   dom.window.close();
 });
 

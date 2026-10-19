@@ -376,7 +376,7 @@ function preserveFilters(href: string, query: URLSearchParams): string {
   for (const [key, value] of query) {
     if (!reportingFilterKeys.has(key) || (leadDestination && ["period", "view"].includes(key))) continue;
     const target = leadDestination ? filterTarget(key) : key;
-    if (target === "createdBefore" && params.has(target)) params.set(target, [params.get(target)!, value].sort()[0]!);
+    if (target === "createdBefore" && params.has(target)) params.set(target, [params.get(target)!, value].sort((first, second) => Date.parse(first) - Date.parse(second))[0]!);
     else if (!params.has(target)) params.set(target, value);
   }
   if (leadDestination && params.has("createdBefore")) params.delete("createdTo");
