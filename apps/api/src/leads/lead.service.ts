@@ -400,7 +400,13 @@ export class LeadService implements OnModuleInit {
         if (!saved) throw new ConflictException({ code: "lead_activity_receipt_incomplete" });
         return saved as T;
       }
-      if (typeof result === "object" && result !== null && "leadCode" in result) return this.visibleLead(this.leads.get(leadId)!, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;
+      if (typeof result === "object" && result !== null && "leadCode" in result) {
+        const saved = this.leads.get(leadId)!;
+        // Assignment and its cross-instance replay share the persisted Lead shape.
+        // Read-time treatment clocks belong to GET/list, not an assignment receipt.
+        if (operation === "ASSIGN") return { ...saved } as T;
+        return this.visibleLead(saved, { userId: "system", roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: "persistent-adapter" }) as T;
+      }
       if (typeof result === "object" && result !== null && "id" in result) return (this.activities.find((item) => item.id === result.id) ?? result) as T;
       return result;
     } catch (error) {
