@@ -312,10 +312,10 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
       <DashboardKpi icon={TrendUp} tone="teal" label="Conversion vers inscription" value={report.panels.funnel.rates?.enrolled ?? null} format="rate" hint="Taux calculé par l’API" />
       <DashboardKpi icon={TrendUp} tone="teal" label="Alertes actives" value={report.cards.activeAlerts} hint="À surveiller" />
     </section>
-    <p><small>Ces liens ouvrent des listes de travail avec les filtres de période et de périmètre conservés. Les Leads non affectés peuvent inclure des statuts terminaux ; la file des Leads à relancer n’est pas le compteur de relances ; la file sans activité est distincte du seuil de première interaction.</small></p>
+    <p><small>Ces liens ouvrent des listes de travail avec les filtres de période et de périmètre conservés. La file non affectée exclut les dossiers clôturés ; les relances distinguent actions et dossiers ; l’absence d’activité technique ne prouve pas l’absence de traitement commercial.</small></p>
     <section className="quick-queues" aria-label="Files rapides">
       <ToContactCard report={report} />
-      <Link className="queue-item" href={preserveFilters(report.drillDowns.find((item) => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED", query)}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Leads actifs non affectés<strong>{displayCount(report.cards.unassigned)}</strong><small>La file ouverte inclut aussi les statuts clos.</small></span></Link>
+      <Link className="queue-item" href={unassignedDashboardHref(report, query)}><span className="icon-disc small neutral"><UserPlus size={20} /></span><span>Leads actifs non affectés<strong>{displayCount(report.cards.unassigned)}</strong><small>Dossiers ouverts uniquement, avec la même cohorte.</small></span></Link>
       <Link className="queue-item" href={followUpsHref}><span className="icon-disc small amber"><Alarm size={20} /></span><span>Relances en retard<strong>{displayCount(report.cards.overdueFollowUps)}</strong><small>Actions en retard et dossiers distincts dans la même file filtrée.</small></span></Link>
       <FirstTreatmentCard report={report} />
       <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
@@ -327,7 +327,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
       <section className="panel activity-panel"><div className="panel-heading"><div><h2>Points d’attention</h2><p>Signaux agrégés — pas un historique d’activités</p></div></div><DashboardAttentionList alerts={report.panels.operationalRisks.alerts} sourceQualityAvailability={report.panels.operationalRisks.sourceQualityAvailability} /></section>
     </div>
     <details className="reporting-details"><summary>Analyses détaillées et tableaux accessibles</summary>
-    <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
+    <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={item.key === "unassigned" ? unassignedDashboardHref(report, query) : preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
     {query.has("status") && query.get("status") !== "ENROLLED" && <p>Le lien Inscriptions explore le statut Inscrit en remplaçant le filtre de statut ; ce n’est pas la même cohorte que celle actuellement affichée.</p>}
     <AccessibleChart title="Funnel commercial" data={funnel} showTable={showTables} />
     <AccessibleTrend data={report.trends} showTable={showTables} />
@@ -344,6 +344,14 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
 }
 
 type OperationalAlert = DashboardReport["panels"]["operationalRisks"]["alerts"][number];
+function unassignedDashboardHref(report: DashboardReport, query: URLSearchParams): string {
+  const href = preserveFilters(report.drillDowns.find(item => item.key === "unassigned")?.href ?? "/leads?view=UNASSIGNED&portfolioState=OPEN", query);
+  if (href === "#") return href;
+  const target = new URL(href, "https://report.invalid");
+  if (target.pathname !== "/leads" || target.searchParams.get("view") !== "UNASSIGNED") return "#";
+  target.searchParams.set("portfolioState", "OPEN");
+  return `${target.pathname}?${target.searchParams}`;
+}
 function operationalAlertHref(alert: OperationalAlert, query: URLSearchParams): string {
   if (alert.code === "load_gap" || alert.code === "reassignment_decision_pending" || alert.code.startsWith("source_quality:") || alert.drillDownAvailability === "UNAVAILABLE" || alert.drillDownAvailability === "INLINE_COMPARISON") return "#";
   return preserveFilters(alert.drillDown, query);
@@ -373,7 +381,7 @@ function operationalAlertLinkLabel(alert: OperationalAlert): string {
   if (alert.drillDown.startsWith("/manager/reports/commercial-work?")) return "Ouvrir les actions et dossiers de cette file";
   if (alert.code === "follow_up_overdue") return "Ouvrir la file distincte des Leads à relancer";
   if (alert.code === "first_interaction_overdue") return "Ouvrir les Prospects à contacter en retard";
-  if (alert.code === "unassigned_leads") return "Ouvrir la file non affectée (statuts clos inclus)";
+  if (alert.code === "unassigned_leads") return "Ouvrir les dossiers ouverts non affectés";
   return "Ouvrir";
 }
 

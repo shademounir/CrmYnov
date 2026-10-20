@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Principal } from "../src/auth/auth.types.js";
 import { AuditService } from "../src/audit/audit.service.js";
-import type { LeadService } from "../src/leads/lead.service.js";
+import { LeadService } from "../src/leads/lead.service.js";
 import type { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
 import type { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
 import { ManagerDashboardController, PersonalDashboardController } from "../src/reporting/manager-dashboard.controller.js";
@@ -91,6 +91,28 @@ test("serializes reporting filters and channels deterministically without mutati
   assert.equal(reportingSearchParams(query).toString(), "adviserId=adviser-synthetic&campus=campus-a&period=30d&source=WEB_FORM");
   assert.deepEqual(query, { source: "WEB_FORM", period: "30d", campus: "campus-a", adviserId: "adviser-synthetic" });
   assert.deepEqual(["PHONE_CALL", "PHYSICAL_VISIT", "WEB_FORM", "PARTNER", "UNKNOWN"].map(sourceChannel), ["PHONE", "IN_PERSON", "DIGITAL", "PARTNER", "OTHER"]);
+});
+
+test("Manager unassigned card drills into only OPEN dossiers of the same creation cohort and fence, including observed zero", () => {
+  const audit = new AuditService(), leads = new LeadService(audit);
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "campus-a", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", educationLevel: "BAC", createdAt: "2026-10-01T12:00:00.000Z" };
+  for (const [id, status] of [["open", "PROSPECT"], ["closed", "CLOSED_LOST"], ["enrolled", "ENROLLED"]] as const) leads.registerLocalLead({ ...base, id, leadCode: id, status });
+  leads.registerLocalLead({ ...base, id: "other-source", leadCode: "OTHER", source: "TEST" });
+  leads.registerLocalLead({ ...base, id: "foreign", leadCode: "FOREIGN", campus: "campus-b" });
+  const service = new ManagerDashboardService(
+    dependency<CommercialFunnelService>("funnel", { cohort: { totalUniqueLeads: 3 }, currentState: { QUALIFIED: 0 }, attainment: { enrolled: 1 }, rates: { enrolled: 0.3333 }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 1, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}), leads, audit,
+  );
+  const report = service.read({ period: "custom", from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "campus-a", campaign: "COHORT", source: "WEB_FORM", channel: "DIGITAL", treatmentState: "NONE" }, manager, "unassigned-fixture", new Date("2026-10-20T12:00:00.000Z"));
+  const link = report.drillDowns.find(item => item.key === "unassigned")!;
+  const params = Object.fromEntries(new URL(link.href, "https://fixture.invalid").searchParams);
+  assert.equal(params.portfolioState, "OPEN"); assert.equal(params.createdBefore, report.filters.to); assert.equal(params.treatmentState, "NONE");
+  const list = leads.listLeads({ ...params, page: 1, pageSize: 25 }, manager, "fixture-list");
+  assert.equal(list.total, report.cards.unassigned); assert.deepEqual(list.items.map(item => item.id), ["open"]);
+  const closedOnly = leads.listLeads({ ...params, status: "ENROLLED", page: 1, pageSize: 25 }, manager, "fixture-zero");
+  assert.equal(closedOnly.total, 0); assert.deepEqual(closedOnly.items, []);
 });
 
 test("personal dashboard exposes only authenticated adviser aggregates", () => {

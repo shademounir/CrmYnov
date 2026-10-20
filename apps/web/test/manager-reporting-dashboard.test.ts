@@ -695,6 +695,11 @@ test("Manager fetch uses capabilities and qualified aggregate data rather than a
   const href = view.host.querySelector<HTMLAnchorElement>(".quick-queues a")!.href;
   assert.equal(new URL(href).searchParams.get("source"), "QUALIFIED_SOURCE");
   assert.equal(new URL(href).searchParams.get("createdBefore"), scoped.filters.to);
+  assert.equal(new URL(href).searchParams.get("portfolioState"), "OPEN", "legacy producer links cannot include closed dossiers behind an active counter");
+  const allUnassigned = [...view.host.querySelectorAll<HTMLAnchorElement>('a[href*="view=UNASSIGNED"]')];
+  assert.ok(allUnassigned.length >= 2);
+  for (const anchor of allUnassigned) assert.equal(new URL(anchor.href).searchParams.get("portfolioState"), "OPEN");
+  assert.doesNotMatch(view.host.querySelector(".quick-queues")?.textContent ?? "", /inclut aussi les statuts clos/u);
 });
 
 for (const value of [0, null] as const) {
