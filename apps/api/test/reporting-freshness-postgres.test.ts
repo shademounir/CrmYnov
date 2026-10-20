@@ -203,7 +203,20 @@ test("CRMY-162 real PostgreSQL dashboard freshness, cohort parity and live autho
       assert.equal(actual.status, 200); assert.equal(actual.body.definitionVersion, expected.body.definitionVersion);
       assert.deepEqual(actual.body.cards, expected.body.cards);
       assert.deepEqual(actual.body.panels.operationalRisks.queues, expected.body.panels.operationalRisks.queues);
-      assert.deepEqual(actual.body.panels.performance.advisers, expected.body.panels.performance.advisers);
+      // Separate HTTP reads freeze their own cutoff. Validate each exact cutoff
+      // before comparing every other count, identity, scope and link parameter.
+      const comparableAdvisers = (report: ManagerDashboardReport): ManagerDashboardReport["panels"]["performance"]["advisers"] => {
+        const performance = report.panels.performance;
+        const cutoff = new Date(Date.parse(performance.generatedAt) - performance.cohort.inactivityHours * 3_600_000).toISOString();
+        return performance.advisers.map(adviser => {
+          const inactive = new URL(adviser.drillDown.inactive, "https://synthetic.invalid");
+          assert.equal(inactive.pathname, "/leads"); assert.equal(inactive.searchParams.get("inactiveTreatmentBefore"), cutoff);
+          assert.equal(inactive.searchParams.get("portfolioState"), "OPEN");
+          inactive.searchParams.delete("inactiveTreatmentBefore");
+          return { ...adviser, drillDown: { ...adviser.drillDown, inactive: `${inactive.pathname}?${inactive.searchParams}` } };
+        });
+      };
+      assert.deepEqual(comparableAdvisers(actual.body), comparableAdvisers(expected.body));
       assert.equal(actual.body.cards.uniqueLeads, 2); assert.equal(actual.body.cards.overdueFollowUps, 2);
       assert.equal(actual.body.panels.operationalRisks.queues.pendingClosures, 2); assert.equal(actual.body.panels.operationalRisks.queues.pendingReassignments, 1);
       assert.equal((await shell()).body.canViewPilotageDashboard, true);
