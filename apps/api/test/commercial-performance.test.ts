@@ -15,11 +15,63 @@ import type { ClosureService } from "../src/closure/closure.service.js";
 import type { FollowUpRecord } from "../src/follow-up/follow-up.service.js";
 import type { LeadRecord } from "../src/leads/lead.service.js";
 import type { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
+import { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
+import { portfolioReportPaths, portfolioReportSchemas, portfolioReportParameters } from "../src/reporting/portfolio-reports.openapi.js";
+import { firstTreatmentSchemas } from "../src/leads/first-treatment.openapi.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviserA: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-a" };
 const adviserB: Principal = { userId: "adviser-b", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-b" };
 const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify(error).includes(code);
+
+interface ReadSchema { $ref?: string; type?: string; nullable?: boolean; minimum?: number; maximum?: number; enum?: readonly unknown[]; required?: readonly string[]; properties?: Record<string, ReadSchema>; items?: ReadSchema; allOf?: readonly ReadSchema[]; additionalProperties?: boolean }
+function assertReadSchema(value: unknown, schema: ReadSchema, at = "report"): void {
+  const registry: Record<string, ReadSchema> = { ...portfolioReportSchemas, ...firstTreatmentSchemas } as unknown as Record<string, ReadSchema>;
+  if (schema.$ref) { const resolved = registry[schema.$ref.split("/").at(-1)!]; assert.ok(resolved, `Unresolved ref ${schema.$ref}`); assertReadSchema(value, resolved, at); return; }
+  for (const part of schema.allOf ?? []) assertReadSchema(value, part, at);
+  if (value === null && schema.nullable) return;
+  if (schema.enum) assert.ok(schema.enum.includes(value), `${at}: enum`);
+  if (schema.type === "object") {
+    assert.ok(typeof value === "object" && value !== null && !Array.isArray(value), `${at}: object`);
+    const row = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) assert.ok(Object.hasOwn(row, key), `${at}.${key}: required`);
+    for (const [key, field] of Object.entries(schema.properties ?? {})) if (Object.hasOwn(row, key)) assertReadSchema(row[key], field, `${at}.${key}`);
+    if (schema.additionalProperties === false) for (const key of Object.keys(row)) assert.ok(Object.hasOwn(schema.properties ?? {}, key), `${at}.${key}: extra`);
+  } else if (schema.type === "array") {
+    assert.ok(Array.isArray(value), `${at}: array`); for (const item of value) assertReadSchema(item, schema.items ?? {}, `${at}[]`);
+  } else if (schema.type === "integer" || schema.type === "number") {
+    assert.ok(typeof value === "number" && Number.isFinite(value), `${at}: number`);
+    if (schema.type === "integer") assert.ok(Number.isSafeInteger(value), `${at}: integer`);
+    if (schema.minimum !== undefined) assert.ok(value >= schema.minimum, `${at}: minimum`);
+    if (schema.maximum !== undefined) assert.ok(value <= schema.maximum, `${at}: maximum`);
+  } else if (schema.type === "string") assert.equal(typeof value, "string", at);
+}
+
+test("published portfolio OpenAPI matches nonempty and empty native projections without conflating portfolio and task ownership", () => {
+  const { service, leads, audit } = setup(), now = new Date("2026-10-20T12:00:00.000Z");
+  leads.registerLocalLead({ id: "contract-enrolled", leadCode: "CONTRACT", firstName: "Synthetic", lastName: "Contract", campus: "SYNTHETIC", campaign: "CONTRACT", program: "TEST", educationLevel: "BAC", source: "WEB_FORM", assignedToId: adviserA.userId, status: "ENROLLED" });
+  const funnel = new CommercialFunnelService(leads, audit);
+  for (const source of ["WEB_FORM", "TEST"]) {
+    const query = { source };
+    const performance = service.read(query, manager, "contract-performance", now), pipeline = funnel.read(query, manager, "contract-funnel", now);
+    assertReadSchema(performance, portfolioReportSchemas.CommercialPerformanceReport);
+    assertReadSchema(pipeline, portfolioReportSchemas.CommercialFunnel as unknown as ReadSchema);
+    assert.equal(performance.cohort.uniqueLeadCount, source === "WEB_FORM" ? 1 : 0);
+    assert.equal(pipeline.attainment.enrolled, pipeline.currentState.ENROLLED);
+    if (source === "TEST") assert.equal(pipeline.rates.enrolled, null);
+  }
+  const personal = service.read({ view: "personal", source: "TEST" }, adviserB, "contract-empty-owner", now);
+  assertReadSchema(personal, portfolioReportSchemas.CommercialPerformanceReport);
+  assert.equal(personal.advisers[0]!.rates.enrollment, null);
+  const schema = portfolioReportSchemas.AdviserPerformance;
+  assert.match(schema.properties.followUps.description, /persisted task OWNER.*after Lead reassignment/);
+  assert.match(schema.properties.inactiveLeadCount.description, /strictly before.*Unknown\/mixed/);
+  assert.equal(schema.properties.rates.properties.enrollment!.nullable, true);
+  assert.equal(new Set(portfolioReportParameters.map(item => item.name)).size, portfolioReportParameters.length);
+  assert.equal(portfolioReportPaths["/reports/commercial-performance"].get.parameters.some(item => item.name === "inactivityHours"), true);
+  assert.deepEqual(portfolioReportPaths["/reports/commercial-funnel"].get.security, [{ bearerAuth: [] }]);
+  assert.throws(() => assertReadSchema({ ...personal, advisers: [{ ...personal.advisers[0], rates: { ...personal.advisers[0]!.rates, enrollment: 2 } }] }, portfolioReportSchemas.CommercialPerformanceReport));
+});
 test("primary and old-treatment drilldowns retain the exact involved cohort, frozen cutoff and permission fence", async () => {
   const audit = new AuditService(), now = new Date("2026-10-20T12:00:00.000Z");
   const row = (id: string, extra: Partial<LeadRecord> = {}): LeadRecord => ({ id, leadCode: `SYN-${id}`, firstName: "Synthetic", lastName: "Fixture", status: "CONTACTED", campus: "CASABLANCA", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z", lastActivityAt: now.toISOString(), assignedToId: adviserA.userId, collaboratorIds: [adviserB.userId], ...extra });

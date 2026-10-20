@@ -21,6 +21,7 @@ import { manualInteractionSchema, followUpDecisionSchema } from "./follow-up/nex
 import { firstTreatmentSchemas, treatmentListParameters } from "./leads/first-treatment.openapi.js";
 import { commercialWorkPaths } from "./reporting/commercial-work.openapi.js";
 import { operationalRiskPaths, operationalRiskSchemas } from "./reporting/operational-risk.openapi.js";
+import { portfolioReportPaths, portfolioReportSchemas } from "./reporting/portfolio-reports.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -37,7 +38,7 @@ export function configureApplication(app: INestApplication): void {
   const openApi = {
     openapi: "3.0.3",
     info: { title: "CRM Admissions API", version: "0.1.0" },
-    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } }, schemas: { ...bootstrapImportSchemas, ...cutoverSchemas, ...firstTreatmentSchemas, ...operationalRiskSchemas } },
+    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } }, schemas: { ...bootstrapImportSchemas, ...cutoverSchemas, ...firstTreatmentSchemas, ...operationalRiskSchemas, ...portfolioReportSchemas } },
     paths: {
       ...sheetImportPaths,
       ...referencePaths,
@@ -50,6 +51,7 @@ export function configureApplication(app: INestApplication): void {
       ...dashboardCapabilityPaths,
       ...commercialWorkPaths,
       ...operationalRiskPaths,
+      ...portfolioReportPaths,
       ...bootstrapImportPaths,
       ...cutoverPaths,
       "/health": {

@@ -61,6 +61,13 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   let secondClosed = false;
   t.after(async () => { await first.close(); if (!secondClosed) await second.close(); });
   const base = (value: number): string => `http://127.0.0.1:${value}`;
+  const docsResponse = await fetch(`${base(firstPort)}/docs-json`); assert.equal(docsResponse.status, 200);
+  const docs = await docsResponse.json() as { paths: Record<string, { get: { responses: Record<string, { content?: Record<string, { schema: { $ref: string } }> }> } }>; components: { schemas: Record<string, { properties: Record<string, unknown> }> } };
+  for (const [route, schema] of [["commercial-performance", "CommercialPerformanceReport"], ["commercial-funnel", "CommercialFunnel"]]) {
+    assert.equal(docs.paths[`/reports/${route}`]!.get.responses["200"]!.content!["application/json"]!.schema.$ref, `#/components/schemas/${schema}`);
+    assert.ok(docs.components.schemas[schema!]!.properties.generatedAt);
+  }
+  assert.ok(docs.components.schemas.AdviserPerformance!.properties.followUps);
   const login = await fetch(`${base(firstPort)}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
   assert.equal(login.status, 201);
   const { token } = await login.json() as { token: string };
