@@ -962,6 +962,11 @@ input, select, textarea { color: var(--onyx); }
 .dashboard-page .quick-queues .queue-item { min-height: 96px; padding: 12px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: start; border-right: 0; border-bottom: 1px solid var(--border); }
 .dashboard-page .queue-item > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
 .dashboard-page .queue-item small { white-space: normal; }
+/* Operational-risk explanations can be longer than their desktop column or
+   mobile card. Keep the full explanation readable without page overflow. */
+.dashboard-page .priority-panel { height: auto; }
+.dashboard-page .priority-table .table-row { min-width: 0; }
+.dashboard-page .priority-table .table-row small { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
 .dashboard-page .ui-page-header { display: flex; flex-wrap: wrap; align-items: flex-start; }
 .dashboard-page .ui-page-header > div:first-child { min-width: 0; flex: 1 1 18rem; }
 .dashboard-page .ui-page-header__actions { width: auto; max-width: 100%; flex-wrap: wrap; }

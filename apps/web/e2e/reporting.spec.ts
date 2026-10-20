@@ -99,6 +99,44 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   expect(consoleErrors).toEqual([]);
 });
 
+test("long operational-risk explanations fit the priority panel at five widths", async ({ page }) => {
+  await mockReporting(page);
+  const alerts = [
+    { code: "closure_decision_pending", count: 4, drillDown: "/manager/reports/commercial-work?queue=PENDING_CLOSURE" },
+    { code: "first_interaction_overdue", count: 9, drillDown: "/leads?view=FIRST_TREATMENT_OVERDUE" },
+    { code: "follow_up_overdue", count: 1, drillDown: "/manager/reports/commercial-work?queue=OVERDUE_FOLLOW_UP" },
+    { code: "load_gap", count: 601, drillDown: "/manager/reports/commercial-performance", loadComparison: { minimum: 37, maximum: 638, adviserCount: 5, population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" } },
+  ];
+  await page.route("**/api/crm/reports/manager-dashboard?*", (route) => route.fulfill({ json: {
+    ...managerReport, cards: { ...managerReport.cards, activeAlerts: alerts.length },
+    panels: { ...managerReport.panels, operationalRisks: { ...managerReport.panels.operationalRisks, alerts } },
+  } }));
+  await page.goto("/manager/reports/dashboard?period=7d&campus=campus-a");
+  const panel = page.locator(".priority-panel");
+  await expect(panel.locator("article.table-row")).toHaveCount(4);
+  await expect(panel).toContainText("Prospects à contacter reçus depuis strictement plus de 24 heures consécutives sans traitement commercial connu");
+  for (const width of [1440, 1280, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width <= 768) await expect(page.locator("#crm-sidebar")).not.toBeVisible();
+    const layout = await panel.evaluate((element) => ({
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+      panelBottom: element.getBoundingClientRect().bottom,
+      nextTop: document.querySelector(".dashboard-secondary-grid")?.getBoundingClientRect().top,
+      panelOverflow: element.scrollHeight > element.clientHeight + 1,
+      overflowing: [...element.querySelectorAll(".table-row,.table-row small")].filter((item) => {
+        const bounds = item.getBoundingClientRect();
+        return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1 || item.scrollWidth > item.clientWidth + 1 || item.scrollHeight > item.clientHeight + 1;
+      }).map((item) => item.textContent),
+    }));
+    expect(layout.documentWidth, `Priority document at ${width}px`).toBeLessThanOrEqual(layout.viewportWidth + 1);
+    expect(layout.overflowing, `Full explanations at ${width}px`).toEqual([]);
+    expect(layout.panelOverflow, `Priority panel content at ${width}px`).toBe(false);
+    expect(layout.nextTop, "the following dashboard section is rendered").toBeDefined();
+    expect(layout.panelBottom, `No overlap with the next section at ${width}px`).toBeLessThanOrEqual(layout.nextTop! + 1);
+  }
+});
+
 test("personal scope, empty and error states fail closed", async ({ page }) => {
   await mockReporting(page); await page.goto("/manager/reports/dashboard?view=personal&period=30d"); await expect(page.getByRole("heading", { name: "Mes indicateurs autorisés" })).toBeVisible();
   await expect(page.getByText("Cette vue est limitée au collaborateur connecté")).toBeVisible();
