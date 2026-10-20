@@ -8,6 +8,9 @@ import { LeadService, type LeadReportingRow } from "../leads/lead.service.js";
 import { matchesInteractiveFilters, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
 import { acquisitionPartition, isBaseline, type AcquisitionPartition } from "./acquisition-cohort.js";
+import { projectCommercialWork } from "./commercial-work.js";
+import { commercialWorkHref, portfolioLeadHref } from "./commercial-work-query.js";
+import { isTreatmentInactive } from "../leads/lead-treatment.js";
 
 export const COMMERCIAL_PERFORMANCE_VERSION = "commercial-performance-v1";
 export const COMMERCIAL_PERFORMANCE_TIMEZONE = "Africa/Casablanca";
@@ -23,7 +26,7 @@ export interface AdviserPerformance {
   statusVolumes: { contacted: number; qualified: number; enrolled: number; closedLost: number };
   rates: { contact: number | null; qualification: number | null; enrollment: number | null; loss: number | null };
   medianMinutes: { firstHandling: number | null; contactToQualification: number | null; qualificationToEnrollment: number | null };
-  followUps: { planned: number; completed: number; overdue: number; cancelled: number };
+  followUps: { planned: number; completed: number; overdue: number; cancelled: number; active: number; dueNow: number; invalidDeadline: number };
   inactiveLeadCount: number;
   activeLoad: number;
   reassignments: { requested: number; approved: number; rejected: number };
@@ -58,18 +61,19 @@ export class CommercialPerformanceService {
       throw new BadRequestException({ code: "performance_inactivity_threshold_invalid" });
     }
     const normalized = { ...query, ...(from ? { from } : {}), ...(to ? { to } : {}), ...(query.view === "personal" ? { adviserId: principal.userId } : {}) };
-    const rows = this.leads.reportingSnapshot(principal).filter((lead) => matchesInteractiveFilters(lead, normalized));
+    const rows = this.leads.reportingSnapshot(principal, now).filter((lead) => matchesInteractiveFilters(lead, normalized));
     const unique = new Map(rows.map((row) => [row.id, row]));
     const cohort = [...unique.values()];
     const adviserOnly = query.view === "personal" || !hasPilotageReportingScope(principal) && principal.roles.includes("ADMISSIONS")
       && !principal.roles.some((role) => role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN");
     const adviserIds = new Set<string>();
+    const followUps = this.followUps.reportingSnapshot(principal).filter((task) => unique.has(task.leadId));
     for (const lead of cohort) {
       if (lead.assignedToId) adviserIds.add(lead.assignedToId);
       for (const collaboratorId of lead.collaboratorIds) adviserIds.add(collaboratorId);
     }
+    for (const task of followUps) adviserIds.add(task.ownerId);
     if (adviserOnly) { adviserIds.clear(); adviserIds.add(principal.userId); }
-    const followUps = this.followUps.reportingSnapshot(principal);
     const reassignments = this.reassignments.reportingSnapshot(principal);
     const inactiveBefore = new Date(now.valueOf() - inactivityHours * 3_600_000).toISOString();
     const advisers = [...adviserIds].sort((left, right) => left.localeCompare(right, "en")).map((adviserId) => {
@@ -80,6 +84,7 @@ export class CommercialPerformanceService {
       const enrolled = primary.filter((lead) => this.reached(lead, "ENROLLED")).length;
       const closedLost = primary.filter((lead) => lead.status === "CLOSED_LOST").length;
       const adviserFollowUps = followUps.filter((item) => item.ownerId === adviserId && unique.has(item.leadId));
+      const taskWork = projectCommercialWork(cohort, adviserFollowUps, [], now).actions;
       const adviserReassignments = reassignments.filter((item) => item.requestedBy === adviserId && unique.has(item.leadId));
       const rate = (value: number): number | null => primary.length === 0 ? null : Number((value / primary.length).toFixed(4));
       const adviserLabel = primary.find((lead) => lead.assignedToLabel)?.assignedToLabel;
@@ -94,12 +99,10 @@ export class CommercialPerformanceService {
           qualificationToEnrollment: this.median(primary.map((lead) => this.stageDelay(lead, "QUALIFIED", "ENROLLED")).filter((value): value is number => value !== undefined)),
         },
         followUps: {
-          planned: adviserFollowUps.filter((item) => item.state === "SCHEDULED" && item.dueAt > now.toISOString()).length,
-          completed: adviserFollowUps.filter((item) => item.state === "COMPLETED").length,
-          overdue: adviserFollowUps.filter((item) => (item.state === "SCHEDULED" || item.state === "DUE") && item.dueAt <= now.toISOString()).length,
-          cancelled: adviserFollowUps.filter((item) => item.state === "CANCELLED").length,
+          planned: taskWork.future, completed: taskWork.completed, overdue: taskWork.overdue, cancelled: taskWork.cancelled,
+          active: taskWork.active, dueNow: taskWork.dueNow, invalidDeadline: taskWork.invalidDeadline,
         },
-        inactiveLeadCount: primary.filter((lead) => !lead.lastActivityAt || lead.lastActivityAt < inactiveBefore).length,
+        inactiveLeadCount: primary.filter((lead) => isTreatmentInactive(lead, inactiveBefore)).length,
         activeLoad: primary.filter((lead) => lead.status !== "ENROLLED" && lead.status !== "CLOSED_LOST").length,
         reassignments: {
           requested: adviserReassignments.length,
@@ -107,9 +110,9 @@ export class CommercialPerformanceService {
           rejected: adviserReassignments.filter((item) => item.status === "REJECTED").length,
         },
         drillDown: {
-          assigned: this.adviserHref(adviserId, primary, undefined),
-          overdue: this.adviserHref(adviserId, primary, "FOLLOW_UP"),
-          inactive: this.adviserHref(adviserId, primary, "NO_ACTIVITY"),
+          assigned: this.adviserHref(adviserId, primary, normalized),
+          overdue: commercialWorkHref(normalized, "OVERDUE_FOLLOW_UP", "INVOLVED", adviserId),
+          inactive: this.adviserHref(adviserId, primary, normalized, inactiveBefore),
         },
       } satisfies AdviserPerformance;
     });
@@ -117,6 +120,8 @@ export class CommercialPerformanceService {
       definitionVersion: COMMERCIAL_PERFORMANCE_VERSION, timezone: COMMERCIAL_PERFORMANCE_TIMEZONE,
       generatedAt: now.toISOString(), cohort: { ...(from ? { from } : {}), ...(to ? { to } : {}), inactivityHours, uniqueLeadCount: cohort.length }, advisers, acquisition: acquisitionPartition(cohort),
       definitions: [
+        { key: "inactiveLeadCount", numerator: "distinct OPEN primary leads with entirely dated known business treatment strictly before generatedAt minus inactivityHours", denominator: "selected primary portfolio, not a never-treated rate", inclusions: ["same pure predicate as inactiveTreatmentBefore Lead filter", "frozen canonical UTC cutoff", "source/campus/status/creation/treatment/involved-adviser cohort preserved"], exclusions: ["never-treated dossiers", "known undated or mixed history", "terminal dossiers", "technical lastActivityAt", "equality at threshold"] },
+        { key: "followUps", numerator: "visible task states by persisted task OWNER within this authorized Lead-created cohort; not current primary adviser", denominator: "not a Lead rate; active = future + due-now + strictly overdue + invalid deadline", inclusions: ["same commercial work projection and scoped drilldown", "current task owner, even after Lead reassignment", "completed distinct from cancelled"], exclusions: ["active tasks on final Leads", "dueAt equality from overdue", "work performed today inferred from creation cohort"] },
         { key: "contactRate", numerator: "distinct primary leads that reached CONTACTED or beyond", denominator: "distinct primary leads", inclusions: ["CONTACTED", "QUALIFIED", "ENROLLED", "CLOSED_LOST after contact"], exclusions: ["secondary contributions", "unassigned leads"] },
         { key: "qualificationRate", numerator: "distinct primary leads that reached QUALIFIED or ENROLLED", denominator: "distinct primary leads", inclusions: ["QUALIFIED", "ENROLLED"], exclusions: ["secondary contributions"] },
         { key: "enrollmentRate", numerator: "distinct primary leads that reached ENROLLED", denominator: "distinct primary leads", inclusions: ["ENROLLED"], exclusions: ["secondary contributions"] },
@@ -134,12 +139,12 @@ export class CommercialPerformanceService {
     return report;
   }
 
-  private adviserHref(adviserId: string, rows: readonly LeadReportingRow[], view: "FOLLOW_UP" | "NO_ACTIVITY" | undefined): string {
-    const params = new URLSearchParams({ assignedToId: adviserId });
+  private adviserHref(adviserId: string, rows: readonly LeadReportingRow[], query: InteractiveReportingQuery, inactiveBefore?: string): string {
+    const refinements: Record<string, string> = { assignedToId: adviserId };
     const label = rows.find((lead) => lead.assignedToLabel)?.assignedToLabel;
-    if (label) params.set("assignedToLabel", label);
-    if (view) params.set("view", view);
-    return `/leads?${params.toString()}`;
+    if (label) refinements.assignedToLabel = label;
+    if (inactiveBefore) { refinements.inactiveTreatmentBefore = inactiveBefore; refinements.portfolioState = "OPEN"; }
+    return portfolioLeadHref(query, refinements);
   }
 
   private reached(lead: LeadReportingRow, stage: "CONTACTED" | "QUALIFIED" | "ENROLLED"): boolean {

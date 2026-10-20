@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Principal } from "../src/auth/auth.types.js";
 import { AuditService } from "../src/audit/audit.service.js";
-import type { LeadService } from "../src/leads/lead.service.js";
-import type { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
+import { LeadService } from "../src/leads/lead.service.js";
+import { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
 import type { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
 import { ManagerDashboardController, PersonalDashboardController } from "../src/reporting/manager-dashboard.controller.js";
 import { ManagerDashboardService } from "../src/reporting/manager-dashboard.service.js";
@@ -46,6 +46,10 @@ test("consolidates versioned reports with common filters and explicit safeguards
   assert.equal(csv.includes('rate,enrolledConversionRatio,"0.5",'), true);
   assert.equal(csv.includes("distribution,source,\"'=FORMULA\",1"), true);
   assert.equal(result.drillDowns.every((item) => item.href.includes("returnTo=")), true);
+  const workLink = new URL(result.drillDowns.find((item) => item.key === "overdueFollowUps")!.href, "https://example.invalid");
+  assert.equal(workLink.pathname, "/manager/reports/commercial-work");
+  assert.equal(workLink.searchParams.get("adviserScope"), "INVOLVED");
+  assert.equal(workLink.searchParams.get("queue"), "OVERDUE_FOLLOW_UP");
   assert.equal(audit.list().some((event) => event.eventType === "MANAGER_DASHBOARD_VIEWED"), true);
 });
 
@@ -89,6 +93,42 @@ test("serializes reporting filters and channels deterministically without mutati
   assert.deepEqual(["PHONE_CALL", "PHYSICAL_VISIT", "WEB_FORM", "PARTNER", "UNKNOWN"].map(sourceChannel), ["PHONE", "IN_PERSON", "DIGITAL", "PARTNER", "OTHER"]);
 });
 
+test("Manager unassigned card drills into only OPEN dossiers of the same creation cohort and fence, including observed zero", () => {
+  const audit = new AuditService(), leads = new LeadService(audit);
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "campus-a", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", educationLevel: "BAC", createdAt: "2026-10-01T12:00:00.000Z" };
+  for (const [id, status] of [["open", "PROSPECT"], ["closed", "CLOSED_LOST"], ["enrolled", "ENROLLED"]] as const) leads.registerLocalLead({ ...base, id, leadCode: id, status });
+  leads.registerLocalLead({ ...base, id: "other-source", leadCode: "OTHER", source: "TEST" });
+  leads.registerLocalLead({ ...base, id: "foreign", leadCode: "FOREIGN", campus: "campus-b" });
+  const service = new ManagerDashboardService(
+    dependency<CommercialFunnelService>("funnel", { cohort: { totalUniqueLeads: 3 }, currentState: { QUALIFIED: 0 }, attainment: { enrolled: 1 }, rates: { enrolled: 0.3333 }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 1, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}), leads, audit,
+  );
+  const report = service.read({ period: "custom", from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "campus-a", campaign: "COHORT", source: "WEB_FORM", channel: "DIGITAL", treatmentState: "NONE" }, manager, "unassigned-fixture", new Date("2026-10-20T12:00:00.000Z"));
+  const link = report.drillDowns.find(item => item.key === "unassigned")!;
+  const params = Object.fromEntries(new URL(link.href, "https://fixture.invalid").searchParams);
+  assert.equal(params.portfolioState, "OPEN"); assert.equal(params.createdBefore, report.filters.to); assert.equal(params.treatmentState, "NONE");
+  const list = leads.listLeads({ ...params, page: 1, pageSize: 25 }, manager, "fixture-list");
+  assert.equal(list.total, report.cards.unassigned); assert.deepEqual(list.items.map(item => item.id), ["open"]);
+  const closedOnly = leads.listLeads({ ...params, status: "ENROLLED", page: 1, pageSize: 25 }, manager, "fixture-zero");
+  assert.equal(closedOnly.total, 0); assert.deepEqual(closedOnly.items, []);
+  const enrolledService = new ManagerDashboardService(new CommercialFunnelService(leads, audit),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 0, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}), leads, audit);
+  for (const status of [undefined, "ENROLLED", "PROSPECT"] as const) {
+    const selected = enrolledService.read({ ...report.filters, ...(status ? { status } : {}) }, manager, "enrolled-cohort", new Date("2026-10-20T12:00:00.000Z"));
+    const destination = selected.drillDowns.find(item => item.key === "enrolled")!.href;
+    assert.equal(selected.cards.enrolled, status === "PROSPECT" ? 0 : 1);
+    if (status === "PROSPECT") { assert.equal(destination, "#"); continue; }
+    const selectedParams = Object.fromEntries(new URL(destination, "https://fixture.invalid").searchParams);
+    assert.equal(selectedParams.source, "WEB_FORM"); assert.equal(selectedParams.createdBefore, report.filters.to);
+    const selectedList = leads.listLeads({ ...selectedParams, page: 1, pageSize: 25 }, manager, "enrolled-list");
+    assert.equal(selectedList.total, selected.cards.enrolled); assert.deepEqual(selectedList.items.map(item => item.id), ["enrolled"]);
+  }
+});
+
 test("personal dashboard exposes only authenticated adviser aggregates", () => {
   const adviser: Principal = { userId: "adviser-synthetic", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-adviser" };
   const service = new ManagerDashboardService(
@@ -129,4 +169,37 @@ test("API reporting refreshes PostgreSQL-backed state and exposes scoped persist
   assert.equal(csv.includes("kpi,qualifiedCurrentStatus,,0"), true);
   assert.equal(csv.includes('rate,enrolledConversionRatio,"UNAVAILABLE",'), true);
   assert.equal(csv.includes('rate,enrolledConversionRatio,"0",'), false);
+});
+
+test("first-treatment queue uses the shared strict threshold, excludes known history and retains zero-count scoped links", () => {
+  const adviser: Principal = { userId: "adviser-synthetic", roles: ["ADMISSIONS"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], sessionId: "session-adviser" };
+  const createdAt = "2026-10-18T10:00:00.000Z";
+  const common = { createdAt, status: "PROSPECT", campus: "campus-a", assignedToId: adviser.userId, collaboratorIds: [], activities: [] };
+  const rows = [
+    { ...common, id: "untreated", receivedAt: createdAt },
+    { ...common, id: "history", hasUndatedHistory: true, treatmentState: "UNKNOWN_DATE" },
+    { ...common, id: "treated", firstTreatmentAt: "2026-10-18T12:00:00.000Z", treatmentState: "DATED" },
+    { ...common, id: "other-adviser", assignedToId: "another" },
+    { ...common, id: "other-source", source: "PHONE_CALL" },
+  ].map(row => ({ source: "WEB_FORM", ...row }));
+  const service = new ManagerDashboardService(
+    dependency<CommercialFunnelService>("funnel", { cohort: { totalUniqueLeads: 0 }, currentState: { QUALIFIED: 0 }, attainment: { enrolled: 0 }, rates: { enrolled: null }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 0, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}), { reportingSnapshot: () => rows } as unknown as LeadService, new AuditService(),
+  );
+  const filters = { period: "30d", source: "WEB_FORM", campus: "campus-a" };
+  const equal = service.readPersonal(filters, adviser, "sla-equal", new Date("2026-10-19T10:00:00.000Z"));
+  assert.equal(equal.firstTreatmentOverdue.count, 0);
+  const late = service.readPersonal(filters, adviser, "sla-late", new Date("2026-10-19T10:00:00.001Z"));
+  assert.equal(late.firstTreatmentOverdue.count, 1); assert.equal(late.toContact.count, 1);
+  const global = service.read({ ...filters, adviserId: adviser.userId }, manager, "sla-manager", new Date("2026-10-19T10:00:00.001Z"));
+  assert.equal(global.firstTreatmentOverdue.count, late.firstTreatmentOverdue.count);
+  assert.equal(global.firstTreatmentOverdue.thresholdHours, late.firstTreatmentOverdue.thresholdHours);
+  for (const report of [equal, late]) {
+    const params = new URL(report.firstTreatmentOverdue.href, "http://localhost").searchParams;
+    assert.equal(params.get("view"), "FIRST_TREATMENT_OVERDUE"); assert.equal(params.get("adviserId"), adviser.userId);
+    assert.equal(params.get("source"), "WEB_FORM"); assert.equal(params.get("campus"), "campus-a");
+    assert.equal(report.firstTreatmentOverdue.thresholdHours, 24); assert.equal(report.firstTreatmentOverdue.comparison, "STRICTLY_GREATER");
+  }
 });

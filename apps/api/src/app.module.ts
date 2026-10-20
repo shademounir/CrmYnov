@@ -90,6 +90,8 @@ import { CommercialFunnelController } from "./reporting/commercial-funnel.contro
 import { CommercialFunnelService } from "./reporting/commercial-funnel.service.js";
 import { CommercialPerformanceController } from "./reporting/commercial-performance.controller.js";
 import { CommercialPerformanceService } from "./reporting/commercial-performance.service.js";
+import { CommercialWorkController } from "./reporting/commercial-work.controller.js";
+import { CommercialWorkService } from "./reporting/commercial-work.service.js";
 import { OperationalRiskController } from "./reporting/operational-risk.controller.js";
 import { OperationalRiskService } from "./reporting/operational-risk.service.js";
 import { SourceEffectivenessController } from "./reporting/source-effectiveness.controller.js";
@@ -133,7 +135,7 @@ import { createSheetSource } from "./sheet-import/google-sheet-source.js";
 import { resolve } from "node:path";
 
 @Module({
-controllers: [CutoverController, BootstrapHistoricalNotesController, BootstrapImportController, TelephonyOwnController, AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController, DashboardRecentLeadsController, DashboardCapabilitiesController],
+controllers: [CommercialWorkController, CutoverController, BootstrapHistoricalNotesController, BootstrapImportController, TelephonyOwnController, AdmissionsController, SheetImportController, ViewSharingController, DynamicPermissionController, ReferenceController, LeadTagController, HealthController, SessionController, ResourceController, AccessRecoveryController, AuditController, UserController, FirstLoginController, InvitationController, LeadTimelineController, LeadStatusController, LeadQualificationController, LeadController, SavedLeadViewController, QuickLeadController, AssignmentController, LeadAssignmentController, ReassignmentController, AssignmentDashboardController, IngestionController, ImportProfileController, ImportMappingController, ImportReportController, ImportWizardController, ImportReviewController, ForminatorWebhookController, NotificationController, ChatController, BroadcastController, CandidateDocumentController, DocumentVerificationController, TelephonyController, TelephonyProvisioningController, TelephonyAgentController, TelephonyBridgeController, AppointmentController, FollowUpController, ClosureController, LeadCollaborationController, CommercialFunnelController, CommercialPerformanceController, SourceEffectivenessController, OperationalRiskController, SharedContributionController, ManagerDashboardController, PersonalDashboardController, DashboardRecentLeadsController, DashboardCapabilitiesController],
   providers: [
     CutoverService,
     CutoverRuntimeService,
@@ -214,6 +216,7 @@ controllers: [CutoverController, BootstrapHistoricalNotesController, BootstrapIm
     LeadCollaborationService,
     CommercialFunnelService,
     CommercialPerformanceService,
+    CommercialWorkService,
     SourceEffectivenessService,
     OperationalRiskService,
     SharedContributionService,

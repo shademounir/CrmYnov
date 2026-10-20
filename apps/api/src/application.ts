@@ -18,6 +18,10 @@ import { dashboardCapabilityPaths } from "./reporting/dashboard-capabilities.ope
 import { bootstrapImportPaths, bootstrapImportSchemas } from "./bootstrap-import/bootstrap-import.openapi.js";
 import { cutoverPaths, cutoverSchemas } from "./cutover/cutover.openapi.js";
 import { manualInteractionSchema, followUpDecisionSchema } from "./follow-up/next-action.openapi.js";
+import { firstTreatmentSchemas, treatmentListParameters } from "./leads/first-treatment.openapi.js";
+import { commercialWorkPaths } from "./reporting/commercial-work.openapi.js";
+import { operationalRiskPaths, operationalRiskSchemas } from "./reporting/operational-risk.openapi.js";
+import { portfolioReportPaths, portfolioReportSchemas } from "./reporting/portfolio-reports.openapi.js";
 
 export async function createApplication(logLevel: "error" | "warn" | "log" = "error"): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { logger: [logLevel] });
@@ -34,7 +38,7 @@ export function configureApplication(app: INestApplication): void {
   const openApi = {
     openapi: "3.0.3",
     info: { title: "CRM Admissions API", version: "0.1.0" },
-    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } }, schemas: { ...bootstrapImportSchemas, ...cutoverSchemas } },
+    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "opaque session" } }, schemas: { ...bootstrapImportSchemas, ...cutoverSchemas, ...firstTreatmentSchemas, ...operationalRiskSchemas, ...portfolioReportSchemas } },
     paths: {
       ...sheetImportPaths,
       ...referencePaths,
@@ -45,6 +49,9 @@ export function configureApplication(app: INestApplication): void {
       ...admissionsPaths,
       ...ownTelephonyPaths,
       ...dashboardCapabilityPaths,
+      ...commercialWorkPaths,
+      ...operationalRiskPaths,
+      ...portfolioReportPaths,
       ...bootstrapImportPaths,
       ...cutoverPaths,
       "/health": {
@@ -165,10 +172,10 @@ export function configureApplication(app: INestApplication): void {
       },
       "/leads": {
         post: { summary: "Create a normalized lead with an immutable identifier", description: "Accepts a client-stable idempotencyKey so an ambiguous network retry replays the first committed creation. Probable contact matches are reported without silently merging records.", responses: { "201": { description: "Lead created or idempotently replayed, with probable duplicate warnings" }, "400": { description: "Invalid, incomplete or malformed idempotency input" }, "403": { description: "Role or campus scope refused" }, "409": { description: "Idempotency key reused with different content" } } },
-        get: { summary: "Search, filter, sort and paginate operational and saved provenance lead views", responses: { "200": { description: "Filtered leads with deterministic pagination, provenance views and role-based masking" }, "400": { description: "Invalid view, filter, sort or pagination" }, "403": { description: "Role refused" } } },
+        get: { summary: "Search, filter, sort and paginate operational and saved provenance lead views", parameters: treatmentListParameters, responses: { "200": { description: "Filtered leads with deterministic pagination, provenance views and role-based masking", content: { "application/json": { schema: { type: "object", required: ["items", "total", "page", "pageSize"], properties: { items: { type: "array", items: { $ref: "#/components/schemas/LeadTreatmentProjection" } }, total: { type: "integer", minimum: 0 }, page: { type: "integer", minimum: 1 }, pageSize: { type: "integer", minimum: 1 } } } } } }, "400": { description: "Invalid view, filter, sort or pagination" }, "403": { description: "Role refused" } } },
       },
       "/leads/{leadId}": {
-        get: { summary: "Read one authorized lead", responses: { "200": { description: "Lead detail with role-based masking" }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } },
+        get: { summary: "Read one authorized lead", responses: { "200": { description: "Lead detail with role-based masking and server-derived first-treatment projection", content: { "application/json": { schema: { $ref: "#/components/schemas/LeadTreatmentProjection" } } } }, "403": { description: "Role refused" }, "404": { description: "Lead not found" } } },
         patch: { summary: "Correct allowlisted current Lead fields without rewriting provenance or history", description: "Partial update with explicit empty contact clearing, server normalization, optimistic version and idempotency. Contact collisions are refused without identifying or merging the other Lead. The same contract serves the contextual drawer and direct page.", responses: { "200": { description: "Confirmed current Lead values" }, "400": { description: "Field, reference, email or phone invalid" }, "403": { description: "Effective lead.edit permission or campus scope refused" }, "409": { description: "Version, idempotency or contact collision" }, "404": { description: "Lead not found in the authorized scope" } } },
       },
       "/reports/manager-dashboard": { get: { summary: "Read the full pilotage dashboard with effective reporting.view, reporting.pilotage.view and lead.view", responses: { "200": { description: "Versioned KPI, chart, navigation and drill-down aggregates for the server-authorized OWN/TEAM/CAMPUS/GLOBAL cohort" }, "400": { description: "Unknown or invalid filter" }, "403": { description: "Grant, ceiling, campus or reserved global scope refused" } } } },

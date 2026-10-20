@@ -4,6 +4,7 @@ export const leadWorkViews = [
   ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["TO_CONTACT", "À contacter"], ["FOLLOW_UP", "À relancer"],
   ["UNASSIGNED", "Non affectés"], ["NO_ACTIVITY", "Sans activité"], ["CLOSED", "Clôturés"],
   ["NEXT_ACTION_MISSING", "Prochaine action à planifier"],
+  ["FIRST_TREATMENT_OVERDUE", "Premier traitement >24 h"],
 ] as const;
 
 export const leadProvenanceViews = [
@@ -19,6 +20,7 @@ export const leadListFilterLabels: Readonly<Record<string, string>> = {
   channel: "Canal", program: "Formation", campaign: "Campagne", campus: "Campus",
   createdFrom: "Créés à partir du", createdTo: "Créés jusqu’au", createdBefore: "Créés avant le",
   treatmentFrom: "Dernier traitement à partir du", treatmentTo: "Dernier traitement jusqu’au", treatmentState: "Historique de traitement",
+  inactiveTreatmentBefore: "Traitement daté ancien — seuil figé avant", portfolioState: "État du portefeuille",
   assignmentMode: "Mode d’affectation", importBatchId: "Lot d’import", view: "File",
   savedView: "Provenance", sharedViewId: "Vue partagée",
 };
@@ -43,6 +45,7 @@ export function leadListResetHref(current: URLSearchParams): string {
 }
 
 export function leadListFilterValue(key: string, value: string, current?: URLSearchParams): string {
+  if (key === "inactiveTreatmentBefore" && Number.isFinite(Date.parse(value))) return `${new Date(value).toLocaleString("fr-FR", { timeZone: "Africa/Casablanca" })} · Casablanca`;
   const choices: Record<string, string> = {
     ...Object.fromEntries(leadWorkViews), ...Object.fromEntries(leadProvenanceViews),
     IMPORT_ERRORS: "Imports en erreur — indisponibles", PROSPECT: "Prospect", CONTACTED: "Contacté",
@@ -50,6 +53,7 @@ export function leadListFilterValue(key: string, value: string, current?: URLSea
     COLD: "Froid", WARM: "Tiède", HOT: "Chaud", DIGITAL: "Digital", PHONE: "Téléphone",
     IN_PERSON: "Présentiel", PARTNER: "Partenaire", OTHER: "Autre",
     DATED: "Historique daté", UNKNOWN_DATE: "Historique avec date inconnue", NONE: "Aucun traitement connu",
+    OPEN: "Dossiers ouverts", CLOSED: "Dossiers clôturés",
   };
   const labelKey: Readonly<Record<string, string>> = { assignedToId: "assignedToLabel", collaboratorId: "collaboratorLabel", adviserId: "adviserLabel" };
   const label = labelKey[key] ? current?.get(labelKey[key])?.normalize("NFC").trim() : undefined;

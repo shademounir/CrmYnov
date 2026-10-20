@@ -14,6 +14,9 @@ import { OperationalRiskController } from "../src/reporting/operational-risk.con
 import { OperationalRiskService } from "../src/reporting/operational-risk.service.js";
 import { withPilotageReportingScope } from "../src/reporting/reporting-authority.js";
 import { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
+import { CommercialWorkService } from "../src/reporting/commercial-work.service.js";
+import { normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
+import { operationalRiskPaths, operationalRiskSchemas } from "../src/reporting/operational-risk.openapi.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviser: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-adviser" };
@@ -41,15 +44,44 @@ test("reports explicit workload, reactivity, approval and source alerts without 
   closures.request(assigned.id, { target: "CLOSED_LOST", reason: "NOT_INTERESTED", comment: "Motif synthétique", evidence: ["EVIDENCE_SYNTHETIC"] }, adviser, "corr-close");
   reassignments.request(assigned.id, { targetUserId: "adviser-b", reason: "Besoin synthétique", moveOpenTasks: true, idempotencyKey: "reassign_synth_1" }, adviser, "corr-reassign");
   for (let index = 0; index < 3; index += 1) ingestion.ingest({ idempotencyKey: `risk_batch_${index}`, profile: "FORMINATOR_ZAPIER", confirmed: true, assignment: { strategy: "UNASSIGNED" }, records: [{ lineNumber: 1, firstName: "Lead", lastName: "Synthétique", email: `risk-${index}@example.invalid`, campus: "", campaign: "Campagne", educationLevel: "BAC", program: "Programme", source: "WEB_FORM", technicalSystem: "SYNTHETIC", originalSource: "SYNTHETIC", externalId: `risk-${index}` }] }, manager, `corr-risk-${index}`);
-  const report = service.read({ noInteractionHours: "1", capacityWarningPercent: "90", loadGap: "1", sourceRiskPercent: "30", minSourceVolume: "3" }, manager, "corr-report", reportingAt);
+  const report = service.read({ noInteractionHours: "24", capacityWarningPercent: "90", loadGap: "1", sourceRiskPercent: "30", minSourceVolume: "3" }, manager, "corr-report", reportingAt);
   assert.equal(report.queues.unassigned >= 1, true); assert.equal(report.queues.withoutFirstInteraction, 1); // Contacted is not a first-contact backlog.
   assert.equal(report.queues.overdueFollowUps, 1); assert.equal(report.queues.pendingClosures, 1); assert.equal(report.queues.pendingReassignments, 1);
+  const workService = new CommercialWorkService(leads, followUps, closures, audit);
+  for (const alert of report.alerts.filter((item) => ["follow_up_overdue", "closure_decision_pending"].includes(item.code))) {
+    const { queue, adviserScope, ...filters } = Object.fromEntries(new URL(alert.drillDown, "https://example.invalid").searchParams);
+    const work = workService.read(normalizeWorkQuery(filters, manager, reportingAt), { queue, adviserScope }, manager, "fixture-work", reportingAt);
+    const selected = work.queues.find((item) => item.key === work.selectedQueue)!;
+    assert.equal(selected.itemCount, alert.count); assert.equal(work.page.total, selected.leadCount);
+    assert.equal(work.cohort.attribution, "INVOLVED_ADVISER");
+  }
   assert.equal(report.capacity.find((item) => item.adviserId === "adviser-a")?.utilizationPercent, 100);
   assert.equal(report.sourceRisks.find((item) => item.source === "WEB_FORM")?.rate, 100);
   assert.equal(report.alerts.some((item) => item.code === "unassigned_leads"), true);
+  for (const alert of report.alerts.filter(item => item.code.startsWith("source_quality:") || item.code === "reassignment_decision_pending")) {
+    assert.equal(alert.drillDown, "#"); assert.equal(alert.drillDownAvailability, "UNAVAILABLE");
+    assert.equal(alert.unit, alert.code.startsWith("source_quality:") ? "OCCURRENCES" : "REQUESTS");
+  }
   assert.deepEqual(report.safeguards, { disciplinaryScore: false, financialDecision: false });
   const serialized = JSON.stringify(report); assert.equal(serialized.includes("Prénom"), false); assert.equal(serialized.includes("example.invalid"), false);
   const event = audit.list().find((item) => item.eventType === "OPERATIONAL_RISK_VIEWED"); assert.equal(event?.after?.definitionVersion, "operational-risk-v1");
+});
+
+test("load gap compares only current active primary owners of the same authorized cohort, never links a different Lead population", () => {
+  const { leads, service } = setup();
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "BAC", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z" };
+  for (let index = 0; index < 4; index += 1) leads.registerLocalLead({ ...base, id: `visible-${index}`, leadCode: `VISIBLE-${index}`, assignedToId: index < 3 ? "owner-a" : "owner-b", collaboratorIds: ["secondary-zero"] });
+  leads.registerLocalLead({ ...base, id: "closed", leadCode: "CLOSED", assignedToId: "owner-c", status: "CLOSED_LOST" });
+  leads.registerLocalLead({ ...base, source: "TEST", id: "outside-source", leadCode: "OUTSIDE", assignedToId: "owner-b" });
+  leads.registerLocalLead({ ...base, id: "outside-permission", leadCode: "FENCED", assignedToId: "owner-b" });
+  const scoped = { ...manager, permissionLeadIds: new Set(["visible-0", "visible-1", "visible-2", "visible-3", "closed", "outside-source"]) };
+  const report = service.read({ campus: "CAMPUS", source: "WEB_FORM", loadGap: "1", from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z" }, scoped, "gap", new Date("2026-10-20T12:00:00Z"));
+  const alert = report.alerts.find(item => item.code === "load_gap")!;
+  assert.equal(alert.count, 2); assert.equal(alert.unit, "ACTIVE_LEAD_GAP"); assert.equal(alert.drillDown, "#"); assert.equal(alert.drillDownAvailability, "INLINE_COMPARISON");
+  assert.deepEqual(alert.loadComparison, { minimum: 1, maximum: 3, adviserCount: 2, population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" });
+  assert.ok(!JSON.stringify(alert).includes("owner-a"));
+  assert.ok(operationalRiskSchemas.OperationalAlert.required.includes("unit"));
+  assert.equal(operationalRiskPaths["/reports/operational-risks"].get.responses["200"].content["application/json"].schema.properties.alerts.items.$ref, "#/components/schemas/OperationalAlert");
 });
 
 test("fails closed for advisers and invalid thresholds", () => {
@@ -130,4 +162,24 @@ test("applies the consolidated period and campus scope and rejects invalid bound
   assert.equal(report.queues.unassigned, 1);
   assert.throws(() => service.read({ from: "invalid" }, manager, "corr-invalid"), hasCode("operational_from_invalid"));
   assert.throws(() => service.read({ from: "2026-09-01", to: "2026-08-01" }, manager, "corr-order"), hasCode("operational_period_invalid"));
+});
+
+test("unassigned and capacity drilldowns retain the authorized active creation cohort rather than closed or outside dossiers", () => {
+  const { leads, assignments, service } = setup();
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z" };
+  for (const id of ["one", "two"]) leads.registerLocalLead({ ...base, id, leadCode: id, status: "CONTACTED", assignedToId: adviser.userId });
+  leads.registerLocalLead({ ...base, id: "unassigned-open", leadCode: "U-OPEN" });
+  leads.registerLocalLead({ ...base, id: "unassigned-closed", leadCode: "U-CLOSED", status: "CLOSED_LOST" });
+  leads.registerLocalLead({ ...base, id: "assigned-closed", leadCode: "A-CLOSED", status: "ENROLLED", assignedToId: adviser.userId });
+  leads.registerLocalLead({ ...base, source: "TEST", id: "outside", leadCode: "OUTSIDE", assignedToId: adviser.userId });
+  assignments.configure([{ id: "capacity", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [{ userId: adviser.userId, active: true, capacity: 1, activeLeadCount: 2 }] }], manager, "fixture");
+  const filters = { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", channel: "DIGITAL" };
+  const report = service.read(filters, manager, "scoped", new Date("2026-10-20T12:00:00Z"));
+  assert.equal(report.queues.unassigned, 1);
+  for (const alert of report.alerts.filter(item => item.code === "unassigned_leads" || item.code.startsWith("capacity_warning:"))) {
+    const query = Object.fromEntries(new URL(alert.drillDown, "https://fixture.invalid").searchParams);
+    const list = leads.listLeads({ ...query, page: 1, pageSize: 25 }, manager, "drilldown");
+    assert.equal(list.total, alert.count); assert.equal(query.portfolioState, "OPEN"); assert.equal(query.source, "WEB_FORM"); assert.equal(query.createdBefore, filters.to);
+    assert.equal(list.items.some(item => item.id.includes("closed") || item.id === "outside"), false);
+  }
 });
