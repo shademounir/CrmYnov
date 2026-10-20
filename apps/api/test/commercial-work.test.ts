@@ -31,6 +31,14 @@ test("six queues use distinct Leads, preserve action/request units and separate 
   assert.deepEqual(result.actions, { active: 3, future: 1, dueNow: 0, overdue: 2, invalidDeadline: 0, completed: 1, cancelled: 1 });
 });
 
+test("queue selections use an explicit stable English collation without changing units or membership", () => {
+  const ids = ["z-lead", "A-lead", "a-lead"], expected = ["a-lead", "A-lead", "z-lead"];
+  const result = projectCommercialWork(ids.map((id) => row(id)), ids.map((id) => task(`task-${id}`, id, "2026-10-21T12:00:00Z")), ids.map((id) => closure(`request-${id}`, id)), now);
+  assert.deepEqual(result.queues.TO_CONTACT.leadIds, expected);
+  assert.deepEqual(result.queues.ACTIVE_FOLLOW_UP, { leadIds: expected, itemCount: 3, itemUnit: "ACTIONS" });
+  assert.deepEqual(result.queues.PENDING_CLOSURE, { leadIds: expected, itemCount: 3, itemUnit: "REQUESTS" });
+});
+
 test("strict threshold and overdue equality compare instants, not string spelling or scheduler state", () => {
   const result = projectCommercialWork([row("equal", { receivedAt: "2026-10-19T12:00:00Z" }), row("late", { receivedAt: "2026-10-19T11:59:59.999Z" })], [task("equal", "equal", "2026-10-20T13:00:00+01:00", "DUE"), task("late", "equal", "2026-10-20T11:59:59.999Z"), task("future", "equal", "2026-10-21T12:00:00Z", "DUE"), task("invalid", "equal", "invalid")], [], now);
   assert.deepEqual(result.queues.FIRST_TREATMENT_OVERDUE.leadIds, ["late"]);

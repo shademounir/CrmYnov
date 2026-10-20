@@ -27,10 +27,10 @@ export function projectCommercialWork(rows: readonly LeadReportingRow[], tasks: 
   const overdue = active.filter((task) => Date.parse(task.dueAt) < now.valueOf());
   const pending = [...new Map(requests.filter((request) => request.state === "PENDING" && ["ENROLLED", "CLOSED_LOST"].includes(request.target) && leads.has(request.leadId) && open(leads.get(request.leadId)!)).map((request) => [request.id, request])).values()];
   const leadSelection = (predicate: (row: LeadReportingRow) => boolean): WorkSelection => {
-    const leadIds = [...leads.values()].filter(predicate).map((row) => row.id).sort();
+    const leadIds = [...leads.values()].filter(predicate).map((row) => row.id).sort((a, b) => a.localeCompare(b, "en"));
     return { leadIds, itemCount: leadIds.length, itemUnit: "LEADS" };
   };
-  const items = (records: readonly { leadId: string }[], itemUnit: "ACTIONS" | "REQUESTS"): WorkSelection => ({ leadIds: [...new Set(records.map((record) => record.leadId))].sort(), itemCount: records.length, itemUnit });
+  const items = (records: readonly { leadId: string }[], itemUnit: "ACTIONS" | "REQUESTS"): WorkSelection => ({ leadIds: [...new Set(records.map((record) => record.leadId))].sort((a, b) => a.localeCompare(b, "en")), itemCount: records.length, itemUnit });
   return { queues: {
     TO_CONTACT: leadSelection(isToContact), FIRST_TREATMENT_OVERDUE: leadSelection((lead) => firstTreatmentState(lead, now).firstTreatmentOverdue),
     ACTIVE_FOLLOW_UP: items(active, "ACTIONS"), OVERDUE_FOLLOW_UP: items(overdue, "ACTIONS"),

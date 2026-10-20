@@ -60,7 +60,7 @@ export class CommercialWorkService {
       const lead = this.leads.getLead(id, principal, correlationId), row = byId.get(id)!;
       return { ...lead, ...firstTreatmentState(row, now) };
     });
-    const advisers = [...new Set(rows.flatMap((row) => row.assignedToId ? [row.assignedToId] : []))].sort().map((id) => {
+    const advisers = [...new Set(rows.flatMap((row) => row.assignedToId ? [row.assignedToId] : []))].sort((a, b) => a.localeCompare(b, "en")).map((id) => {
       const primary = rows.filter((row) => row.assignedToId === id), data = projectCommercialWork(primary, tasks, requests, now);
       const label = primary.find((row) => row.assignedToLabel)?.assignedToLabel;
       return { adviserId: id, ...(label ? { adviserLabel: label } : {}), leadCount: primary.length,

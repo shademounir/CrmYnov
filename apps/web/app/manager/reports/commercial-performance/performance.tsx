@@ -23,8 +23,15 @@ const count = (value: unknown): number => {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error("contract");
   return value;
 };
-const text = (value: unknown): string => { if (typeof value !== "string" || !value.trim()) throw new Error("contract"); return value; };
-const instant = (value: unknown): string => { const result = text(value); if (!Number.isFinite(Date.parse(result))) throw new Error("contract"); return result; };
+const text = (value: unknown): string => {
+  if (typeof value !== "string" || !value.trim()) { throw new Error("contract"); }
+  return value;
+};
+const instant = (value: unknown): string => {
+  const result = text(value);
+  if (!Number.isFinite(Date.parse(result))) { throw new Error("contract"); }
+  return result;
+};
 function counts(value: unknown, keys: string[]): Counts {
   const raw = record(value); return Object.fromEntries(keys.map((key) => [key, count(raw[key])]));
 }
@@ -52,7 +59,8 @@ export function readPerformance(value: unknown): PerformanceData {
   const cutoff = new Date(Date.parse(generatedAt) - inactivityHours * 3_600_000).toISOString(), ids = new Set<string>();
   const advisers = raw.advisers.map((entry): Adviser => {
     const row = record(entry), adviserId = text(row.adviserId);
-    if (ids.has(adviserId)) throw new Error("contract"); ids.add(adviserId);
+    if (ids.has(adviserId)) { throw new Error("contract"); }
+    ids.add(adviserId);
     const primaryLeadCount = count(row.primaryLeadCount), secondaryLeadCount = count(row.secondaryLeadCount);
     const activeLoad = count(row.activeLoad), inactiveLeadCount = count(row.inactiveLeadCount);
     if (primaryLeadCount > uniqueLeadCount || secondaryLeadCount > uniqueLeadCount || activeLoad > primaryLeadCount || inactiveLeadCount > activeLoad) throw new Error("contract");
@@ -61,7 +69,8 @@ export function readPerformance(value: unknown): PerformanceData {
     for (const [name, status] of [["contact", "contacted"], ["qualification", "qualified"], ["enrollment", "enrolled"], ["loss", "closedLost"]] as const) {
       if (statusVolumes[status]! > primaryLeadCount) throw new Error("contract");
       const expected = primaryLeadCount ? Number((statusVolumes[status]! / primaryLeadCount).toFixed(4)) : null;
-      if (rawRates[name] !== expected) throw new Error("contract"); rates[name] = expected;
+      if (rawRates[name] !== expected) { throw new Error("contract"); }
+      rates[name] = expected;
     }
     const followUps = counts(row.followUps, ["planned", "completed", "overdue", "cancelled", "active", "dueNow", "invalidDeadline"]);
     if (followUps.active !== followUps.planned! + followUps.overdue! + followUps.dueNow! + followUps.invalidDeadline!) throw new Error("contract");
