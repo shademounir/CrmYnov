@@ -362,7 +362,9 @@ function ProfileActions({ lead, callTriggerId, onLeadChanged, onLeadEdited }: Re
     <LeadStatusDrawer leadId={lead.id} leadCode={lead.leadCode} currentStatus={lead.status} {...completionProps(onLeadChanged, "Étape commerciale enregistrée.")} />
     <LeadQualificationDrawer leadId={lead.id} leadCode={lead.leadCode} temperatureLabel={lead.temperatureLabel} {...completionProps(onLeadChanged, "Qualification commerciale enregistrée.")} />
     <Link className="secondary-button" href={`/leads/${encodeURIComponent(lead.id)}/appointments`}><CalendarBlank size={18} aria-hidden="true" /> Planifier un rendez-vous</Link>
-    <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} assignmentTriggerId={assignmentTriggerId} {...completionProps(onLeadChanged, "Relance planifiée et enregistrée.")} />
+    {lead.status === "ENROLLED" || lead.status === "CLOSED_LOST"
+      ? <Link className="secondary-button" href={leadSectionHref(lead.id, "follow-ups")}><CalendarBlank size={18} aria-hidden="true" /> Consulter les relances</Link>
+      : <LeadFollowUpDrawer leadId={lead.id} leadCode={lead.leadCode} assigned={Boolean(lead.assignedToId)} assignmentTriggerId={assignmentTriggerId} {...completionProps(onLeadChanged, "Relance planifiée et enregistrée.")} />}
   </nav>;
 }
 

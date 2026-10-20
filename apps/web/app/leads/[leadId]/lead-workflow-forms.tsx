@@ -461,14 +461,20 @@ export function FollowUpWorkflowForm({ leadId, onCancel, onCompleted, onDirtyCha
 }
 
 function parseFollowUps(value: unknown, leadId: string): FollowUpRecord[] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("follow_up_payload_invalid");
   const items = (value as { items?: unknown }).items;
-  if (!Array.isArray(items)) return [];
-  return items.filter((item): item is FollowUpRecord => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  if (!Array.isArray(items)) throw new Error("follow_up_payload_invalid");
+  const ids = new Set<string>();
+  const records = items.map((item): FollowUpRecord => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("follow_up_payload_invalid");
     const row = item as Partial<FollowUpRecord>;
-    return row.leadId === leadId && typeof row.id === "string" && typeof row.dueAt === "string" && Number.isFinite(Date.parse(row.dueAt)) && typeof row.reason === "string" && typeof row.version === "number" && ["SCHEDULED", "DUE", "COMPLETED", "CANCELLED"].includes(row.state ?? "");
+    if (typeof row.leadId !== "string" || !row.leadId || typeof row.id !== "string" || !row.id || ids.has(row.id)
+      || typeof row.dueAt !== "string" || !Number.isFinite(Date.parse(row.dueAt)) || typeof row.reason !== "string"
+      || !Number.isSafeInteger(row.version) || (row.version ?? 0) < 1 || !["SCHEDULED", "DUE", "COMPLETED", "CANCELLED"].includes(row.state ?? "")) throw new Error("follow_up_payload_invalid");
+    ids.add(row.id);
+    return row as FollowUpRecord;
   });
+  return records.filter(item => item.leadId === leadId);
 }
 
 function followUpStateLabel(state: FollowUpRecord["state"]): string {
@@ -476,6 +482,10 @@ function followUpStateLabel(state: FollowUpRecord["state"]): string {
 }
 
 export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React.JSX.Element {
+  return <FollowUpHistoryForLead key={leadId} leadId={leadId} />;
+}
+
+function FollowUpHistoryForLead({ leadId }: Readonly<{ leadId: string }>): React.JSX.Element {
   const [items, setItems] = useState<FollowUpRecord[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [busyId, setBusyId] = useState<string>();
@@ -483,18 +493,35 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
   const attempts = useRef(new Map<string, { payload: string; key: string }>());
   const decisionLocks = useRef(new Set<string>());
   const [actions, setActions] = useState<Record<string, string>>({});
+  const reading = useRef<AbortController | undefined>(undefined);
+  const mounted = useRef(true);
 
   async function load(): Promise<void> {
+    if (!mounted.current) return;
+    reading.current?.abort();
+    const controller = new AbortController();
+    reading.current = controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    setItems([]);
     setState("loading");
     try {
-      const response = await fetch("/api/crm/follow-ups", { cache: "no-store", credentials: "same-origin" });
+      const response = await fetch("/api/crm/follow-ups", { cache: "no-store", credentials: "same-origin", signal });
       if (!response.ok) throw new Error(`follow_up_${response.status}`);
-      setItems(parseFollowUps(await response.json(), leadId));
+      const records = parseFollowUps(await response.json(), leadId);
+      if (!mounted.current || controller.signal.aborted) return;
+      if (signal.aborted) throw new Error("follow_up_read_timeout");
+      setItems(records);
       setState("ready");
-    } catch { setState("error"); }
+    } catch {
+      if (mounted.current && !controller.signal.aborted) { setItems([]); setState("error"); }
+    }
   }
 
-  useEffect(() => { void load(); }, [leadId]);
+  useEffect(() => {
+    mounted.current = true;
+    void load();
+    return (): void => { mounted.current = false; reading.current?.abort(); };
+  }, [leadId]);
 
   async function decide(event: React.FormEvent<HTMLFormElement>, item: FollowUpRecord): Promise<void> {
     event.preventDefault();
@@ -513,7 +540,10 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
     setBusyId(item.id); setFeedback({ kind: "idle" });
     try {
       const response = await fetch(`/api/crm/follow-ups/${encodeURIComponent(item.id)}`, { method: "PATCH", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, idempotencyKey: attempt.key }) });
-      if (!response.ok) { setFeedback({ kind: "error", message: await responseMessage("follow-up", response) }); return; }
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) { setItems([]); setState("error"); }
+        setFeedback({ kind: "error", message: await responseMessage("follow-up", response) }); return;
+      }
       attempts.current.delete(item.id);
       setFeedback({ kind: "success", message: action === "POSTPONE" ? "Relance modifiée et enregistrée." : action === "COMPLETE" ? "Relance réalisée et prochaine étape enregistrées ensemble." : "Relance annulée et ajoutée à l’historique ; elle n’est pas comptée comme réalisée." });
       await load();
@@ -525,10 +555,11 @@ export function FollowUpHistory({ leadId }: Readonly<{ leadId: string }>): React
   if (state === "error") return <div className="lead-follow-up-history__state" role="alert"><p>Les relances sont indisponibles.</p><button className="secondary-button" type="button" onClick={() => void load()}>Réessayer</button></div>;
   return <div className="lead-follow-up-history">
     <FormFeedback feedback={feedback} />
-    {!items.length ? <p>Aucune relance enregistrée pour ce Lead.</p> : <ol>{items.map((item) => {
+    <p>Horaires : Africa/Casablanca · Relances visibles selon vos autorisations.</p>
+    {!items.length ? <p>Aucune relance visible dans votre périmètre pour ce dossier.</p> : <ol>{items.map((item) => {
       const active = item.state === "SCHEDULED" || item.state === "DUE";
       return <li key={item.id}>
-        <div><span className={`lead-follow-up-history__state lead-follow-up-history__state--${item.state.toLowerCase()}`}>{followUpStateLabel(item.state)}</span><time dateTime={item.dueAt}>{new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(item.dueAt))}</time><p>{item.reason}</p></div>
+        <div><span className={`lead-follow-up-history__state lead-follow-up-history__state--${item.state.toLowerCase()}`}>{followUpStateLabel(item.state)}</span><time dateTime={item.dueAt}>{new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Casablanca" }).format(new Date(item.dueAt))}</time><p>{item.reason}</p></div>
         {active ? <form onSubmit={(event) => void decide(event, item)}>
           <label>Action<select name="action" value={actions[item.id] ?? "POSTPONE"} onChange={event => { const value = event.currentTarget.value; setActions(previous => ({ ...previous, [item.id]: value })); }} disabled={busyId === item.id}><option value="POSTPONE">Modifier l’échéance</option><option value="COMPLETE">Relance réalisée, programmer la suite</option><option value="CANCEL">Annuler la relance</option></select></label>
           {(actions[item.id] ?? "POSTPONE") === "POSTPONE" ? <label>Nouvelle échéance<input name="dueAt" type="datetime-local" required disabled={busyId === item.id} /></label> : null}

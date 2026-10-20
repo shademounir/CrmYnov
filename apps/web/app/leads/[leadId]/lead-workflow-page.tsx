@@ -96,6 +96,8 @@ function WorkflowAction({ leadId, surface, context, contextState, onCompleted }:
       ? <StatusWorkflowForm leadId={leadId} currentStatus={context.status} onCompleted={onCompleted} />
       : <p role="status">{contextState === "error" ? "Le statut actuel est indisponible. Aucun changement ne peut être proposé." : "Chargement de l’étape actuelle…"}</p>;
   }
+  if (contextState !== "ready") return <p role="status">{contextState === "error" ? "Le dossier est indisponible. Aucune nouvelle relance n’est proposée." : "Chargement du dossier…"}</p>;
+  if (context?.status === "ENROLLED" || context?.status === "CLOSED_LOST") return <p className="lead-assignment-dialog__notice" role="status">Ce dossier est clôturé. Aucune nouvelle relance n’est proposée ; l’historique est conservé.</p>;
   if (context?.assignedToId) return <FollowUpWorkflowForm leadId={leadId} onCompleted={onCompleted} />;
   if (contextState === "ready") return <p className="lead-assignment-dialog__notice" role="status">Affectez d’abord le Lead à un conseiller. La relance pourra ensuite être enregistrée sous sa responsabilité.</p>;
   return null;

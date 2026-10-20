@@ -111,16 +111,18 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-status-dialog__terminal p { margin: 0; color: #334047; font-size: 12px; line-height: 1.55; }
 .lead-status-dialog__terminal .primary-button { width: 100%; text-decoration: none; }
 .lead-status-dialog__terminal .text-button { justify-self: end; }
-.lead-follow-up-history { display: grid; gap: 14px; }
+.lead-follow-up-history { display: grid; gap: 14px; min-width: 0; }
 .lead-follow-up-history > p { margin: 0; }
-.lead-follow-up-history > ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
-.lead-follow-up-history > ol > li { padding: 14px; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 14px; }
+.lead-follow-up-history > ol { min-width: 0; margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.lead-follow-up-history > ol > li { min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: 10px; display: grid; gap: 14px; overflow-wrap: anywhere; }
 .lead-follow-up-history > ol > li > div { display: grid; gap: 6px; }
 .lead-follow-up-history time { color: var(--muted); font-size: 11px; }
 .lead-follow-up-history li p { margin: 0; font-size: 12px; line-height: 1.5; }
 .lead-follow-up-history__state { width: fit-content; padding: 4px 8px; border-radius: 999px; background: var(--teal-soft); color: var(--teal-dark); font-size: 10px; font-weight: 800; }
 .lead-follow-up-history__state--completed, .lead-follow-up-history__state--cancelled { background: #eef1f3; color: #53616a; }
 .lead-follow-up-history li form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.lead-follow-up-history li form label { min-width: 0; }
+.lead-follow-up-history li form input, .lead-follow-up-history li form select, .lead-follow-up-history li form textarea { min-width: 0; width: 100%; max-width: 100%; box-sizing: border-box; }
 .lead-follow-up-history li form label:nth-of-type(3), .lead-follow-up-history li form button { grid-column: 1 / -1; }
 .lead-closure-history { display: grid; gap: 14px; }
 .lead-closure-history > p { margin: 0; }
@@ -193,7 +195,7 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-assignment-dialog > .lead-assignment-dialog__details { position: absolute; left: 24px; bottom: 20px; z-index: 2; }
 .lead-assignment-dialog > .lead-assignment-dialog__form { padding-bottom: 78px; }
 
-.lead-workflow-page { width: min(1220px, 100%); margin-inline: auto; display: grid; gap: 16px; }
+.lead-workflow-page { min-width: 0; width: min(1220px, 100%); margin-inline: auto; display: grid; gap: 16px; }
 .lead-workflow-page__header { min-height: 96px; padding: 0 4px; display: flex; align-items: center; gap: 15px; }
 .lead-workflow-page__header > span { width: 48px; height: 48px; border-radius: 14px; background: var(--teal-soft); color: var(--teal-dark); display: grid; place-items: center; flex: 0 0 auto; }
 .lead-workflow-page__header h1 { margin: 2px 0 6px; font-size: clamp(27px, 3vw, 36px); }
@@ -203,7 +205,7 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-workflow-page__context > div:first-child { border-left: 0; }
 .lead-workflow-page__context span { color: var(--muted); font-size: 10px; }
 .lead-workflow-page__context strong { overflow-wrap: anywhere; font-size: 13px; }
-.lead-workflow-page__grid { display: grid; grid-template-columns: minmax(340px, .86fr) minmax(440px, 1.14fr); align-items: start; gap: 16px; }
+.lead-workflow-page__grid { min-width: 0; display: grid; grid-template-columns: minmax(0, .86fr) minmax(0, 1.14fr); align-items: start; gap: 16px; }
 .lead-workflow-page__form-card, .lead-workflow-page__history { min-width: 0; padding: 24px; }
 .lead-workflow-page__section-heading { margin-bottom: 18px; }
 .lead-workflow-page__section-heading h2 { margin-top: 4px; font-size: 21px; }
@@ -212,8 +214,8 @@ body:has(.lead-assignment-dialog[open]) { overflow: hidden; }
 .lead-workflow-page__history > p { color: var(--muted); font-size: 13px; line-height: 1.6; }
 .lead-workflow-page__history .secondary-button { width: fit-content; margin-top: 14px; text-decoration: none; }
 
-@media (max-width: 900px) {
-  .lead-workflow-page__grid { grid-template-columns: 1fr; }
+@media (max-width: 1040px) {
+  .lead-workflow-page__grid { grid-template-columns: minmax(0, 1fr); }
   .lead-workflow-page__history { min-height: 300px; }
 }
 
