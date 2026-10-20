@@ -9,11 +9,95 @@ import { LeadService } from "../src/leads/lead.service.js";
 import { NotificationService } from "../src/notifications/notification.service.js";
 import { CommercialPerformanceController } from "../src/reporting/commercial-performance.controller.js";
 import { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
+import { CommercialWorkService } from "../src/reporting/commercial-work.service.js";
+import { normalizeWorkQuery } from "../src/reporting/commercial-work-query.js";
+import type { ClosureService } from "../src/closure/closure.service.js";
+import type { FollowUpRecord } from "../src/follow-up/follow-up.service.js";
+import type { LeadRecord } from "../src/leads/lead.service.js";
+import type { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
+import { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
+import { portfolioReportPaths, portfolioReportSchemas, portfolioReportParameters } from "../src/reporting/portfolio-reports.openapi.js";
+import { firstTreatmentSchemas } from "../src/leads/first-treatment.openapi.js";
 
 const manager: Principal = { userId: "manager-synthetic", roles: ["MANAGER"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-manager" };
 const adviserA: Principal = { userId: "adviser-a", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-a" };
 const adviserB: Principal = { userId: "adviser-b", roles: ["ADMISSIONS"], scopes: [{ kind: "GLOBAL" }], sessionId: "session-b" };
 const hasCode = (code: string) => (error: unknown): boolean => JSON.stringify(error).includes(code);
+
+interface ReadSchema { $ref?: string; type?: string; nullable?: boolean; minimum?: number; maximum?: number; enum?: readonly unknown[]; required?: readonly string[]; properties?: Record<string, ReadSchema>; items?: ReadSchema; allOf?: readonly ReadSchema[]; additionalProperties?: boolean }
+function assertReadSchema(value: unknown, schema: ReadSchema, at = "report"): void {
+  const registry: Record<string, ReadSchema> = { ...portfolioReportSchemas, ...firstTreatmentSchemas } as unknown as Record<string, ReadSchema>;
+  if (schema.$ref) { const resolved = registry[schema.$ref.split("/").at(-1)!]; assert.ok(resolved, `Unresolved ref ${schema.$ref}`); assertReadSchema(value, resolved, at); return; }
+  for (const part of schema.allOf ?? []) assertReadSchema(value, part, at);
+  if (value === null && schema.nullable) return;
+  if (schema.enum) assert.ok(schema.enum.includes(value), `${at}: enum`);
+  if (schema.type === "object") {
+    assert.ok(typeof value === "object" && value !== null && !Array.isArray(value), `${at}: object`);
+    const row = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) assert.ok(Object.hasOwn(row, key), `${at}.${key}: required`);
+    for (const [key, field] of Object.entries(schema.properties ?? {})) if (Object.hasOwn(row, key)) assertReadSchema(row[key], field, `${at}.${key}`);
+    if (schema.additionalProperties === false) for (const key of Object.keys(row)) assert.ok(Object.hasOwn(schema.properties ?? {}, key), `${at}.${key}: extra`);
+  } else if (schema.type === "array") {
+    assert.ok(Array.isArray(value), `${at}: array`); for (const item of value) assertReadSchema(item, schema.items ?? {}, `${at}[]`);
+  } else if (schema.type === "integer" || schema.type === "number") {
+    assert.ok(typeof value === "number" && Number.isFinite(value), `${at}: number`);
+    if (schema.type === "integer") assert.ok(Number.isSafeInteger(value), `${at}: integer`);
+    if (schema.minimum !== undefined) assert.ok(value >= schema.minimum, `${at}: minimum`);
+    if (schema.maximum !== undefined) assert.ok(value <= schema.maximum, `${at}: maximum`);
+  } else if (schema.type === "string") assert.equal(typeof value, "string", at);
+}
+
+test("published portfolio OpenAPI matches nonempty and empty native projections without conflating portfolio and task ownership", () => {
+  const { service, leads, audit } = setup(), now = new Date("2026-10-20T12:00:00.000Z");
+  leads.registerLocalLead({ id: "contract-enrolled", leadCode: "CONTRACT", firstName: "Synthetic", lastName: "Contract", campus: "SYNTHETIC", campaign: "CONTRACT", program: "TEST", educationLevel: "BAC", source: "WEB_FORM", assignedToId: adviserA.userId, status: "ENROLLED" });
+  const funnel = new CommercialFunnelService(leads, audit);
+  for (const source of ["WEB_FORM", "TEST"]) {
+    const query = { source };
+    const performance = service.read(query, manager, "contract-performance", now), pipeline = funnel.read(query, manager, "contract-funnel", now);
+    assertReadSchema(performance, portfolioReportSchemas.CommercialPerformanceReport);
+    assertReadSchema(pipeline, portfolioReportSchemas.CommercialFunnel as unknown as ReadSchema);
+    assert.equal(performance.cohort.uniqueLeadCount, source === "WEB_FORM" ? 1 : 0);
+    assert.equal(pipeline.attainment.enrolled, pipeline.currentState.ENROLLED);
+    if (source === "TEST") assert.equal(pipeline.rates.enrolled, null);
+  }
+  const personal = service.read({ view: "personal", source: "TEST" }, adviserB, "contract-empty-owner", now);
+  assertReadSchema(personal, portfolioReportSchemas.CommercialPerformanceReport);
+  assert.equal(personal.advisers[0]!.rates.enrollment, null);
+  const schema = portfolioReportSchemas.AdviserPerformance;
+  assert.match(schema.properties.followUps.description, /persisted task OWNER.*after Lead reassignment/);
+  assert.match(schema.properties.inactiveLeadCount.description, /strictly before.*Unknown\/mixed/);
+  assert.equal(schema.properties.rates.properties.enrollment!.nullable, true);
+  assert.equal(new Set(portfolioReportParameters.map(item => item.name)).size, portfolioReportParameters.length);
+  assert.equal(portfolioReportPaths["/reports/commercial-performance"].get.parameters.some(item => item.name === "inactivityHours"), true);
+  assert.deepEqual(portfolioReportPaths["/reports/commercial-funnel"].get.security, [{ bearerAuth: [] }]);
+  assert.throws(() => assertReadSchema({ ...personal, advisers: [{ ...personal.advisers[0], rates: { ...personal.advisers[0]!.rates, enrollment: 2 } }] }, portfolioReportSchemas.CommercialPerformanceReport));
+});
+test("primary and old-treatment drilldowns retain the exact involved cohort, frozen cutoff and permission fence", async () => {
+  const audit = new AuditService(), now = new Date("2026-10-20T12:00:00.000Z");
+  const row = (id: string, extra: Partial<LeadRecord> = {}): LeadRecord => ({ id, leadCode: `SYN-${id}`, firstName: "Synthetic", lastName: "Fixture", status: "CONTACTED", campus: "CASABLANCA", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z", lastActivityAt: now.toISOString(), assignedToId: adviserA.userId, collaboratorIds: [adviserB.userId], ...extra });
+  const rows = [row("old"), row("equal"), row("recent"), row("unknown"), row("mixed"), row("none"), row("closed", { status: "ENROLLED" }), row("outside", { source: "PHONE" }), row("other", { assignedToId: adviserB.userId, collaboratorIds: [] })];
+  const historicalTreatments = [{ leadId: "old", occurredAt: "2026-10-16T12:00:00.000Z" }, { leadId: "equal", occurredAt: "2026-10-17T12:00:00.000Z" }, { leadId: "recent", occurredAt: "2026-10-18T12:00:00.000Z" }, { leadId: "unknown", occurredAt: null }, { leadId: "mixed", occurredAt: null }, ...["mixed", "closed", "outside", "other"].map(leadId => ({ leadId, occurredAt: "2026-10-10T12:00:00.000Z" }))];
+  const repository = { enabled: true, snapshot: () => Promise.resolve({ leads: rows, activities: [], historicalTreatments }) } as unknown as LeadPersistenceRepository;
+  const leads = new LeadService(audit, repository); await leads.onModuleInit();
+  const followUps = new FollowUpService(leads, new NotificationService(audit), audit);
+  const service = new CommercialPerformanceService(leads, followUps, new ReassignmentService(leads, new AssignmentService(audit), audit), audit);
+  const query = { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "CASABLANCA", source: "WEB_FORM", channel: "DIGITAL", campaign: "COHORT", program: "PROGRAM", adviserId: adviserB.userId, inactivityHours: "72" };
+  const report = service.read(query, manager, "frozen", now), adviser = report.advisers.find(item => item.adviserId === adviserA.userId)!;
+  assert.equal(adviser.primaryLeadCount, 7); assert.equal(adviser.inactiveLeadCount, 1);
+  for (const key of ["assigned", "inactive"] as const) {
+    const url = new URL(adviser.drillDown[key], "https://crm.invalid");
+    for (const field of ["campus", "source", "channel", "campaign", "program", "adviserId"] as const) assert.equal(url.searchParams.get(field), query[field]);
+    assert.equal(url.searchParams.get("assignedToId"), adviserA.userId, "primary intersection does not replace involved-adviser cohort");
+    assert.equal(url.searchParams.get("createdFrom"), query.from); assert.equal(url.searchParams.get("createdBefore"), query.to);
+    const filters = Object.fromEntries(url.searchParams), page = leads.listLeads({ ...filters, page: 1, pageSize: 25 }, manager, "drilldown");
+    assert.equal(page.total, key === "assigned" ? adviser.primaryLeadCount : adviser.inactiveLeadCount);
+    if (key === "inactive") { assert.deepEqual(page.items.map(item => item.id), ["old"]); assert.equal(filters.inactiveTreatmentBefore, "2026-10-17T12:00:00.000Z"); }
+    assert.equal(leads.listLeads({ ...filters, page: 1, pageSize: 25 }, { ...manager, permissionLeadIds: new Set(["recent"]) }, "fenced").items.some(item => item.id === "old"), false);
+  }
+  assert.equal(leads.listLeads({ page: 1, pageSize: 25, portfolioState: "OPEN" }, manager, "open").items.some(item => item.id === "closed"), false);
+  assert.throws(() => leads.listLeads({ page: 1, pageSize: 25, portfolioState: "INVALID" }, manager, "bad"), hasCode("lead_portfolio_state_invalid"));
+  assert.throws(() => leads.listLeads({ page: 1, pageSize: 25, inactiveTreatmentBefore: "invalid" }, manager, "bad"), hasCode("lead_inactive_treatment_boundary_invalid"));
+});
 
 function setup(): { audit: AuditService; leads: LeadService; followUps: FollowUpService; engine: AssignmentService;
   reassignments: ReassignmentService; service: CommercialPerformanceService } {
@@ -47,6 +131,12 @@ test("computes distinct primary KPIs and keeps secondary contributions separate"
   assert.equal(b.secondaryLeadCount, 1); assert.equal(a.statusVolumes.enrolled, 1); assert.equal(b.statusVolumes.contacted, 1);
   assert.equal(a.rates.enrollment, 1); assert.equal(b.rates.contact, 1); assert.equal(a.followUps.overdue, 1);
   assert.equal(a.adviserLabel, "Conseillère A");
+  const work = new CommercialWorkService(leads, followUps, { reportingSnapshot: () => [] } as unknown as ClosureService, audit);
+  const { queue, adviserScope, taskOwnerId, ...filters } = Object.fromEntries(new URL(a.drillDown.overdue, "https://crm.invalid").searchParams);
+  const detail = work.read(normalizeWorkQuery(filters, manager, new Date()), { queue, adviserScope, taskOwnerId }, manager, "corr-owner-detail", new Date(result.generatedAt));
+  assert.equal(taskOwnerId, adviserA.userId); assert.equal(detail.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!.itemCount, a.followUps.overdue);
+  assert.deepEqual(detail.page.items.map((item) => item.id), [contacted.id], "task owner A still links to authorized Lead now assigned to B");
+  assert.ok(detail.queues.every((item) => new URL(item.href, "https://crm.invalid").searchParams.get("taskOwnerId") === adviserA.userId));
   assert.equal(new URL(a.drillDown.assigned, "https://crm.invalid").searchParams.get("assignedToLabel"), "Conseillère A");
   assert.deepEqual(a.reassignments, { requested: 1, approved: 1, rejected: 0 });
   assert.ok(result.definitions.every((definition) => definition.numerator && definition.denominator));
@@ -71,4 +161,16 @@ test("controller fails closed without a principal", async () => {
   const { service } = setup(); const controller = new CommercialPerformanceController(service);
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
   assert.equal((await controller.read({}, { principal: manager, header: () => "corr-controller" } as never)).cohort.uniqueLeadCount, 0);
+});
+
+test("task owner counts share strict overdue, due-now, future, invalid, completed and cancelled semantics", () => {
+  const { leads, followUps, service } = setup(); const now = new Date("2026-10-20T12:00:00Z");
+  const lead = leads.registerLocalLead({ id: "owner-test", leadCode: "SYN-OWNER", firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "CAMPAIGN", educationLevel: "Bac", program: "PROGRAM", source: "WEB_FORM", status: "CONTACTED", assignedToId: adviserB.userId });
+  const record = (id: string, dueAt: string, state: FollowUpRecord["state"] = "SCHEDULED"): FollowUpRecord => ({ id, leadId: lead.id, ownerId: adviserA.userId, dueAt, state, reason: "Synthetic", version: 1, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
+  followUps.reportingSnapshot = (): FollowUpRecord[] => [record("late", "2026-10-20T11:59:59.999Z"), record("equal", "2026-10-20T13:00:00+01:00", "DUE"), record("future", "2026-10-21T00:00:00Z", "DUE"), record("invalid", "invalid"), record("done", "2026-10-19T00:00:00Z", "COMPLETED"), record("cancel", "2026-10-19T00:00:00Z", "CANCELLED")];
+  const result = service.read({ campus: "CAMPUS" }, manager, "owner-states", now);
+  const owner = result.advisers.find((item) => item.adviserId === adviserA.userId)!;
+  assert.equal(owner.primaryLeadCount, 0, "former owner not silently made current principal adviser");
+  assert.deepEqual(owner.followUps, { planned: 1, completed: 1, overdue: 1, cancelled: 1, active: 4, dueNow: 1, invalidDeadline: 1 });
+  assert.equal(result.advisers.find((item) => item.adviserId === adviserB.userId)!.followUps.overdue, 0);
 });

@@ -171,7 +171,7 @@ for (const zeroCounts of [false, true]) {
     await page.goto("/manager/reports/dashboard?view=personal&period=30d");
     const performance = page.locator(".dashboard-personal-charts > figure").filter({ has: page.getByRole("heading", { name: "Ma performance", exact: true }) });
     const chart = performance.locator("button.reporting-chart");
-    await expect(chart.locator("div > span")).toHaveText(["Leads principaux", "Collaborations", "Charge active", "Relances échues"]);
+    await expect(chart.locator("div > span")).toHaveText(["Leads principaux", "Collaborations", "Charge active", "Relances en retard"]);
     await expect(chart.locator("strong")).toHaveText(values.map(String));
     await expect(performance.getByRole("table", { name: "Données alternatives — Ma performance", exact: true })).toBeVisible();
     for (const width of [1440, 1280, 1024, 768, 390]) {
@@ -213,6 +213,7 @@ test("hostile labels remain inert and external destinations are refused", async 
   await expect(page.getByText(hostile, { exact: true }).first()).toBeVisible();
   expect((await page.locator("script").allTextContents()).every((content) => !content.includes("window.__unsafe"))).toBe(true);
   expect(await page.evaluate(() => (window as typeof window & { __unsafe?: boolean }).__unsafe)).toBeUndefined();
-  await expect(page.getByRole("link", { name: /Leads uniques/u })).toHaveAttribute("href", "#");
+  await expect(page.getByRole("link", { name: /Leads uniques/u })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Cartes KPI", exact: true })).toContainText("Liste indisponible dans cette cohorte.");
   await expect(page.getByRole("link", { name: "Exporter les agrégats CSV" })).toHaveAttribute("href", "#");
 });

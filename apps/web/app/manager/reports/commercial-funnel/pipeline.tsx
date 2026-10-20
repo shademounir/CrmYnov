@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowClockwise, ArrowRight, ChartBar, Info, SlidersHorizontal, Thermometer, UsersThree } from "@phosphor-icons/react";
 import { PageHeader } from "../../../_components/ui/page-header";
 import { buildLeadListHref, parseSnapshot, stages, temperatures, type FunnelSnapshot } from "./funnel-contract";
+import { PipelineLeads } from "./pipeline-leads";
 const styles = {
   page: "pipeline-pilot-page", filters: "pipeline-pilot-filters", panel: "pipeline-pilot-panel",
   help: "pipeline-pilot-help", primaryFilters: "pipeline-pilot-primaryFilters", apply: "pipeline-pilot-apply",
@@ -18,7 +19,8 @@ const styles = {
 
 type Result = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; data: FunnelSnapshot };
 const fields = [{ key: "campus", label: "Campus" }, { key: "campaign", label: "Campagne" }, { key: "program", label: "Formation" }, { key: "source", label: "Source" }];
-const preservedCohortFields = ["channel", "adviserId", "status"] as const;
+const preservedCohortFields = ["channel"] as const;
+const treatmentFields = ["treatmentFrom", "treatmentTo", "treatmentState"] as const;
 const number = new Intl.NumberFormat("fr-FR");
 function failure(status: number): string {
   if (status === 401) return "Votre session a expiré. Reconnectez-vous pour consulter le Pipeline.";
@@ -27,6 +29,26 @@ function failure(status: number): string {
   return "Le rapport est momentanément indisponible. Vos filtres sont conservés.";
 }
 function filtersFromQuery(query: string): Record<string, string> { return Object.fromEntries(new URLSearchParams(query)); }
+function AdviserFilter({ selected }: Readonly<{ selected: string }>): React.JSX.Element {
+  const [chosen, setChosen] = useState(selected);
+  const [people, setPeople] = useState<Array<{ id: string; label: string }>>([]), [state, setState] = useState("loading");
+  useEffect(() => {
+    const controller = new AbortController(); let current = true;
+    const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
+    void (async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/crm/leads/filter-options", { credentials: "same-origin", cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("options_unavailable");
+        const body = await response.json() as { advisers?: unknown };
+        if (!Array.isArray(body.advisers) || !body.advisers.every((item: unknown) => typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" && "label" in item && typeof item.label === "string")) throw new Error("options_invalid");
+        if (current) { setPeople(body.advisers as Array<{ id: string; label: string }>); setState("ready"); }
+      } catch { if (current) setState("error"); }
+      finally { globalThis.clearTimeout(timeout); }
+    })();
+    return (): void => { current = false; controller.abort(); globalThis.clearTimeout(timeout); };
+  }, []);
+  return <label>Conseiller impliqué<select name="adviserId" value={chosen} onChange={(event) => setChosen(event.target.value)} aria-busy={state === "loading"}><option value="">Tous les conseillers autorisés</option>{chosen && !people.some((person) => person.id === chosen) ? <option value={chosen}>Conseiller du filtre actuel</option> : null}{people.map((person) => <option key={person.id} value={person.id}>{person.label}</option>)}</select><small>Responsable principal ou collaborateur, dans votre périmètre.</small>{state === "error" ? <small role="status">Liste des conseillers indisponible ; filtre actuel conservé.</small> : null}</label>;
+}
 function CohortBoundary({ name, label, initialValue }: Readonly<{ name: "from" | "to"; label: string; initialValue: string }>): React.JSX.Element {
   const [boundary, setBoundary] = useState(initialValue);
   return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue.slice(0, 10)} onChange={(event) => setBoundary(event.target.value)} /></label>;
@@ -63,6 +85,7 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
+    const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
     setResult({ kind: "loading" });
     async function load(): Promise<void> {
       try {
@@ -71,16 +94,17 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
         const payload: unknown = await response.json();
         const data = parseSnapshot(payload);
         if (current) setResult({ kind: "ready", data });
-      } catch { if (current) setResult({ kind: "error", message: "Le rapport n’a pas pu être chargé. Vos filtres sont conservés ; réessayez." }); }
+      } catch { if (current) setResult({ kind: "error", message: controller.signal.aborted ? "Délai de chargement dépassé. Vos filtres sont conservés ; réessayez." : "Le rapport n’a pas pu être chargé. Vos filtres sont conservés ; réessayez." }); }
+      finally { globalThis.clearTimeout(timeout); }
     }
     void load();
-    return (): void => { current = false; controller.abort(); };
+    return (): void => { current = false; controller.abort(); globalThis.clearTimeout(timeout); };
   }, [query, revision]);
   function apply(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
     const next = new URLSearchParams();
-    for (const key of ["from", "to", ...fields.map((field) => field.key), ...preservedCohortFields]) {
+    for (const key of ["from", "to", ...fields.map((field) => field.key), ...preservedCohortFields, "adviserId", "status", ...treatmentFields]) {
       const value = values.get(key);
       if (typeof value === "string" && value.trim()) next.set(key, value.trim());
     }
@@ -96,7 +120,7 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
   }
   return <main className={styles.page}>
     <PageHeader eyebrow="Pilotage commercial" title="Pipeline" description="Une photographie exploitable de vos leads, dans leur état commercial actuel." actions={<Link className="secondary-button" href={buildLeadListHref(selectedFilters)}><UsersThree size={18} aria-hidden="true" />Voir les leads</Link>} />
-    <form key={query} className={styles.filters} onSubmit={apply} onReset={reset} aria-label="Filtres du Pipeline">
+    <form key={`filters:${query}:${revision}`} className={styles.filters} onSubmit={apply} onReset={reset} aria-label="Filtres du Pipeline">
       {preservedCohortFields.map((key) => selectedFilters[key] ? <input key={key} type="hidden" name={key} value={selectedFilters[key]} /> : null)}
       <div className={styles.activeFilters}><div><strong>Affiner la sélection</strong><span>{activeFilterCount ? `${activeFilterCount} filtre${activeFilterCount > 1 ? "s" : ""} actif${activeFilterCount > 1 ? "s" : ""}` : "Tous les leads accessibles"}</span></div></div>
       <div className={styles.primaryFilters}>
@@ -105,14 +129,18 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
         <button className={styles.apply} type="submit"><ArrowClockwise size={18} aria-hidden="true" />Actualiser</button>
         <button className={styles.reset} type="reset">Réinitialiser</button>
       </div>
-      <details className={styles.advanced}><summary><SlidersHorizontal size={18} aria-hidden="true" />Filtres supplémentaires</summary><div>{fields.map((field) => <label key={field.key}>{field.label}<input name={field.key} defaultValue={selectedFilters[field.key]} /></label>)}</div></details>
+      <details className={styles.advanced}><summary><SlidersHorizontal size={18} aria-hidden="true" />Filtres supplémentaires</summary><div>{fields.map((field) => <label key={field.key}>{field.label}<input name={field.key} defaultValue={selectedFilters[field.key]} /></label>)}<AdviserFilter selected={selectedFilters.adviserId ?? ""} /><label>Statut<select name="status" defaultValue={selectedFilters.status ?? ""}><option value="">Tous les statuts</option>{stages.map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label><label>Dernier traitement à partir du<input type="date" name="treatmentFrom" defaultValue={selectedFilters.treatmentFrom ?? ""} /></label><label>Dernier traitement jusqu’au (inclus)<input type="date" name="treatmentTo" defaultValue={selectedFilters.treatmentTo ?? ""} /></label><label>Historique de traitement<select name="treatmentState" defaultValue={selectedFilters.treatmentState ?? ""}><option value="">Tous les historiques</option><option value="DATED">Historique entièrement daté</option><option value="UNKNOWN_DATE">Historique avec date inconnue</option><option value="NONE">Aucun traitement connu</option></select></label></div><p>Dernier traitement : journées incluses de Casablanca, sans compter lectures ni imports. Les commentaires non datés restent distincts d’une absence de traitement. Une plage porte sur le dernier traitement daté connu.</p></details>
       <p className={styles.hint}>Sans période : tous les leads accessibles. La date de fin est exclue. Une date saisie seule correspond à minuit UTC ; un instant ISO existant est conservé tant que la date n’est pas modifiée.</p>
     </form>
     {result.kind === "loading" ? <section className={`${styles.panel} ${styles.state}`} role="status" aria-busy="true"><span className={styles.skeleton} aria-hidden="true" /><strong>Chargement du Pipeline…</strong><p>Nous préparons les volumes de votre sélection.</p></section> : null}
     {result.kind === "error" ? <section className={`${styles.panel} ${styles.state}`}><div role="alert"><strong>Rapport indisponible</strong><p>{result.message}</p><span>Aucun compteur n’est affiché tant que l’API n’a pas répondu.</span></div><div>{result.message.includes("session") ? <Link className={styles.reconnect} href="/">Se reconnecter</Link> : null}<button className={styles.retry} type="button" onClick={(): void => setRevision((value) => value + 1)}>Réessayer</button></div></section> : null}
     {result.kind === "ready" && result.data.total === 0 ? <section className={`${styles.panel} ${styles.state}`} role="status"><ChartBar size={40} aria-hidden="true" /><strong>Aucun lead dans cette sélection</strong><p>Élargissez la période ou ajustez les filtres pour afficher des résultats.</p><span>0 lead confirmé par l’API · aucune part calculée</span></section> : null}
+    {result.kind === "ready" ? <section className={`${styles.panel} pipeline-first-treatment`} data-overdue={Boolean(result.data.firstTreatmentOverdue?.count)} aria-labelledby="pipeline-first-treatment"><header><h2 id="pipeline-first-treatment">Premiers traitements en retard</h2>{result.data.firstTreatmentOverdue ? <strong aria-label={`${number.format(result.data.firstTreatmentOverdue.count)} leads en retard`}>{number.format(result.data.firstTreatmentOverdue.count)}</strong> : null}</header>{result.data.firstTreatmentOverdue
+      ? <><p>Leads distincts sans traitement connu, depuis strictement plus de 24 heures consécutives après réception source reconnue ou première observation CRM persistée. Même sélection que le Pipeline ; les échanges historiques connus sans date sont exclus.</p><Link href={result.data.firstTreatmentOverdue.href}>Voir la file des premiers traitements en retard <ArrowRight size={14} aria-hidden="true" /></Link></>
+      : <p>Indicateur indisponible dans cette réponse. Aucun zéro ni délai n’est déduit des seuls statuts.</p>}</section> : null}
     {result.kind === "ready" && result.data.total > 0 ? <><section className={styles.summary} aria-label="Synthèse de la sélection"><div><span>Leads uniques</span><strong>{number.format(result.data.total)}</strong><small>dans le périmètre courant</small></div><div><span>Étapes occupées</span><strong>{number.format(stages.filter((stage) => result.data.counts[stage.key] > 0).length)}</strong><small>sur {stages.length} statuts</small></div><div><span>Qualifiés humainement</span><strong>{number.format(result.data.total - result.data.temperatureDistribution.UNEVALUATED)}</strong><small>température renseignée</small></div></section><div className={styles.results}><section className={styles.panel} aria-labelledby="pipeline-volumes"><header className={styles.panelHeader}><div><h2 id="pipeline-volumes">Volumes par statut</h2><p>Photographie actuelle · pas un historique des transitions</p></div><ChartBar size={26} aria-hidden="true" /></header><Volumes data={result.data} filters={selectedFilters} /></section><TemperatureDistribution data={result.data} filters={selectedFilters} /></div></> : null}
     {result.kind === "ready" ? <><aside className={styles.dimensions} aria-label="Lecture des dimensions"><Info size={20} aria-hidden="true" /><p><strong>Quatre dimensions indépendantes.</strong> Le statut commercial, la température humaine, le dernier résultat de contact et la complétude documentaire ne se remplacent pas et ne sont pas déduits les uns des autres.</p></aside><footer className={styles.freshness}>Données API · {result.data.definitionVersion} · mises à jour le {new Date(result.data.generatedAt).toLocaleString("fr-FR", { timeZone: result.data.timezone })} · heure de Casablanca</footer></> : null}
+    {result.kind === "ready" ? <PipelineLeads key={`${query}:${revision}`} filters={selectedFilters} generatedAt={result.data.generatedAt} /> : null}
     <details className={styles.help}><summary>Comment lire ces chiffres ?</summary><p>La période sélectionne les leads selon leur date de création. Cette photographie actuelle décrit leur statut courant, pas un historique des transitions.</p><p>Chaque barre indique la part du statut dans l’ensemble des leads uniques de la sélection. « Sans suite » reste inclus dans ce total. Les résultats respectent votre périmètre de consultation.</p></details>
   </main>;
 }

@@ -30,6 +30,9 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   DashboardCapabilitiesController: { read: [] },
   // The read adapter applies lead.view per resource, not an aggregate grant to raw identities.
   DashboardRecentLeadsController: { read: ["reporting.view"] },
+  // This adapter rechecks reporting.view + lead.view per Lead in the shared
+  // ReportingPersistenceService fence before returning a selected page.
+  CommercialWorkController: { read: ["reporting.view"] },
   TelephonyController: { configuration: ["interaction.view"], configure: ["settings.global.manage"], initiate: ["interaction.create"], freeCall: ["telephony.free-call.create"], listLeadCalls: ["interaction.view"], detail: ["interaction.view"], end: ["interaction.create"], associationCandidates: ["interaction.view"], event: ["interaction.create"], compensate: ["interaction.create"], associate: ["interaction.create"], queue: ["interaction.view"], recording: ["interaction.view"], webhookStatus: ["interaction.view"], webhook: ["settings.global.manage"] },
   TelephonyProvisioningController: { list: [], server: [], user: [], pairing: [], revoke: [] },
   TelephonyOwnController: { read: ["interaction.view"], pairing: ["interaction.create"], revoke: ["interaction.create"] },
@@ -64,7 +67,7 @@ export function routePermissions(controller: string, handler: string): readonly 
  * ReportingPersistenceService inside this same fence. Aggregate contexts cannot
  * manufacture OWN/TEAM membership. Reserved GLOBAL remains in the interceptor. */
 export function usesScopedReportingAuthorization(controller: string, handler: string): boolean {
-  return handler === "read" && ["ManagerDashboardController", "PersonalDashboardController", "DashboardRecentLeadsController", "CommercialFunnelController", "CommercialPerformanceController", "SourceEffectivenessController", "SharedContributionController", "OperationalRiskController"].includes(controller)
+  return handler === "read" && ["ManagerDashboardController", "PersonalDashboardController", "DashboardRecentLeadsController", "CommercialWorkController", "CommercialFunnelController", "CommercialPerformanceController", "SourceEffectivenessController", "SharedContributionController", "OperationalRiskController"].includes(controller)
     || controller === "ManagerDashboardController" && handler === "export";
 }
 

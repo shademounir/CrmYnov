@@ -90,7 +90,7 @@ for (const zeroCounts of [false, true]) {
     const values = zeroCounts ? [0, 0, 0, 0] : [3, 1, 2, 1];
     const personal: PersonalDashboardReport = {
       definitionVersion: "personal-dashboard-v1", timezone: "Africa/Casablanca", filters: { view: "personal" },
-      performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0]!, secondaryLeadCount: values[1]!, activeLoad: values[2]!, followUps: { overdue: values[3]! } }] },
+      performance: { advisers: [{ adviserId: "adviser-synthetic", primaryLeadCount: values[0]!, secondaryLeadCount: values[1]!, activeLoad: values[2]!, followUps: { overdue: values[3]! }, drillDown: { overdue: "/manager/reports/commercial-work?view=personal&queue=OVERDUE_FOLLOW_UP&taskOwnerId=adviser-synthetic&adviserScope=INVOLVED&period=open" } }] },
       contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: zeroCounts ? 0 : 4, secondaryActionCount: zeroCounts ? 0 : 2 }] },
       safeguards: { personalScopeOnly: true, aggregatedOnly: true },
     };
@@ -102,12 +102,15 @@ for (const zeroCounts of [false, true]) {
     assert.equal(figures[0]?.querySelector("h2")?.textContent, "Ma performance");
     const chart = figures[0]?.querySelector<HTMLButtonElement>("button.reporting-chart");
     assert.equal(chart?.type, "button");
-    assert.deepEqual([...chart.querySelectorAll("div > span")].map((label) => label.textContent), ["Leads principaux", "Collaborations", "Charge active", "Relances échues"]);
+    assert.deepEqual([...chart.querySelectorAll("div > span")].map((label) => label.textContent), ["Leads principaux", "Collaborations", "Charge active", "Relances en retard"]);
     assert.deepEqual([...chart.querySelectorAll("meter")].map((meter) => meter.value), values);
     assert.deepEqual([...chart.querySelectorAll("strong")].map((count) => count.textContent), values.map(String));
     assert.deepEqual([...figures[0].querySelectorAll("tbody td")].map((count) => count.textContent), values.map(String));
-    assert.equal(chart?.getAttribute("aria-label")?.includes(`Relances échues: ${values[3]}`), true);
+    assert.equal(chart?.getAttribute("aria-label")?.includes(`Relances en retard: ${values[3]}`), true);
     assert.equal(personalCharts.textContent?.includes("adviser-synthetic"), false);
+    const ownerLink = [...dom.window.document.querySelectorAll("a")].find((link) => link.textContent?.includes("Mes actions en retard"));
+    assert.ok(ownerLink); assert.equal(ownerLink.textContent?.includes(String(values[3])), true);
+    assert.equal(new URL(ownerLink.href, "https://crm.invalid").searchParams.get("taskOwnerId"), "adviser-synthetic");
     dom.window.close();
   });
 }
@@ -124,7 +127,10 @@ test("keeps hostile aggregate labels as inert text and refuses unsafe destinatio
   assert.equal(html.includes("<script>alert(1)</script>"), false);
   assert.equal(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), true);
   assert.equal(html.includes("onerror="), true);
-  assert.equal((html.match(/href="#"/gu) ?? []).length >= 2, true);
+  assert.match(html, /Liste indisponible dans cette cohorte/u);
+  const dom = new JSDOM(html);
+  assert.equal(dom.window.document.querySelector('section[aria-label="Cartes KPI"] a'), null, "unsafe KPI destinations are text, not navigable links");
+  dom.window.close();
   assert.equal(html.includes("javascript:"), false);
   assert.equal(html.includes("external.invalid"), false);
 });
@@ -139,6 +145,11 @@ test("allows only explicit internal reporting destinations", () => {
   assert.equal(preserved.includes("createdBefore=2026-08-24"), true);
   assert.equal(preserved.includes("createdTo="), false);
   assert.equal(preserveFilters("javascript:alert(1)", new URLSearchParams()), "#");
+  const treatment = { treatmentFrom: "2026-01-02", treatmentTo: "2026-01-03", treatmentState: "UNKNOWN_DATE" };
+  for (const destination of ["/leads", "/manager/reports/commercial-funnel", "/manager/reports/commercial-work"]) {
+    const url = new URL(preserveFilters(destination, new URLSearchParams(treatment)), "https://crm.invalid");
+    for (const [key, value] of Object.entries(treatment)) assert.equal(url.searchParams.get(key), value);
+  }
 });
 
 test("detects ASCII control characters without rejecting international code points", () => {
@@ -164,9 +175,10 @@ test("period, preferred period and reset preserve the personal view and selected
   dom.window.close();
 });
 
-test("quick queues retain the selected cohort and show the backend first-interaction count", () => {
-  const scoped = { ...report, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, queues: { withoutFirstInteraction: 2 } } } };
+test("quick queues retain the selected cohort and show the backend shared first-treatment count", () => {
   const filters = { view: "global", period: "custom", campus: "campus-a", source: "SYNTHETIC", from: "2026-10-01T00:00:00.000Z", to: "2026-10-05T00:00:00.000Z" };
+  const href = `/leads?${new URLSearchParams({ view: "FIRST_TREATMENT_OVERDUE", campus: filters.campus, source: filters.source, createdFrom: filters.from, createdBefore: filters.to, returnTo: `/manager/reports/dashboard?${new URLSearchParams(filters)}` })}`;
+  const scoped: DashboardReport = { ...report, firstTreatmentOverdue: { count: 2, href, thresholdHours: 24, comparison: "STRICTLY_GREATER" }, panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, queues: { withoutFirstInteraction: 2 } } } };
   const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: filters, initialReport: scoped, initialCalendar })));
   for (const link of dom.window.document.querySelectorAll<HTMLAnchorElement>(".quick-queues a")) {
     const url = new URL(link.getAttribute("href")!, "https://dev.example.invalid");
@@ -176,15 +188,15 @@ test("quick queues retain the selected cohort and show the backend first-interac
     assert.equal(url.searchParams.has("createdTo"), false);
     assert.equal(new URL(url.searchParams.get("returnTo")!, "https://dev.example.invalid").searchParams.get("source"), "SYNTHETIC");
   }
-  assert.match(dom.window.document.querySelector(".quick-queues")?.textContent ?? "", /Premiers contacts en retard2/u);
+  assert.match(dom.window.document.querySelector(".quick-queues")?.textContent ?? "", /Premiers traitements en retard2/u);
   dom.window.close();
 });
 
-test("first-contact backlog links exactly to À contacter while keeping cutoff and selected cohort", () => {
+test("first-treatment backlog uses its own shared SLA view and keeps the selected cohort", () => {
   const cutoff = "2026-10-04T00:00:00.000Z";
   const scoped = { ...report, toContact: { count: 4, href: "/leads?view=TO_CONTACT&adviserId=adviser-synthetic" },
     panels: { ...report.panels, operationalRisks: { ...report.panels.operationalRisks, queues: { withoutFirstInteraction: 2 },
-      alerts: [{ code: "first_interaction_overdue", count: 2, drillDown: `/leads?view=TO_CONTACT&createdBefore=${encodeURIComponent(cutoff)}` },
+      alerts: [{ code: "first_interaction_overdue", count: 2, drillDown: "/leads?view=FIRST_TREATMENT_OVERDUE" },
         { code: "closure_decision_pending", count: 1, drillDown: "/manager/validations" },
         { code: "load_gap", count: 7, drillDown: "/manager/reports/commercial-performance" }] } } };
   const filters = { period: "custom", campus: "campus-a", adviserId: "adviser-synthetic", from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z" };
@@ -193,14 +205,16 @@ test("first-contact backlog links exactly to À contacter while keeping cutoff a
   const priority = document.querySelector(".priority-panel")!;
   assert.doesNotMatch(priority.textContent ?? "", /first_interaction_overdue|closure_decision_pending|load_gap|Signal agrégé sans PII|contrôles API/u);
   assert.match(priority.textContent ?? "", /leur somme n’est pas un nombre de Leads distincts/u);
-  const row = [...priority.querySelectorAll("article")].find((item) => item.textContent?.includes("Premiers contacts en retard"))!;
+  const row = [...priority.querySelectorAll("article")].find((item) => item.textContent?.includes("Premiers traitements en retard"))!;
   const url = new URL(row.querySelector("a")!.href);
-  assert.equal(url.searchParams.get("view"), "TO_CONTACT");
-  assert.equal(url.searchParams.get("createdBefore"), cutoff);
+  assert.equal(url.searchParams.get("view"), "FIRST_TREATMENT_OVERDUE");
+  assert.equal(url.searchParams.get("createdBefore"), filters.to);
   assert.equal(url.searchParams.get("createdFrom"), filters.from);
   assert.equal(url.searchParams.get("adviserId"), filters.adviserId);
   assert.ok(document.querySelector('a[href^="/manager/validations?"]'));
-  assert.ok(document.querySelector('a[href^="/manager/reports/commercial-performance?"]'));
+  assert.equal(document.querySelector('a[href^="/manager/reports/commercial-performance?"]'), null, "a load difference is not a selectable Lead queue");
+  assert.match(priority.textContent ?? "", /Écart de charge commerciale/u);
+  assert.match(priority.textContent ?? "", /Dossiers d’écart/u);
   const earlier = new URL(preserveFilters(`/leads?view=TO_CONTACT&createdBefore=${cutoff}`, new URLSearchParams({ ...filters, to: "2026-10-03T00:00:00.000Z" })), "https://dev.example.invalid");
   assert.equal(earlier.searchParams.get("createdBefore"), "2026-10-03T00:00:00.000Z");
   const offset = new URL(preserveFilters(`/leads?view=TO_CONTACT&createdBefore=${cutoff}`, new URLSearchParams({ ...filters, to: "2026-10-03T23:30:00-02:00" })), "https://dev.example.invalid");
@@ -546,7 +560,7 @@ test("an otherwise valid recent Lead cannot manufacture an unsafe destination", 
 
 test("Points d’attention translate known aggregate signals without links, raw codes or a fabricated timeline", () => {
   const cases = [
-    ["unassigned_leads", "Leads actifs non affectés"], ["first_interaction_overdue", "Premiers contacts en retard"],
+    ["unassigned_leads", "Leads actifs non affectés"], ["first_interaction_overdue", "Premiers traitements en retard"],
     ["follow_up_overdue", "Relances en retard"], ["closure_decision_pending", "Demandes de clôture à valider"],
     ["reassignment_decision_pending", "Décisions de réaffectation en attente"], ["capacity_warning:synthetic-internal-id", "Capacité commerciale à examiner"],
     ["load_gap", "Écart de charge commerciale"], ["source_quality:synthetic-internal-source", "Qualité d’une source à vérifier"],
@@ -564,7 +578,7 @@ test("Points d’attention translate known aggregate signals without links, raw 
       assert.equal(panel.textContent?.includes(code!), false); assert.equal(panel.querySelector("a, time"), null);
       assert.equal(panel.textContent?.includes("2026-"), false);
       assert.equal(panel.textContent?.includes("PRIVATE_DESTINATION"), false);
-      if (code === "first_interaction_overdue") assert.match(panel.textContent ?? "", /délai de prise en charge est dépassé/u);
+      if (code === "first_interaction_overdue") assert.match(panel.textContent ?? "", /strictement plus de 24 heures consécutives/u);
       if (code === "follow_up_overdue") assert.match(panel.textContent ?? "", /Relances planifiées dont l’échéance est dépassée/u);
     } finally { dom.window.close(); }
   }
@@ -580,6 +594,25 @@ test("Points d’attention keep five observed signals and do not turn an observe
     assert.deepEqual([...panel.querySelectorAll(".dashboard-attention-item__count")].map((item) => item.textContent), ["0 élément(s) concerné(s)", "11 élément(s) concerné(s)", "12 élément(s) concerné(s)", "13 élément(s) concerné(s)", "14 élément(s) concerné(s)"]);
     assert.doesNotMatch(panel.textContent ?? "", /Aucun point d’attention|Écart de charge commerciale|Qualité d’une source/u);
     assert.equal(panel.querySelector("a"), null);
+  } finally { dom.window.close(); }
+});
+
+test("operational alerts state mixed units and decline unqualified legacy destinations, load comparison remains in the same report", () => {
+  const alerts = [
+    { code: "load_gap", count: 2, drillDown: "/manager/reports/commercial-performance", loadComparison: { minimum: 1, maximum: 3, adviserCount: 2, population: "VISIBLE_CURRENT_PRIMARY_ACTIVE_OWNERS" } },
+    { code: "source_quality:synthetic", count: 3, drillDown: "/leads?source=PRIVATE_SOURCE" },
+    { code: "reassignment_decision_pending", count: 4, drillDown: "/manager/assignment" },
+  ];
+  const scoped: DashboardReport = { ...report, panels: { ...report.panels, operationalRisks: { alerts, queues: {} } } };
+  const dom = new JSDOM(renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { source: "WEB_FORM" }, initialReport: scoped, initialCalendar })));
+  try {
+    const section = dom.window.document.querySelector('[aria-label="Alertes opérationnelles"]')!;
+    assert.equal(section.querySelectorAll("a").length, 0);
+    for (const expected of ["Dossiers d’écart", "Maximum 3, minimum 1", "2 conseillers", "Conseillers sans dossier actif exclus", "Occurrences d’import", "Demandes, pas dossiers distincts", "File de décision filtrée indisponible", "Aucune décision automatique"]) assert.ok(section.textContent?.includes(expected), expected);
+    assert.ok(!section.innerHTML.includes("PRIVATE_SOURCE"));
+    const broken = { ...scoped, panels: { ...scoped.panels, operationalRisks: { alerts: [{ ...alerts[0]!, count: 9 }], queues: {} } } };
+    const invalid = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: {}, initialReport: broken, initialCalendar }));
+    assert.ok(!invalid.includes("Maximum 3"));
   } finally { dom.window.close(); }
 });
 
@@ -643,6 +676,7 @@ test("Manager fetch uses capabilities and qualified aggregate data rather than a
     drillDowns: [
       { key: "overdueFollowUps", count: 1, href: "/leads?view=FOLLOW_UP&source=QUALIFIED_SOURCE" },
       { key: "unassigned", count: 1, href: "/leads?view=UNASSIGNED&source=QUALIFIED_SOURCE" },
+      { key: "enrolled", count: 0, href: "/leads?status=ENROLLED&source=QUALIFIED_SOURCE" },
       { key: "futureMetric", count: 1, href: "/leads" },
     ] };
   let release: ((response: Response) => void) | undefined;
@@ -659,12 +693,18 @@ test("Manager fetch uses capabilities and qualified aggregate data rather than a
   assert.match(view.host.querySelector(".freshness-indicator")?.textContent ?? "", /dernière réponse API/u);
   assert.equal(view.host.querySelector('select[name="view"] option[value="global"]')?.hasAttribute("disabled"), false);
   assert.match(view.host.textContent ?? "", /uniquement les données autorisées/u);
-  assert.match(view.host.textContent ?? "", /ce n’est pas la même cohorte/u);
+  assert.match(view.host.textContent ?? "", /Aucun lien Inscriptions ne remplace ce filtre/u);
+  assert.equal(view.host.querySelector('a[href*="status=ENROLLED"]'), null, "legacy response cannot replace the selected status behind a zero counter");
   assert.match(view.host.querySelector(".priority-panel")?.textContent ?? "", /Liste non disponible/u);
   assert.equal(view.host.querySelector('.priority-panel a[href*="closures"]'), null);
   const href = view.host.querySelector<HTMLAnchorElement>(".quick-queues a")!.href;
   assert.equal(new URL(href).searchParams.get("source"), "QUALIFIED_SOURCE");
   assert.equal(new URL(href).searchParams.get("createdBefore"), scoped.filters.to);
+  assert.equal(new URL(href).searchParams.get("portfolioState"), "OPEN", "legacy producer links cannot include closed dossiers behind an active counter");
+  const allUnassigned = [...view.host.querySelectorAll<HTMLAnchorElement>('a[href*="view=UNASSIGNED"]')];
+  assert.ok(allUnassigned.length >= 2);
+  for (const anchor of allUnassigned) assert.equal(new URL(anchor.href).searchParams.get("portfolioState"), "OPEN");
+  assert.doesNotMatch(view.host.querySelector(".quick-queues")?.textContent ?? "", /inclut aussi les statuts clos/u);
 });
 
 for (const value of [0, null] as const) {

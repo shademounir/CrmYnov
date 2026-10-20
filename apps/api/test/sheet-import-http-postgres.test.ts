@@ -267,6 +267,14 @@ test("CRMY-171 real HTTP administration and two compiled schedulers / synthetic 
   const replay = await fetch(`${second}/lead-assignments`, { method: "POST", headers, body: JSON.stringify(batch) });
   assert.equal(replay.status, 201, JSON.stringify(await replay.clone().json()));
   assert.deepEqual(await replay.json(), assignedResult, "another API returns the same assignment result without memory receipts");
+  assert.ok(Array.isArray(assignedResult.assigned));
+  assert.equal(Object.hasOwn(object(assignedResult.assigned[0]), "firstTreatmentAgeMinutes"), false, "assignment result is not a read-time SLA snapshot");
+  const observedAssignment = await fetch(`${second}/leads/${manualLead.id}`, { headers });
+  assert.equal(observedAssignment.status, 200);
+  const observedLead = object(await observedAssignment.json());
+  assert.equal(observedLead.treatmentState, "NONE", "technical assignment is not a business treatment");
+  assert.equal(observedLead.firstTreatmentPending, true);
+  assert.equal(observedLead.firstTreatmentDeadlineAt, new Date(manualLead.createdAt.getTime() + 86_400_000).toISOString(), "authorized GET retains the original reception deadline");
   assert.equal(await client.auditEvent.count({ where: { resourceId: manualLead.id } }), auditCount, "assignment replay writes no duplicate audit");
   assert.equal(await client.campusAssignmentCursor.count({ where: { campusId: campus.id, version: 1, cursor: 2 } }), 1);
   const manualRecords = [{ ...record, externalId: "synthetic-manual-import-171" }];

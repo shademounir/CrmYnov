@@ -152,7 +152,13 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
     operation: "CANCEL", reasonCode: "DUPLICATE_ENTRY" }, principal, "persistent-correction");
   assert.equal(correction.correction?.operation, "CANCEL");
   assert.equal((await service.changeStatusForApi(id, { status: "CONTACTED", reason: "Contact synthétique" }, principal, "persistent-status")).status, "CONTACTED");
-  assert.equal((await service.assignLocalLeadForApi(id, ownerId, principal, "persistent-assignment", "Affectation synthétique")).assignedToId, ownerId);
+  const assigned = await service.assignLocalLeadForApi(id, ownerId, principal, "persistent-assignment", "Affectation synthétique");
+  assert.equal(assigned.assignedToId, ownerId);
+  assert.deepEqual(assigned, await restartedService.findLocalLeadForApi(id), "assignment result matches the persistent replay shape on another instance");
+  assert.equal(Object.hasOwn(assigned, "firstTreatmentAgeMinutes"), false, "assignment response does not freeze a read-time SLA clock");
+  const observed = await restartedService.getLeadForApi(id, principal, "persistent-assignment-read");
+  assert.equal(observed.treatmentState, "DATED");
+  assert.equal(Object.hasOwn(observed, "firstTreatmentAgeMinutes"), true, "authorized reads retain the derived treatment projection");
   assert.equal((await service.reassignLocalLeadForApi(id, ownerId, targetId, principal, "persistent-reassignment", "Réaffectation synthétique")).assignedToId, targetId);
   assert.deepEqual((await service.applyCollaboratorForApi(id, userId, "ADD", "ADVISER", principal, "persistent-collaboration")).collaboratorIds, [userId]);
   await service.persistCollaboratorSnapshotForApi(id, [userId]);

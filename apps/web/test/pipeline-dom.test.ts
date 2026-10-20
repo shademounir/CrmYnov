@@ -7,6 +7,7 @@ const snapshot = {
   cohort: { totalUniqueLeads: 10 },
   currentState: { PROSPECT: 7, CONTACTED: 1, QUALIFIED: 2, ENROLLED: 0, CLOSED_LOST: 0 },
   temperatureDistribution: { UNEVALUATED: 7, COLD: 1, WARM: 0, HOT: 2 },
+  firstTreatmentOverdue: { count: 2, href: "/leads?view=FIRST_TREATMENT_OVERDUE&adviserId=synthetic", thresholdHours: 24, comparison: "STRICTLY_GREATER" },
 };
 
 test("Pipeline renders API-confirmed values, keeps URL context and distinguishes empty, loading and unavailable states", async (t) => {
@@ -35,6 +36,8 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   let firstRequest = true;
   let releaseInitial: (() => void) | undefined;
   t.mock.method(globalThis, "fetch", async (path: string): Promise<Response> => {
+    if (path === "/api/crm/leads/filter-options") return Response.json({ advisers: [{ id: "adviser-synthetic", label: "Conseiller synthétique" }] });
+    if (path.startsWith("/api/crm/leads?")) return Response.json({ items: [], page: 1, pageSize: 12, total: 0 });
     requested = path;
     if (firstRequest) {
       firstRequest = false;
@@ -42,7 +45,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
     }
     await Promise.resolve();
     if (mode === "session") return Response.json({ code: "authentication_required" }, { status: 401 });
-    if (mode === "empty") return Response.json({ ...snapshot, cohort: { totalUniqueLeads: 0 }, currentState: { PROSPECT: 0, CONTACTED: 0, QUALIFIED: 0, ENROLLED: 0, CLOSED_LOST: 0 }, temperatureDistribution: { UNEVALUATED: 0, COLD: 0, WARM: 0, HOT: 0 } });
+    if (mode === "empty") return Response.json({ ...snapshot, firstTreatmentOverdue: { ...snapshot.firstTreatmentOverdue, count: 0 }, cohort: { totalUniqueLeads: 0 }, currentState: { PROSPECT: 0, CONTACTED: 0, QUALIFIED: 0, ENROLLED: 0, CLOSED_LOST: 0 }, temperatureDistribution: { UNEVALUATED: 0, COLD: 0, WARM: 0, HOT: 0 } });
     return Response.json(snapshot);
   });
   const settle = async (): Promise<void> => { await act(async () => { await new Promise<void>((resolve) => setImmediate(resolve)); }); };
@@ -53,6 +56,8 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   const text = dom.window.document.body.textContent ?? "";
   for (const expected of ["10", "Prospects", "7", "Contactés", "1", "Qualifiés", "2", "Non évalué", "Froid", "Chaud", "Quatre dimensions indépendantes"]) assert.match(text, new RegExp(expected, "u"));
   assert.equal(requested, "/api/crm/reports/commercial-funnel?");
+  assert.match(text, /Premiers traitements en retard/u);
+  assert.equal(dom.window.document.querySelector<HTMLAnchorElement>('a[href*="FIRST_TREATMENT_OVERDUE"]')?.getAttribute("href"), snapshot.firstTreatmentOverdue.href);
   const prospectLink = [...dom.window.document.querySelectorAll<HTMLAnchorElement>("a")].find((item) => item.href.includes("status=PROSPECT"));
   assert.ok(prospectLink); assert.match(prospectLink.href, /\/leads\?status=PROSPECT&returnTo=%2Fmanager%2Freports%2Fcommercial-funnel$/u);
 
@@ -63,6 +68,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
   await settle();
   assert.equal(dom.window.location.search, "?from=2026-09-01");
   assert.match(dom.window.document.body.textContent ?? "", /0 lead confirmé par l’API/u);
+  assert.equal(dom.window.document.querySelector<HTMLAnchorElement>('a[href*="FIRST_TREATMENT_OVERDUE"]')?.getAttribute("href"), snapshot.firstTreatmentOverdue.href, "zero remains a targeted queue, not all prospects");
 
   mode = "session";
   const refresh = dom.window.document.querySelector<HTMLButtonElement>('form button[type="submit"]'); assert.ok(refresh);
@@ -83,7 +89,7 @@ test("Pipeline renders API-confirmed values, keeps URL context and distinguishes
 });
 
 test("Pipeline direct navigation and applying filters preserve the Dashboard cohort until dates are explicitly edited", async (t) => {
-  const filters = { from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z", campus: "CAMPUS-SYNTHETIC", source: "SYNTHETIC", channel: "DIGITAL", adviserId: "adviser-synthetic", status: "QUALIFIED" };
+  const filters = { from: "2026-10-01T08:14:27.000Z", to: "2026-10-05T09:42:18.000Z", campus: "CAMPUS-SYNTHETIC", source: "SYNTHETIC", channel: "DIGITAL", adviserId: "adviser-synthetic", status: "QUALIFIED", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-03", treatmentState: "UNKNOWN_DATE" };
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: `https://dev.example.invalid/manager/reports/commercial-funnel?${new URLSearchParams(filters)}` });
   const prior = new Map<string, PropertyDescriptor | undefined>();
   for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator,
@@ -101,11 +107,22 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
     for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
   });
   const requested: URL[] = [];
-  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => { requested.push(new URL(path, dom.window.location.origin)); return Promise.resolve(Response.json(snapshot)); });
-  await act(async () => { root.render(createElement(Pipeline, { initialFilters: { campus: filters.campus } })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => {
+    if (path === "/api/crm/leads/filter-options") return Promise.resolve(Response.json({ advisers: [{ id: "adviser-synthetic", label: "Conseiller synthétique" }] }));
+    if (path.startsWith("/api/crm/leads?")) return Promise.resolve(Response.json({ items: [], page: 1, pageSize: 12, total: 0 }));
+    requested.push(new URL(path, dom.window.location.origin)); return Promise.resolve(Response.json(snapshot));
+  });
+  const { default: Page } = await import("../app/manager/reports/commercial-funnel/page");
+  const serverElement = await Page({ searchParams: Promise.resolve(filters) });
+  await act(async () => { root.render(createElement(Pipeline, serverElement.props as { initialFilters: Record<string, string> })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.ok(requested.length > 0);
+  for (const request of requested) for (const [key, value] of Object.entries(filters)) assert.equal(request.searchParams.get(key), value, "even the first request uses the full server cohort");
+  assert.equal(host.querySelector('.pipeline-first-treatment')?.getAttribute('data-overdue'), "true");
+  assert.equal(host.querySelector('.pipeline-first-treatment strong')?.getAttribute('aria-label'), "2 leads en retard");
   for (const [key, value] of Object.entries(filters)) assert.equal(requested.at(-1)!.searchParams.get(key), value);
   let form = host.querySelector<HTMLFormElement>("form")!;
   let values = new dom.window.FormData(form);
+  assert.equal(form.querySelector('select[name="adviserId"] option[value="adviser-synthetic"]')?.textContent, "Conseiller synthétique");
   for (const [key, value] of Object.entries(filters)) assert.deepEqual(values.getAll(key), [value], "submit each original boundary or scope exactly once");
   const dates = form.querySelectorAll<HTMLInputElement>('input[type="date"]');
   assert.equal(dates[0]?.value, "2026-10-01"); assert.equal(dates[1]?.value, "2026-10-05");
@@ -120,6 +137,7 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
   assert.equal(allLeads.searchParams.get("adviserId"), filters.adviserId);
   assert.equal(allLeads.searchParams.get("channel"), filters.channel);
   assert.equal(allLeads.searchParams.get("status"), filters.status);
+  for (const key of ["treatmentFrom", "treatmentTo", "treatmentState"] as const) assert.equal(allLeads.searchParams.get(key), filters[key]);
   form = host.querySelector<HTMLFormElement>("form")!;
   const from = form.querySelector<HTMLInputElement>('input[type="date"]')!;
   act(() => {
@@ -133,4 +151,10 @@ test("Pipeline direct navigation and applying filters preserve the Dashboard coh
   await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
   assert.equal(requested.at(-1)!.searchParams.get("from"), "2026-10-02");
   assert.equal(requested.at(-1)!.searchParams.get("to"), filters.to);
+  form = host.querySelector<HTMLFormElement>("form")!;
+  await act(async () => { form.dispatchEvent(new dom.window.Event("reset", { bubbles: true, cancelable: true })); await new Promise<void>((resolve) => setImmediate(resolve)); });
+  assert.equal(dom.window.location.search, "");
+  assert.equal(host.querySelector<HTMLSelectElement>('select[name="adviserId"]')?.value, "");
+  assert.equal(host.querySelector<HTMLSelectElement>('select[name="status"]')?.value, "");
+  assert.equal(host.querySelector<HTMLInputElement>('input[name="treatmentFrom"]')?.value, "");
 });

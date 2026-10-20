@@ -58,3 +58,24 @@ test("controller fails closed without an authenticated principal", async () => {
   assert.throws(() => controller.read({}, {} as never), hasCode("principal_missing"));
   assert.equal((await controller.read({}, { principal: manager, header: () => "corr-controller" } as never)).cohort.totalUniqueLeads, 0);
 });
+
+test("pipeline strict first-treatment threshold uses one clock and preserves the filtered queue at zero", () => {
+  const receivedAt = "2026-10-18T10:00:00.000Z";
+  const common = { createdAt: receivedAt, receivedAt, status: "PROSPECT", campus: "Casablanca synthétique", campaign: "SYNTHETIC", program: "SYNTHETIC", source: "WEB_FORM", assignedToId: "synthetic", collaboratorIds: [], temperature: "UNEVALUATED" };
+  const rows = [{ ...common, id: "untreated" }, { ...common, id: "history", hasUndatedHistory: true, treatmentState: "UNKNOWN_DATE" }, { ...common, id: "other", assignedToId: "other" }];
+  let observedClock: Date | undefined;
+  const leads = { reportingSnapshot: (_principal: Principal, now: Date) => { observedClock = now; return rows; } } as unknown as LeadService;
+  const service = new CommercialFunnelService(leads, new AuditService());
+  const query = { adviserId: "synthetic", source: "WEB_FORM", from: "2026-10-01T00:00:00Z", to: "2026-11-01T00:00:00Z" };
+  const equal = service.read(query, manager, "equal", new Date("2026-10-19T10:00:00.000Z"));
+  assert.equal(equal.firstTreatmentOverdue.count, 0);
+  const late = service.read(query, manager, "late", new Date("2026-10-19T10:00:00.001Z"));
+  assert.equal(late.firstTreatmentOverdue.count, 1);
+  assert.equal(late.generatedAt, observedClock?.toISOString());
+  for (const report of [equal, late]) {
+    const params = new URL(report.firstTreatmentOverdue.href, "https://synthetic.invalid").searchParams;
+    assert.equal(params.get("view"), "FIRST_TREATMENT_OVERDUE"); assert.equal(params.get("adviserId"), "synthetic"); assert.equal(params.get("source"), "WEB_FORM");
+    assert.equal(params.get("createdFrom"), "2026-10-01T00:00:00.000Z"); assert.equal(params.get("createdBefore"), "2026-11-01T00:00:00.000Z");
+    assert.equal(report.firstTreatmentOverdue.thresholdHours, 24); assert.equal(report.firstTreatmentOverdue.comparison, "STRICTLY_GREATER");
+  }
+});

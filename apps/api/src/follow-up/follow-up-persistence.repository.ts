@@ -54,7 +54,9 @@ export class FollowUpPersistenceRepository {
       // also the delivery receipt; no new schema or in-memory queue is involved.
       const candidates = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT f.id FROM lead_follow_ups f
-        WHERE (f.state = 'SCHEDULED' AND f.due_at <= ${now})
+        JOIN leads l ON l.id = f.lead_id
+        WHERE l.status NOT IN ('ENROLLED', 'CLOSED_LOST')
+          AND ((f.state = 'SCHEDULED' AND f.due_at <= ${now})
           OR (f.state = 'DUE' AND f.due_at <= ${now} AND NOT EXISTS (
             SELECT 1 FROM internal_notifications n
             WHERE n.deduplication_key IN ('follow-up-due:' || f.id::text || ':v' || f.version::text, 'follow-up-due:' || f.id::text)
@@ -74,9 +76,10 @@ export class FollowUpPersistenceRepository {
                   AND a.after->>'dueAt' = to_char(f.due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                   AND (n.deduplication_key = 'follow-up-due:' || f.id::text OR a.after->>'ownerId' = f.owner_id::text)
               )
-          ))
+          )))
         ORDER BY f.due_at, f.id LIMIT ${limit}
         FOR UPDATE OF f SKIP LOCKED
+        FOR SHARE OF l SKIP LOCKED
       `;
       let due = 0; let notifications = 0;
       for (const candidate of candidates) {
@@ -106,8 +109,10 @@ export class FollowUpPersistenceRepository {
         if (result.created) notifications += 1;
       }
       return { due, notifications };
-    // Row locks serialize decisions/cancellation and claims. SKIP LOCKED lets
-    // another worker process a disjoint batch rather than fail serialization.
+    // Hold a shared Lead lock until state/audit/notification commit. A final
+    // closure cannot commit between the open-status test and delivery. When
+    // closure already holds the Lead, skip it rather than wait in reverse
+    // task/Lead lock order. Closed historical tasks are not auto-cancelled.
     }, { isolationLevel: "ReadCommitted" });
   }
 

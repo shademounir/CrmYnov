@@ -2,13 +2,14 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import type { Principal } from "../auth/auth.types.js";
 import { leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
+import { matchesTreatmentFilters, normalizeTreatmentFilters, type TreatmentFilters } from "../leads/lead-treatment.js";
 
 export const REPORTING_TIMEZONE = "Africa/Casablanca" as const;
 export const reportingPeriods = ["7d", "30d", "90d", "custom"] as const;
 export const reportingViews = ["global", "personal"] as const;
 export const reportingChannels = ["DIGITAL", "PHONE", "IN_PERSON", "PARTNER", "OTHER"] as const;
 
-export interface InteractiveReportingQuery {
+export interface InteractiveReportingQuery extends TreatmentFilters {
   period?: string; from?: string; to?: string; campus?: string; campaign?: string; program?: string;
   source?: string; channel?: string; adviserId?: string; status?: string; view?: string;
 }
@@ -26,7 +27,7 @@ export function normalizeScopedReportingQuery(raw: Record<string, string | undef
   return normalizeReportingQuery(isPersonalReportingRequest(raw, principal) ? { ...raw, view: "personal", adviserId: principal.userId } : { ...raw, view: "global" }, principal, now);
 }
 
-const allowedKeyList = ["period", "from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "view"] as const;
+const allowedKeyList = ["period", "from", "to", "campus", "campaign", "program", "source", "channel", "adviserId", "status", "view", "treatmentFrom", "treatmentTo", "treatmentState"] as const;
 const allowedKeys = new Set<string>(allowedKeyList);
 const SAFE_VALUE = /^[\p{L}\p{N} ._:/+-]{1,100}$/u;
 const compareText = (left: string, right: string): number => left.localeCompare(right, "fr", { sensitivity: "accent", numeric: true });
@@ -48,10 +49,11 @@ export function normalizeReportingQuery(
   const campaign = value("campaign");
   const program = value("program");
   const source = value("source");
+  const treatment = normalizeTreatmentFilters({ treatmentFrom: value("treatmentFrom"), treatmentTo: value("treatmentTo"), treatmentState: value("treatmentState") });
   return {
     period, from, to, view, ...(campus ? { campus } : {}), ...(campaign ? { campaign } : {}),
     ...(program ? { program } : {}), ...(source ? { source } : {}),
-    ...(channel ? { channel } : {}), ...(adviserId ? { adviserId } : {}), ...(status ? { status } : {}),
+    ...(channel ? { channel } : {}), ...(adviserId ? { adviserId } : {}), ...(status ? { status } : {}), ...treatment,
   };
 }
 
@@ -61,7 +63,7 @@ export function matchesInteractiveFilters(row: LeadReportingRow, query: Interact
     && exact(row.campus, query.campus) && exact(row.campaign, query.campaign) && exact(row.program, query.program)
     && exact(row.source, query.source) && (!query.channel || sourceChannel(row.source) === query.channel)
     && (!query.adviserId || row.assignedToId === query.adviserId || row.collaboratorIds.includes(query.adviserId))
-    && (!query.status || row.status === query.status);
+    && (!query.status || row.status === query.status) && matchesTreatmentFilters(row, query);
 }
 
 export function sourceChannel(source: string): (typeof reportingChannels)[number] {

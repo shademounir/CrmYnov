@@ -4,7 +4,7 @@ import test from "node:test";
 import { createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer, type AddressInfo } from "node:net";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Lead } from "@prisma/client";
 import { createApplication } from "../src/application.js";
 import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
 
@@ -44,8 +44,8 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   const superActorId = randomUUID(); const superEmail = `${superActorId}@example.invalid`; const superSalt = randomBytes(16).toString("hex");
   await client.collaborator.create({ data: { id: superActorId, professionalEmail: superEmail, roles: ["SUPER_ADMIN"], firstLoginRequired: false } });
   await client.localPasswordHash.create({ data: { collaboratorId: superActorId, identityDigest: createHash("sha256").update(superEmail).digest("hex"), passwordSalt: superSalt, passwordDigest: scryptSync(password, superSalt, 32).toString("hex"), mustChange: false } });
-  const commercialId = randomUUID(), supervisorId = randomUUID();
-  for (const [id, role] of [[commercialId, "ADMISSIONS"], [supervisorId, "MANAGER"]] as const) {
+  const commercialId = randomUUID(), supervisorId = randomUUID(), readerId = randomUUID();
+  for (const [id, role] of [[commercialId, "ADMISSIONS"], [supervisorId, "MANAGER"], [readerId, "AUDITOR"]] as const) {
     const identity = `${id}@example.invalid`, identitySalt = randomBytes(16).toString("hex");
     await client.collaborator.create({ data: { id, professionalEmail: identity, professionalDisplayName: role === "MANAGER" ? "Superviseure synthétique" : "Conseillère synthétique", roles: [role], campusId: campus, firstLoginRequired: false } });
     await client.localPasswordHash.create({ data: { collaboratorId: id, identityDigest: createHash("sha256").update(identity).digest("hex"), passwordSalt: identitySalt, passwordDigest: scryptSync(password, identitySalt, 32).toString("hex"), mustChange: false } });
@@ -61,6 +61,13 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   let secondClosed = false;
   t.after(async () => { await first.close(); if (!secondClosed) await second.close(); });
   const base = (value: number): string => `http://127.0.0.1:${value}`;
+  const docsResponse = await fetch(`${base(firstPort)}/docs-json`); assert.equal(docsResponse.status, 200);
+  const docs = await docsResponse.json() as { paths: Record<string, { get: { responses: Record<string, { content?: Record<string, { schema: { $ref: string } }> }> } }>; components: { schemas: Record<string, { properties: Record<string, unknown> }> } };
+  for (const [route, schema] of [["commercial-performance", "CommercialPerformanceReport"], ["commercial-funnel", "CommercialFunnel"]]) {
+    assert.equal(docs.paths[`/reports/${route}`]!.get.responses["200"]!.content!["application/json"]!.schema.$ref, `#/components/schemas/${schema}`);
+    assert.ok(docs.components.schemas[schema!]!.properties.generatedAt);
+  }
+  assert.ok(docs.components.schemas.AdviserPerformance!.properties.followUps);
   const login = await fetch(`${base(firstPort)}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
   assert.equal(login.status, 201);
   const { token } = await login.json() as { token: string };
@@ -106,7 +113,7 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
     const response = await fetch(`${base(firstPort)}/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: `${id}@example.invalid`, password }) });
     assert.equal(response.status, 201); return (await response.json() as { token: string }).token;
   };
-  const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId);
+  const commercialToken = await businessToken(commercialId), supervisorToken = await businessToken(supervisorId), readerToken = await businessToken(readerId);
   const businessRequest = (actorToken: string, path: string, method = "GET", payload?: unknown, apiPort = firstPort): Promise<Response> => fetch(`${base(apiPort)}${path}`, { method, headers: { authorization: `Bearer ${actorToken}`, "content-type": "application/json", "x-correlation-id": `business-${randomUUID()}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
   const nextAction = { mode: "SCHEDULE", dueAt: "2099-10-20T09:00:00Z", reason: "Vérifier les pièces synthétiques" };
   const interactionBody = { type: "COMMENT", result: "INFORMATION_RECORDED", note: "Commentaire synthétique visible\nAvec prochaine action", idempotencyKey: "business:first-interaction", nextAction };
@@ -207,13 +214,42 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
     const response = await businessRequest(commercialToken, `/leads?${new URLSearchParams({ ...Object.fromEntries(historyQuery), ...extra })}`);
     assert.equal(response.status, 200); return response.json() as Promise<HistoryPage>;
   };
-  const allHistory = await readHistory();
+  const allHistory = await readHistory({ view: "ALL" });
   assert.equal(allHistory.total, 3);
   assert.equal(allHistory.items[0]?.lastTreatmentAt, "2026-01-01T23:30:00.000Z");
   assert.equal(allHistory.items.find(item => item.id === historyLeads[1]!.id)?.treatmentState, "UNKNOWN_DATE");
   assert.equal(allHistory.items.find(item => item.id === historyLeads[2]!.id)?.treatmentState, "NONE");
-  assert.equal((await readHistory({ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" })).total, 1);
-  assert.equal((await readHistory({ treatmentState: "UNKNOWN_DATE" })).total, 1);
+  const performanceFilters = new URLSearchParams({ campaign: historyCampaign, campus, source: "TEST", channel: "OTHER", adviserId: commercialId, from: "2026-01-01T00:00:00.000Z", to: "2099-01-01T00:00:00.000Z", inactivityHours: "72" });
+  const historyPerformanceResponse = await businessRequest(supervisorToken, `/reports/commercial-performance?${performanceFilters}`);
+  assert.equal(historyPerformanceResponse.status, 200, await historyPerformanceResponse.clone().text());
+  const historyPerformance = await historyPerformanceResponse.json() as { generatedAt: string; advisers: Array<{ adviserId: string; primaryLeadCount: number; inactiveLeadCount: number; drillDown: { assigned: string; inactive: string } }> };
+  const historyOwner = historyPerformance.advisers.find(item => item.adviserId === commercialId)!;
+  assert.equal(historyOwner.primaryLeadCount, 3); assert.equal(historyOwner.inactiveLeadCount, 1, "dated old treatment counted despite recent technical import; unknown and never-treated excluded");
+  for (const key of ["assigned", "inactive"] as const) {
+    const response = await businessRequest(supervisorToken, historyOwner.drillDown[key]); assert.equal(response.status, 200, await response.clone().text());
+    const list = await response.json() as HistoryPage;
+    assert.equal(list.total, key === "assigned" ? historyOwner.primaryLeadCount : historyOwner.inactiveLeadCount);
+    if (key === "inactive") { assert.deepEqual(list.items.map(item => item.id), [historyLeads[0]!.id]); assert.equal(new URL(historyOwner.drillDown[key], "https://fixture.invalid").searchParams.get("inactiveTreatmentBefore"), new Date(Date.parse(historyPerformance.generatedAt) - 72 * 3600000).toISOString()); }
+  }
+  assert.equal((await businessRequest(supervisorToken, "/leads?inactiveTreatmentBefore=invalid")).status, 400);
+  assert.equal((await businessRequest(supervisorToken, "/leads?portfolioState=INVALID")).status, 400);
+  assert.equal((await readHistory({ view: "ALL", treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" })).total, 1);
+  assert.equal((await readHistory({ view: "ALL", treatmentState: "UNKNOWN_DATE" })).total, 1);
+  for (const filter of [{ treatmentFrom: "2026-01-02", treatmentTo: "2026-01-02" }, { treatmentState: "UNKNOWN_DATE" }, { treatmentState: "NONE" }]) {
+    const params = new URLSearchParams({ campaign: historyCampaign, adviserId: commercialId, ...filter });
+    const funnelResponse = await businessRequest(supervisorToken, `/reports/commercial-funnel?${params}`);
+    assert.equal(funnelResponse.status, 200, await funnelResponse.clone().text());
+    const report = await funnelResponse.json() as { cohort: { totalUniqueLeads: number }; firstTreatmentOverdue: { href: string; count: number } };
+    const listResponse = await businessRequest(supervisorToken, `/leads?${params}`); assert.equal(listResponse.status, 200);
+    const list = await listResponse.json() as HistoryPage;
+    assert.equal(report.cohort.totalUniqueLeads, list.total); assert.equal(list.total, 1);
+    const slaResponse = await businessRequest(supervisorToken, report.firstTreatmentOverdue.href);
+    assert.equal(slaResponse.status, 200); assert.equal((await slaResponse.json() as HistoryPage).total, report.firstTreatmentOverdue.count);
+    for (const [key, value] of Object.entries(filter)) assert.equal(new URL(report.firstTreatmentOverdue.href, "https://example.invalid").searchParams.get(key), value);
+  }
+  for (const filter of ["treatmentFrom=2026-02-30", "treatmentState=INVALID", "treatmentFrom=2026-01-03&treatmentTo=2026-01-02"]) assert.equal((await businessRequest(supervisorToken, `/reports/commercial-funnel?${filter}`)).status, 400);
+  const untreatedHistory = await readHistory();
+  assert.deepEqual(untreatedHistory.items.map(item => item.id), [historyLeads[2]!.id], "known dated and undated historical exchanges are not never-treated");
   const missingActions = await businessRequest(supervisorToken, `/leads?view=NEXT_ACTION_MISSING&campaign=${encodeURIComponent(historyCampaign)}`);
   assert.equal(missingActions.status, 200);
   assert.deepEqual((await missingActions.json() as HistoryPage).items.map(item => item.id).sort(), [historyLeads[0]!.id, historyLeads[1]!.id].sort());
@@ -221,11 +257,42 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   const dashboard = await businessRequest(supervisorToken, `/reports/manager-dashboard?period=30d&campaign=${encodeURIComponent(historyCampaign)}`);
   assert.equal(dashboard.status, 200, await dashboard.clone().text());
   const contactCard = (await dashboard.json() as { toContact: { count: number; href: string } }).toContact;
-  assert.equal(contactCard.count, allHistory.total);
+  assert.equal(contactCard.count, untreatedHistory.total);
   const fromCard = await businessRequest(supervisorToken, contactCard.href);
   assert.equal(fromCard.status, 200); assert.equal((await fromCard.json() as { total: number }).total, contactCard.count);
+  const unassignedCampaign = "SYNTHETIC-UNASSIGNED-DASHBOARD";
+  const unassignedBase = { firstName: "Synthetic", lastName: "Unassigned", campus, campaign: unassignedCampaign, educationLevel: "BAC", program: "Programme synthétique", source: "WEB_FORM" };
+  const unassignedOpen = await client.lead.create({ data: { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-OPEN" } });
+  await client.lead.createMany({ data: [
+    { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-CLOSED", status: "CLOSED_LOST" },
+    { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-ENROLLED", status: "ENROLLED" },
+    { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-FOREIGN", campus: otherCampus },
+    { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-SOURCE", source: "TEST" },
+  ] });
+  for (const status of [undefined, "ENROLLED", "PROSPECT"] as const) {
+    const filters = new URLSearchParams({ period: "30d", campaign: unassignedCampaign, source: "WEB_FORM", ...(status ? { status } : {}) });
+    const response = await businessRequest(supervisorToken, `/reports/manager-dashboard?${filters}`); assert.equal(response.status, 200);
+    const report = await response.json() as { cards: { unassigned: number; enrolled: number }; drillDowns: Array<{ key: string; href: string }> };
+    const href = report.drillDowns.find(item => item.key === "unassigned")!.href;
+    const url = new URL(href, "https://example.invalid");
+    assert.equal(url.searchParams.get("portfolioState"), "OPEN"); assert.equal(url.searchParams.get("campaign"), unassignedCampaign); assert.equal(url.searchParams.get("source"), "WEB_FORM");
+    const read = await businessRequest(supervisorToken, href); assert.equal(read.status, 200);
+    const page = await read.json() as { total: number; items: Array<{ id: string }> };
+    assert.equal(report.cards.unassigned, status === "ENROLLED" ? 0 : 1); assert.equal(page.total, report.cards.unassigned);
+    assert.deepEqual(page.items.map(item => item.id), status === "ENROLLED" ? [] : [unassignedOpen.id]);
+    const enrolledHref = report.drillDowns.find(item => item.key === "enrolled")!.href;
+    assert.equal(report.cards.enrolled, status === "PROSPECT" ? 0 : 1);
+    if (status === "PROSPECT") assert.equal(enrolledHref, "#");
+    else {
+      const enrolledUrl = new URL(enrolledHref, "https://example.invalid");
+      assert.equal(enrolledUrl.searchParams.get("campaign"), unassignedCampaign); assert.equal(enrolledUrl.searchParams.get("source"), "WEB_FORM");
+      const enrolledRead = await businessRequest(supervisorToken, enrolledHref); assert.equal(enrolledRead.status, 200);
+      const enrolledPage = await enrolledRead.json() as { total: number; items: Array<{ leadCode: string }> };
+      assert.equal(enrolledPage.total, report.cards.enrolled); assert.deepEqual(enrolledPage.items.map(item => item.leadCode), ["LD-DASH-UNASSIGNED-ENROLLED"]);
+    }
+  }
   assert.equal((await businessRequest(commercialToken, `/leads/${historyLeads[2]!.id}/timeline`, "POST", { type: "COMMENT", result: "COMPLETED", note: "Premier échange synthétique daté", idempotencyKey: "treatment:first-contact", nextAction })).status, 201);
-  assert.equal((await readHistory()).total, 2);
+  assert.equal((await readHistory()).total, 0);
   assert.equal(await client.importedHistoricalNote.count({ where: { leadId: { in: historyLeads.map(item => item.id) } } }), 2);
 
   const fresh = await client.lead.create({ data: { leadCode: "LD-PROGRESSION-CONCURRENT", firstName: "Test", lastName: "Synthétique", campus, campaign: "Campagne synthétique", educationLevel: "BAC", program: "Programme synthétique", source: "TEST", assignedToId: commercialId } });
@@ -269,10 +336,122 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
   assert.deepEqual(competing.map(response => response.status).sort(), [201, 409]);
   assert.equal(await client.leadClosureRequest.count({ where: { leadId: fresh.id, state: "PENDING" } }), 1);
 
+  // Persisted creation-batch evidence anchors source reception; later source
+  // attachments cannot replace a previously observed CRM fallback clock.
+  const slaCampaign = "SYNTHETIC-FIRST-TREATMENT-24H";
+  const observedAt = "2026-01-03T10:00:00.000Z", sourceAt = "2026-01-01T10:00:00.000Z";
+  const creationBatch = await client.ingestionBatch.create({ data: { idempotencyKey: "synthetic-sla-creation", profile: "SYNTHETIC", assignmentMode: "FIXED", actorId,
+    totalCount: 1, createdCount: 1, attachedCount: 0, reviewCount: 0, invalidCount: 0, importedAt: new Date(observedAt) } });
+  const slaLead = async (suffix: string, assignedToId: string, importBatchId?: string): Promise<Lead> => client.lead.create({ data: { leadCode: `LD-SLA-${suffix}`, firstName: "Fixture", lastName: "Synthétique", campus,
+    campaign: slaCampaign, educationLevel: "BAC", program: "Programme synthétique", source: "WEB_FORM", createdAt: new Date(observedAt), assignedToId, ...(importBatchId ? { importBatchId } : {}) } });
+  const sourced = await slaLead("SOURCE", commercialId, creationBatch.id), observed = await slaLead("OBSERVATION", commercialId), otherOwner = await slaLead("OTHER-OWNER", actorId);
+  await client.leadProvenance.create({ data: { leadId: sourced.id, batchId: creationBatch.id, sourceType: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER",
+    originalSource: "SYNTHETIC", recentSource: "SYNTHETIC", externalId: "synthetic-sla-first", occurredAt: new Date(sourceAt), importedAt: new Date(observedAt) } });
+  type SlaProjection = { id: string; receivedAt: string; receptionOrigin: string; firstTreatmentOverdue: boolean; firstTreatmentAgeMinutes: number; firstTreatmentDeadlineAt: string; treatmentState: string };
+  const readSla = async (id: string, apiPort = firstPort): Promise<SlaProjection> => {
+    const response = await businessRequest(commercialToken, `/leads/${id}`, "GET", undefined, apiPort);
+    assert.equal(response.status, 200, await response.clone().text()); return response.json() as Promise<SlaProjection>;
+  };
+  const sourceBefore = await readSla(sourced.id), observationBefore = await readSla(observed.id);
+  assert.equal(sourceBefore.receivedAt, sourceAt); assert.equal(sourceBefore.receptionOrigin, "SOURCE_CONTRACT");
+  assert.equal(observationBefore.receivedAt, observedAt); assert.equal(observationBefore.receptionOrigin, "CRM_OBSERVATION");
+  assert.equal(sourceBefore.firstTreatmentOverdue, true); assert.equal(observationBefore.firstTreatmentOverdue, true);
+  const lateBatch = await client.ingestionBatch.create({ data: { idempotencyKey: "synthetic-sla-later-attachment", profile: "SYNTHETIC", assignmentMode: "FIXED", actorId,
+    totalCount: 2, createdCount: 0, attachedCount: 2, reviewCount: 0, invalidCount: 0, importedAt: new Date("2026-01-04T10:00:00Z") } });
+  for (const item of [sourced, observed]) await client.leadProvenance.create({ data: { leadId: item.id, batchId: lateBatch.id, sourceType: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER",
+    originalSource: "SYNTHETIC", recentSource: "SYNTHETIC", externalId: `synthetic-sla-later-${item.id}`, occurredAt: new Date("2026-01-02T10:00:00Z"), importedAt: new Date("2026-01-04T10:00:00Z") } });
+  for (const [item, initial] of [[sourced, sourceBefore], [observed, observationBefore]] as const) {
+    const after = await readSla(item.id, secondPort);
+    assert.equal(after.receivedAt, initial.receivedAt); assert.equal(after.receptionOrigin, initial.receptionOrigin);
+    assert.equal(after.firstTreatmentDeadlineAt, initial.firstTreatmentDeadlineAt); assert.ok(after.firstTreatmentAgeMinutes >= initial.firstTreatmentAgeMinutes);
+  }
+  const slaQuery = new URLSearchParams({ from: "2026-01-01", to: "2026-12-31", campaign: slaCampaign, adviserId: commercialId });
+  const workDue = new Date(Date.now() - 60_000);
+  await client.leadFollowUp.create({ data: { leadId: sourced.id, ownerId: commercialId, dueAt: workDue, createdAt: new Date(workDue.valueOf() - 60_000), state: "SCHEDULED", reason: "Suivi synthétique de cohérence des compteurs", idempotencyKey: "synthetic-work-counter", fingerprint: createHash("sha256").update("synthetic-work-counter").digest("hex") } });
+  await client.lead.update({ where: { id: sourced.id }, data: { nextActionAt: workDue } });
+  const authorizedActions = await businessRequest(commercialToken, "/follow-ups"); assert.equal(authorizedActions.status, 200);
+  const readActions = await authorizedActions.json() as { items: Array<{ leadId: string; ownerId: string; reason: string }> };
+  assert.equal(readActions.items.find((item) => item.leadId === sourced.id)?.reason, "Suivi synthétique de cohérence des compteurs");
+  assert.ok(readActions.items.every((item) => item.ownerId === commercialId));
+  const leadOnly = await businessRequest(readerToken, `/leads/${sourced.id}`); assert.equal(leadOnly.status, 200);
+  assert.equal((await leadOnly.text()).includes("Suivi synthétique de cohérence des compteurs"), false, "Lead read alone does not disclose task reason");
+  assert.equal((await businessRequest(readerToken, "/follow-ups")).status, 403, "task reason remains behind existing reminder permission");
+  type SlaQueue = { count: number; href: string };
+  const dashboardSlaResponse = await businessRequest(supervisorToken, `/reports/manager-dashboard?${slaQuery}`);
+  assert.equal(dashboardSlaResponse.status, 200, await dashboardSlaResponse.clone().text());
+  const slaDashboard = await dashboardSlaResponse.json() as { firstTreatmentOverdue: SlaQueue; panels: { funnel: { firstTreatmentOverdue: SlaQueue } }; cards: { overdueFollowUps: number }; drillDowns: Array<{ key: string; href: string }> };
+  assert.equal(slaDashboard.firstTreatmentOverdue.count, 2); assert.equal(slaDashboard.panels.funnel.firstTreatmentOverdue.count, 2);
+  for (const queue of [slaDashboard.firstTreatmentOverdue, slaDashboard.panels.funnel.firstTreatmentOverdue]) {
+    const response = await businessRequest(supervisorToken, queue.href); assert.equal(response.status, 200);
+    const page = await response.json() as { total: number; items: SlaProjection[] };
+    assert.equal(page.total, queue.count); assert.deepEqual(page.items.map(item => item.id).sort(), [sourced.id, observed.id].sort());
+    assert.equal(page.items.some(item => item.id === otherOwner.id), false);
+  }
+  const personalSlaResponse = await businessRequest(commercialToken, `/reports/personal-dashboard?${slaQuery}`);
+  assert.equal(personalSlaResponse.status, 200, await personalSlaResponse.clone().text());
+  const personalSla = await personalSlaResponse.json() as { firstTreatmentOverdue: SlaQueue; performance: { advisers: Array<{ adviserId: string; followUps: { overdue: number }; drillDown: { overdue: string } }> } };
+  assert.equal(personalSla.firstTreatmentOverdue.count, 2);
+  const personalOwner = personalSla.performance.advisers.find((item) => item.adviserId === commercialId)!;
+  const personalOwnerLink = personalOwner.drillDown.overdue.replace("/manager/reports/commercial-work?", "/reports/commercial-work?");
+  const ownerWorkResponse = await businessRequest(commercialToken, personalOwnerLink);
+  assert.equal(ownerWorkResponse.status, 200, await ownerWorkResponse.clone().text());
+  const ownerWork = await ownerWorkResponse.json() as { queues: Array<{ key: string; itemCount: number }>; page: { total: number; items: Array<{ id: string }> } };
+  assert.equal(personalOwner.followUps.overdue, 1); assert.equal(ownerWork.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!.itemCount, personalOwner.followUps.overdue);
+  assert.deepEqual(ownerWork.page.items.map((item) => item.id), [sourced.id]);
+  const forbiddenOwnerLink = new URL(personalOwnerLink, "https://example.invalid"); forbiddenOwnerLink.searchParams.set("taskOwnerId", supervisorId);
+  assert.equal((await businessRequest(commercialToken, `${forbiddenOwnerLink.pathname}?${forbiddenOwnerLink.searchParams}`)).status, 403, "personal caller cannot select another task owner");
+  const foreignSla = await businessRequest(commercialToken, `/leads?view=FIRST_TREATMENT_OVERDUE&campaign=${slaCampaign}&adviserId=${actorId}`);
+  assert.equal(foreignSla.status, 200, "list filters refine the already authorized scope rather than granting another adviser's scope");
+  assert.deepEqual(await foreignSla.json(), { items: [], page: 1, pageSize: 25, total: 0 }, "another adviser's filter must not expose a single foreign Lead or inflate its total");
+
+  type WorkSummary = { key: string; leadCount: number; itemCount: number; href: string };
+  type WorkRead = { queues: WorkSummary[]; selectedQueue: string; page: { total: number; items: Array<{ id: string }> }; cohort: { leadCount: number }; advisers: Array<{ adviserId: string }> };
+  const dashboardLink = new URL(slaDashboard.drillDowns.find((item) => item.key === "overdueFollowUps")!.href, "https://example.invalid");
+  assert.equal(dashboardLink.pathname, "/manager/reports/commercial-work"); assert.equal(dashboardLink.searchParams.get("adviserScope"), "INVOLVED");
+  dashboardLink.searchParams.delete("returnTo");
+  const dashboardWorkResponse = await businessRequest(supervisorToken, `/reports/commercial-work?${dashboardLink.searchParams}`);
+  assert.equal(dashboardWorkResponse.status, 200, await dashboardWorkResponse.clone().text());
+  const dashboardWork = await dashboardWorkResponse.json() as WorkRead;
+  assert.equal(slaDashboard.cards.overdueFollowUps, 1);
+  assert.equal(dashboardWork.queues.find((item) => item.key === "OVERDUE_FOLLOW_UP")!.itemCount, slaDashboard.cards.overdueFollowUps);
+  assert.deepEqual(dashboardWork.page.items.map((item) => item.id), [sourced.id]);
+  const workResponse = await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&queue=FIRST_TREATMENT_OVERDUE`);
+  assert.equal(workResponse.status, 200, await workResponse.clone().text());
+  const work = await workResponse.json() as WorkRead;
+  assert.equal((await fetch(`${base(firstPort)}/reports/commercial-work`)).status, 401, "no unauthenticated queue access");
+  assert.equal((await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&queue=__proto__`)).status, 400);
+  assert.equal((await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&unexpected=true`)).status, 400);
+  assert.equal((await businessRequest(supervisorToken, `/reports/commercial-work?${slaQuery}&campus=${otherCampus}`)).status, 403, "campus scope unchanged");
+  assert.equal((await businessRequest(commercialToken, `/reports/commercial-work?${slaQuery}&view=global`)).status, 403, "commercial cannot request pilotage");
+  assert.equal(work.queues.length, 6); assert.equal(work.cohort.leadCount, 2); assert.equal(work.page.total, 2);
+  assert.deepEqual(work.page.items.map(item => item.id).sort(), [sourced.id, observed.id].sort());
+  for (const queue of work.queues) {
+    const link = queue.href.replace("/manager/reports/commercial-work?", "/reports/commercial-work?");
+    const response = await businessRequest(supervisorToken, link);
+    assert.equal(response.status, 200, await response.clone().text());
+    const list = await response.json() as WorkRead;
+    assert.equal(list.selectedQueue, queue.key); assert.equal(list.page.total, queue.leadCount);
+    assert.equal(list.page.items.some(item => item.id === otherOwner.id), false);
+  }
+  const ownWorkResponse = await businessRequest(commercialToken, `/reports/commercial-work?${slaQuery}&view=personal&queue=FIRST_TREATMENT_OVERDUE`);
+  assert.equal(ownWorkResponse.status, 200, await ownWorkResponse.clone().text());
+  const ownWork = await ownWorkResponse.json() as WorkRead;
+  assert.equal(ownWork.page.total, 2); assert.deepEqual(ownWork.advisers.map(adviser => adviser.adviserId), [commercialId]);
+  const foreignWork = await businessRequest(commercialToken, `/reports/commercial-work?${slaQuery}&adviserId=${actorId}`);
+  // Personal reporting canonicalizes the adviser to the authenticated commercial.
+  assert.equal(foreignWork.status, 200, await foreignWork.clone().text());
+  assert.equal((await foreignWork.json() as WorkRead).page.items.some(item => item.id === otherOwner.id), false);
+
   await second.close(); secondClosed = true;
   const restarted = await createApplication("error"); const restartPort = await port(); await restarted.listen(restartPort, "127.0.0.1");
   t.after(() => restarted.close());
   const persisted = await fetch(`${base(restartPort)}/leads/${lead.id}/qualification`, { headers: { authorization: `Bearer ${token}` } });
   assert.equal(persisted.status, 200); assert.equal((await persisted.json() as { current: { version: number } }).current.version, 2);
+  for (const [item, initial] of [[sourced, sourceBefore], [observed, observationBefore]] as const) {
+    const afterRestart = await readSla(item.id, restartPort);
+    assert.equal(afterRestart.receivedAt, initial.receivedAt); assert.equal(afterRestart.firstTreatmentDeadlineAt, initial.firstTreatmentDeadlineAt);
+    assert.equal(afterRestart.receptionOrigin, initial.receptionOrigin); assert.ok(afterRestart.firstTreatmentAgeMinutes >= initial.firstTreatmentAgeMinutes);
+  }
+  t.diagnostic("Source creation-batch and CRM-fallback reception clocks remain stable across later provenance attachments, repeated HTTP reads, two instances and restart; Manager/Personal/Pipeline queue counts match filtered lists without exposing another adviser's Leads.");
   t.diagnostic("Admin campus scope, Super Admin global scope, two API instances, one PostgreSQL transaction fence, exact replay, optimistic conflict, inter-campus refusal, rollback and restart persistence verified.");
 });
