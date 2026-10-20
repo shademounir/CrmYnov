@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FollowUpDueScheduler } from "../src/follow-up/follow-up-due.scheduler.js";
+import { FollowUpPersistenceRepository } from "../src/follow-up/follow-up-persistence.repository.js";
 import { followUpDueFailure, runFollowUpDueJob } from "../src/jobs/follow-up-due.js";
 import { runRuntimeDatabaseGrantJob, runtimeDatabaseGrantFailure } from "../src/jobs/grant-runtime-database.js";
 
@@ -17,8 +17,8 @@ test("follow-up job requires external workers, writes its result and always clos
     workersMode: "external",
     createContext: () => Promise.resolve({
       get: (token) => {
-        assert.equal(token, FollowUpDueScheduler);
-        return { tick: (value): Promise<{ due: number; notifications: number }> => {
+        assert.equal(token, FollowUpPersistenceRepository);
+        return { enabled: true, markDue: (value): Promise<{ due: number; notifications: number }> => {
           assert.equal(value, now);
           return Promise.resolve({ due: 3, notifications: 2 });
         } };
@@ -31,8 +31,8 @@ test("follow-up job requires external workers, writes its result and always clos
 
   assert.equal(closed, 1);
   assert.deepEqual(JSON.parse(writes[0] ?? "{}"), { job: "follow-up-due", completed: true, due: 3, notifications: 2 });
-  assert.match(followUpDueFailure(new Error("synthetic_failure")), /synthetic_failure/u);
-  assert.match(followUpDueFailure("unknown"), /unknown_error/u);
+  assert.match(followUpDueFailure(new Error("synthetic_failure")), /follow_up_due_job_failed/u);
+  assert.match(followUpDueFailure("unknown"), /follow_up_due_job_failed/u);
 });
 
 test("runtime database grant validates the allowlist and executes the bounded grant sequence", async () => {
