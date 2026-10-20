@@ -24,12 +24,12 @@ export default function AuditPageView(): React.JSX.Element {
     const controller = new AbortController(); setBusy(true); setError(""); setData(null);
     // A new scope/page/read invalidates both the visible list and its open detail.
     // Closing selection aborts the detail effect; no hidden stale identities remain.
-    dialog.current?.close(); setSelected(null); setDetail(null); setDetailError(""); setDetailBusy(false); setCampuses([]);
+    dialog.current?.close(); setSelected(null); setDetail(null); setDetailError(""); setDetailBusy(false);
     const params = new URLSearchParams(query); params.set("page", String(page)); params.set("pageSize", "25");
     if (snapshot.current) params.set("snapshot", snapshot.current);
     void auditRequest<AuditPage>(`?${params}`, controller.signal).then((result) => {
       if (!controller.signal.aborted) { snapshot.current = result.snapshot; setCampuses(result.campuses); setData(result); setBusy(false); }
-    }).catch((cause: unknown) => { if (!controller.signal.aborted) { setError(cause instanceof Error ? cause.message : "Journal indisponible."); setBusy(false); } });
+    }).catch((cause: unknown) => { if (!controller.signal.aborted) { setCampuses([]); setError(cause instanceof Error ? cause.message : "Journal indisponible."); setBusy(false); } });
     return (): void => controller.abort();
   }, [query, page, revision]);
   useEffect(() => {

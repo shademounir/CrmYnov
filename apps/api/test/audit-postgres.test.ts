@@ -137,6 +137,16 @@ test("CRMY-54 HTTP/PostgreSQL: scoped immutable audit, live ceilings and redacti
   assert.deepEqual((await identity(identityEvents[2]!.id)).actorDisplay, { kind: "SYSTEM", label: null });
   await client.collaborator.update({ where: { id: admin.principal.userId }, data: { professionalDisplayName: "Profil Synthétique Renommé" } });
   assert.equal((await identity()).actorDisplay.label, "Profil Synthétique Renommé", "explicit current profile, not an invented historical snapshot");
+  for (const invalid of ["", "   "]) {
+    await client.collaborator.update({ where: { id: admin.principal.userId }, data: { campusId: invalid } });
+    assert.equal((await identity(undefined, superAdmin.token)).actorDisplay.kind, "UNAVAILABLE", "blank actor campus is not GLOBAL");
+    await client.lead.update({ where: { id: lead.id }, data: { campus: invalid } });
+    assert.equal((await identity(undefined, superAdmin.token)).leadDisplay.kind, "UNAVAILABLE", "blank Lead campus is not GLOBAL");
+  }
+  await client.lead.update({ where: { id: lead.id }, data: { campus: campusA } });
+  await client.collaborator.update({ where: { id: admin.principal.userId }, data: { campusId: null } });
+  assert.equal((await identity(undefined, superAdmin.token)).actorDisplay.kind, "CURRENT_PROFILE", "null is a legitimate GLOBAL profile");
+  assert.equal((await identity()).actorDisplay.kind, "UNAVAILABLE", "campus-only audit access cannot disclose a GLOBAL profile");
   await client.collaborator.update({ where: { id: admin.principal.userId }, data: { campusId: campusB } });
   assert.equal((await identity()).actorDisplay.kind, "UNAVAILABLE", "historical event remains visible but current actor outside scope is masked");
   await client.lead.update({ where: { id: lead.id }, data: { campus: campusB } });

@@ -20,10 +20,11 @@ function validName(value: unknown): string | null {
 function campusAccess(client: PrismaClient, permissions: Access, principal: Principal): CampusAccess {
   const cache = new Map<string | null, Promise<ResourceContext | null>>();
   const resolve = async (value: string | null): Promise<ResourceContext | null> => {
+    if (value !== null && !value.trim()) return null;
     let resource: ResourceContext;
     try {
-      resource = value ? { scope: "CAMPUS", campusKeys: (await canonicalCampus(client, value)).keys, active: true }
-        : { scope: "GLOBAL", campusKeys: [], active: true };
+      resource = value === null ? { scope: "GLOBAL", campusKeys: [], active: true }
+        : { scope: "CAMPUS", campusKeys: (await canonicalCampus(client, value)).keys, active: true };
     } catch (error) { if (error instanceof ForbiddenException) return null; throw error; }
     return await permissions.can(principal, "audit.view", resource) ? resource : null;
   };

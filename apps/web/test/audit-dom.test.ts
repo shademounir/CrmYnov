@@ -99,6 +99,22 @@ test("CRMY-54 audit filters, UTC periods, CAMPUS and pagination preserve the rea
   for (const key of Object.keys(values)) assert.equal(ui.field(key).value, "");
 });
 
+test("audit campus selection survives delayed reload and subsequent submit or pagination", async (t) => {
+  let pending = false;
+  let complete: (response: Response) => void = () => { throw new Error("request_missing"); };
+  const ui = await browser(t, (url) => pending ? new Promise<Response>((resolve) => { complete = resolve; }) : Response.json(page([item], 51, Number(url.searchParams.get("page") ?? 1))));
+  ui.field("campus").value = campus; pending = true;
+  await ui.submit();
+  assert.equal(ui.field("campus").value, campus, "selection remains visible while loading");
+  assert.equal(ui.doc.querySelectorAll("tbody tr").length, 0, "identities are still cleared while loading");
+  pending = false;
+  await ui.act<void>(() => complete(Response.json(page([item], 51))));
+  assert.equal(ui.field("campus").value, campus, "selection survives refreshed options");
+  await ui.submit(); assert.equal(ui.requests.at(-1)?.searchParams.get("campus"), campus);
+  await ui.click(ui.button("Suivant")); assert.equal(ui.requests.at(-1)?.searchParams.get("campus"), campus);
+  assert.equal(ui.field("campus").value, campus);
+});
+
 test("CRMY-54 audit screen clears stale data on empty results, forbidden or failed API responses", async (t) => {
   let result: Response = Response.json(page());
   const ui = await browser(t, () => result.clone());
@@ -109,6 +125,7 @@ test("CRMY-54 audit screen clears stale data on empty results, forbidden or fail
     result = Response.json({ code: "synthetic_denial" }, { status }); await ui.submit();
     assert.ok(ui.doc.querySelector('[role="alert"]')?.textContent.includes(message));
     assert.equal(ui.doc.querySelectorAll("tbody tr").length, 0); assert.equal(ui.doc.body.textContent.includes("Conseiller Synthétique"), false);
+    assert.equal(ui.doc.querySelectorAll('select[name="campus"] option').length, 1);
   }
 });
 

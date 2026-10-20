@@ -15,14 +15,14 @@ function event(overrides: Partial<AuditEvent> = {}): AuditEvent {
 interface IdentityFixture {
   client: PrismaClient;
   permissions: { can(who: Principal | undefined, key: string, resource: ResourceContext): Promise<boolean> };
-  actor: { id: string; professionalDisplayName: string; campusId: string; active: boolean };
+  actor: { id: string; professionalDisplayName: string; campusId: string | null; active: boolean };
   lead: { id: string; firstName: string; lastName: string; leadCode: string; campus: string; assignedToId: string; collaborators: Array<{ userId: string }> };
   calls: Array<[string, unknown]>;
   denyLead(): void;
 }
 function fixture(): IdentityFixture {
   const calls: Array<[string, unknown]> = [];
-  const actor = { id: actorId, professionalDisplayName: "Conseiller Synthétique", campusId, active: true };
+  const actor: IdentityFixture["actor"] = { id: actorId, professionalDisplayName: "Conseiller Synthétique", campusId, active: true };
   const lead = { id: leadId, firstName: "Dossier", lastName: "Synthétique", leadCode: "LD-SYNTHETIC", campus: campusId, assignedToId: actorId, collaborators: [{ userId: principal.userId }] };
   let allowLead = true;
   const client = {
@@ -57,6 +57,24 @@ test("audit identities never expose current Lead identity after effective lead a
   const [view] = await auditIdentities(f.client, f.permissions, principal, [event()]);
   assert.deepEqual(view!.leadDisplay, { kind: "UNAVAILABLE", id: null, label: null, reference: null });
   assert.doesNotMatch(JSON.stringify(view), /Dossier Synthétique|LD-SYNTHETIC/);
+});
+test("audit invalid blank or unknown campus never falls back to GLOBAL even for a global reader", async () => {
+  for (const invalid of ["", "   ", "SYNTHETIC-UNKNOWN-CAMPUS"]) {
+    const f = fixture(); f.actor.campusId = invalid; f.lead.campus = invalid;
+    const scopes: string[] = [];
+    const permissions = { can: (_who: Principal | undefined, _key: string, resource: ResourceContext): Promise<boolean> => { scopes.push(resource.scope); return Promise.resolve(true); } };
+    const [view] = await auditIdentities(f.client, permissions, principal, [event()]);
+    assert.equal(view!.actorDisplay.kind, "UNAVAILABLE"); assert.equal(view!.leadDisplay.kind, "UNAVAILABLE");
+    assert.deepEqual(scopes, [], "invalid campus is rejected before any GLOBAL permission lookup");
+  }
+});
+test("audit legitimately null actor campus still requires GLOBAL audit permission", async () => {
+  const f = fixture(); f.actor.campusId = null;
+  const permissions = { can: (_who: Principal | undefined, key: string, resource: ResourceContext): Promise<boolean> => Promise.resolve(key === "audit.view" && resource.scope === "GLOBAL") };
+  const [view] = await auditIdentities(f.client, permissions, principal, [event()]);
+  assert.equal(view!.actorDisplay.kind, "CURRENT_PROFILE"); assert.equal(view!.leadDisplay.kind, "UNAVAILABLE");
+  const [denied] = await auditIdentities(f.client, f.permissions, principal, [event()]);
+  assert.equal(denied!.actorDisplay.kind, "UNAVAILABLE");
 });
 test("audit identities mask foreign current campus, inactive and invalid profiles without email fallback", async () => {
   for (const change of [{ campusId: foreignCampus }, { active: false }, { professionalDisplayName: "" }, { professionalDisplayName: "bad\nname" }]) {
