@@ -20,7 +20,7 @@ const context = new URLSearchParams({
 });
 
 test("exposes every supported work queue and usable provenance without advertising import errors as a result queue", () => {
-  assert.deepEqual(leadWorkViews.map(([key]) => key), ["ALL", "MINE", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING", "FIRST_TREATMENT_OVERDUE"]);
+  assert.deepEqual(leadWorkViews.map(([key]) => key), ["ALL", "MINE", "NEW_RECEIVED", "TO_CONTACT", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING", "FIRST_TREATMENT_OVERDUE"]);
   assert.ok(leadProvenanceViews.some(([key]) => key === "YNOV_COM"));
   assert.ok(leadProvenanceViews.some(([key]) => key === "LEGACY_RELAUNCH"));
   assert.equal(leadProvenanceViews.length, 9);
@@ -33,6 +33,17 @@ test("changes a work queue while preserving every other filter, exact date bound
   assert.equal(href.searchParams.get("page"), "1");
   for (const [key, value] of context) if (!["view", "page"].includes(key)) assert.equal(href.searchParams.get(key), value, key);
   assert.equal(context.get("page"), "7");
+});
+
+test("new-entry ordering is visibly fixed while My Leads retains editable creation sorting", () => {
+  for (const view of ["NEW_RECEIVED", "MINE"]) {
+    const dom = new JSDOM(renderToStaticMarkup(createElement(LeadFilterForm, { current: new URLSearchParams({ view, sortBy: "lastName", sortDirection: "asc" }), mode: "directory" })));
+    try {
+      const by = dom.window.document.querySelector<HTMLSelectElement>('select[name="sortBy"]')!, direction = dom.window.document.querySelector<HTMLSelectElement>('select[name="sortDirection"]')!;
+      assert.equal(by.disabled, view === "NEW_RECEIVED"); assert.equal(direction.disabled, view === "NEW_RECEIVED");
+      assert.equal(by.value, view === "NEW_RECEIVED" ? "createdAt" : "lastName"); assert.equal(direction.value, view === "NEW_RECEIVED" ? "desc" : "asc");
+    } finally { dom.window.close(); }
+  }
 });
 
 test("preserves a shared view token and server page size in pagination links", () => {
@@ -74,7 +85,8 @@ test("GET form retains all supported context and exact inclusive/exclusive bound
     assert.equal(form.querySelectorAll('select[name="assignedToId"]').length, 1);
     assert.equal(form.querySelectorAll('select[name="collaboratorId"]').length, 1);
     assert.equal(form.querySelectorAll('input[name="assignedToId"], input[name="collaboratorId"]').length, 0);
-    assert.equal(form.querySelector<HTMLInputElement>('input[type="date"][aria-label="Créés jusqu’au (inclus)"]')?.value, "2026-09-30");
+    assert.equal(form.querySelector<HTMLInputElement>('input[type="date"][aria-label="Ajoutés avant le (exclu)"]')?.value, "2026-10-01");
+    assert.equal(data.get("createdTo"), context.get("createdTo"), "A simultaneous legacy inclusive bound remains exact, not silently dropped");
   } finally { dom.window.close(); }
 });
 

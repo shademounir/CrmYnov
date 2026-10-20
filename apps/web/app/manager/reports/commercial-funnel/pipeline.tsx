@@ -6,6 +6,9 @@ import { ArrowClockwise, ArrowRight, ChartBar, Info, SlidersHorizontal, Thermome
 import { PageHeader } from "../../../_components/ui/page-header";
 import { buildLeadListHref, parseSnapshot, stages, temperatures, type FunnelSnapshot } from "./funnel-contract";
 import { PipelineLeads } from "./pipeline-leads";
+import CommercialWork, { workCohortQuery } from "../commercial-work/work";
+import { AddedAtFilters } from "../../../leads/added-at-filters";
+import { addedDayStart, casablancaDay } from "../../../leads/added-at-period";
 const styles = {
   page: "pipeline-pilot-page", filters: "pipeline-pilot-filters", panel: "pipeline-pilot-panel",
   help: "pipeline-pilot-help", primaryFilters: "pipeline-pilot-primaryFilters", apply: "pipeline-pilot-apply",
@@ -51,7 +54,7 @@ function AdviserFilter({ selected }: Readonly<{ selected: string }>): React.JSX.
 }
 function CohortBoundary({ name, label, initialValue }: Readonly<{ name: "from" | "to"; label: string; initialValue: string }>): React.JSX.Element {
   const [boundary, setBoundary] = useState(initialValue);
-  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue.slice(0, 10)} onChange={(event) => setBoundary(event.target.value)} /></label>;
+  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue ? casablancaDay(initialValue) : ""} onChange={(event) => setBoundary(event.target.value ? addedDayStart(event.target.value) : "")} /></label>;
 }
 function Volumes({ data, filters }: { data: FunnelSnapshot; filters: Record<string, string> }): React.JSX.Element {
   return <>
@@ -76,6 +79,7 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
   const activeFilterCount = useMemo(() => [...new URLSearchParams(query).keys()].length, [query]);
   useEffect(() => {
     function restoreFromHistory(): void {
+      setResult({ kind: "loading" });
       setQuery(globalThis.window.location.search.slice(1));
     }
     restoreFromHistory();
@@ -109,17 +113,20 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
       if (typeof value === "string" && value.trim()) next.set(key, value.trim());
     }
     const serialized = next.toString();
+    setResult({ kind: "loading" });
     globalThis.window.history.replaceState(null, "", serialized ? `/manager/reports/commercial-funnel?${serialized}` : "/manager/reports/commercial-funnel");
     setQuery(serialized); setRevision((value) => value + 1);
   }
   function reset(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    setResult({ kind: "loading" });
     for (const element of event.currentTarget.elements) if (element instanceof HTMLInputElement) element.value = "";
     globalThis.window.history.replaceState(null, "", "/manager/reports/commercial-funnel");
     setQuery(""); setRevision((value) => value + 1);
   }
   return <main className={styles.page}>
     <PageHeader eyebrow="Pilotage commercial" title="Pipeline" description="Une photographie exploitable de vos leads, dans leur état commercial actuel." actions={<Link className="secondary-button" href={buildLeadListHref(selectedFilters)}><UsersThree size={18} aria-hidden="true" />Voir les leads</Link>} />
+    <AddedAtFilters current={new URLSearchParams(query)} path="/manager/reports/commercial-funnel" onChange={(next): void => { next.delete("period"); const serialized = next.toString(); globalThis.window.history.replaceState(null, "", `/manager/reports/commercial-funnel?${serialized}`); setResult({ kind: "loading" }); setQuery(serialized); }} />
     <form key={`filters:${query}:${revision}`} className={styles.filters} onSubmit={apply} onReset={reset} aria-label="Filtres du Pipeline">
       {preservedCohortFields.map((key) => selectedFilters[key] ? <input key={key} type="hidden" name={key} value={selectedFilters[key]} /> : null)}
       <div className={styles.activeFilters}><div><strong>Affiner la sélection</strong><span>{activeFilterCount ? `${activeFilterCount} filtre${activeFilterCount > 1 ? "s" : ""} actif${activeFilterCount > 1 ? "s" : ""}` : "Tous les leads accessibles"}</span></div></div>
@@ -130,8 +137,9 @@ export default function Pipeline({ initialFilters }: { initialFilters: Record<st
         <button className={styles.reset} type="reset">Réinitialiser</button>
       </div>
       <details className={styles.advanced}><summary><SlidersHorizontal size={18} aria-hidden="true" />Filtres supplémentaires</summary><div>{fields.map((field) => <label key={field.key}>{field.label}<input name={field.key} defaultValue={selectedFilters[field.key]} /></label>)}<AdviserFilter selected={selectedFilters.adviserId ?? ""} /><label>Statut<select name="status" defaultValue={selectedFilters.status ?? ""}><option value="">Tous les statuts</option>{stages.map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label><label>Dernier traitement à partir du<input type="date" name="treatmentFrom" defaultValue={selectedFilters.treatmentFrom ?? ""} /></label><label>Dernier traitement jusqu’au (inclus)<input type="date" name="treatmentTo" defaultValue={selectedFilters.treatmentTo ?? ""} /></label><label>Historique de traitement<select name="treatmentState" defaultValue={selectedFilters.treatmentState ?? ""}><option value="">Tous les historiques</option><option value="DATED">Historique entièrement daté</option><option value="UNKNOWN_DATE">Historique avec date inconnue</option><option value="NONE">Aucun traitement connu</option></select></label></div><p>Dernier traitement : journées incluses de Casablanca, sans compter lectures ni imports. Les commentaires non datés restent distincts d’une absence de traitement. Une plage porte sur le dernier traitement daté connu.</p></details>
-      <p className={styles.hint}>Sans période : tous les leads accessibles. La date de fin est exclue. Une date saisie seule correspond à minuit UTC ; un instant ISO existant est conservé tant que la date n’est pas modifiée.</p>
+      <p className={styles.hint}>Période d’ajout CRM : mêmes bornes pour les volumes, taux et dossiers. Sans période : tous les leads accessibles. La date de fin est exclue. Les dates saisies correspondent à minuit Casablanca ; les instants ISO existants sont conservés tant que la date n’est pas modifiée.</p>
     </form>
+    {result.kind === "ready" ? <CommercialWork embedded query={workCohortQuery({ ...selectedFilters, view: "global" })} /> : null}
     {result.kind === "loading" ? <section className={`${styles.panel} ${styles.state}`} role="status" aria-busy="true"><span className={styles.skeleton} aria-hidden="true" /><strong>Chargement du Pipeline…</strong><p>Nous préparons les volumes de votre sélection.</p></section> : null}
     {result.kind === "error" ? <section className={`${styles.panel} ${styles.state}`}><div role="alert"><strong>Rapport indisponible</strong><p>{result.message}</p><span>Aucun compteur n’est affiché tant que l’API n’a pas répondu.</span></div><div>{result.message.includes("session") ? <Link className={styles.reconnect} href="/">Se reconnecter</Link> : null}<button className={styles.retry} type="button" onClick={(): void => setRevision((value) => value + 1)}>Réessayer</button></div></section> : null}
     {result.kind === "ready" && result.data.total === 0 ? <section className={`${styles.panel} ${styles.state}`} role="status"><ChartBar size={40} aria-hidden="true" /><strong>Aucun lead dans cette sélection</strong><p>Élargissez la période ou ajustez les filtres pour afficher des résultats.</p><span>0 lead confirmé par l’API · aucune part calculée</span></section> : null}

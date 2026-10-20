@@ -36,12 +36,13 @@ const row = (id: string, campus: string, source = "WEB_FORM", assignedToId = man
 
 function fixture(): { service: ReportingPersistenceService; requests: Array<{ model: string; where: unknown }>;
   account: { id: string; active: boolean; roles: string[]; campusId: string; teamId: string | null; firstLoginRequired: boolean; authenticationVersion: number };
-  rows: LeadReportingRow[]; configure: (role: "MANAGER" | "ADMISSIONS" | "AUDITOR", grants: Record<string, PermissionScope>) => void; fail: () => void; responsibility: { active: boolean } } {
+  rows: LeadReportingRow[]; configure: (role: "MANAGER" | "ADMISSIONS" | "AUDITOR", grants: Record<string, PermissionScope>) => void; fail: () => void; responsibility: { active: boolean }; admissionsDesignation: { active: boolean } } {
   const requests: Array<{ model: string; where: unknown }> = [];
   let configurations: ConfigurationSnapshot[] = [];
   let failCount = false;
   const account = { id: manager.userId, active: true, roles: ["MANAGER"], campusId, teamId: null as string | null, firstLoginRequired: false, authenticationVersion: 1 };
   const responsibility = { active: true };
+  const admissionsDesignation = { active: false };
   const campus = { id: campusId, kind: "CAMPUS", state: "ACTIVE", code: "SYNTHETIC", label: "Campus synthétique" };
   const foreign = { ...campus, id: foreignId, code: "FOREIGN", label: "Campus étranger" };
   const rows = [row("lead-digital", campus.code), row("lead-phone", campus.code, "PHONE_CALL", "other-owner"), row("lead-foreign", foreign.code)];
@@ -54,6 +55,7 @@ function fixture(): { service: ReportingPersistenceService; requests: Array<{ mo
     collaborator: { findUnique: ({ where }: { where: { id: string } }): Promise<typeof account> => Promise.resolve(where.id === manager.userId ? account : { ...account, id: where.id }),
       findMany: ({ where }: { where: { id?: { in: string[] }; campusId?: { in: string[] } } }): Promise<Array<{ id: string; professionalDisplayName: string | null }>> => Promise.resolve((where.id?.in ?? [manager.userId, "other-owner"]).map((id) => ({ id, professionalDisplayName: id === "other-owner" ? null : "Conseiller synthétique" }))) },
     teamResponsibility: { findUnique: (): Promise<typeof responsibility> => Promise.resolve(responsibility) },
+    admissionsResponsibility: { findMany: (): Promise<Array<{ campus: string }>> => Promise.resolve(admissionsDesignation.active ? [{ campus: "SYNTHETIC" }] : []) },
     localSession: { findUnique: (): Promise<{ active: boolean; collaboratorId: string; authenticationVersion: number; expiresAt: Date }> => Promise.resolve({ active: true, collaboratorId: manager.userId, authenticationVersion: 1, expiresAt: new Date("2099-01-01") }) },
     crmReference: { findUnique: ({ where }: { where: { id: string } }): Promise<typeof campus | undefined> => Promise.resolve([campus, foreign].find((value) => value.id === where.id)) },
     crmReferenceKey: { findMany: ({ where, include }: { where: { referenceId?: string; key?: string }; include?: unknown }): Promise<Array<{ reference: typeof campus } | { key: string }>> => {
@@ -76,8 +78,25 @@ function fixture(): { service: ReportingPersistenceService; requests: Array<{ mo
     const target: ConfigurationTarget = { kind: "ROLE", role, campus: "GLOBAL" };
     configurations = [{ ...target, id: configurationKey(target), version: 1, grants: { ...defaultConfiguration(target), ...grants } }];
   };
-  return { service, requests, account, rows, configure, responsibility, fail: (): void => { failCount = true; } };
+  return { service, requests, account, rows, configure, responsibility, admissionsDesignation, fail: (): void => { failCount = true; } };
 }
+
+test("designated Admissions has fresh campus supervision without changing Commercial role or mutation grants", async () => {
+  const f = fixture(); f.account.roles = ["ADMISSIONS"]; f.admissionsDesignation.active = true;
+  const actor = { ...manager, roles: ["ADMISSIONS"] as Principal["roles"] };
+  const capabilities = await f.service.dashboardCapabilities(actor, {});
+  assert.equal(capabilities.canViewPilotageDashboard, true);
+  assert.equal(capabilities.canExportReporting, false, "functional supervision is not an export grant");
+  let received: Principal | undefined;
+  await f.service.withReportingScope(actor, principal => { received = principal; assert.deepEqual(principal.roles, ["ADMISSIONS"]); assert.deepEqual([...principal.permissionLeadIds!].sort(), ["lead-digital", "lead-phone"]); assert(hasPilotageReportingScope(principal)); }, ["reporting.pilotage.view"]);
+  assert.equal(hasPilotageReportingScope(received!), false, "scope does not survive the callback");
+  await assert.rejects(() => f.service.withReportingScope(actor, principal => f.service.normalizeCampusQuery(principal, { campus: "FOREIGN" }), ["reporting.pilotage.view"]), hasCode("permission_denied"));
+  f.admissionsDesignation.active = false;
+  assert.equal((await f.service.dashboardCapabilities(actor, {})).canViewPilotageDashboard, false);
+  await assert.rejects(() => f.service.withReportingScope(actor, () => true, ["reporting.pilotage.view"]), hasCode("permission_denied"));
+  f.admissionsDesignation.active = true; f.configure("ADMISSIONS", { "lead.view": "OWN" });
+  await f.service.withReportingScope(actor, principal => { assert.deepEqual([...principal.permissionLeadIds!], ["lead-digital"]); }, ["reporting.pilotage.view"]);
+});
 
 test("refreshes all four persisted projections; missing PostgreSQL is unavailable, not zero", async () => {
   const calls: string[] = []; const projection = (name: string): { refreshReportingForApi: () => Promise<void> } => ({ refreshReportingForApi: (): Promise<void> => { calls.push(name); return Promise.resolve(); } });

@@ -8,6 +8,7 @@ import type { LeadPersistenceRepository } from "../src/leads/lead-persistence.re
 import { LeadService, type LeadRecord, type LeadReportingRow } from "../src/leads/lead.service.js";
 import { projectCommercialWork } from "../src/reporting/commercial-work.js";
 import { CommercialWorkService, workQueueKey } from "../src/reporting/commercial-work.service.js";
+import { workContractVersion, workResponse } from "../src/reporting/commercial-work.response.js";
 import { commercialWorkPaths } from "../src/reporting/commercial-work.openapi.js";
 import { routePermissions, usesScopedReportingAuthorization } from "../src/permissions/dynamic-routes.js";
 import { commercialWorkHref, normalizeWorkQuery, workTaskOwner } from "../src/reporting/commercial-work-query.js";
@@ -47,13 +48,43 @@ test("strict threshold and overdue equality compare instants, not string spellin
 
 async function setup(): Promise<CommercialWorkService> {
   const audit = new AuditService();
-  const records: LeadRecord[] = [row("a"), row("b", { assignedToId: "adviser-b", assignedToLabel: "Conseiller B" }), row("secondary", { assignedToId: "adviser-b", collaboratorIds: ["adviser-a"] }), row("elsewhere", { campus: "OTHER" })].map((lead) => ({ ...lead, leadCode: `SYNTH-${lead.id}`, firstName: "Synthetic", lastName: "Fixture", educationLevel: "Bac" }));
+  const records: LeadRecord[] = [row("a", { acquisitionKind: "NEW" }), row("b", { assignedToId: "adviser-b", assignedToLabel: "Conseiller B", acquisitionKind: "BASELINE" }), row("secondary", { assignedToId: "adviser-b", collaboratorIds: ["adviser-a"], acquisitionKind: "NEW", createdAt: "2026-10-19T02:00:00Z" }), row("elsewhere", { campus: "OTHER" })].map((lead) => ({ ...lead, leadCode: `SYNTH-${lead.id}`, firstName: "Synthetic", lastName: "Fixture", educationLevel: "Bac" }));
   const repository = { enabled: true, snapshot: () => Promise.resolve({ leads: records, activities: [], historicalTreatments: [] }) } as unknown as LeadPersistenceRepository;
   const leads = new LeadService(audit, repository); await leads.onModuleInit();
-  const followUps = { reportingSnapshot: () => [task("foreign", "invisible", "2026-10-20T10:00:00Z"), task("owned-a", "a", "2026-10-20T10:00:00Z"), { ...task("owned-b", "a", "2026-10-20T10:00:00Z"), ownerId: "adviser-b" }] } as unknown as FollowUpService;
+  const followUps = { reportingSnapshot: () => [task("foreign", "invisible", "2026-10-20T10:00:00Z"), task("owned-a", "a", "2026-10-20T10:00:00Z"), task("future-a", "a", "2026-10-21T10:00:00Z"), { ...task("owned-b", "a", "2026-10-20T10:00:00Z"), ownerId: "adviser-b" }] } as unknown as FollowUpService;
   const closures = { reportingSnapshot: () => [closure("foreign", "invisible")] } as unknown as ClosureService;
   return new CommercialWorkService(leads, followUps, closures, audit);
 }
+
+test("new acquisitions exclude historical baseline, sort recent first and rates keep action denominators distinct", async () => {
+  const service = await setup(), query = { campus: "CAMPUS", view: "global" };
+  const report = service.read(query, { queue: "NEW_RECEIVED" }, manager, "v2", now);
+  assert.equal(report.definitionVersion, "commercial-work-v2");
+  assert.deepEqual(report.page.items.map(lead => lead.id), ["secondary", "a"]);
+  const overdue = report.queues.find(queue => queue.key === "OVERDUE_FOLLOW_UP")!;
+  assert.equal(overdue.leadCount, 1); assert.equal(overdue.itemCount, 2);
+  assert.deepEqual(overdue.subsetRate, { numerator: 2, denominator: 3, value: 2 / 3, unit: "ACTIONS", denominatorQueue: "ACTIVE_FOLLOW_UP", label: "Part des relances actives déjà en retard" });
+  const first = report.queues.find(queue => queue.key === "FIRST_TREATMENT_OVERDUE")!;
+  assert.equal(first.subsetRate?.denominator, report.queues.find(queue => queue.key === "TO_CONTACT")?.leadCount);
+  assert.equal(first.subsetRate?.unit, "LEADS");
+  const empty = service.read({ campus: "MISSING" }, {}, manager, "empty", now);
+  assert.ok(empty.queues.filter(queue => queue.subsetRate).every(queue => queue.subsetRate?.value === null));
+});
+
+test("version negotiation preserves six legacy queues and explicit v2 drilldowns without changing cohort or authority", async () => {
+  const service = await setup(), report = service.read({ campus: "CAMPUS", view: "global" }, {}, manager, "compat", now);
+  assert.equal(workContractVersion(), "1");
+  for (const value of ["", "3", "v2", "__proto__"]) assert.throws(() => workContractVersion(value));
+  const legacy = workResponse(report, workContractVersion());
+  assert.equal(legacy.definitionVersion, "commercial-work-v1"); assert.equal(legacy.queues.length, 6);
+  assert.ok(legacy.advisers.every(row => row.queues.length === 6));
+  assert.ok(legacy.queues.every(row => row.key !== "NEW_RECEIVED" && !row.href.includes("contractVersion")));
+  const next = workResponse(report, workContractVersion("2"));
+  assert.equal(next.definitionVersion, "commercial-work-v2"); assert.equal(next.queues.length, 7);
+  for (const row of [...next.queues, ...next.advisers.flatMap(adviser => adviser.queues)]) assert.equal(new URL(row.href, "https://synthetic.invalid").searchParams.get("contractVersion"), "2");
+  assert.deepEqual(legacy.cohort, next.cohort); assert.deepEqual(legacy.page, next.page);
+  assert.throws(() => workResponse(service.read({ campus: "CAMPUS" }, { queue: "NEW_RECEIVED" }, manager, "compat-new", now), "1"));
+});
 
 test("every summary and adviser drilldown reuses the exact paginated selection and filters", async () => {
   const service = await setup();
@@ -130,7 +161,7 @@ test("empty data is observed zero with unavailable ratio; invalid filters never 
 test("OpenAPI names the six exact queue units, strict overdue threshold and guarded response", () => {
   const route = commercialWorkPaths["/reports/commercial-work"].get;
   const schema = route.responses["200"].content["application/json"].schema;
-  assert.equal(schema.properties.queues.minItems, 6);
+  assert.equal(schema.properties.queues.minItems, 6); assert.equal(schema.properties.queues.maxItems, 7);
   assert.deepEqual(schema.properties.queues.items.properties.itemUnit.enum, ["LEADS", "ACTIONS", "REQUESTS"]);
   assert.equal(schema.properties.queues.items.properties.leadShare.properties.value.nullable, true);
   assert.match(route.description, /dueAt < generatedAt.*equality is dueNow/);

@@ -7,7 +7,8 @@ export const dashboardCapabilityPaths = {
     responses: {
       "200": { description: "Independent booleans, no user or lead identities and no grants changed", content: { "application/json": { schema: {
         type: "object", additionalProperties: false, required: dashboardCapabilityFields,
-        properties: Object.fromEntries(dashboardCapabilityFields.map((key) => [key, { type: "boolean" }])),
+        properties: { ...Object.fromEntries(dashboardCapabilityFields.map((key) => [key, { type: "boolean" }])),
+          admissionsSupervision: { type: "boolean", description: "Optional true only when an active current-campus functional Admissions designation and effective read permissions allow supervision; never a mutation or decision grant" } },
       } } } },
       "400": { description: "Unknown or invalid campus filter" }, "401": { description: "Current authenticated session required" },
       "403": { description: "Session or campus scope refused" }, "503": { description: "Authorization store unavailable; no role-based fallback" },

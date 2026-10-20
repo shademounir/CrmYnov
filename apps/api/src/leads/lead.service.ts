@@ -85,9 +85,9 @@ export interface LeadListQuery {
   savedView?: string;
   temperature?: string;
   treatmentFrom?: string; treatmentTo?: string; treatmentState?: string;
-  inactiveTreatmentBefore?: string; portfolioState?: string;
+  inactiveTreatmentBefore?: string; portfolioState?: string; acquisitionKind?: string;
 }
-export type LeadWorkView = "ALL" | "MINE" | "TO_CONTACT" | "FIRST_TREATMENT_OVERDUE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED" | "NEXT_ACTION_MISSING";
+export type LeadWorkView = "ALL" | "MINE" | "NEW_RECEIVED" | "TO_CONTACT" | "FIRST_TREATMENT_OVERDUE" | "FOLLOW_UP" | "UNASSIGNED" | "NO_ACTIVITY" | "CLOSED" | "NEXT_ACTION_MISSING";
 export const leadSavedViews = ["FORMINATOR_ZAPIER", "YNOV_MA_LEGACY", "YNOV_COM", "PHONE_CALLS", "PHYSICAL_VISITS", "JOBINTECH", "LEGACY_RELAUNCH", "UNCLASSIFIED_SOURCES", "INCOMPLETE", "IMPORT_ERRORS"] as const;
 export type LeadSavedView = typeof leadSavedViews[number];
 type ValidatedLeadListQuery = Readonly<{
@@ -104,6 +104,7 @@ type ValidatedLeadListQuery = Readonly<{
   view: LeadWorkView;
   savedView?: LeadSavedView | undefined;
   channel?: string | undefined;
+  acquisitionKind?: LeadAcquisitionKind | undefined;
   treatmentFrom?: string | undefined; treatmentTo?: string | undefined; treatmentState?: TreatmentSummary["treatmentState"] | undefined;
   inactiveTreatmentBefore?: string | undefined; portfolioState?: "OPEN" | "CLOSED" | undefined;
 }>;
@@ -432,7 +433,7 @@ export class LeadService implements OnModuleInit {
 
   createLead(input: CreateLeadInput, principal: Principal, correlationId: string, deferAudit = false): CreateLeadResult {
     if (!principal.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER" || role === "ADMIN" || role === "SUPER_ADMIN")) throw new ForbiddenException({ code: "role_forbidden" });
-    const derived = ["receivedAt", "receptionOrigin", "firstTreatmentAt", "lastTreatmentAt", "treatmentState", "hasUndatedHistory", "firstTreatmentPending", "firstTreatmentOverdue", "firstTreatmentAgeMinutes", "firstTreatmentDeadlineAt"];
+    const derived = ["createdAt", "acquisitionKind", "receivedAt", "receptionOrigin", "firstTreatmentAt", "lastTreatmentAt", "treatmentState", "hasUndatedHistory", "firstTreatmentPending", "firstTreatmentOverdue", "firstTreatmentAgeMinutes", "firstTreatmentDeadlineAt"];
     if (derived.some(key => Object.hasOwn(input, key))) throw new BadRequestException({ code: "lead_server_field_forbidden" });
     const required = [input.firstName, input.lastName, input.campus, input.campaign, input.educationLevel, input.program, input.source];
     if (required.some((value) => !value?.trim())) throw new BadRequestException({ code: "lead_required_field_missing" });
@@ -498,7 +499,8 @@ export class LeadService implements OnModuleInit {
     assertListDateRange(createdFrom, createdTo);
     if (createdFrom && createdBefore && createdFrom >= createdBefore) throw new BadRequestException({ code: "lead_date_range_invalid" });
     const search = query.search?.trim().toLocaleLowerCase("fr");
-    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "TO_CONTACT", "FIRST_TREATMENT_OVERDUE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING"], "lead_view_invalid");
+    const view = requiredChoice<LeadWorkView>(query.view?.toUpperCase() as LeadWorkView | undefined, "ALL", ["ALL", "MINE", "NEW_RECEIVED", "TO_CONTACT", "FIRST_TREATMENT_OVERDUE", "FOLLOW_UP", "UNASSIGNED", "NO_ACTIVITY", "CLOSED", "NEXT_ACTION_MISSING"], "lead_view_invalid");
+    const acquisitionKind = normalizedOptionalChoice<LeadAcquisitionKind>(query.acquisitionKind, ["NEW", "BASELINE"], "lead_acquisition_kind_invalid");
     const treatmentFrom = validateTreatmentDay(query.treatmentFrom);
     const treatmentTo = validateTreatmentDay(query.treatmentTo);
     assertListDateRange(treatmentFrom, treatmentTo);
@@ -511,8 +513,8 @@ export class LeadService implements OnModuleInit {
     return {
       page,
       pageSize,
-      sortBy,
-      sortDirection,
+      sortBy: view === "NEW_RECEIVED" ? "createdAt" : sortBy,
+      sortDirection: view === "NEW_RECEIVED" ? "desc" : sortDirection,
       view,
       status,
       temperature,
@@ -522,6 +524,7 @@ export class LeadService implements OnModuleInit {
       search,
       savedView,
       channel,
+      acquisitionKind,
       treatmentFrom, treatmentTo, treatmentState, inactiveTreatmentBefore, portfolioState,
     };
   }
@@ -547,6 +550,7 @@ export class LeadService implements OnModuleInit {
       && (!query.collaboratorId || Boolean(lead.collaboratorIds?.includes(query.collaboratorId)))
       && (!query.adviserId || lead.assignedToId === query.adviserId || Boolean(lead.collaboratorIds?.includes(query.adviserId)))
       && (!validated.status || lead.status === validated.status)
+      && (!validated.acquisitionKind || lead.acquisitionKind === validated.acquisitionKind)
       && (!validated.temperature || (lead.temperature ?? "UNEVALUATED") === validated.temperature)
       && matches(lead.source, query.source)
       && (!validated.channel || this.sourceChannel(lead.source) === validated.channel)
@@ -564,6 +568,7 @@ export class LeadService implements OnModuleInit {
   }
 
   private compareListedLeads(left: Readonly<LeadRecord>, right: Readonly<LeadRecord>, query: ValidatedLeadListQuery): number {
+    if (query.view === "NEW_RECEIVED") return right.createdAt.localeCompare(left.createdAt) || left.leadCode.localeCompare(right.leadCode, "fr");
     if (query.view === "FOLLOW_UP") {
       return (left.nextActionAt ?? "").localeCompare(right.nextActionAt ?? "") || left.leadCode.localeCompare(right.leadCode, "fr");
     }
@@ -575,6 +580,7 @@ export class LeadService implements OnModuleInit {
   }
 
   private matchesView(lead: Readonly<LeadRecord>, view: LeadWorkView, principal: Principal, now: string): boolean {
+    if (view === "NEW_RECEIVED") return lead.acquisitionKind === "NEW";
     if (view === "FIRST_TREATMENT_OVERDUE") return firstTreatmentState(lead, new Date(now)).firstTreatmentOverdue && this.matchesView(lead, "TO_CONTACT", principal, now);
     if (view === "NEXT_ACTION_MISSING") return needsNextAction(lead);
     if (view === "TO_CONTACT") {

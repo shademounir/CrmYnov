@@ -6,6 +6,7 @@ import { isToContact } from "../leads/lead-treatment.js";
 import { needsNextAction } from "../follow-up/next-action.contract.js";
 
 export const commercialWorkQueues = {
+  NEW_RECEIVED: "Nouveaux reçus",
   TO_CONTACT: "À contacter", FIRST_TREATMENT_OVERDUE: "Premiers traitements en retard",
   ACTIVE_FOLLOW_UP: "Relances en attente", OVERDUE_FOLLOW_UP: "Relances en retard",
   NEXT_ACTION_MISSING: "Prochaine action à planifier", PENDING_CLOSURE: "Clôtures en attente de décision",
@@ -32,6 +33,7 @@ export function projectCommercialWork(rows: readonly LeadReportingRow[], tasks: 
   };
   const items = (records: readonly { leadId: string }[], itemUnit: "ACTIONS" | "REQUESTS"): WorkSelection => ({ leadIds: [...new Set(records.map((record) => record.leadId))].sort((a, b) => a.localeCompare(b, "en")), itemCount: records.length, itemUnit });
   return { queues: {
+    NEW_RECEIVED: leadSelection(lead => lead.acquisitionKind === "NEW"),
     TO_CONTACT: leadSelection(isToContact), FIRST_TREATMENT_OVERDUE: leadSelection((lead) => firstTreatmentState(lead, now).firstTreatmentOverdue),
     ACTIVE_FOLLOW_UP: items(active, "ACTIONS"), OVERDUE_FOLLOW_UP: items(overdue, "ACTIONS"),
     NEXT_ACTION_MISSING: leadSelection(needsNextAction), PENDING_CLOSURE: items(pending, "REQUESTS"),

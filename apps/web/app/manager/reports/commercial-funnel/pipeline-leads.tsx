@@ -7,6 +7,7 @@ import { followUpDate, leadDirectoryLabel, leadDirectoryNameParts, leadDirectory
 import { FirstTreatmentIndicator } from "../../../leads/first-treatment-indicator";
 import { readLeadListPage, type LeadListPage } from "../../../leads/lead-list-query";
 import { buildLeadListHref, temperatures } from "./funnel-contract";
+import { addedAtLabel } from "../../../leads/added-at-period";
 
 /** Navigation context is not an API filter. The directory API owns visibility. */
 export function pipelineLeadEndpoint(filters: Record<string, string>, page: number): string {
@@ -53,6 +54,9 @@ export function PipelineLeadCards({ data, generatedAt, actions = { kind: "unavai
       <header><strong><bdi dir="auto">{name}</bdi></strong><small>{code}</small></header>
       <p>{leadDirectoryStatus(apiString(lead, "status"))} · {temperature}</p>
       <dl><div><dt>Conseiller principal</dt><dd>{adviser}</dd></div>
+        <div><dt>Source et campagne</dt><dd>{leadDirectoryLabel(apiString(lead, "source"), "Source non renseignée")} · {leadDirectoryLabel(apiString(lead, "campaign"), "Campagne non renseignée")}</dd></div>
+        <div><dt>Ajouté le</dt><dd>{apiString(lead, "createdAt") ? <time dateTime={apiString(lead, "createdAt")}>{addedAtLabel(apiString(lead, "createdAt"))}</time> : "Date indisponible"}{lead.acquisitionKind === "BASELINE" ? <small>Reprise historique — pas un nouveau reçu</small> : lead.acquisitionKind === "NEW" ? <small>Nouvelle acquisition</small> : null}</dd></div>
+        <div><dt>Réception de référence</dt><dd>{apiString(lead, "receivedAt") ? <time dateTime={apiString(lead, "receivedAt")}>{followUpDate(apiString(lead, "receivedAt"))}</time> : "Non observée"}<small>{lead.receptionOrigin === "SOURCE_CONTRACT" ? "Date source reconnue" : lead.receptionOrigin === "CRM_OBSERVATION_BASELINE" ? "Première observation CRM historique, pas réception ancienne déduite" : lead.receptionOrigin === "CRM_OBSERVATION" ? "Première observation CRM" : "Origine non confirmée"}</small></dd></div>
         <div><dt>Dernier traitement commercial</dt><dd>{last ? <time dateTime={last}>{followUpDate(last)}</time> : lead.treatmentState === "NONE" ? "Aucun traitement connu" : "Date inconnue"}{lead.hasUndatedHistory === true ? <small>Historique également non daté</small> : null}</dd></div>
         <div><dt>Prochaine action</dt><dd>{active === true ? <><span>Action persistée · </span>{due ? <time dateTime={due}>{followUpDate(due)}</time> : "Échéance indisponible"}{overdue ? <strong className="pipeline-lead-overdue">En retard à la génération du rapport</strong> : null}</>
           : active === false ? <><span>{["ENROLLED", "CLOSED_LOST"].includes(apiString(lead, "status")) ? "Dossier clôturé" : "Aucune action active persistée"}</span>{due ? <small>Date historique : {followUpDate(due)} · ne prouve pas une planification</small> : null}</>

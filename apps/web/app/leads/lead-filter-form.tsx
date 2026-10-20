@@ -5,11 +5,12 @@ import Link from "next/link";
 import { Funnel, X } from "@phosphor-icons/react";
 import type { LeadPageMode } from "./lead-page-mode";
 import { leadListFilterLabels, leadListFilterValue, leadListHref, leadListResetHref } from "./lead-list-query";
+import { AddedAtFilters } from "./added-at-filters";
+import { addedDayStart, casablancaDay, shiftCivilDay } from "./added-at-period";
 
-function DateBoundaryFilter({ name, label, initialValue }: Readonly<{ name: "createdFrom" | "createdTo"; label: string; initialValue: string }>): React.JSX.Element {
+function DateBoundaryFilter({ name, label, initialValue }: Readonly<{ name: "createdFrom" | "createdTo" | "createdBefore"; label: string; initialValue: string }>): React.JSX.Element {
   const [boundary, setBoundary] = React.useState(initialValue);
-  return <label>{label}<input name={name} type="hidden" value={boundary} /><input type="date" aria-label={label}
-    defaultValue={initialValue.slice(0, 10)} onChange={(event) => setBoundary(event.target.value ? `${event.target.value}T${name === "createdTo" ? "23:59:59.999" : "00:00:00.000"}Z` : "")} /></label>;
+  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" aria-label={label} defaultValue={initialValue ? casablancaDay(initialValue) : ""} onChange={(event) => setBoundary(event.target.value ? name === "createdTo" ? new Date(Date.parse(addedDayStart(shiftCivilDay(event.target.value, 1))) - 1).toISOString() : addedDayStart(event.target.value) : "")} /></label>;
 }
 
 export function LeadFilterChips({ current }: Readonly<{ current: URLSearchParams }>): React.JSX.Element {
@@ -34,11 +35,13 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
     return (): void => controller.abort();
   }, []);
   const sharedView = Boolean(current.get("sharedViewId"));
-  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "collaboratorLabel", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "createdFrom", "createdTo", "treatmentFrom", "treatmentTo", "treatmentState", "sortBy", "sortDirection", "pageSize", "page"]);
+  const newEntries = current.get("view")?.toUpperCase() === "NEW_RECEIVED";
+  const visibleKeys = new Set(["search", "status", "temperature", "assignedToId", "assignedToLabel", "collaboratorId", "collaboratorLabel", "source", "program", "campaign", "campus", "assignmentMode", "importBatchId", "acquisitionKind", "createdFrom", "createdTo", "createdBefore", "treatmentFrom", "treatmentTo", "treatmentState", "sortBy", "sortDirection", "pageSize", "page"]);
   // Context fields are not owned by this form (shared view, provenance, drill-down, return URL).
   const preserved = [...current.entries()].filter(([key]) => !visibleKeys.has(key));
-  return <form className="lead-filter-form" action="/leads" method="get" aria-label={mode === "follow-up" ? "Recherche dans les relances" : "Recherche et filtres des leads"}>
+  return <><div hidden={sharedView}><AddedAtFilters current={current} path="/leads" directory /></div><form className="lead-filter-form" action="/leads" method="get" aria-label={mode === "follow-up" ? "Recherche dans les relances" : "Recherche et filtres des leads"}>
     {preserved.map(([key, value], index) => <input key={`${key}-${index}`} name={key} type="hidden" value={value} />)}
+    {current.has("createdBefore") && current.has("createdTo") ? <input type="hidden" name="createdTo" value={current.get("createdTo") ?? ""} /> : null}
     {mode === "follow-up" && !current.has("view") ? <input name="view" type="hidden" value="FOLLOW_UP" /> : null}
     {sharedView ? <p className="lead-shared-context">La définition de cette vue partagée est relue par le serveur. Ses filtres sont en lecture seule. <Link href={leadListHref(current, { sharedViewId: null })}>Quitter la vue partagée pour ajuster les filtres</Link></p> : null}
     <fieldset className="lead-filter-fields" disabled={sharedView} hidden={sharedView}>
@@ -60,18 +63,19 @@ export function LeadFilterForm({ current, mode }: Readonly<{ current: URLSearchP
         <label>Campus<input name="campus" defaultValue={current.get("campus") ?? ""} /></label>
         <label>Mode d’affectation<input name="assignmentMode" defaultValue={current.get("assignmentMode") ?? ""} /></label>
         <label>Lot d’import<input name="importBatchId" defaultValue={current.get("importBatchId") ?? ""} /></label>
-        <DateBoundaryFilter name="createdFrom" label="Créés à partir du" initialValue={current.get("createdFrom") ?? ""} />
-        <DateBoundaryFilter name="createdTo" label="Créés jusqu’au (inclus)" initialValue={current.get("createdTo") ?? ""} />
+        <label>Type d’entrée CRM<select name="acquisitionKind" defaultValue={current.get("acquisitionKind") ?? ""}><option value="">Toutes les entrées</option><option value="NEW">Nouvelles acquisitions</option><option value="BASELINE">Reprises historiques</option></select></label>
+        <DateBoundaryFilter name="createdFrom" label="Ajoutés à partir du" initialValue={current.get("createdFrom") ?? ""} />
+        {current.has("createdBefore") ? <DateBoundaryFilter name="createdBefore" label="Ajoutés avant le (exclu)" initialValue={current.get("createdBefore") ?? ""} /> : <DateBoundaryFilter name="createdTo" label="Ajoutés jusqu’au (inclus)" initialValue={current.get("createdTo") ?? ""} />}
         <label>Dernier traitement à partir du<input name="treatmentFrom" type="date" defaultValue={current.get("treatmentFrom") ?? ""} /></label>
         <label>Dernier traitement jusqu’au (inclus)<input name="treatmentTo" type="date" defaultValue={current.get("treatmentTo") ?? ""} /></label>
         <label>Historique de traitement<select name="treatmentState" defaultValue={current.get("treatmentState") ?? ""}><option value="">Tous les historiques</option><option value="DATED">Historique entièrement daté</option><option value="UNKNOWN_DATE">Contient un commentaire de date inconnue</option><option value="NONE">Aucun traitement connu</option></select></label>
-        <label>Trier par<select name="sortBy" defaultValue={current.get("sortBy") ?? "createdAt"}><option value="createdAt">Date de création</option><option value="lastTreatmentAt">Dernier traitement métier</option><option value="leadCode">Identifiant</option><option value="lastName">Nom</option><option value="status">Statut</option></select></label>
-        <label>Sens du tri<select name="sortDirection" defaultValue={current.get("sortDirection") ?? "desc"}><option value="desc">Décroissant</option><option value="asc">Croissant</option></select></label>
+        <label>Trier par<select name="sortBy" disabled={newEntries} defaultValue={newEntries ? "createdAt" : current.get("sortBy") ?? "createdAt"}><option value="createdAt">Date d’ajout CRM</option><option value="lastTreatmentAt">Dernier traitement métier</option><option value="leadCode">Identifiant</option><option value="lastName">Nom</option><option value="status">Statut</option></select></label>
+        <label>Sens du tri<select name="sortDirection" disabled={newEntries} defaultValue={newEntries ? "desc" : current.get("sortDirection") ?? "desc"}><option value="desc">Décroissant</option><option value="asc">Croissant</option></select></label>
         <label>Résultats par page<input name="pageSize" type="number" min={1} max={100} required defaultValue={current.get("pageSize") ?? "25"} /></label>
-      </div><p className="lead-filter-help">Dernier traitement : journées de Casablanca, bornes incluses. Les dates d’import et les lectures sont exclues. Une date inconnue ne signifie pas absence de traitement ; une plage de dates porte seulement sur le dernier traitement daté connu. Les filtres de création conservent leurs bornes UTC.{mode === "follow-up" ? " La file de relances est toujours ordonnée par échéance, la plus ancienne d’abord." : ""}</p></details>
+      </div><p className="lead-filter-help">Ajout et dernier traitement : journées de Casablanca. Les instants existants sont conservés tant que leur date n’est pas modifiée. Les dates d’import et les lectures ne constituent pas un traitement. Une date inconnue ne signifie pas absence de traitement. Nouveaux Leads : nouvelles acquisitions seulement, ajout le plus récent d’abord ; les reprises historiques restent distinctes.{mode === "follow-up" ? " La file de relances est toujours ordonnée par échéance, la plus ancienne d’abord." : ""}</p></details>
     </fieldset>
     <input name="page" type="hidden" value="1" />
-  </form>;
+  </form></>;
 }
 
 function PersonFilter({ name, label, current, people, state }: Readonly<{ name: "assignedToId" | "collaboratorId"; label: string; current: URLSearchParams; people: Array<{ id: string; label: string }>; state: "loading" | "ready" | "error" }>): React.JSX.Element {

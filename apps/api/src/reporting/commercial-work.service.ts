@@ -13,9 +13,10 @@ import { commercialWorkHref, workAdviserScope, workTaskOwner, type WorkAdviserSc
 export interface WorkQueueSummary {
   key: CommercialWorkQueue; label: string; leadCount: number; itemCount: number; itemUnit: "LEADS" | "ACTIONS" | "REQUESTS"; href: string;
   leadShare: { numerator: number; denominator: number; value: number | null };
+  subsetRate?: { numerator: number; denominator: number; value: number | null; unit: "LEADS" | "ACTIONS"; denominatorQueue: CommercialWorkQueue; label: string };
 }
 export interface CommercialWorkReport {
-  definitionVersion: "commercial-work-v1"; generatedAt: string; timezone: "Africa/Casablanca"; filters: InteractiveReportingQuery;
+  definitionVersion: "commercial-work-v2"; generatedAt: string; timezone: "Africa/Casablanca"; filters: InteractiveReportingQuery;
   cohort: { leadCount: number; attribution: "CURRENT_PRIMARY_ADVISER" | "INVOLVED_ADVISER"; dateBasis: "LEAD_CREATED_COHORT_CURRENT_STATE"; from?: string; to?: string };
   queues: WorkQueueSummary[]; actions: WorkProjection["actions"];
   advisers: Array<{ adviserId: string; adviserLabel?: string; leadCount: number; queues: WorkQueueSummary[]; actions: WorkProjection["actions"] }>;
@@ -36,8 +37,11 @@ function pagination(value: string | undefined, fallback: number, max: number): n
 function summaries(projection: WorkProjection, rows: readonly LeadReportingRow[], query: InteractiveReportingQuery, adviserScope: WorkAdviserScope, taskOwnerId?: string): WorkQueueSummary[] {
   return (Object.keys(commercialWorkQueues) as CommercialWorkQueue[]).map((key) => {
     const queue = projection.queues[key], numerator = queue.leadIds.length, denominator = rows.length;
+    const subsetRate = key === "FIRST_TREATMENT_OVERDUE" ? { numerator, denominator: projection.queues.TO_CONTACT.leadIds.length, unit: "LEADS" as const, denominatorQueue: "TO_CONTACT" as const, label: "Part des À contacter au-delà de 24 h" }
+      : key === "OVERDUE_FOLLOW_UP" ? { numerator: queue.itemCount, denominator: projection.queues.ACTIVE_FOLLOW_UP.itemCount, unit: "ACTIONS" as const, denominatorQueue: "ACTIVE_FOLLOW_UP" as const, label: "Part des relances actives déjà en retard" } : undefined;
     return { key, label: commercialWorkQueues[key], leadCount: numerator, itemCount: queue.itemCount, itemUnit: queue.itemUnit,
-      href: commercialWorkHref(query, key, adviserScope, taskOwnerId), leadShare: { numerator, denominator, value: denominator ? numerator / denominator : null } };
+      href: commercialWorkHref(query, key, adviserScope, taskOwnerId), leadShare: { numerator, denominator, value: denominator ? numerator / denominator : null },
+      ...(subsetRate ? { subsetRate: { ...subsetRate, value: subsetRate.denominator ? subsetRate.numerator / subsetRate.denominator : null } } : {}) };
   });
 }
 
@@ -54,8 +58,9 @@ export class CommercialWorkService {
     const rows = this.leads.reportingSnapshot(principal, now).filter((row) => adviserScope === "INVOLVED" ? matchesInteractiveFilters(row, query) : matchesInteractiveFilters(row, filters) && (!adviserId || row.assignedToId === adviserId));
     const tasks = this.followUps.reportingSnapshot(principal).filter((task) => !taskOwnerId || task.ownerId === taskOwnerId), requests = this.closures.reportingSnapshot(principal);
     const projection = projectCommercialWork(rows, tasks, requests, now);
-    const ids = projection.queues[queue].leadIds;
     const byId = new Map(rows.map((row) => [row.id, row]));
+    const ids = [...projection.queues[queue].leadIds];
+    if (queue === "NEW_RECEIVED") ids.sort((left, right) => byId.get(right)!.createdAt.localeCompare(byId.get(left)!.createdAt) || left.localeCompare(right, "en"));
     const items = ids.slice((page - 1) * pageSize, page * pageSize).map((id) => {
       const lead = this.leads.getLead(id, principal, correlationId), row = byId.get(id)!;
       return { ...lead, ...firstTreatmentState(row, now) };
@@ -68,10 +73,11 @@ export class CommercialWorkService {
     });
     this.audit.record({ eventType: "COMMERCIAL_WORK_VIEWED", actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId,
       after: { queue, leadCount: rows.length, selectedCount: ids.length, page, pageSize, taskOwnerFilter: taskOwnerId !== undefined }, result: "SUCCESS", idempotencyKey: `commercial-work:${randomUUID()}` });
-    return { definitionVersion: "commercial-work-v1", generatedAt: now.toISOString(), timezone: "Africa/Casablanca", filters: query,
+    return { definitionVersion: "commercial-work-v2", generatedAt: now.toISOString(), timezone: "Africa/Casablanca", filters: query,
       cohort: { leadCount: rows.length, attribution: adviserScope === "PRIMARY" ? "CURRENT_PRIMARY_ADVISER" : "INVOLVED_ADVISER", dateBasis: "LEAD_CREATED_COHORT_CURRENT_STATE", ...(query.from ? { from: query.from } : {}), ...(query.to ? { to: query.to } : {}) },
       queues: summaries(projection, rows, query, adviserScope, taskOwnerId), actions: projection.actions, advisers, selectedQueue: queue, page: { items, page, pageSize, total: ids.length }, ...(taskOwnerId ? { taskOwnerId } : {}),
       definitions: [
+        "Nouveaux reçus : acquisitions NEW créées dans la période sélectionnée, triées par ajout CRM récent ; reprises historiques BASELINE exclues. Réception source reconnue et première observation CRM restent distinctes, sans remise à zéro par import/exécution.",
         "Stock actuel des dossiers autorisés créés dans la période, pas un nombre de traitements réalisés aujourd’hui. Historique importé conservé, non attribué au travail contemporain.",
         adviserScope === "PRIMARY" ? "Filtre conseiller : portefeuille principal actuel. Les tableaux sont par responsable principal, sans doubler les contributions secondaires." : "Filtre conseiller : dossiers impliqués comme responsable principal ou collaborateur, dédoublonnés. Les sous-tableaux restent par responsable principal actuel et leurs liens l’indiquent.",
         "Relances : actions visibles rattachées au portefeuille, pas nécessairement réalisées par son conseiller actuel. Actives = SCHEDULED ou DUE sur dossier ouvert ; retard strictement après échéance. Égalité = échue maintenant, pas encore en retard.",

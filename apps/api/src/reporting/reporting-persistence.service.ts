@@ -12,10 +12,12 @@ import { canonicalCampus } from "../permissions/dynamic-resources.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { matchesInteractiveFilters, normalizeReportingQuery, normalizeScopedReportingQuery, reportingScopeRequirements, type InteractiveReportingQuery } from "./reporting-filter.js";
 import { withPilotageReportingScope } from "./reporting-authority.js";
+import { admissionsPilotageAllowed, bindAdmissionsSupervision, hasAdmissionsSupervision, readAdmissionsSupervision } from "./admissions-supervision.js";
 
 export interface DashboardCapabilities {
   canCreateLead: boolean; canReadRecentLeads: boolean; canViewManagerDashboard: boolean;
   canViewPersonalDashboard: boolean; canViewPilotageDashboard: boolean; canExportReporting: boolean;
+  admissionsSupervision?: boolean;
 }
 export interface RecentDashboardLeads {
   generatedAt: string; timezone: "Africa/Casablanca"; filters: InteractiveReportingQuery; limit: number;
@@ -73,6 +75,9 @@ export class ReportingPersistenceService {
     }
     return this.permissions.readTransaction(async (tx) => {
       const current = await currentPrincipal(tx, actor);
+      const supervision = await readAdmissionsSupervision(tx, current);
+      const clearCurrentSupervision = bindAdmissionsSupervision(current, supervision);
+      try {
       const snapshots = await this.permissions.snapshots(tx);
       const keys = typeof additionalKeys === "function" ? additionalKeys(current) : additionalKeys;
       const requiredKeys = [...new Set(["reporting.view", "lead.view", ...keys])];
@@ -91,7 +96,7 @@ export class ReportingPersistenceService {
         const campus = campuses.get(row.campus) ?? await canonicalCampus(tx, row.campus); campuses.set(row.campus, campus);
         const context = await resourceEvaluationContext(tx, current, { scope: "CAMPUS", campusKeys: campus.keys, active: true,
           ...(row.assignedToId ? { ownerId: row.assignedToId } : {}), collaboratorIds: row.collaborators.map((item) => item.userId), readableResource: true });
-        if (!requiredKeys.every((key) => evaluatePermission(current, key, snapshots, context).allowed)) continue;
+        if (!requiredKeys.every((key) => this.reportingPermission(current, key, snapshots, context, requiredKeys))) continue;
         leadIds.add(row.id);
         if (evaluatePermission(current, "appointment.manage", snapshots, context).allowed) appointmentIds.add(row.id);
         if (evaluatePermission(current, "import.view", snapshots, context).allowed) importIds.add(row.id);
@@ -99,11 +104,13 @@ export class ReportingPersistenceService {
       // A revoked capability is not an observed empty cohort, even on an empty database.
       if (!leadIds.size && !await this.hasCapability(tx, current, snapshots, requiredKeys)) permissionDenied();
       const scoped: Principal = { ...current, permissionLeadIds: leadIds };
-      await this.refresh();
-      this.authorizedReads.set(scoped, { tx, snapshots, requiredKeys, appointmentIds, importIds, normalizations: [] });
+      const clearScopedSupervision = bindAdmissionsSupervision(scoped, supervision);
       try {
+        await this.refresh();
+        this.authorizedReads.set(scoped, { tx, snapshots, requiredKeys, appointmentIds, importIds, normalizations: [] });
         return keys.includes("reporting.pilotage.view") ? await withPilotageReportingScope(scoped, () => action(scoped)) : await action(scoped);
-      } finally { this.authorizedReads.delete(scoped); }
+      } finally { this.authorizedReads.delete(scoped); clearScopedSupervision(); }
+      } finally { clearCurrentSupervision(); }
     });
   }
 
@@ -113,7 +120,7 @@ export class ReportingPersistenceService {
     if (!authorized) throw new ServiceUnavailableException({ code: "reporting_scope_unavailable" });
     const campus = await canonicalCampus(authorized.tx, query.campus);
     const contexts = await this.campusCapabilityContexts(authorized.tx, principal, campus.keys);
-    if (!contexts.some((context) => authorized.requiredKeys.every((key) => evaluatePermission(principal, key, authorized.snapshots, context).allowed))) permissionDenied();
+    if (!contexts.some((context) => authorized.requiredKeys.every((key) => this.reportingPermission(principal, key, authorized.snapshots, context, authorized.requiredKeys)))) permissionDenied();
     const code = campus.keys[1]; if (!code) permissionDenied();
     if (query.campus !== code && !authorized.normalizations.some((item) => item.requested === query.campus)) {
       authorized.normalizations.push({ field: "campus", requested: query.campus, applied: code, source: "PERSISTED_CAMPUS_REFERENCE" });
@@ -136,14 +143,15 @@ export class ReportingPersistenceService {
       if (seen.has(value)) continue;
       const campus = await canonicalCampus(authorized.tx, value); campus.keys.forEach((key) => seen.add(key));
       const contexts = await this.campusCapabilityContexts(authorized.tx, principal, campus.keys);
-      const can = (keys: readonly string[]): boolean => contexts.some((context) => keys.every((key) => evaluatePermission(principal, key, authorized.snapshots, context).allowed));
+      const can = (keys: readonly string[]): boolean => contexts.some((context) => keys.every((key) => this.reportingPermission(principal, key, authorized.snapshots, context, keys)));
       canCreateLead ||= principal.roles.some((role) => ["ADMISSIONS", "ADMIN", "SUPER_ADMIN"].includes(role)) && can(["lead.create"]);
       const pilotage = globalReportAllowed && can(["reporting.view", "reporting.pilotage.view", "lead.view"]);
       canReadRecentLeads ||= globalReportAllowed && can(["reporting.view", "lead.view"]) && (legacyPersonalRole || pilotage);
       canViewManagerDashboard ||= pilotage;
       canExportReporting ||= globalReportAllowed && can(["reporting.view", "reporting.pilotage.view", "lead.view", "reporting.export"]);
     }
-    return { canCreateLead, canReadRecentLeads, canViewManagerDashboard, canViewPersonalDashboard: legacyPersonalRole && canReadRecentLeads, canViewPilotageDashboard: canViewManagerDashboard, canExportReporting };
+    return { canCreateLead, canReadRecentLeads, canViewManagerDashboard, canViewPersonalDashboard: legacyPersonalRole && canReadRecentLeads, canViewPilotageDashboard: canViewManagerDashboard, canExportReporting,
+      ...(canViewManagerDashboard && hasAdmissionsSupervision(principal) ? { admissionsSupervision: true } : {}) };
   }
 
   /** Read-only shell capability: absence of reporting access must not hide an
@@ -152,11 +160,16 @@ export class ReportingPersistenceService {
     if (Object.keys(raw).some((key) => key !== "campus")) throw new BadRequestException({ code: "reporting_capability_filter_unknown" });
     return this.permissions.readTransaction(async (tx) => {
       const current = await currentPrincipal(tx, actor);
+      const supervision = await readAdmissionsSupervision(tx, current);
+      const clearSupervision = bindAdmissionsSupervision(current, supervision);
+      try {
       const query = normalizeReportingQuery(raw, current);
       const snapshots = await this.permissions.snapshots(tx);
       const scoped: Principal = { ...current };
+      const clearScopedSupervision = bindAdmissionsSupervision(scoped, supervision);
       this.authorizedReads.set(scoped, { tx, snapshots, requiredKeys: [], appointmentIds: new Set(), importIds: new Set(), normalizations: [] });
-      try { return await this.capabilities(scoped, query); } finally { this.authorizedReads.delete(scoped); }
+      try { return await this.capabilities(scoped, query); } finally { this.authorizedReads.delete(scoped); clearScopedSupervision(); }
+      } finally { clearSupervision(); }
     });
   }
 
@@ -175,13 +188,18 @@ export class ReportingPersistenceService {
     for (const value of [...new Set(values)]) {
       const campus = await canonicalCampus(tx, value);
       const contexts = await this.campusCapabilityContexts(tx, principal, campus.keys);
-      if (contexts.some((context) => keys.every((key) => evaluatePermission(principal, key, snapshots, context).allowed))) return true;
+      if (contexts.some((context) => keys.every((key) => this.reportingPermission(principal, key, snapshots, context, keys)))) return true;
     }
     if (!values.length && principal.roles.includes("SUPER_ADMIN")) {
       const context = await resourceEvaluationContext(tx, principal, { scope: "GLOBAL", campusKeys: [], active: true });
       return keys.every((key) => evaluatePermission(principal, key, snapshots, context).allowed);
     }
     return false;
+  }
+
+  private reportingPermission(principal: Principal, key: string, snapshots: ConfigurationSnapshot[], context: EvaluationContext, keys: readonly string[]): boolean {
+    return evaluatePermission(principal, key, snapshots, context).allowed
+      || !keys.includes("reporting.export") && admissionsPilotageAllowed(principal, key, snapshots, context);
   }
 
   async recentLeads(actor: Principal, raw: Record<string, string | undefined>, limit = 5, now = new Date()): Promise<RecentDashboardLeads> {
