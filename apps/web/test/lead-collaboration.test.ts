@@ -41,5 +41,7 @@ test("loads bounded advisers only after the Lead context is confirmed without a 
   const select = host.querySelector<HTMLSelectElement>('select[name="targetUserId"]'); assert.ok(select); assert.equal(select.disabled, false);
   assert.deepEqual([...select.options].filter((option) => !option.disabled).map((option) => ({ value: option.value, text: option.textContent })), [{ value: "eligible-synthetic", text: "Commercial autorisé · 2/5 Leads actifs" }]);
   assert.equal(host.querySelector('input[name="targetUserId"]'), null);
-  assert.match(host.textContent ?? "", /campus et la règle applicables.*revérifiée/u);
+  assert.match(host.textContent ?? "", /conseillers actifs et autorisés du campus/u);
+  assert.match(host.textContent ?? "", /pool configuré et ses plafonds restent restrictifs/u);
+  assert.match(host.textContent ?? "", /revérifiée à la demande et à la décision/u);
 });

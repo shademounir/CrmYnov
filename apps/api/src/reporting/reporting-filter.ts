@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import type { Principal } from "../auth/auth.types.js";
 import { leadStatuses, type LeadReportingRow, type LeadStatus } from "../leads/lead.service.js";
 import { hasPilotageReportingScope } from "./reporting-authority.js";
+import { hasAdmissionsSupervision } from "./admissions-supervision.js";
 import { matchesTreatmentFilters, normalizeTreatmentFilters, type TreatmentFilters } from "../leads/lead-treatment.js";
 
 export const REPORTING_TIMEZONE = "Africa/Casablanca" as const;
@@ -18,7 +19,7 @@ export interface InteractiveReportingQuery extends TreatmentFilters {
  * omitted mode is personal only for the legacy Commercial-only audience. */
 export function isPersonalReportingRequest(raw: Pick<InteractiveReportingQuery, "view">, principal: Principal): boolean {
   if (raw.view && !(reportingViews as readonly string[]).includes(raw.view)) throw new BadRequestException({ code: "reporting_view_invalid" });
-  return raw.view === "personal" || !raw.view && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+  return raw.view === "personal" || !raw.view && !hasAdmissionsSupervision(principal) && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
 }
 export function reportingScopeRequirements(raw: Pick<InteractiveReportingQuery, "view">, principal: Principal): readonly string[] {
   return isPersonalReportingRequest(raw, principal) ? [] : ["reporting.pilotage.view"];
@@ -158,5 +159,5 @@ function boundary(value: string, code: string): string {
   return parsed.toISOString();
 }
 function isAdviserOnly(principal: Principal): boolean {
-  return !hasPilotageReportingScope(principal) && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+  return !hasPilotageReportingScope(principal) && !hasAdmissionsSupervision(principal) && principal.roles.includes("ADMISSIONS") && !principal.roles.some((role) => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
 }

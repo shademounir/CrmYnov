@@ -13,6 +13,7 @@ import { readCampusRules } from "./campus-assignment.service.js";
 import { applicableCampusRule } from "./campus-assignment-policy.js";
 import { recordedAssignment, type RecordedAssignmentDecision } from "./recorded-assignment.js";
 import { assignmentManagerRecipients } from "./assignment-notifications.js";
+import { reassignmentCandidateOptions } from "./reassignment-candidates.js";
 
 export interface PersistentAssignmentInput { leadId: string; eventKey: string; assignment: IngestionBatchInput["assignment"] }
 export interface PersistentAssignmentResult { outcome: "ASSIGNED" | "PRESERVED" | "UNASSIGNED"; assignment: SheetAssignment; lead: LeadRecord; replayed: boolean }
@@ -20,7 +21,7 @@ export interface AssignmentCandidateOption {
   id: string;
   label: string;
   activeLeadCount: number;
-  capacity: number;
+  capacity: number | null;
 }
 
 @Injectable()
@@ -111,6 +112,11 @@ export class PersistentAssignmentService {
       const snapshots = await this.repository.snapshots(tx);
       const permission = lead.assignedToId ? "lead.reassign.request" : "lead.assign";
       if (!context.campusAllowed || !evaluatePermission(current, permission, snapshots, context).allowed) permissionDenied();
+      if (!evaluatePermission(current, "lead.view", snapshots, context).allowed) permissionDenied();
+      if (lead.assignedToId) {
+        if (!current.roles.some(role => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role)) && lead.assignedToId !== current.userId) permissionDenied();
+        return reassignmentCandidateOptions(tx, lead, snapshots);
+      }
 
       const configuration = await readCampusRules(tx, campus.id);
       const rule = applicableCampusRule(configuration.rules, lead.source, lead.campaign);
@@ -160,10 +166,7 @@ export class PersistentAssignmentService {
   }
 
   async assertReassignmentTarget(tx: Prisma.TransactionClient, lead: { campus: string; campaign: string; source: string }, target: string): Promise<void> {
-    const campus = await canonicalCampus(tx, lead.campus);
-    const selection = await prepareSheetAssignment(tx, { strategy: "FIXED", targetUserId: target }, lead, campus.id, "reassignment-target", 0, false,
-      { commercialOnly: true, permissions: await this.repository.snapshots(tx) });
-    if (selection.targetUserId !== target) throw new ConflictException({ code: "assignment_target_ineligible" });
+    if (!(await reassignmentCandidateOptions(tx, lead, await this.repository.snapshots(tx))).some(candidate => candidate.id === target)) throw new ConflictException({ code: "assignment_target_ineligible" });
   }
 
   reassignmentApprovers(tx: Prisma.TransactionClient, campus: string, requesterId: string): Promise<string[]> {

@@ -16,7 +16,19 @@ export interface InteractionBody {
 export interface StatusBody { status: string; reason: string; qualification?: { interestConfirmed: boolean; eligibilityConfirmed: boolean } }
 export interface FollowUpBody { dueAt: string; reason: string }
 export interface ClosureBody { target: string; reason: string; comment: string; evidence: string[]; qualification?: { interestConfirmed: boolean; eligibilityConfirmed: boolean } }
-export interface AssignmentCandidate { id: string; label: string; activeLeadCount: number; capacity: number }
+export interface AssignmentCandidate { id: string; label: string; activeLeadCount: number; capacity: number | null }
+export function parseAssignmentCandidates(payload: unknown): AssignmentCandidate[] {
+  if (!payload || typeof payload !== "object" || !("candidates" in payload) || !Array.isArray(payload.candidates) || payload.candidates.length > 500) throw new Error("candidate_payload");
+  const ids = new Set<string>();
+  return payload.candidates.map((item: unknown) => {
+    if (!item || typeof item !== "object" || !("id" in item) || typeof item.id !== "string" || !item.id.trim() || ids.has(item.id)
+      || !("label" in item) || typeof item.label !== "string" || !item.label.trim()
+      || !("activeLeadCount" in item) || typeof item.activeLeadCount !== "number" || !Number.isSafeInteger(item.activeLeadCount) || item.activeLeadCount < 0
+      || !("capacity" in item) || item.capacity !== null && (typeof item.capacity !== "number" || !Number.isSafeInteger(item.capacity) || item.capacity < 1 || item.activeLeadCount >= item.capacity)) throw new Error("candidate_payload");
+    ids.add(item.id);
+    return { id: item.id, label: item.label, activeLeadCount: item.activeLeadCount, capacity: item.capacity };
+  });
+}
 export interface FollowUpRecord { id: string; leadId: string; dueAt: string; state: "SCHEDULED" | "DUE" | "COMPLETED" | "CANCELLED"; reason: string; version: number }
 export interface ClosureRequestRecord {
   id: string;
@@ -247,16 +259,16 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
     const controller = new AbortController();
     setCandidateState("loading");
     setCandidates([]);
-    void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/assignment-candidates`, { cache: "no-store", credentials: "same-origin", signal: controller.signal })
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+    void fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/assignment-candidates`, { cache: "no-store", credentials: "same-origin", signal })
       .then(async (response) => {
         if (controller.signal.aborted) return;
         if (response.status === 401) { setCandidateState("session"); return; }
         if (response.status === 403) { setCandidateState("forbidden"); return; }
         if (!response.ok) throw new Error(`candidate_${response.status}`);
-        const payload = await response.json() as { candidates?: unknown };
+        const payload: unknown = await response.json();
         if (controller.signal.aborted) return;
-        if (!Array.isArray(payload.candidates)) throw new Error("candidate_payload");
-        const values = payload.candidates.filter((item): item is AssignmentCandidate => Boolean(item) && typeof item === "object" && typeof (item as AssignmentCandidate).id === "string" && typeof (item as AssignmentCandidate).label === "string");
+        const values = parseAssignmentCandidates(payload);
         setCandidates(values);
         setCandidateState("ready");
       })
@@ -313,10 +325,10 @@ export function AssignmentWorkflowForm({ leadId, assigned, onCancel, onCompleted
     <label>Conseiller cible
       <select name="targetUserId" required disabled={busy || candidateState !== "ready" || !candidates.length} defaultValue="" aria-describedby={candidateHelpId}>
         <option value="" disabled>{candidateState === "loading" ? "Chargement des conseillers…" : candidates.length ? "Sélectionner un conseiller" : "Aucun conseiller disponible"}</option>
-        {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label} · {candidate.activeLeadCount}/{candidate.capacity} Leads actifs</option>)}
+        {candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label} · {candidate.activeLeadCount}{candidate.capacity === null ? " Leads actifs · plafond non configuré" : `/${candidate.capacity} Leads actifs`}</option>)}
       </select>
     </label>
-    <p id={candidateHelpId} className="lead-assignment-dialog__help">La liste est limitée aux conseillers actifs, autorisés et disponibles pour le campus et la règle applicables. L’éligibilité sera revérifiée lors de la confirmation.</p>
+    <p id={candidateHelpId} className="lead-assignment-dialog__help">La liste est limitée aux conseillers actifs et autorisés du campus. Un pool configuré et ses plafonds restent restrictifs. Sans configuration, la réaffectation manuelle n’active pas le routage automatique. L’éligibilité sera revérifiée à la demande et à la décision.</p>
     {candidateState === "error" ? <p className="lead-assignment-dialog__feedback lead-assignment-dialog__feedback--error" role="alert">Les conseillers éligibles sont indisponibles. Aucun identifiant technique ne peut être saisi en remplacement.</p> : null}
     {assigned ? <>
       <label>Motif de la demande<textarea name="reason" required minLength={4} maxLength={500} disabled={busy} rows={4} /></label>

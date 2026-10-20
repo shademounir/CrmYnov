@@ -63,7 +63,7 @@ type SessionProfile = { roles: SessionRole[]; professionalEmail?: string; scopeL
 export type ShellSessionState =
   | { kind: "loading" | "expired" | "first-login" | "unavailable" }
   | { kind: "ready"; profile: SessionProfile };
-export type ShellReportingAccess = Readonly<{ canViewPersonalDashboard: boolean; canViewPilotageDashboard: boolean }>;
+export type ShellReportingAccess = Readonly<{ canViewPersonalDashboard: boolean; canViewPilotageDashboard: boolean; admissionsSupervision?: boolean }>;
 const roleNames: Record<SessionRole, string> = { SUPER_ADMIN: "Super Admin", ADMIN: "Administrateur", MANAGER: "Manager", ADMISSIONS: "Commercial", AUDITOR: "Lecteur" };
 const commercialNavigation = new Set(["/manager/reports/dashboard", "/leads", "/leads?view=FOLLOW_UP", "/appointments", "/calls/queue", "/notifications", "/chat", "/manager/reports/commercial-performance"]);
 const ownTelephonyNavigation = { href: "/account/telephony", label: "Mon poste d’appel", icon: PhoneCallIcon };
@@ -111,7 +111,9 @@ export async function loadShellReportingAccess(request: typeof fetch = fetch, si
     const value: unknown = await response.json();
     if (!value || typeof value !== "object" || !("canViewPersonalDashboard" in value) || !("canViewPilotageDashboard" in value)
       || typeof value.canViewPersonalDashboard !== "boolean" || typeof value.canViewPilotageDashboard !== "boolean") return null;
-    return { canViewPersonalDashboard: value.canViewPersonalDashboard, canViewPilotageDashboard: value.canViewPilotageDashboard };
+    if ("admissionsSupervision" in value && typeof value.admissionsSupervision !== "boolean") return null;
+    return { canViewPersonalDashboard: value.canViewPersonalDashboard, canViewPilotageDashboard: value.canViewPilotageDashboard,
+      ...("admissionsSupervision" in value && value.admissionsSupervision === true && value.canViewPilotageDashboard ? { admissionsSupervision: true } : {}) };
   } catch { return null; }
 }
 
@@ -401,7 +403,8 @@ export function AppShellView({
   const canUseOwnTelephony = ownTelephonyAllowed && ownTelephonyRoleAllowed(sessionRoles);
   const allowedNavigation = [...visibleNavigation(sessionRoles, reportingAccess), ...(canUseOwnTelephony ? [ownTelephonyNavigation] : [])];
   const canManageUsers = sessionRoles.includes("SUPER_ADMIN");
-  const roleLabel = sessionRoles[0] ? roleNames[sessionRoles[0]] : "Session CRM";
+  const roleLabel = reportingAccess?.admissionsSupervision && sessionRoles.includes("ADMISSIONS") && !sessionRoles.some(role => ["SUPER_ADMIN", "ADMIN", "MANAGER"].includes(role))
+    ? "Responsable Admissions · supervision" : sessionRoles[0] ? roleNames[sessionRoles[0]] : "Session CRM";
   const profileLabel = professionalEmail ?? roleLabel;
   const currentLabel = allowedNavigation.find((item) => isActive(pathname, item.href, locationSearch))?.label ?? "CRM Admissions";
   return <div className={`app-shell ${collapsed ? "is-collapsed" : ""}`}>

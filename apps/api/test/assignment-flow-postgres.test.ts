@@ -109,6 +109,40 @@ async function setGrant(f: Journey, role: "ADMISSIONS" | "MANAGER", key: "lead.v
   await permissions.save(principal, { ...target, expectedVersion: previous.version, grants: { ...previous.grants, [key]: value }, confirmed: true, reason: "ACCESS_REVIEW" });
 }
 
+test("manual reassignment without acquisition configuration uses only current campus candidates and rechecks on decision", options, async () => {
+  const f = await journey();
+  try {
+    const lead = await f.ownedLead("manual-no-config");
+    const path = `/leads/${lead.id}/assignment-candidates`;
+    type Options = { candidates: Array<{ id: string; label: string; capacity: number | null; activeLeadCount: number }> };
+    const options = await f.http<Options>("GET", path, f.commercialSession.token);
+    assert.equal(options.status, 200);
+    assert.deepEqual(new Set(options.body.candidates.map(row => row.id)), new Set([f.target.id, f.secondTarget.id]));
+    for (const row of options.body.candidates) {
+      assert.equal(row.capacity, null); assert.match(row.label, /^Synthetic /u);
+      assert.deepEqual(Object.keys(row).sort(), ["activeLeadCount", "capacity", "id", "label"]);
+    }
+    for (const token of [f.readerSession.token, f.outsiderSession.token, f.firstLoginSession.token, f.targetSession.token]) assert.equal((await f.http("GET", path, token, undefined, 1)).status, 403);
+    assert.equal((await f.http("GET", path, f.adminSession.token, undefined, 1)).status, 200);
+    assert.equal(await f.db.campusAssignmentConfiguration.count({ where: { campusId: f.campus.id } }), 0);
+    const input = requestInput(f, "manual-no-config");
+    const requested = await f.http<ReassignmentRequest>("POST", `/leads/${lead.id}/reassignment-requests`, f.commercialSession.token, input);
+    assert.equal(requested.status, 201);
+    const before = await effects(f, lead.id);
+    await f.db.collaborator.update({ where: { id: f.target.id }, data: { active: false } });
+    assert.equal((await f.http("PATCH", `/reassignment-requests/${requested.body.id}/decision`, f.managerSession.token, decisionInput, 1)).status, 409);
+    assert.deepEqual(await effects(f, lead.id), before, "A revoked target cannot change ownership, history or the pending decision");
+    await f.db.collaborator.update({ where: { id: f.target.id }, data: { active: true } });
+    assert.equal((await f.http("PATCH", `/reassignment-requests/${requested.body.id}/decision`, f.managerSession.token, decisionInput, 1)).status, 200);
+    const decided = await effects(f, lead.id); assert.equal(decided.lead?.assignedToId, f.target.id);
+    assert.equal((await f.http("PATCH", `/reassignment-requests/${requested.body.id}/decision`, f.managerSession.token, decisionInput)).status, 200);
+    assert.deepEqual(await effects(f, lead.id), decided);
+    await f.configure("ROUND_ROBIN", [], false, []);
+    const other = await f.ownedLead("explicit-empty");
+    assert.deepEqual((await f.http<Options>("GET", `/leads/${other.id}/assignment-candidates`, f.commercialSession.token)).body.candidates, [], "Configured empty pools never fall back to the campus directory");
+  } finally { await f.close(); }
+});
+
 test("CRMY-94 initial creation atomically records assignment, durable replay, eligibility, rules and rollback", options, async () => {
   const f = await journey();
   try {
@@ -210,6 +244,8 @@ test("CRMY-94 two API producers respect durable creation replay and real capacit
     const winner = races.find((row) => row.status === 201)!;
     const confirmed = await f.http<CreateLeadResult>("POST", "/leads", f.commercialSession.token, input, 1);
     assert.equal(confirmed.status, 201); assert.equal(confirmed.body.lead.id, winner.body.lead.id);
+    assert.equal(confirmed.body.lead.createdAt, winner.body.lead.createdAt, "Two API producers replay the same server CRM entry timestamp");
+    assert.equal(confirmed.body.lead.acquisitionKind, "NEW");
     assert.equal(confirmed.body.lead.assignedToId, f.commercial.id);
     assert.equal(await f.db.lead.count({ where: { email: input.email } }), 1);
     assert.equal((await f.db.campusAssignmentCursor.findUniqueOrThrow({ where: { campusId_version_ruleId: { campusId: f.campus.id, version, ruleId: f.key("fallback") } } })).cursor, 1);
@@ -274,6 +310,7 @@ test("CRMY-94 authenticated request and distinct decision bind exact intention, 
     const accepted = await f.http<{ request: ReassignmentRequest; lead: LeadRecord }>("PATCH", `/reassignment-requests/${requested.body.id}/decision`, f.managerSession.token, decisionInput, 1);
     assert.equal(accepted.status, 200); assert.equal(accepted.body.request.status, "APPROVED"); assert.equal(accepted.body.lead.assignedToId, f.target.id);
     const terminal = await effects(f, lead.id); assert.equal(terminal.requests[0]?.version, 2);
+    assert.equal(terminal.lead?.createdAt?.toISOString(), original.lead?.createdAt?.toISOString(), "Distinct approved reassignment preserves the CRM entry timestamp");
     assert.equal(terminal.audits.filter((row) => row.eventType === "LEAD_REASSIGNMENT_APPROVED").length, 1);
     assert.equal(terminal.activities.filter((row) => row.type === "ASSIGNMENT_CHANGED").length, 1);
     assert.equal(terminal.receipts.filter((row) => row.operation === "REASSIGNMENT_DECISION").length, 1);

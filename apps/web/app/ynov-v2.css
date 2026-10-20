@@ -1075,3 +1075,13 @@ input, select, textarea { color: var(--onyx); }
 .first-treatment-overdue small { color: #8f1d14; line-height: 1.5; }
 .first-treatment-queue[data-overdue="true"] { border-left: 3px solid #b42318; background: #fff2f0; }
 .first-treatment-queue[data-overdue="true"] strong { color: #8f1d14; }
+.added-at-filters { min-width: 0; max-width: 100%; margin-block: 12px 20px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface, #fff); }
+.added-at-filters > strong { display: block; margin-bottom: 10px; color: var(--text); font-size: 13px; }
+.added-at-filters .saved-views { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.added-at-filters :is(button, summary) { min-height: 44px; cursor: pointer; }
+.added-at-filters summary { display: flex; align-items: center; font-weight: 700; font-size: 12px; }
+.added-at-filters .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; align-items: end; }
+.added-at-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 12px; }
+.added-at-filters input { min-width: 0; width: 100%; min-height: 44px; }
+.added-at-filters p { margin: 8px 0 0; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.added-at-filters :is(button, summary, input):focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }

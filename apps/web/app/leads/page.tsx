@@ -35,6 +35,7 @@ function LeadsPageContent(): React.JSX.Element {
   const mode = leadPageMode(current.get("view"));
   const followUp = mode === "follow-up";
   const activeView = current.get("view")?.toUpperCase() ?? "ALL";
+  const entryTitle = activeView === "NEW_RECEIVED" ? "Nouveaux Leads" : activeView === "MINE" ? "Mes leads" : "Tous les leads";
   const activeProvenance = current.get("savedView")?.toUpperCase();
   const sharedView = Boolean(current.get("sharedViewId"));
   const importErrors = activeProvenance === "IMPORT_ERRORS" && !sharedView;
@@ -43,11 +44,12 @@ function LeadsPageContent(): React.JSX.Element {
   return <main className={`leads-page${followUp ? " leads-page--follow-up" : ""}`}>
     <PageHeader
       eyebrow={followUp ? "Suivi commercial" : "Base prospects"}
-      title={followUp ? "Relances" : activeView === "FIRST_TREATMENT_OVERDUE" ? "Premiers traitements en retard" : activeView === "TO_CONTACT" ? "À contacter" : activeView === "NEXT_ACTION_MISSING" ? "Prochaine action à planifier" : "Tous les leads"}
+      title={followUp ? "Relances" : activeView === "FIRST_TREATMENT_OVERDUE" ? "Premiers traitements en retard" : activeView === "TO_CONTACT" ? "À contacter" : activeView === "NEXT_ACTION_MISSING" ? "Prochaine action à planifier" : entryTitle}
       description={followUp ? "Traitez les échéances arrivées à terme, de la plus ancienne à la plus récente." : activeView === "FIRST_TREATMENT_OVERDUE" ? "Prospects sans traitement commercial connu, reçus depuis strictement plus de 24 heures consécutives. Le point de départ est la réception source reconnue ou la première observation CRM persistée, jamais la dernière exécution du job." : activeView === "NEXT_ACTION_MISSING" ? "Dossiers ouverts déjà pris en charge, sans relance persistée conforme. Les informations historiques restent conservées ; aucune date n’est ajoutée automatiquement." : activeView === "TO_CONTACT" ? "Prospects à prendre en charge dans votre périmètre. Une nouvelle interaction métier ou le passage manuel à Contacté les retire de cette file, distincte des relances." : "Centralisez, qualifiez et affectez chaque opportunité."}
       actions={<>{followUp ? <Link className="secondary-button" href={leadListHref(current, { view: "ALL", sharedViewId: null })}><ArrowLeft size={18} aria-hidden="true" /> Tous les leads</Link> : null}<LeadCreateAccess /></>}
     />
     <DashboardReturnLink />
+    {activeView === "NEW_RECEIVED" ? <p>Nouvelles acquisitions uniquement, de l’ajout CRM le plus récent au plus ancien. Les reprises historiques sont exclues. <Link href={leadListHref(current, { view: "FIRST_TREATMENT_OVERDUE", createdFrom: null, createdTo: null, createdBefore: null, acquisitionKind: null })}>Priorité : consulter tous les premiers traitements en retard</Link> · <Link href={leadListHref(current, { view: "FOLLOW_UP", createdFrom: null, createdTo: null, createdBefore: null, acquisitionKind: null })}>Consulter les relances échues sans période d’ajout</Link></p> : null}
     <nav className="saved-views lead-work-views" aria-label="Files de travail Leads">{leadWorkViews.map(([view, label]) => sharedView
       ? <span key={view} aria-disabled="true">{label}</span>
       : <Link key={view} prefetch={false} href={leadListHref(current, { view })} className={activeView === view ? "active" : undefined} aria-current={activeView === view ? "page" : undefined}>{label}</Link>)}</nav>

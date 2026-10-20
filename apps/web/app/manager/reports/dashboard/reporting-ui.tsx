@@ -1,11 +1,15 @@
 "use client";
 
+import CommercialWork, { workCohortQuery } from "../commercial-work/work";
+
 import { Alarm, CaretRight, CheckCircle, Plus, Student, TrendUp, User, UserPlus, WarningCircle } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../../../_components/ui/page-header";
 import { AdmissionsAgendaLink } from "../../../appointments/admissions/agenda-link";
 import { leadDirectoryStatus } from "../../../leads/lead-directory";
+import { AddedAtFilters } from "../../../leads/added-at-filters";
+import { addedAtLabel, addedDayStart, casablancaDay } from "../../../leads/added-at-period";
 import type { DashboardCalendar } from "./dashboard-calendar";
 
 type Datum = { value: string; count: number; key?: string };
@@ -224,7 +228,7 @@ function RecentDashboardLeads({ query, canRead, onSessionExpired }: Readonly<{ q
     const knownStatus = Object.hasOwn(recentLeadStatusClasses, lead.status);
     return <li className="dashboard-recent-lead" key={lead.id}>
       <Link className="dashboard-recent-lead__link" href={preserveFilters(`/leads/${encodeURIComponent(lead.id)}`, query)}>
-        <span className="dashboard-recent-lead__identity"><strong><bdi dir="auto">{lead.name}</bdi></strong><small><bdi dir="auto">{lead.leadCode}</bdi></small></span>
+        <span className="dashboard-recent-lead__identity"><strong><bdi dir="auto">{lead.name}</bdi></strong><small><bdi dir="auto">{lead.leadCode}</bdi></small><small>Ajouté le <time dateTime={lead.createdAt}>{addedAtLabel(lead.createdAt)}</time></small></span>
         <span className="dashboard-recent-lead__details">
           <span className={`status-badge${knownStatus ? ` ${recentLeadStatusClasses[lead.status]}` : ""}`}>{leadDirectoryStatus(knownStatus ? lead.status : "UNKNOWN")}</span>
           <span className="dashboard-recent-lead__owner"><User size={14} aria-hidden="true" /><span className="sr-only">Responsable : </span><bdi dir="auto">{lead.assignedToLabel ?? "Libellé du responsable indisponible"}</bdi></span>
@@ -270,13 +274,14 @@ function DashboardAttentionList({ alerts, sourceQualityAvailability }: Readonly<
 
 function ReportingBoundary({ name, label, initialValue }: Readonly<{ name: "from" | "to"; label: string; initialValue: string }>): React.JSX.Element {
   const [boundary, setBoundary] = useState(initialValue);
-  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue.slice(0, 10)} onChange={(event) => setBoundary(event.target.value)} /></label>;
+  return <label>{label}<input type="hidden" name={name} value={boundary} /><input type="date" defaultValue={initialValue ? casablancaDay(initialValue) : ""} onChange={(event) => setBoundary(event.target.value ? addedDayStart(event.target.value) : "")} /></label>;
 }
 
 function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readonly<{ filters: Record<string, string>; calendar: DashboardCalendar; canViewManagerDashboard: boolean }>): React.JSX.Element {
   const query = new URLSearchParams(filters);
   const todayHref = dashboardPeriodHref(query, "custom", calendar);
   return <div className="reporting-toolbar-content">
+    <AddedAtFilters current={query} path="/manager/reports/dashboard" />
     <nav className="period-selector" aria-label="Période globale du dashboard">
       <Link href={todayHref} className={filters.period === "custom" ? "active" : ""}>Aujourd’hui</Link>
       <Link href={dashboardPeriodHref(query, "7d")} className={filters.period === "7d" ? "active" : ""}>7 jours</Link>
@@ -286,11 +291,14 @@ function ReportingFilters({ filters, calendar, canViewManagerDashboard }: Readon
     <details className="reporting-filter-popover" suppressHydrationWarning><summary>Filtres avancés</summary><form method="get" action="/manager/reports/dashboard" aria-label="Filtres interactifs du reporting">
     <label>Période <select name="period" defaultValue={filters.period ?? "30d"}><option value="7d">7 jours</option><option value="30d">30 jours</option><option value="90d">90 jours</option><option value="custom">Personnalisée</option></select></label>
     <ReportingBoundary name="from" label="Du" initialValue={filters.from ?? ""} /><ReportingBoundary name="to" label="Au (borne exclue)" initialValue={filters.to ?? ""} />
-    <small>Une date saisie seule correspond à minuit UTC. Les instants ISO existants sont conservés tant que vous ne modifiez pas la date.</small>
+    <small>Période d’ajout CRM. Une date saisie correspond à minuit Casablanca. Les instants ISO existants sont conservés tant que vous ne modifiez pas la date.</small>
     <label>Campus <input name="campus" defaultValue={filters.campus} /></label><label>Campagne <input name="campaign" defaultValue={filters.campaign} /></label>
     <label>Formation <input name="program" defaultValue={filters.program} /></label><label>Source <input name="source" defaultValue={filters.source} /></label>
     <label>Canal <select name="channel" defaultValue={filters.channel ?? ""}><option value="">Tous</option><option value="DIGITAL">Digital</option><option value="PHONE">Téléphone</option><option value="IN_PERSON">Présentiel</option><option value="PARTNER">Partenaire</option><option value="OTHER">Autre</option></select></label>
     <label>Commercial <input name="adviserId" defaultValue={filters.adviserId} autoComplete="off" /></label>
+    <label>Dernier traitement à partir du<input type="date" name="treatmentFrom" defaultValue={filters.treatmentFrom} /></label>
+    <label>Dernier traitement jusqu’au (inclus)<input type="date" name="treatmentTo" defaultValue={filters.treatmentTo} /></label>
+    <label>Historique de traitement<select name="treatmentState" defaultValue={filters.treatmentState ?? ""}><option value="">Tous</option><option value="DATED">Entièrement daté</option><option value="UNKNOWN_DATE">Date inconnue</option><option value="NONE">Aucun traitement connu</option></select></label>
     <label>Statut <select name="status" defaultValue={filters.status ?? ""}><option value="">Tous</option><option value="PROSPECT">Prospect</option><option value="CONTACTED">Contacté</option><option value="QUALIFIED">Qualifié</option><option value="ENROLLED">Inscrit</option><option value="CLOSED_LOST">Sans suite</option></select></label>
     <label>Vue <select name="view" defaultValue={filters.view ?? "global"}><option value="global" disabled={!canViewManagerDashboard}>Pilotage autorisé</option><option value="personal">Personnelle</option></select></label>
     <button type="submit">Appliquer</button> <a href={dashboardPeriodHref(query, "30d")}>Réinitialiser la période</a></form></details>
@@ -320,6 +328,7 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
       <FirstTreatmentCard report={report} />
       <div className="queue-item"><span className="icon-disc small red"><WarningCircle size={20} /></span><span>Imports en erreur<strong>Non observé</strong></span></div>
     </section>
+    <CommercialWork embedded query={workCohortQuery(report.filters)} />
     <p><Link className="text-button" href={preserveFilters("/leads?view=NO_ACTIVITY", query)}>Ouvrir les Leads sans activité — file distincte du signal de première interaction échue</Link></p>
     <div className="dashboard-primary-grid"><section className="panel priority-panel"><div className="panel-heading"><div><h2>À traiter aujourd’hui en priorité</h2><p>{report.panels.operationalRisks.alerts.length} point(s) d’attention dans le périmètre sélectionné. Les signaux peuvent se recouper ; leur somme n’est pas un nombre de Leads distincts.</p></div><Link className="text-button" href={followUpsHref}>Ouvrir les Leads à relancer</Link></div><div className="priority-table"><div className="table-row table-head"><span>Priorité</span><span>Action</span><span>Volume</span><span>File</span><span>Échéance</span></div>{report.panels.operationalRisks.alerts.slice(0, 5).map((alert) => <article className="table-row" key={alert.code}><span data-label="Priorité"><span className="status-badge en-retard"><WarningCircle size={14} weight="fill" />À examiner</span></span><span data-label="Action"><b>{dashboardAttentionText(alert.code).label}</b><small>{dashboardAttentionText(alert.code).hint}</small></span><span data-label="Volume">{displayCount(alert.count)}<small>{operationalAlertUnit(alert)}</small><AlertComparison alert={alert} /></span><span data-label="File">{operationalAlertHref(alert, query) === "#" ? unavailableAlertLabel(alert) : <Link href={operationalAlertHref(alert, query)}>{operationalAlertLinkLabel(alert)}</Link>}</span><span data-label="Échéance" className="due">À traiter</span></article>)}</div><Link className="panel-footer-action" href={followUpsHref}>Ouvrir ma liste de travail</Link></section><section className="panel pipeline-panel"><div className="panel-heading"><h2>Pipeline</h2><Link className="text-button" href={preserveFilters("/manager/reports/commercial-funnel", query)}>Voir le pipeline complet</Link></div><div className="pipeline-head"><span>Étape</span><span>Leads</span><span>Part</span></div>{funnel.map((item) => <div className="pipeline-row" key={item.value}><span><i className="stage-dot teal" />{item.value}</span><strong>{displayCount(item.count)}</strong><em>{pipelineShare(item.count, report.cards.uniqueLeads)}</em></div>)}</section></div>
     <div className="dashboard-secondary-grid dashboard-secondary-grid--refined">

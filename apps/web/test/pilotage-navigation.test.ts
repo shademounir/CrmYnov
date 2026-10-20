@@ -42,3 +42,14 @@ test("capability transport is read-only, strict and fails closed", async () => {
   }
   assert.equal(await loadShellReportingAccess(() => Promise.reject(new Error("offline"))), null);
 });
+
+test("functional designation metadata requires the current server pilotage proof and adds no administrative menu", async () => {
+  for (const allowed of [true, false]) {
+    const access = await loadShellReportingAccess(() => Promise.resolve(Response.json({ canViewPersonalDashboard: true, canViewPilotageDashboard: allowed, admissionsSupervision: true })));
+    assert.equal(access?.admissionsSupervision, allowed ? true : undefined);
+    const links = visibleNavigation(["ADMISSIONS"], access).map(item => item.href);
+    assert.equal(links.includes("/manager/reports/commercial-funnel"), allowed);
+    assert.equal(links.some(href => href.startsWith("/admin/")), false);
+  }
+  assert.equal(await loadShellReportingAccess(() => Promise.resolve(Response.json({ canViewPersonalDashboard: true, canViewPilotageDashboard: true, admissionsSupervision: "true" }))), null);
+});
