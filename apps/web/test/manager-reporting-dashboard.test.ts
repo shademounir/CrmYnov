@@ -6,6 +6,7 @@ import ManagerReportsDashboardPage from "../app/manager/reports/dashboard/page.j
 import InteractiveReportingDashboard, { preserveFilters, safeInternalHref, type DashboardReport, type PersonalDashboardReport } from "../app/manager/reports/dashboard/reporting-ui.js";
 import { containsControlCharacter } from "../app/leads/dashboard-return-link.js";
 import { dashboardCalendar } from "../app/manager/reports/dashboard/dashboard-calendar.js";
+import { addedDayStart } from "../app/leads/added-at-period.js";
 import { JSDOM } from "jsdom";
 import { LeadFilterForm } from "../app/leads/lead-filter-form.js";
 
@@ -37,7 +38,9 @@ test("renders URL-backed filters and the non-sensitive loading state", async () 
 test("renders keyboard-focusable charts and an alternative data table for every visualization", () => {
   const html = renderToStaticMarkup(createElement(InteractiveReportingDashboard, { initialFilters: { period: "30d", campus: "campus-a" }, initialReport: report, initialCalendar }));
   for (const text of ["Indicateurs clés", "Funnel commercial", "Évolution temporelle", "Répartition par source", "Charge commerciale", "Contributions principales et secondaires", "Données alternatives", "Exporter les agrégats CSV"]) assert.equal(html.includes(text), true);
-  assert.equal((html.match(/class="reporting-chart"/gu) ?? []).length, 8); assert.equal((html.match(/type="button"/gu) ?? []).length, 8);
+  assert.equal((html.match(/class="reporting-chart"/gu) ?? []).length, 8);
+  const charts = new JSDOM(html).window.document.querySelectorAll("button.reporting-chart");
+  assert.equal(charts.length, 8); for (const chart of charts) assert.equal(chart.getAttribute("type"), "button");
   assert.equal(html.includes("dashboard-personal-charts"), false);
   assert.equal(html.includes("Alex"), false); assert.equal(html.includes("@example"), false); assert.equal(html.includes("returnTo="), true);
 });
@@ -429,7 +432,7 @@ test("Dashboard Applying filters keeps exact UTC instants until the user explici
   for (const key of ["view", "channel", "adviserId", "status"] as const) assert.equal(submitted.get(key), filters[key]);
   const dates = form.querySelectorAll<HTMLInputElement>('input[type="date"]');
   assert.equal(dates[0]?.value, "2026-10-01"); assert.equal(dates[1]?.value, "2026-10-05");
-  assert.match(form.textContent ?? "", /minuit UTC/u);
+  assert.match(form.textContent ?? "", /minuit Casablanca/u);
   const { act } = await import("react");
   act(() => {
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(dates[0], "2026-10-02");
@@ -437,7 +440,7 @@ test("Dashboard Applying filters keeps exact UTC instants until the user explici
     dates[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
   });
   submitted = new window.FormData(form);
-  assert.deepEqual(submitted.getAll("from"), ["2026-10-02"]);
+  assert.deepEqual(submitted.getAll("from"), [addedDayStart("2026-10-02")]);
   assert.deepEqual(submitted.getAll("to"), [filters.to]);
   act(() => {
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(dates[1], "2026-10-06");
@@ -445,7 +448,7 @@ test("Dashboard Applying filters keeps exact UTC instants until the user explici
     dates[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
   });
   submitted = new window.FormData(form);
-  assert.deepEqual(submitted.getAll("to"), ["2026-10-06"]);
+  assert.deepEqual(submitted.getAll("to"), [addedDayStart("2026-10-06")]);
 });
 
 test("recent Leads use the exact normalized report cohort and observed owner label", async (t) => {
@@ -519,7 +522,7 @@ test("five observed recent Leads retain safe destinations, exact filters and Fre
     assert.equal(link.querySelector(".dashboard-recent-lead__identity small bdi")?.textContent, leads[index]!.leadCode);
     assert.equal(link.querySelector(".dashboard-recent-lead__owner bdi")?.textContent, leads[index]!.assignedToLabel);
   }
-  assert.equal(view.host.querySelector(".dashboard-recent-leads time"), null, "created-at data must not be repurposed into an activity timeline");
+  assert.equal(view.host.querySelector(".dashboard-recent-leads time")?.getAttribute("datetime"), filters.from, "created-at is labeled as entry, never repurposed into an activity timeline");
 });
 
 for (const status of ["FUTURE_STATUS", "__proto__", "constructor"]) {
@@ -873,8 +876,7 @@ test("the Lead date input keeps its exact instant until an explicit date edit", 
     input.dispatchEvent(new window.Event("change", { bubbles: true }));
   });
   values = new window.FormData(form);
-  assert.deepEqual(values.getAll("createdFrom"), ["2026-10-02T00:00:00.000Z"], "an explicit date edit encodes the exact UTC lower bound, still submitted only once");
-  assert.equal(values.get("createdFrom"), new Date("2026-10-02").toISOString(), "the API normalizes the old date-only value to this same instant");
+  assert.deepEqual(values.getAll("createdFrom"), [addedDayStart("2026-10-02")], "an explicit date edit encodes Casablanca midnight, still submitted only once");
   assert.equal(values.get("createdBefore"), "2026-10-05T08:00:00.000Z", "editing the lower bound must not weaken the exclusive upper bound");
 });
 

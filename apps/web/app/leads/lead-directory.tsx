@@ -8,6 +8,7 @@ import { apiString, type ApiObject, type ApiValue } from "../_components/connect
 import { sessionLoginHref } from "../_components/app-shell";
 import { leadListFailureForStatus, leadListHref, readLeadListPage, type LeadListFailure, type LeadListPage } from "./lead-list-query";
 import { FirstTreatmentIndicator } from "./first-treatment-indicator";
+import { addedAtLabel } from "./added-at-period";
 
 const statusLabels: Readonly<Record<string, string>> = {
   PROSPECT: "Prospect",
@@ -95,7 +96,7 @@ export function LeadDirectoryTable({ items, ariaLabel, context = "directory", to
           return <tr key={id || code}>
             <th scope="row" data-label="Prospect"><span className="lead-directory__person">
               <span className="lead-directory__avatar" aria-hidden="true">{leadDirectoryInitials(item)}</span>
-              <span className="lead-directory__identity"><strong><LeadName item={item} /></strong><small>{code}</small></span>
+              <span className="lead-directory__identity"><strong><LeadName item={item} /></strong><small>{code}</small><small>Ajouté le {apiString(item, "createdAt") ? <time dateTime={apiString(item, "createdAt")}>{addedAtLabel(apiString(item, "createdAt"))}</time> : "date indisponible"}</small>{item.acquisitionKind === "NEW" ? <small>Nouvelle acquisition{assigned ? " · affectée" : " · non affectée"}</small> : item.acquisitionKind === "BASELINE" ? <small>Reprise historique · pas une nouvelle demande</small> : null}</span>
             </span></th>
             {followUp ? <td className="lead-directory__situation lead-directory__due" data-label="Échéance"><CalendarBlank size={17} aria-hidden="true" /><span><strong><LeadDate value={nextActionAt} empty="Échéance indisponible" /></strong><small>À traiter</small></span></td> : <td className="lead-directory__situation" data-label="Situation">
               <span className="lead-directory__status" data-status={status}>{leadDirectoryStatus(status)}</span>

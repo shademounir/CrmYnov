@@ -1,7 +1,7 @@
 import type { ApiObject, ApiValue } from "../_components/connected-resource";
 
 export const leadWorkViews = [
-  ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["TO_CONTACT", "À contacter"], ["FOLLOW_UP", "À relancer"],
+  ["ALL", "Tous les leads"], ["MINE", "Mes leads"], ["NEW_RECEIVED", "Nouveaux Leads"], ["TO_CONTACT", "À contacter"], ["FOLLOW_UP", "À relancer"],
   ["UNASSIGNED", "Non affectés"], ["NO_ACTIVITY", "Sans activité"], ["CLOSED", "Clôturés"],
   ["NEXT_ACTION_MISSING", "Prochaine action à planifier"],
   ["FIRST_TREATMENT_OVERDUE", "Premier traitement >24 h"],
@@ -18,7 +18,7 @@ export const leadListFilterLabels: Readonly<Record<string, string>> = {
   search: "Recherche", assignedToId: "Conseiller principal", collaboratorId: "Collaborateur",
   adviserId: "Conseiller impliqué", status: "Statut", temperature: "Température", source: "Source",
   channel: "Canal", program: "Formation", campaign: "Campagne", campus: "Campus",
-  createdFrom: "Créés à partir du", createdTo: "Créés jusqu’au", createdBefore: "Créés avant le",
+  createdFrom: "Ajoutés à partir du", createdTo: "Ajoutés jusqu’au", createdBefore: "Ajoutés avant le", acquisitionKind: "Type d’entrée CRM",
   treatmentFrom: "Dernier traitement à partir du", treatmentTo: "Dernier traitement jusqu’au", treatmentState: "Historique de traitement",
   inactiveTreatmentBefore: "Traitement daté ancien — seuil figé avant", portfolioState: "État du portefeuille",
   assignmentMode: "Mode d’affectation", importBatchId: "Lot d’import", view: "File",
@@ -53,7 +53,7 @@ export function leadListFilterValue(key: string, value: string, current?: URLSea
     COLD: "Froid", WARM: "Tiède", HOT: "Chaud", DIGITAL: "Digital", PHONE: "Téléphone",
     IN_PERSON: "Présentiel", PARTNER: "Partenaire", OTHER: "Autre",
     DATED: "Historique daté", UNKNOWN_DATE: "Historique avec date inconnue", NONE: "Aucun traitement connu",
-    OPEN: "Dossiers ouverts", CLOSED: "Dossiers clôturés",
+    OPEN: "Dossiers ouverts", CLOSED: "Dossiers clôturés", NEW: "Nouvelle acquisition", BASELINE: "Reprise historique",
   };
   const labelKey: Readonly<Record<string, string>> = { assignedToId: "assignedToLabel", collaboratorId: "collaboratorLabel", adviserId: "adviserLabel" };
   const label = labelKey[key] ? current?.get(labelKey[key])?.normalize("NFC").trim() : undefined;

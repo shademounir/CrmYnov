@@ -48,7 +48,7 @@ export class ReassignmentService implements OnModuleInit {
       if (replay) { const record = reassignmentRecord(replay); assertReassignmentIntent(record, leadId, input, current.userId); return record; }
       const lead = await tx.lead.findUniqueOrThrow({ where: { id: leadId } });
       if (!lead.assignedToId) throw new ConflictException({ code: "reassignment_current_owner_missing" });
-      if (current.roles.includes("ADMISSIONS") && lead.assignedToId !== current.userId) throw new ForbiddenException({ code: "reassignment_owner_required" });
+      if (!current.roles.some(role => ["MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role)) && lead.assignedToId !== current.userId) throw new ForbiddenException({ code: "reassignment_owner_required" });
       if (lead.assignedToId === input.targetUserId) throw new BadRequestException({ code: "reassignment_target_unchanged" });
       await this.campusAssignments!.assertReassignmentTarget(tx, lead, input.targetUserId);
       if (await tx.reassignmentRequest.findFirst({ where: { leadId, status: "PENDING" } })) throw new ConflictException({ code: "reassignment_pending_exists" });

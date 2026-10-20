@@ -133,6 +133,7 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
   const id = created.lead.id;
   const replayedCreation = await service.createLeadForApi(creationInput, principal, "persistent-create-retry");
   assert.equal(replayedCreation.lead.id, id);
+  assert.equal(replayedCreation.lead.createdAt, created.lead.createdAt);
   assert.equal(state.leads.length, 1); assert.equal(state.activities.length, 1); assert.equal(state.audits.length, 1);
   await assert.rejects(() => service.createLeadForApi({ ...creationInput, lastName: "Différent" }, principal, "persistent-create-conflict"), hasCode("lead_idempotency_conflict"));
   assert.equal((await service.listLeadsForApi({ page: 1, pageSize: 20 }, principal, "persistent-list")).total, 1);
@@ -158,6 +159,7 @@ test("routes the complete Lead API lifecycle through the persistent adapter", as
   assert.equal(Object.hasOwn(assigned, "firstTreatmentAgeMinutes"), false, "assignment response does not freeze a read-time SLA clock");
   const observed = await restartedService.getLeadForApi(id, principal, "persistent-assignment-read");
   assert.equal(observed.treatmentState, "DATED");
+  assert.equal(observed.createdAt, created.lead.createdAt, "Edits, interactions, assignment and persistent replay preserve the CRM entry clock");
   assert.equal(Object.hasOwn(observed, "firstTreatmentAgeMinutes"), true, "authorized reads retain the derived treatment projection");
   assert.equal((await service.reassignLocalLeadForApi(id, ownerId, targetId, principal, "persistent-reassignment", "Réaffectation synthétique")).assignedToId, targetId);
   assert.deepEqual((await service.applyCollaboratorForApi(id, userId, "ADD", "ADVISER", principal, "persistent-collaboration")).collaboratorIds, [userId]);

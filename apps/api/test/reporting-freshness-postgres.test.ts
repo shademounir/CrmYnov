@@ -185,10 +185,53 @@ test("CRMY-162 real PostgreSQL dashboard freshness, cohort parity and live autho
       assert.equal(await f.db.lead.count(), 6, "Read/refusal checks cannot manufacture additional business rows");
     });
 
-    await t.test("CRMY-178 explicit Commercial pilotage uses the same real dashboard, with live revocation and no admin authority", async () => {
+    await t.test("functional Admissions designation grants live campus supervision, not Commercial role or mutation authority", async () => {
       await setGrants("ADMISSIONS", { "reporting.view": "CAMPUS", "lead.view": "CAMPUS" });
-      await f.db.admissionsResponsibility.create({ data: { userId: f.commercial.id, campus: f.campus.code, active: true } });
-      assert.equal((await dashboard(commercial.token)).status, 403, "An active Admissions agenda profile is not director/pilotage authority");
+      const shell = (): Promise<HttpResult<DashboardCapabilities>> => http("GET", "/reports/dashboard/capabilities", commercial.token, undefined, 1);
+      assert.equal((await shell()).body.canViewPilotageDashboard, false);
+      assert.equal((await dashboard(commercial.token)).status, 403);
+      const profile = await f.db.admissionsResponsibility.create({ data: { userId: f.commercial.id, campus: f.campus.code, active: true } });
+      const actual = await dashboard(commercial.token), expected = await dashboard();
+      assert.equal(actual.status, 200); assert.equal(actual.body.cards.uniqueLeads, 2);
+      assert.deepEqual(actual.body.cards, expected.body.cards);
+      assert.equal((await shell()).body.admissionsSupervision, true);
+      assert.equal((await shell()).body.canExportReporting, false);
+      for (const path of ["/users", "/admin/role-permissions/catalogue"]) assert.equal((await http("GET", path, commercial.token, undefined, 1)).status, 403);
+      assert.equal((await dashboard(commercial.token, f.otherCampus.id)).status, 403);
+      const legacy = await http<{ definitionVersion: string; queues: unknown[] }>("GET", `/reports/commercial-work?${query()}`, commercial.token, undefined, 1);
+      assert.equal(legacy.status, 200); assert.equal(legacy.body.definitionVersion, "commercial-work-v1"); assert.equal(legacy.body.queues.length, 6);
+      const work = await http<{ cohort: { leadCount: number }; queues: Array<{ key: string; leadCount: number; href: string }>; page: { total: number } }>("GET", `/reports/commercial-work?${query()}&queue=NEW_RECEIVED&contractVersion=2`, commercial.token, undefined, 1);
+      assert.equal(work.status, 200); assert.equal(work.body.cohort.leadCount, 2);
+      assert.equal(work.body.queues.length, 7);
+      const entryQuery = new URLSearchParams({ campus: f.campus.code, channel: "PHONE", createdFrom: from, createdBefore: to, view: "NEW_RECEIVED", sortBy: "leadCode", sortDirection: "asc", page: "1", pageSize: "100" });
+      const entries = await http<{ items: Array<{ id: string; createdAt: string; acquisitionKind: string }>; total: number }>("GET", `/leads?${entryQuery}`, manager.token, undefined, 1);
+      assert.equal(entries.status, 200); assert.equal(entries.body.total, work.body.page.total, "Directory new-entry count equals work queue with the same exact date and scope bounds");
+      assert.ok(entries.body.items.every(row => row.acquisitionKind === "NEW" && row.createdAt >= from && row.createdAt < to));
+      assert.deepEqual(entries.body.items.map(row => row.createdAt), entries.body.items.map(row => row.createdAt).sort().reverse(), "New-entry list is recent first even if another sort is requested");
+      for (const row of entries.body.items) assert.equal(row.createdAt, (await f.db.lead.findUniqueOrThrow({ where: { id: row.id } })).createdAt.toISOString());
+      assert.equal((await http("GET", `/reports/commercial-work?${query()}&contractVersion=3`, commercial.token, undefined, 1)).status, 400);
+      for (const queue of work.body.queues) {
+        const path = queue.href.replace("/manager/reports/commercial-work?", "/reports/commercial-work?");
+        const exact = await http<{ page: { total: number } }>("GET", path, commercial.token, undefined, 1);
+        assert.equal(exact.status, 200); assert.equal(exact.body.page.total, queue.leadCount);
+      }
+      await setGrants("ADMISSIONS", { "lead.view": "OWN" });
+      assert.equal((await dashboard(commercial.token)).body.cards.uniqueLeads, 1, "Functional read cannot override the real lead.view restriction");
+      await setGrants("ADMISSIONS", { "lead.view": "CAMPUS", "reporting.view": "NONE" });
+      assert.equal((await dashboard(commercial.token)).status, 403);
+      await setGrants("ADMISSIONS", { "reporting.view": "CAMPUS" });
+      await f.db.admissionsResponsibility.update({ where: { id: profile.id }, data: { active: false } });
+      assert.equal((await dashboard(commercial.token)).status, 403, "Existing session on another process sees designation revocation");
+      assert.equal((await shell()).body.canViewPilotageDashboard, false);
+      const personal = await http<PersonalDashboardReport>("GET", `/reports/personal-dashboard?${query()}`, commercial.token, undefined, 1);
+      assert.equal(personal.status, 200); assert.equal(personal.body.filters.adviserId, f.commercial.id);
+      assert.deepEqual((await f.db.collaborator.findUniqueOrThrow({ where: { id: f.commercial.id } })).roles, ["ADMISSIONS"]);
+    });
+
+    await t.test("CRMY-178 explicit Commercial pilotage uses the same real dashboard, with live revocation and no admin authority", async () => {
+      // The preceding designation test restored these actual persisted grants.
+      // Do not submit an identical save: permission_no_change is intentional.
+      assert.equal((await dashboard(commercial.token)).status, 403, "An inactive Admissions designation is not pilotage authority");
       const shell = (): Promise<HttpResult<DashboardCapabilities>> => http("GET", "/reports/dashboard/capabilities", commercial.token, undefined, 1);
       assert.equal((await shell()).body.canViewPilotageDashboard, false);
       // A Super Admin must first open the role envelope; a campus toggle cannot

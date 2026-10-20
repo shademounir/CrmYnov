@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { OwnTelephonySnapshot } from "../app/account/telephony/own-telephony-contract";
+import { syntheticWorkReport } from "./work-report-fixture";
 
 const managerTelephony: OwnTelephonySnapshot = {
   global: { enabled: false, mode: "DISABLED" }, profile: null, workstation: null,
@@ -30,6 +31,12 @@ const personalReport = { definitionVersion: "personal-dashboard-v1", timezone: "
   contributions: { contributors: [{ contributorId: "adviser-synthetic", primaryActionCount: 4, secondaryActionCount: 2 }] }, safeguards: { personalScopeOnly: true, aggregatedOnly: true } };
 
 async function mockReporting(page: Page): Promise<void> {
+  await page.route("**/api/crm/reports/commercial-work?*", (route) => {
+    expect(route.request().method()).toBe("GET");
+    const query = new URL(route.request().url()).searchParams;
+    expect(query.get("contractVersion")).toBe("2");
+    return route.fulfill({ json: syntheticWorkReport(query) });
+  });
   // Reporting is isolated from the API; include shared shell and Admissions capabilities.
   await page.route("**/api/crm/sessions/current", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ roles: ["MANAGER"], scopes: [{ kind: "CAMPUS", id: "campus-a" }], professionalEmail: "manager@example.invalid", mustChangeSecret: false }) }));
   await page.route("**/api/crm/reports/dashboard/capabilities", (route) => route.fulfill({ json: managerCapabilities }));
@@ -76,6 +83,8 @@ test("manager filters, charts, drill-down, return and aggregate export stay cohe
   });
   await page.context().addCookies([{ name: "crm_session", value: "synthetic-manager-session", domain: "localhost", path: "/" }]);
   await mockReporting(page); await page.goto("/manager/reports/dashboard");
+  await expect(page.locator('[aria-label="Vues de travail"] > .work-queue')).toHaveCount(7);
+  await expect(page.locator('.pipeline-work-supervision')).toContainText("Ajouté le");
   await expect(page.getByRole("link", { name: "Mon agenda Admissions", exact: true })).toHaveAttribute("href", "/appointments/admissions");
   await expect(page.getByRole("link", { name: "Mon poste d’appel", exact: true })).toHaveAttribute("href", "/account/telephony");
   expect((await page.context().cookies()).some((cookie) => cookie.name === "crm_session")).toBe(true);

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import React from "react";
+import { addedAtLabel } from "../added-at-period";
 import {
   ArrowLeft,
   CalendarBlank,
@@ -436,7 +437,7 @@ export function LeadProfileView({ lead, events, actionMessage, onLeadChanged, on
       <dl>
         <InformationRow label="Source" value={leadSourceLabel(lead.source)} />
         <InformationRow label="Campagne" value={lead.campaign} />
-        <InformationRow label="Créé le" value={formatDate(lead.createdAt, false)} />
+        <InformationRow label="Ajouté le" value={addedAtLabel(lead.createdAt ?? "")} />
         {lead.acquisitionKind === "BASELINE" ? <><InformationRow label="Portefeuille" value="Reprise historique · hors acquisitions nouvelles" /><InformationRow label="Cycle de reprise" value="Voir la provenance historique" /></> : null}
       </dl>
     </details>
