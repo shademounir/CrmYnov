@@ -9,6 +9,8 @@ import { PrismaClient } from "@prisma/client";
 import { createApplication } from "../src/application.js";
 import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
 import { FollowUpPersistenceRepository } from "../src/follow-up/follow-up-persistence.repository.js";
+import { cancelFollowUpsForClosure } from "../src/follow-up/cancel-follow-ups-for-closure.js";
+import { PrismaService } from "../src/persistence/prisma.service.js";
 
 const enabled = process.env.CRMY_FOLLOW_UP_POSTGRES === "true";
 async function availablePort(): Promise<number> {
@@ -300,5 +302,86 @@ test("Lead follow-ups persist atomically, replay exactly and remain safe across 
   const notificationPage = await notificationsResponse.json() as { items: Array<{ id: string }>; total: number };
   assert.equal(notificationPage.total, 54); assert.ok(!notificationPage.items.some((item) => item.id === nextNotification.id));
   const crossUserRead = await fetch(`${base(restartPort)}/notifications/${nextNotification.id}/read`, { method: "PATCH", headers: { authorization: `Bearer ${token}` } }); assert.equal(crossUserRead.status, 404);
+
+  // Stranded final-dossier rows, including legacy DUE repairs, are preserved
+  // without commercial delivery. Exclude them BEFORE the bounded LIMIT.
+  const closedRows = [];
+  for (const status of ["CLOSED_LOST", "ENROLLED"] as const) for (const state of ["SCHEDULED", "DUE"] as const) {
+    const fixture = await createReminder(`${status === "ENROLLED" ? "ENR" : "LOST"}-${state}`);
+    await client.lead.update({ where: { id: fixture.lead.id }, data: { status } });
+    await client.leadFollowUp.update({ where: { id: fixture.item.id }, data: { state, dueAt: new Date("2098-01-01T09:00:00.000Z") } });
+    if (state === "DUE") await client.auditEvent.create({ data: {
+      eventType: "FOLLOW_UP_DUE", resourceType: "LEAD", resourceId: fixture.lead.id,
+      actorId: "system:follow-up-scheduler", actorRoles: [], correlationId: `synthetic-closed:${fixture.item.id}`,
+      result: "SUCCESS", idempotencyKey: `follow-up-due:${fixture.item.id}`,
+      after: { followUpId: fixture.item.id, state: "DUE", dueAt: "2098-01-01T09:00:00.000Z", version: 1 },
+    } });
+    closedRows.push(await client.leadFollowUp.findUniqueOrThrow({ where: { id: fixture.item.id } }));
+  }
+  const closedIds = closedRows.map(row => row.leadId);
+  const closedAudits = await client.auditEvent.findMany({ where: { resourceId: { in: closedIds } }, orderBy: { id: "asc" } });
+  assert.deepEqual(await firstRepository.markDue(nextClock, 1), { due: 0, notifications: 0 });
+  for (const row of closedRows) assert.deepEqual(await client.leadFollowUp.findUniqueOrThrow({ where: { id: row.id } }), row);
+  assert.equal(await client.internalNotification.count({ where: { resourceId: { in: closedIds } } }), 0);
+  assert.deepEqual(await client.auditEvent.findMany({ where: { resourceId: { in: closedIds } }, orderBy: { id: "asc" } }), closedAudits);
+  const stillOpen = await createReminder("OPEN-AFTER-CLOSED", randomUUID());
+  assert.deepEqual(await firstRepository.markDue(nextClock, 1), { due: 1, notifications: 1 });
+  assert.equal((await client.internalNotification.findFirstOrThrow({ where: { resourceId: stillOpen.lead.id } })).recipientId,
+    (await client.leadFollowUp.findUniqueOrThrow({ where: { id: stillOpen.item.id } })).ownerId);
+  assert.deepEqual(await secondRepository.markDue(nextClock, 1), { due: 0, notifications: 0 });
+
+  const closePrincipal = { userId: actorId, roles: ["ADMIN" as const], scopes: [{ kind: "GLOBAL" as const }], sessionId: randomUUID() };
+  const closureFirst = await createReminder("CLOSE-FIRST");
+  let startClosure!: () => void, releaseClosure!: () => void;
+  const closureStarted = new Promise<void>(resolve => { startClosure = resolve; });
+  const closureGate = new Promise<void>(resolve => { releaseClosure = resolve; });
+  const closing = client.$transaction(async tx => {
+    await tx.lead.update({ where: { id: closureFirst.lead.id }, data: { status: "CLOSED_LOST" } });
+    startClosure(); await closureGate;
+    await cancelFollowUpsForClosure(tx, { id: randomUUID(), leadId: closureFirst.lead.id, target: "CLOSED_LOST" }, closePrincipal, "synthetic-close-first");
+  }, { timeout: 15_000 });
+  try {
+    await closureStarted;
+    assert.deepEqual(await firstRepository.markDue(nextClock), { due: 0, notifications: 0 });
+  } finally { releaseClosure(); await closing; }
+  assert.equal((await client.leadFollowUp.findUniqueOrThrow({ where: { id: closureFirst.item.id } })).state, "CANCELLED");
+  assert.equal(await client.internalNotification.count({ where: { resourceId: closureFirst.lead.id } }), 0);
+
+  // Exercise the real repository within an outer transaction so its actual
+  // row locks remain held after delivery, before commit; no production hooks.
+  const jobFirst = await createReminder("JOB-FIRST");
+  let startJob!: () => void, releaseJob!: () => void;
+  const jobStarted = new Promise<void>(resolve => { startJob = resolve; });
+  const jobGate = new Promise<void>(resolve => { releaseJob = resolve; });
+  const job = client.$transaction(tx => first.get(PrismaService).withTransaction(tx, async () => {
+    const result = await firstRepository.markDue(nextClock); startJob(); await jobGate; return result;
+  }), { isolationLevel: "ReadCommitted", timeout: 15_000 });
+  let finalClosure: Promise<void> | undefined;
+  try {
+    await jobStarted;
+    finalClosure = client.$transaction(async tx => {
+      await tx.lead.update({ where: { id: jobFirst.lead.id }, data: { status: "ENROLLED" } });
+      await cancelFollowUpsForClosure(tx, { id: randomUUID(), leadId: jobFirst.lead.id, target: "ENROLLED" }, closePrincipal, "synthetic-job-first");
+    }, { timeout: 15_000 });
+    let locked = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const rows = await client.$queryRaw<Array<{ waiting: boolean }>>`SELECT EXISTS (
+        SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'
+          AND query LIKE 'UPDATE%leads%'
+      ) AS waiting`;
+      if (rows[0]?.waiting) { locked = true; break; }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(locked, true, "final status update must wait for real Lead shared lock until job commit");
+  } finally { releaseJob(); }
+  assert.deepEqual(await job, { due: 1, notifications: 1 });
+  await finalClosure;
+  assert.equal((await client.lead.findUniqueOrThrow({ where: { id: jobFirst.lead.id } })).status, "ENROLLED");
+  assert.equal((await client.leadFollowUp.findUniqueOrThrow({ where: { id: jobFirst.item.id } })).state, "CANCELLED");
+  const cancelledAudit = await client.auditEvent.findFirstOrThrow({ where: { resourceId: jobFirst.lead.id, eventType: "FOLLOW_UP_CANCELLED_FOR_CLOSURE" } });
+  assert.equal((cancelledAudit.after as { countsAsCompleted?: boolean }).countsAsCompleted, false);
+  assert.equal(await client.internalNotification.count({ where: { resourceId: jobFirst.lead.id } }), 1);
+  assert.deepEqual(await secondRepository.markDue(nextClock), { due: 0, notifications: 0 });
+  t.diagnostic("Final SCHEDULED/DUE rows untouched, no repair notification, bounded open-row fairness and both deterministic closure/job lock orders verified; no real closure decision made.");
   t.diagnostic("Atomic due/audit/notification rollback, response-loss/restart replay, 51-row concurrent bounded batches, legacy repair fairness, immutable receipts/audits, second postponed occurrence, persisted owner and cancelled reminders verified.");
 });
