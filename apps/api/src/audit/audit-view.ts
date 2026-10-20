@@ -12,11 +12,15 @@ export function auditMetadata(value: unknown): Record<string, number | boolean> 
   }
   return safe;
 }
-export interface AuditView { id: string; eventType: string; actorId: string | null; actorRoles: string[]; campusId: string | null; resourceType: string | null; resourceId: string | null; result: string; occurredAt: string; before: Record<string, number | boolean>; after: Record<string, number | boolean> }
+export interface AuditActorDisplay { kind: "SYSTEM" | "CURRENT_PROFILE" | "UNAVAILABLE"; label: string | null }
+export interface AuditLeadDisplay { kind: "CURRENT_RECORD" | "UNAVAILABLE" | "NOT_APPLICABLE"; id: string | null; label: string | null; reference: string | null }
+export interface AuditView { id: string; eventType: string; actorId: string | null; actorRoles: string[]; campusId: string | null; resourceType: string | null; resourceId: string | null; result: string; occurredAt: string; before: Record<string, number | boolean>; after: Record<string, number | boolean>; actorDisplay: AuditActorDisplay; leadDisplay: AuditLeadDisplay }
 export function auditView(row: AuditEvent): AuditView {
   return { id: row.id, eventType: classification(row.eventType) ?? "OTHER", actorId: technicalId(row.actorId),
     actorRoles: row.actorRoles.filter((role) => ["SUPER_ADMIN", "ADMIN", "AUDITOR", "MANAGER", "ADMISSIONS"].includes(role)),
     campusId: technicalId(row.campusId), resourceType: classification(row.resourceType), resourceId: technicalId(row.resourceId),
     result: ["SUCCESS", "DENIED", "FAILED"].includes(row.result) ? row.result : "UNKNOWN", occurredAt: row.occurredAt.toISOString(),
-    before: auditMetadata(row.before), after: auditMetadata(row.after) };
+    before: auditMetadata(row.before), after: auditMetadata(row.after),
+    actorDisplay: { kind: row.actorRoles.includes("SYSTEM") ? "SYSTEM" : "UNAVAILABLE", label: null },
+    leadDisplay: { kind: ["LEAD", "APPOINTMENT"].includes(row.resourceType ?? "") ? "UNAVAILABLE" : "NOT_APPLICABLE", id: null, label: null, reference: null } };
 }

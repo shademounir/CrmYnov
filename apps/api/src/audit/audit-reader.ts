@@ -5,7 +5,8 @@ import type { Principal } from "../auth/auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { PermissionService } from "../permissions/permission.service.js";
 import { hasAuditRole } from "../permissions/audit-access.js";
-import { auditView, type AuditView } from "./audit-view.js";
+import type { AuditView } from "./audit-view.js";
+import { auditIdentities } from "./audit-identities.js";
 import { auditId, parseAuditQuery, type AuditQuery } from "./audit-query.js";
 export interface AuditPage { items: AuditView[]; total: number; page: number; pageSize: number; snapshot: string; campuses: Array<{ id: string }>; global: boolean; timeZone: string }
 interface Visibility { where: Prisma.AuditEventWhereInput; campuses: Array<{ id: string }>; global: boolean }
@@ -43,14 +44,14 @@ export class AuditReader {
       client.auditEvent.count({ where }),
     ]);
     await this.recordRead(client, principal, "AUDIT_SEARCHED", query.campus ?? null, null, rows.length);
-    return { items: rows.map(auditView), total, page: query.page, pageSize: query.pageSize, snapshot: query.snapshot.toISOString(), campuses: visibility.campuses, global: visibility.global, timeZone: "Africa/Casablanca" };
+    return { items: await auditIdentities(client, this.permissions, principal, rows), total, page: query.page, pageSize: query.pageSize, snapshot: query.snapshot.toISOString(), campuses: visibility.campuses, global: visibility.global, timeZone: "Africa/Casablanca" };
   }
   async detail(id: string, principal: Principal): Promise<AuditView> {
     auditId(id); const client = this.client(principal), visibility = await this.visibility(client, principal);
     const row = await client.auditEvent.findFirst({ where: { AND: [visibility.where, { id }] } });
     if (!row) throw new NotFoundException({ code: "audit_event_not_found" });
     await this.recordRead(client, principal, "AUDIT_VIEWED", row.campusId, row.id, 1);
-    return auditView(row);
+    return (await auditIdentities(client, this.permissions, principal, [row]))[0]!;
   }
   private filters(query: AuditQuery): Prisma.AuditEventWhereInput {
     const until = query.to && query.to < query.snapshot ? query.to : query.snapshot;

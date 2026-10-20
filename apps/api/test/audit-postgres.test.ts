@@ -112,7 +112,54 @@ test("CRMY-54 HTTP/PostgreSQL: scoped immutable audit, live ceilings and redacti
   assert.deepEqual((await page(superAdmin.token, `&${filters}`)).items.map((item) => item.id), [a]);
   assert.ok(await client.auditEvent.count({ where: { eventType: "AUDIT_SEARCHED" } }) > 0);
   assert.ok(await client.auditEvent.count({ where: { eventType: "AUDIT_VIEWED" } }) > 0);
-  await grant(roleTarget("AUDITOR"), "NONE");
+  // Current identity is a separately authorized projection, never a rewrite of
+  // the original event or a fallback to contact/session/arbitrary JSON fields.
+  await client.collaborator.update({ where: { id: admin.principal.userId }, data: { professionalDisplayName: "Profil Synthétique Initial" } });
+  const lead = await client.lead.create({ data: { leadCode: `SYN-${randomUUID().slice(0, 12)}`, firstName: "Dossier", lastName: "Synthétique", campus: campusA, campaign: "SYNTHETIC", educationLevel: "SYNTHETIC", program: "SYNTHETIC", source: "MANUAL", assignedToId: admin.principal.userId, email: "private-lead@example.invalid", phone: "synthetic-private" } });
+  const appointment = await client.appointment.create({ data: { leadId: lead.id, type: "SYNTHETIC", mode: "SUR_SITE", startsAt: new Date("2026-12-01T10:00:00Z"), durationMinutes: 30, adviserId: admin.principal.userId, organizerId: admin.principal.userId, campus: campusA } });
+  const identityEvents = await Promise.all([
+    { resourceType: "LEAD", resourceId: lead.id, actorRoles: ["ADMIN"] },
+    { resourceType: "APPOINTMENT", resourceId: appointment.id, actorRoles: ["ADMIN"] },
+    { resourceType: "LEAD", resourceId: lead.id, actorRoles: ["SYSTEM"] },
+  ].map((data) => client.auditEvent.create({ data: { ...data, campusId: campusA, actorId: admin.principal.userId, eventType: "SYNTHETIC_IDENTITY", result: "SUCCESS", correlationId: randomUUID(), idempotencyKey: randomUUID(), after: { actorName: "FORGED", leadName: "FORGED", email: "private@example.invalid" } } })));
+  const immutableEvents = JSON.stringify(identityEvents);
+  async function identity(id = identityEvents[0]!.id, token = auditor.token): Promise<AuditView> {
+    const response = await request(`/${id}`, token); assert.equal(response.status, 200);
+    const view = await response.json() as AuditView;
+    assert.doesNotMatch(JSON.stringify(view), /FORGED|private.*example.invalid|synthetic-private/);
+    return view;
+  }
+  for (const row of identityEvents.slice(0, 2)) {
+    const view = await identity(row.id);
+    assert.deepEqual(view.actorDisplay, { kind: "CURRENT_PROFILE", label: "Profil Synthétique Initial" });
+    assert.deepEqual(view.leadDisplay, { kind: "CURRENT_RECORD", id: lead.id, label: "Dossier Synthétique", reference: lead.leadCode });
+  }
+  assert.deepEqual((await identity(identityEvents[2]!.id)).actorDisplay, { kind: "SYSTEM", label: null });
+  await client.collaborator.update({ where: { id: admin.principal.userId }, data: { professionalDisplayName: "Profil Synthétique Renommé" } });
+  assert.equal((await identity()).actorDisplay.label, "Profil Synthétique Renommé", "explicit current profile, not an invented historical snapshot");
+  for (const invalid of ["", "   "]) {
+    await client.collaborator.update({ where: { id: admin.principal.userId }, data: { campusId: invalid } });
+    assert.equal((await identity(undefined, superAdmin.token)).actorDisplay.kind, "UNAVAILABLE", "blank actor campus is not GLOBAL");
+    await client.lead.update({ where: { id: lead.id }, data: { campus: invalid } });
+    assert.equal((await identity(undefined, superAdmin.token)).leadDisplay.kind, "UNAVAILABLE", "blank Lead campus is not GLOBAL");
+  }
+  await client.lead.update({ where: { id: lead.id }, data: { campus: campusA } });
+  await client.collaborator.update({ where: { id: admin.principal.userId }, data: { campusId: null } });
+  assert.equal((await identity(undefined, superAdmin.token)).actorDisplay.kind, "CURRENT_PROFILE", "null is a legitimate GLOBAL profile");
+  assert.equal((await identity()).actorDisplay.kind, "UNAVAILABLE", "campus-only audit access cannot disclose a GLOBAL profile");
+  await client.collaborator.update({ where: { id: admin.principal.userId }, data: { campusId: campusB } });
+  assert.equal((await identity()).actorDisplay.kind, "UNAVAILABLE", "historical event remains visible but current actor outside scope is masked");
+  await client.lead.update({ where: { id: lead.id }, data: { campus: campusB } });
+  assert.deepEqual((await identity()).leadDisplay, { kind: "UNAVAILABLE", id: null, label: null, reference: null });
+  await client.lead.update({ where: { id: lead.id }, data: { campus: campusA } });
+  const auditorTarget = roleTarget("AUDITOR");
+  await permissions.save(superAdmin.principal, { ...auditorTarget, grants: { ...defaultConfiguration(auditorTarget), "lead.view": "NONE" }, expectedVersion: 0, confirmed: true, reason: "ACCESS_REVIEW" });
+  assert.equal((await identity()).leadDisplay.kind, "UNAVAILABLE", "audit access alone does not disclose current Lead name");
+  assert.deepEqual((await identity(identityEvents[1]!.id, superAdmin.token)).leadDisplay.kind, "CURRENT_RECORD");
+  assert.equal(JSON.stringify(await client.auditEvent.findMany({ where: { id: { in: identityEvents.map((row) => row.id) } }, orderBy: { id: "asc" } })), JSON.stringify([...identityEvents].sort((left, right) => left.id.localeCompare(right.id))));
+  assert.equal(JSON.stringify(identityEvents), immutableEvents);
+  assert.deepEqual(await client.auditEvent.findMany({ where: { id: { in: [a, b, global] } }, orderBy: { id: "asc" } }), baseline);
+  await grant(roleTarget("AUDITOR"), "NONE", 1);
   await denied("", auditor.token, 403, "permission_denied");
   assert.equal(await client.rolePermissionVersion.count({ where: { configurationId: "ROLE:MANAGER:GLOBAL" } }), 1, "historical erroneous grant is retained");
 });
