@@ -127,7 +127,10 @@ test("keeps hostile aggregate labels as inert text and refuses unsafe destinatio
   assert.equal(html.includes("<script>alert(1)</script>"), false);
   assert.equal(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), true);
   assert.equal(html.includes("onerror="), true);
-  assert.equal((html.match(/href="#"/gu) ?? []).length >= 2, true);
+  assert.match(html, /Liste indisponible dans cette cohorte/u);
+  const dom = new JSDOM(html);
+  assert.equal(dom.window.document.querySelector('section[aria-label="Cartes KPI"] a'), null, "unsafe KPI destinations are text, not navigable links");
+  dom.window.close();
   assert.equal(html.includes("javascript:"), false);
   assert.equal(html.includes("external.invalid"), false);
 });
@@ -673,6 +676,7 @@ test("Manager fetch uses capabilities and qualified aggregate data rather than a
     drillDowns: [
       { key: "overdueFollowUps", count: 1, href: "/leads?view=FOLLOW_UP&source=QUALIFIED_SOURCE" },
       { key: "unassigned", count: 1, href: "/leads?view=UNASSIGNED&source=QUALIFIED_SOURCE" },
+      { key: "enrolled", count: 0, href: "/leads?status=ENROLLED&source=QUALIFIED_SOURCE" },
       { key: "futureMetric", count: 1, href: "/leads" },
     ] };
   let release: ((response: Response) => void) | undefined;
@@ -689,7 +693,8 @@ test("Manager fetch uses capabilities and qualified aggregate data rather than a
   assert.match(view.host.querySelector(".freshness-indicator")?.textContent ?? "", /dernière réponse API/u);
   assert.equal(view.host.querySelector('select[name="view"] option[value="global"]')?.hasAttribute("disabled"), false);
   assert.match(view.host.textContent ?? "", /uniquement les données autorisées/u);
-  assert.match(view.host.textContent ?? "", /ce n’est pas la même cohorte/u);
+  assert.match(view.host.textContent ?? "", /Aucun lien Inscriptions ne remplace ce filtre/u);
+  assert.equal(view.host.querySelector('a[href*="status=ENROLLED"]'), null, "legacy response cannot replace the selected status behind a zero counter");
   assert.match(view.host.querySelector(".priority-panel")?.textContent ?? "", /Liste non disponible/u);
   assert.equal(view.host.querySelector('.priority-panel a[href*="closures"]'), null);
   const href = view.host.querySelector<HTMLAnchorElement>(".quick-queues a")!.href;

@@ -112,7 +112,7 @@ export class ManagerDashboardService {
     ];
     const drillDowns = [
       { key: "uniqueLeads", count: cards.uniqueLeads, href: this.leadHref(query) },
-      { key: "enrolled", count: cards.enrolled, href: this.leadHref({ ...query, status: "ENROLLED" }) },
+      { key: "enrolled", count: cards.enrolled, href: query.status && query.status !== "ENROLLED" ? "#" : this.leadHref({ ...query, status: "ENROLLED" }) },
       { key: "unassigned", count: cards.unassigned, href: this.leadHref(query, { view: "UNASSIGNED", portfolioState: "OPEN" }) },
       { key: "overdueFollowUps", count: cards.overdueFollowUps, href: `${commercialWorkHref(query, "OVERDUE_FOLLOW_UP", "INVOLVED")}&${new URLSearchParams({ returnTo: `/manager/reports/dashboard?${suffix}` })}` },
     ];

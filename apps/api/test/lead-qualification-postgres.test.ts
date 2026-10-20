@@ -262,17 +262,27 @@ test("commercial qualification HTTP/PostgreSQL is scoped, atomic, replayable and
     { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-FOREIGN", campus: otherCampus },
     { ...unassignedBase, leadCode: "LD-DASH-UNASSIGNED-SOURCE", source: "TEST" },
   ] });
-  for (const status of [undefined, "ENROLLED"] as const) {
+  for (const status of [undefined, "ENROLLED", "PROSPECT"] as const) {
     const filters = new URLSearchParams({ period: "30d", campaign: unassignedCampaign, source: "WEB_FORM", ...(status ? { status } : {}) });
     const response = await businessRequest(supervisorToken, `/reports/manager-dashboard?${filters}`); assert.equal(response.status, 200);
-    const report = await response.json() as { cards: { unassigned: number }; drillDowns: Array<{ key: string; href: string }> };
+    const report = await response.json() as { cards: { unassigned: number; enrolled: number }; drillDowns: Array<{ key: string; href: string }> };
     const href = report.drillDowns.find(item => item.key === "unassigned")!.href;
     const url = new URL(href, "https://example.invalid");
     assert.equal(url.searchParams.get("portfolioState"), "OPEN"); assert.equal(url.searchParams.get("campaign"), unassignedCampaign); assert.equal(url.searchParams.get("source"), "WEB_FORM");
     const read = await businessRequest(supervisorToken, href); assert.equal(read.status, 200);
     const page = await read.json() as { total: number; items: Array<{ id: string }> };
-    assert.equal(report.cards.unassigned, status ? 0 : 1); assert.equal(page.total, report.cards.unassigned);
-    assert.deepEqual(page.items.map(item => item.id), status ? [] : [unassignedOpen.id]);
+    assert.equal(report.cards.unassigned, status === "ENROLLED" ? 0 : 1); assert.equal(page.total, report.cards.unassigned);
+    assert.deepEqual(page.items.map(item => item.id), status === "ENROLLED" ? [] : [unassignedOpen.id]);
+    const enrolledHref = report.drillDowns.find(item => item.key === "enrolled")!.href;
+    assert.equal(report.cards.enrolled, status === "PROSPECT" ? 0 : 1);
+    if (status === "PROSPECT") assert.equal(enrolledHref, "#");
+    else {
+      const enrolledUrl = new URL(enrolledHref, "https://example.invalid");
+      assert.equal(enrolledUrl.searchParams.get("campaign"), unassignedCampaign); assert.equal(enrolledUrl.searchParams.get("source"), "WEB_FORM");
+      const enrolledRead = await businessRequest(supervisorToken, enrolledHref); assert.equal(enrolledRead.status, 200);
+      const enrolledPage = await enrolledRead.json() as { total: number; items: Array<{ leadCode: string }> };
+      assert.equal(enrolledPage.total, report.cards.enrolled); assert.deepEqual(enrolledPage.items.map(item => item.leadCode), ["LD-DASH-UNASSIGNED-ENROLLED"]);
+    }
   }
   assert.equal((await businessRequest(commercialToken, `/leads/${historyLeads[2]!.id}/timeline`, "POST", { type: "COMMENT", result: "COMPLETED", note: "Premier échange synthétique daté", idempotencyKey: "treatment:first-contact", nextAction })).status, 201);
   assert.equal((await readHistory()).total, 0);

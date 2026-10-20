@@ -327,8 +327,12 @@ function DashboardContent({ report, showTables, query, operationalThreshold, onS
       <section className="panel activity-panel"><div className="panel-heading"><div><h2>Points d’attention</h2><p>Signaux agrégés — pas un historique d’activités</p></div></div><DashboardAttentionList alerts={report.panels.operationalRisks.alerts} sourceQualityAvailability={report.panels.operationalRisks.sourceQualityAvailability} /></section>
     </div>
     <details className="reporting-details"><summary>Analyses détaillées et tableaux accessibles</summary>
-    <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => <li key={item.key}><a href={item.key === "unassigned" ? unassignedDashboardHref(report, query) : preserveFilters(item.href, query)}><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</a></li>)}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
-    {query.has("status") && query.get("status") !== "ENROLLED" && <p>Le lien Inscriptions explore le statut Inscrit en remplaçant le filtre de statut ; ce n’est pas la même cohorte que celle actuellement affichée.</p>}
+    <section aria-label="Cartes KPI"><h2>Indicateurs clés</h2><ul>{report.drillDowns.map((item) => {
+      const href = item.key === "unassigned" ? unassignedDashboardHref(report, query) : item.key === "enrolled" && query.has("status") && query.get("status") !== "ENROLLED" ? "#" : preserveFilters(item.href, query);
+      const content = <><strong>{labels[item.key] ?? item.key}</strong> : {displayCount(item.count)}</>;
+      return <li key={item.key}>{href === "#" ? <span>{content} — Liste indisponible dans cette cohorte.</span> : <a href={href}>{content}</a>}</li>;
+    })}<li><strong>Alertes actives</strong> : {displayCount(report.cards.activeAlerts)}</li></ul></section>
+    {query.has("status") && query.get("status") !== "ENROLLED" && <p>Le statut sélectionné exclut les dossiers Inscrits. Aucun lien Inscriptions ne remplace ce filtre.</p>}
     <AccessibleChart title="Funnel commercial" data={funnel} showTable={showTables} />
     <AccessibleTrend data={report.trends} showTable={showTables} />
     {(["source", "campaign", "program", "campus"] as const).map((dimension) => <AccessibleChart key={dimension} title={`Répartition par ${dimension}`} data={report.distributions[dimension]} showTable={showTables} />)}

@@ -3,7 +3,7 @@ import test from "node:test";
 import type { Principal } from "../src/auth/auth.types.js";
 import { AuditService } from "../src/audit/audit.service.js";
 import { LeadService } from "../src/leads/lead.service.js";
-import type { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
+import { CommercialFunnelService } from "../src/reporting/commercial-funnel.service.js";
 import type { CommercialPerformanceService } from "../src/reporting/commercial-performance.service.js";
 import { ManagerDashboardController, PersonalDashboardController } from "../src/reporting/manager-dashboard.controller.js";
 import { ManagerDashboardService } from "../src/reporting/manager-dashboard.service.js";
@@ -113,6 +113,20 @@ test("Manager unassigned card drills into only OPEN dossiers of the same creatio
   assert.equal(list.total, report.cards.unassigned); assert.deepEqual(list.items.map(item => item.id), ["open"]);
   const closedOnly = leads.listLeads({ ...params, status: "ENROLLED", page: 1, pageSize: 25 }, manager, "fixture-zero");
   assert.equal(closedOnly.total, 0); assert.deepEqual(closedOnly.items, []);
+  const enrolledService = new ManagerDashboardService(new CommercialFunnelService(leads, audit),
+    dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),
+    dependency<OperationalRiskService>("risks", { queues: { unassigned: 0, overdueFollowUps: 0 }, alerts: [] }),
+    dependency<SharedContributionService>("contributions", {}), leads, audit);
+  for (const status of [undefined, "ENROLLED", "PROSPECT"] as const) {
+    const selected = enrolledService.read({ ...report.filters, ...(status ? { status } : {}) }, manager, "enrolled-cohort", new Date("2026-10-20T12:00:00.000Z"));
+    const destination = selected.drillDowns.find(item => item.key === "enrolled")!.href;
+    assert.equal(selected.cards.enrolled, status === "PROSPECT" ? 0 : 1);
+    if (status === "PROSPECT") { assert.equal(destination, "#"); continue; }
+    const selectedParams = Object.fromEntries(new URL(destination, "https://fixture.invalid").searchParams);
+    assert.equal(selectedParams.source, "WEB_FORM"); assert.equal(selectedParams.createdBefore, report.filters.to);
+    const selectedList = leads.listLeads({ ...selectedParams, page: 1, pageSize: 25 }, manager, "enrolled-list");
+    assert.equal(selectedList.total, selected.cards.enrolled); assert.deepEqual(selectedList.items.map(item => item.id), ["enrolled"]);
+  }
 });
 
 test("personal dashboard exposes only authenticated adviser aggregates", () => {
