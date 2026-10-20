@@ -7,7 +7,7 @@ import type { AuditItem, AuditPage } from "../app/admin/audit/audit-client.js";
 const campus = "00000000-0000-4000-8000-000000000054";
 const actor = "00000000-0000-4000-8000-000000000055";
 const resource = "00000000-0000-4000-8000-000000000056";
-const item: AuditItem = { id: "00000000-0000-4000-8000-000000000057", eventType: "LEAD_UPDATED", actorId: actor, actorRoles: ["ADMIN"], campusId: campus, resourceType: "LEAD", resourceId: resource, result: "SUCCESS", occurredAt: "2026-09-03T10:30:00Z", before: { version: 1 }, after: { version: 2 } };
+const item: AuditItem = { id: "00000000-0000-4000-8000-000000000057", eventType: "LEAD_UPDATED", actorId: actor, actorRoles: ["ADMIN"], campusId: campus, resourceType: "LEAD", resourceId: resource, result: "SUCCESS", occurredAt: "2026-09-03T10:30:00Z", before: { version: 1 }, after: { version: 2 }, actorDisplay: { kind: "CURRENT_PROFILE", label: "Conseiller Synthétique" }, leadDisplay: { kind: "CURRENT_RECORD", id: resource, label: "Dossier Synthétique", reference: "LD-SYNTHETIC" } };
 const snapshot = "2026-09-03T12:00:00Z";
 function page(items: AuditItem[] = [item], total = items.length, number = 1): AuditPage {
   return { items, total, page: number, pageSize: 25, snapshot, campuses: [{ id: campus }], global: false };
@@ -22,7 +22,7 @@ interface AuditBrowser {
 async function browser(t: TestContext, respond: Reply): Promise<AuditBrowser> {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost/admin/audit" });
   const previous = new Map<string, PropertyDescriptor | undefined>();
-  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true })) {
+  for (const [key, value] of Object.entries({ window: dom.window, self: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, FormData: dom.window.FormData, IS_REACT_ACT_ENVIRONMENT: true })) {
     previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, value });
   }
@@ -54,18 +54,21 @@ async function browser(t: TestContext, respond: Reply): Promise<AuditBrowser> {
   return { dom, doc, root, act, click, button, field, submit, requests };
 }
 
-test("CRMY-54 audit screen exposes loading, scoped cards, safe labels and keyboard focus", async (t) => {
+test("CRMY-54 audit screen exposes loading, readable scoped columns, safe fallbacks and keyboard focus", async (t) => {
   let deliver: (response: Response) => void = () => { throw new Error("request_missing"); };
   const ui = await browser(t, () => new Promise<Response>((resolve) => { deliver = resolve; }));
   assert.match(ui.doc.body.textContent, /Chargement du journal/);
   assert.equal(ui.button("Appliquer les filtres").disabled, true);
   assert.equal(ui.doc.querySelectorAll("article").length, 0);
-  const masked = { ...item, id: "00000000-0000-4000-8000-000000000058", actorId: null, resourceType: null, resourceId: null, campusId: null };
+  const masked = { ...item, id: "00000000-0000-4000-8000-000000000058", actorId: null, resourceType: null, resourceId: null, campusId: null, actorDisplay: { kind: "UNAVAILABLE", label: null }, leadDisplay: { kind: "UNAVAILABLE", id: null, label: null, reference: null } };
   await ui.act<void>(() => deliver(Response.json({ ...page([item, masked]), password: "synthetic-never-render", token: "synthetic-never-render" })));
   assert.match(ui.doc.body.textContent, /2 événement\(s\) · Page 1/);
-  assert.equal(ui.doc.querySelectorAll("article").length, 2);
-  assert.equal(ui.doc.querySelectorAll("table").length, 0, "mobile layout retains complete vertical cards");
-  for (const expected of [item.eventType, actor, resource, campus, "Identité technique masquée", "Historique sans identifiant structuré", "Global ou historique non attribué", "11:30:00"]) assert.ok(ui.doc.body.textContent.includes(expected), expected);
+  assert.equal(ui.doc.querySelectorAll("tbody tr").length, 2);
+  assert.equal(ui.doc.querySelectorAll("table").length, 1, "one semantic table adapts to vertical mobile rows without duplicated content");
+  assert.deepEqual([...ui.doc.querySelectorAll("thead th")].map((node) => node.textContent), ["Date", "Acteur", "Action", "Lead", "Résultat", "Détail"]);
+  for (const expected of [item.eventType, "Fiche modifiée", "Succès", "Conseiller Synthétique", "Profil actuel", "Dossier Synthétique", "LD-SYNTHETIC", "Profil indisponible", "Dossier indisponible ou hors accès", "11:30:00"]) assert.ok(ui.doc.body.textContent.includes(expected), expected);
+  assert.equal(ui.doc.querySelector("tbody")?.textContent.includes(actor), false, "UUID is not the primary actor label");
+  assert.equal(ui.doc.querySelector("tbody a")?.getAttribute("href"), `/leads/${resource}`);
   assert.equal(ui.doc.body.textContent.includes("synthetic-never-render"), false);
   const select = ui.field("campus"); assert.ok(select instanceof ui.dom.window.HTMLSelectElement);
   assert.deepEqual([...select.options].map((option) => option.value), ["", campus]);
@@ -99,13 +102,13 @@ test("CRMY-54 audit filters, UTC periods, CAMPUS and pagination preserve the rea
 test("CRMY-54 audit screen clears stale data on empty results, forbidden or failed API responses", async (t) => {
   let result: Response = Response.json(page());
   const ui = await browser(t, () => result.clone());
-  assert.equal(ui.doc.querySelectorAll("article").length, 1);
+  assert.equal(ui.doc.querySelectorAll("tbody tr").length, 1);
   result = Response.json(page([])); await ui.submit();
-  assert.match(ui.doc.body.textContent, /Aucun événement ne correspond/); assert.equal(ui.doc.querySelectorAll("article").length, 0);
+  assert.match(ui.doc.body.textContent, /Aucun événement ne correspond/); assert.equal(ui.doc.querySelectorAll("tbody tr").length, 0);
   for (const [status, message] of [[403, "Accès refusé"], [401, "Votre session a expiré"], [400, "Filtres invalides"], [503, "Journal indisponible"]] as const) {
     result = Response.json({ code: "synthetic_denial" }, { status }); await ui.submit();
     assert.ok(ui.doc.querySelector('[role="alert"]')?.textContent.includes(message));
-    assert.equal(ui.doc.querySelectorAll("article").length, 0); assert.equal(ui.doc.body.textContent.includes(actor), false);
+    assert.equal(ui.doc.querySelectorAll("tbody tr").length, 0); assert.equal(ui.doc.body.textContent.includes("Conseiller Synthétique"), false);
   }
 });
 
@@ -119,13 +122,14 @@ test("CRMY-54 audit detail has loading, sanitized evidence, close, cancel and in
   assert.match(dialog.textContent, /Aucune modification ou suppression possible/);
   assert.equal(dialog.querySelectorAll("pre").length, 2); assert.deepEqual(JSON.parse(dialog.querySelectorAll("pre")[1]?.textContent ?? "null"), { version: 2 });
   assert.equal(dialog.textContent.includes("synthetic-never-render"), false);
+  for (const expected of [actor, resource, campus, "Références techniques", "Profil actuel", "Fiche actuelle"]) assert.ok(dialog.textContent.includes(expected), expected);
   await ui.click(ui.button("Fermer")); assert.equal(dialog.open, false);
   await ui.click(ui.button("Consulter le détail")); await ui.act<void>(() => detailResponse(Response.json({}, { status: 404 })));
   assert.match(dialog.textContent, /Événement absent ou inaccessible/); assert.equal(dialog.querySelectorAll("pre").length, 0);
   await ui.act<void>(() => { dialog.dispatchEvent(new ui.dom.window.Event("cancel", { cancelable: true })); });
   assert.equal(dialog.open, false);
-  await ui.click(ui.button("Consulter le détail")); await ui.act<void>(() => detailResponse(Response.json({ ...item, actorId: null })));
-  assert.match(dialog.textContent, /Acteur : Masqué/);
+  await ui.click(ui.button("Consulter le détail")); await ui.act<void>(() => detailResponse(Response.json({ ...item, actorId: null, actorDisplay: { kind: "UNAVAILABLE", label: null } })));
+  assert.match(dialog.textContent, /Profil indisponible/); assert.ok([...dialog.querySelectorAll("dd")].some((node) => node.textContent === "Masqué"));
 });
 
 test("CRMY-54 unmount aborts outstanding requests and ignores late results", async (t) => {
@@ -136,4 +140,34 @@ test("CRMY-54 unmount aborts outstanding requests and ignores late results", asy
   await ui.act<void>(() => ui.root.unmount()); assert.equal(signal?.aborted, true);
   await ui.act<void>(() => complete(Response.json(page())));
   assert.equal(ui.doc.querySelectorAll("article").length, 0);
+});
+
+test("audit known401/403 from detail clears cached list identities and campus options", async (t) => {
+  let status = 401;
+  const ui = await browser(t, (url) => url.pathname.endsWith(item.id) ? Response.json({ code: "synthetic_access_lost" }, { status }) : Response.json(page()));
+  for (const next of [401, 403]) {
+    status = next;
+    if (next === 403) await ui.submit();
+    assert.ok(ui.doc.body.textContent.includes("Conseiller Synthétique"));
+    await ui.click(ui.button("Consulter le détail"));
+    assert.equal(ui.doc.querySelectorAll("tbody tr").length, 0);
+    for (const privateLabel of ["Conseiller Synthétique", "Dossier Synthétique", "LD-SYNTHETIC"]) assert.equal(ui.doc.body.textContent.includes(privateLabel), false);
+    assert.equal(ui.doc.querySelectorAll('select[name="campus"] option').length, 1);
+    assert.ok(ui.doc.querySelector("dialog [role=alert]"));
+    await ui.click(ui.button("Fermer"));
+  }
+});
+
+test("audit reloading a list closes an open detail and never renders its late response", async (t) => {
+  let completeDetail: (response: Response) => void = () => { throw new Error("detail_request_missing"); };
+  let detailSignal: AbortSignal | null | undefined;
+  const ui = await browser(t, (url, init) => url.pathname.endsWith(item.id) ? new Promise<Response>((resolve) => { detailSignal = init?.signal; completeDetail = resolve; }) : Response.json(page()));
+  await ui.click(ui.button("Consulter le détail"));
+  assert.equal(detailSignal?.aborted, false);
+  await ui.submit();
+  assert.equal(detailSignal?.aborted, true);
+  assert.equal(ui.doc.querySelector("dialog")?.open, false);
+  await ui.act<void>(() => completeDetail(Response.json({ ...item, actorDisplay: { kind: "CURRENT_PROFILE", label: "Late private identity" } })));
+  assert.equal(ui.doc.body.textContent.includes("Late private identity"), false);
+  assert.equal(ui.doc.querySelector("dialog")?.textContent.includes("Dossier Synthétique"), false);
 });
