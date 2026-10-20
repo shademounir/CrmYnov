@@ -5,6 +5,31 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import CommercialWork, { parseWorkReport, workApiEndpoint, workCohortQuery } from "../app/manager/reports/commercial-work/work";
 import { preserveFilters } from "../app/manager/reports/dashboard/reporting-ui";
+import { syntheticWorkReport } from "../e2e/work-report-fixture";
+
+test("browser work fixture obeys all seven selections and exact creation cohort bounds", () => {
+  for (const queue of ["NEW_RECEIVED", ...keys]) {
+    const report = parseWorkReport(syntheticWorkReport(new URLSearchParams({ queue, contractVersion: "2", campus: "campus-a" })));
+    assert.equal(report.queues.length, 7);
+    assert.equal(report.page.total, report.queues.find(row => row.key === queue)!.leadCount);
+    assert.equal(report.cohort.leadCount, 3);
+  }
+  const recent = parseWorkReport(syntheticWorkReport(new URLSearchParams("queue=NEW_RECEIVED&from=2026-10-19T10:00:00.000Z&to=2026-10-20T09:00:00.000Z")));
+  assert.equal(recent.cohort.leadCount, 1);
+  assert.equal(recent.page.items[0]!.id, "synthetic-work-action");
+  const newest = parseWorkReport(syntheticWorkReport(new URLSearchParams("queue=NEW_RECEIVED&page=1&pageSize=1")));
+  assert.equal(newest.page.items[0]!.id, "synthetic-work-enrolled");
+  assert.equal(newest.page.total, 3);
+  assert.equal(parseWorkReport(syntheticWorkReport(new URLSearchParams("queue=NEW_RECEIVED&page=2&pageSize=1"))).page.items[0]!.id, "synthetic-work-action");
+  for (const filter of ["campus=outside", "campaign=outside", "source=outside", "status=QUALIFIED", "adviserId=outside", "program=outside"]) {
+    const empty = parseWorkReport(syntheticWorkReport(new URLSearchParams(`queue=NEW_RECEIVED&${filter}`)));
+    assert.equal(empty.page.total, 0);
+    assert.ok(empty.queues.every(row => row.leadShare.value === null));
+    assert.ok(empty.queues.filter(row => row.subsetRate).every(row => row.subsetRate!.value === null));
+    assert.deepEqual(empty.advisers, []);
+  }
+  assert.throws(() => syntheticWorkReport(new URLSearchParams("queue=toString")), /synthetic_work_queue_invalid/u);
+});
 
 const keys = ["TO_CONTACT", "FIRST_TREATMENT_OVERDUE", "ACTIVE_FOLLOW_UP", "OVERDUE_FOLLOW_UP", "NEXT_ACTION_MISSING", "PENDING_CLOSURE"];
 function fixture(): Record<string, unknown> {
