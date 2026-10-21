@@ -38,7 +38,10 @@ CONFIRME arrivé à son terme. Cela ne produit aucun statut de réalisation ou d
 
 Le destinataire est le propriétaire persistant de l’action ou le responsable Admissions
 désigné, résolu par le futur adaptateur serveur. Une réaffectation du Lead ne suffit
-pas à remplacer ce propriétaire. To et Cc exigent activité, accès effectif au Lead et
+pas à remplacer ce propriétaire. To exige activité, droit effectif sur cette action,
+responsabilité persistée du type attendu et périmètre campus/campagne exact. Cette
+projection serveur est distincte de la liste des copies : le responsable réel peut
+ne pas appartenir à cette liste. Cc exige activité, accès effectif au Lead et
 appartenance explicite au couple campus/campagne. Une appartenance au seul campus
 ne vaut pas participation à toutes ses campagnes ; un candidat de pool n’est pas une
 appartenance d’équipe. Pas de repli vers l’adresse du prospect ou tout le campus.

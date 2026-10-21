@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prepareBusinessMail, type BusinessMailFacts, type BusinessMailPolicy, type InternalMailMember, type PreparedBusinessMail } from "../src/business-mail/business-mail-policy.js";
+import { prepareBusinessMail as prepare, type BusinessMailFacts, type BusinessMailPolicy, type InternalMailMember, type InternalMailActionOwner, type PreparedBusinessMail, type BusinessMailPreparation } from "../src/business-mail/business-mail-policy.js";
 import { renderBusinessMail } from "../src/business-mail/business-mail-template.js";
 
 const at = new Date("2099-10-03T10:30:00Z"), deadline = new Date("2099-10-03T09:30:00Z");
@@ -8,6 +8,12 @@ const scope = { campusId: "synthetic-campus", campaignId: "synthetic-campaign" }
 const member = (userId = "synthetic-owner", email = "owner@example.test"): InternalMailMember => ({ userId, email, active: true, hasLeadAccess: true, memberships: [{ ...scope }] });
 const facts = (): BusinessMailFacts => ({ type: "FOLLOW_UP_DUE", resourceId: "synthetic-task", leadReference: "LD-SYNTHETIC", scope: { ...scope }, leadState: "OPEN", acquisition: "NEW", state: "DUE", actionOwnerId: "synthetic-owner", deadline, receivedAt: null, lastTreatmentAt: null, reportPresent: false, bookingState: "ACCEPTED" });
 const policy = (): BusinessMailPolicy => ({ enabled: true, activatedAt: new Date("2099-10-03T00:00:00Z"), generatedAt: at, warningCadenceHours: 1, maximumWarnings: 3 });
+const actionOwner = (f = facts()): InternalMailActionOwner => ({ userId: f.actionOwnerId, email: "owner@example.test", active: true,
+  hasRequiredPermission: true, scope: { ...scope }, responsibility: f.type.startsWith("FOLLOW_UP_") ? "FOLLOW_UP_OWNER"
+    : f.type === "FIRST_TREATMENT_OVERDUE" ? "LEAD_PRIMARY" : "ADMISSIONS_RESPONSIBLE" });
+function prepareBusinessMail(f: BusinessMailFacts, p: BusinessMailPolicy, members: readonly InternalMailMember[], owners = [actionOwner(f)]): BusinessMailPreparation {
+  return prepare(f, p, members, owners);
+}
 function prepared(f = facts(), p = policy(), members = [member()]): PreparedBusinessMail {
   const r = prepareBusinessMail(f, p, members); assert.equal(r.status, "PREPARED"); if (r.status !== "PREPARED") throw new Error("fixture_not_prepared"); return r.message;
 }
@@ -30,8 +36,21 @@ test("To is the persistent action owner; copies require exact explicit active ca
   const result = prepared(facts(), policy(), [copy, ...excluded, member()]);
   assert.equal(result.to, "owner@example.test"); assert.deepEqual(result.cc, ["copy@example.test"]);
   assert.deepEqual(result.recipientUserIds, ["synthetic-owner", "synthetic-copy"]);
-  assert.equal(prepareBusinessMail(facts(), policy(), [copy]).status, "HELD", "No reassigned Lead PRIMARY fallback");
-  assert.equal(prepareBusinessMail(facts(), policy(), [{ ...member(), hasLeadAccess: false }]).status, "HELD");
+  assert.equal(prepareBusinessMail(facts(), policy(), [copy]).status, "PREPARED", "Actual action authority is independent of Cc membership");
+  assert.equal(prepareBusinessMail(facts(), policy(), [copy], []).status, "HELD", "No reassigned Lead PRIMARY fallback");
+  assert.equal(prepareBusinessMail(facts(), policy(), [{ ...member(), hasLeadAccess: false }]).status, "PREPARED", "Cc filtering never substitutes for direct action authority");
+});
+test("Action owner must have current exact scope, responsibility and permission, not just team membership", () => {
+  for (const change of [{ active: false }, { hasRequiredPermission: false }, { scope: { ...scope, campaignId: "foreign" } },
+    { scope: { ...scope, campusId: "foreign" } }, { responsibility: "LEAD_PRIMARY" as const }, { email: "invalid" }, { userId: "foreign-owner" }]) {
+    assert.equal(prepareBusinessMail(facts(), policy(), [member()], [{ ...actionOwner(), ...change }]).status, "HELD");
+  }
+  assert.equal(prepareBusinessMail(facts(), policy(), [member()], [actionOwner(), actionOwner()]).status, "HELD");
+  assert.equal(prepareBusinessMail(facts(), policy(), [member("synthetic-owner", "other@example.test")]).status, "HELD");
+  for (const type of ["FIRST_TREATMENT_OVERDUE", "CONFIRMATION_EXPECTED", "RETURN_EXPECTED"] as const) {
+    const f = { ...facts(), type, receivedAt: new Date(deadline.valueOf() - 86400000), state: type === "RETURN_EXPECTED" ? "CONFIRME" : "PENDING" };
+    assert.equal(prepareBusinessMail(f, policy(), [member()], [actionOwner()]).status, "HELD");
+  }
 });
 test("Ambiguous identities, duplicate addresses and header injection fail closed", () => {
   for (const members of [[member(), member()], [member(), member("copy", "OWNER@example.test")], [member("synthetic-owner", "owner@example.test\r\nBcc: prospect@example.test")], [member(), member("copy", "invalid")]]) {

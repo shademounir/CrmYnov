@@ -9,6 +9,11 @@ export interface InternalMailMember {
   /** Explicit CRM membership, not an assignment candidate or a campus-wide fallback. */
   memberships: readonly MailScope[];
 }
+export interface InternalMailActionOwner {
+  userId: string; email: string; active: boolean; hasRequiredPermission: boolean;
+  scope: MailScope;
+  responsibility: "FOLLOW_UP_OWNER" | "LEAD_PRIMARY" | "ADMISSIONS_RESPONSIBLE";
+}
 export interface BusinessMailFacts {
   type: BusinessMailType; resourceId: string; leadReference: string; scope: MailScope;
   leadState: string; acquisition: "NEW" | "BASELINE"; state: string;
@@ -35,7 +40,7 @@ const sameScope = (a: MailScope, b: MailScope): boolean => a.campusId === b.camp
 
 /** Pure preparation over server-resolved facts. NOT a permission check, journal, dispatcher or activation API.
  * A future adapter must re-read permissions and business state transactionally before emission. */
-export function prepareBusinessMail(facts: BusinessMailFacts, policy: BusinessMailPolicy, members: readonly InternalMailMember[]): BusinessMailPreparation {
+export function prepareBusinessMail(facts: BusinessMailFacts, policy: BusinessMailPolicy, members: readonly InternalMailMember[], actionOwners: readonly InternalMailActionOwner[]): BusinessMailPreparation {
   if (!policy.enabled) return held("DISABLED");
   if (!validDate(policy.generatedAt) || !validDate(policy.activatedAt) || policy.generatedAt < policy.activatedAt) return held("ACTIVATION_BASELINE_REQUIRED");
   if (!types.has(facts.type) || !identifier(facts.resourceId) || !/^LD-[A-Z0-9-]{1,40}$/.test(facts.leadReference)
@@ -62,12 +67,20 @@ export function prepareBusinessMail(facts: BusinessMailFacts, policy: BusinessMa
     if (occurrence > policy.maximumWarnings) return held("WARNING_LIMIT_REACHED");
   }
   const eligible = members.filter(member => member.active && member.hasLeadAccess && member.memberships.some(scope => sameScope(scope, facts.scope)));
-  const owner = eligible.filter(member => member.userId === facts.actionOwnerId);
-  if (owner.length !== 1 || !email(owner[0]!.email)) return held("ACTION_OWNER_UNAVAILABLE");
+  const responsibility = facts.type.startsWith("FOLLOW_UP_") ? "FOLLOW_UP_OWNER"
+    : facts.type === "FIRST_TREATMENT_OVERDUE" ? "LEAD_PRIMARY" : "ADMISSIONS_RESPONSIBLE";
+  // Direct responsibility is separate from the human-selected team-copy roster.
+  // These projections must come from current server facts under the emission fence.
+  const owner = actionOwners.filter(candidate => candidate.userId === facts.actionOwnerId);
+  if (owner.length !== 1 || !owner[0]!.active || !owner[0]!.hasRequiredPermission
+    || owner[0]!.responsibility !== responsibility || !sameScope(owner[0]!.scope, facts.scope)
+    || !email(owner[0]!.email)) return held("ACTION_OWNER_UNAVAILABLE");
   // Reject ambiguous identities instead of silently collapsing conflicting CRM rows.
   const ids = new Set<string>(); const addresses = new Set<string>();
   for (const member of eligible) {
     if (!identifier(member.userId) || !email(member.email) || ids.has(member.userId) || addresses.has(member.email.toLowerCase())) return held("MEMBERSHIP_AMBIGUOUS");
+    if ((member.userId === facts.actionOwnerId && member.email.toLowerCase() !== owner[0]!.email.toLowerCase())
+      || (member.userId !== facts.actionOwnerId && member.email.toLowerCase() === owner[0]!.email.toLowerCase())) return held("MEMBERSHIP_AMBIGUOUS");
     ids.add(member.userId); addresses.add(member.email.toLowerCase());
   }
   const copies = eligible.filter(member => member.userId !== facts.actionOwnerId).sort((a, b) => a.userId.localeCompare(b.userId, "en"));
