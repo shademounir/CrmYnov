@@ -110,16 +110,19 @@ test("CRMY-175 PostgreSQL journey: outcome is refused before the scheduled end a
   const f = await fixture(); try {
     const request = await f.service.createBooking(f.lead.id, f.input(), f.requester, "synthetic-request"); const accepted = await f.service.decide(request.id, { action: "ACCEPT", expectedVersion: 1, idempotencyKey: f.key("accept") }, f.responsible, "synthetic-accept");
     const completed = { action: "COMPLETE" as const, expectedVersion: accepted.version, idempotencyKey: f.key("complete") };
-    assert.equal(accepted.canComplete, false); await assert.rejects(() => f.service.decide(request.id, completed, f.responsible, "too-early"), (error) => errorCode(error) === "admissions_transition_refused");
+    assert.equal(accepted.canComplete, false); assert.equal(accepted.outcomeFollowUp.status, "UPCOMING"); await assert.rejects(() => f.service.decide(request.id, completed, f.responsible, "too-early"), (error) => errorCode(error) === "admissions_transition_refused");
     context.mock.timers.enable({ apis: ["Date"], now: base + 31 * 60_000 });
-    assert.equal((await f.service.booking(request.id, f.responsible)).canComplete, true);
+    const beforeRead = await f.effects(request.id);
+    const overdueView = await f.service.booking(request.id, f.responsible); assert.equal(overdueView.canComplete, true); assert.equal(overdueView.outcomeFollowUp.status, "RETURN_EXPECTED");
+    const requesterView = await f.service.booking(request.id, f.requester); assert.equal(requesterView.outcomeFollowUp.status, "RETURN_EXPECTED"); assert.equal(requesterView.canComplete, false);
+    assert.equal((await f.db.appointment.findUniqueOrThrow({ where: { id: request.id } })).state, "CONFIRME"); assert.deepEqual(await f.effects(request.id), beforeRead, "Read-only expectation never creates an absence, event or notification");
     const final = await f.service.decide(request.id, completed, f.responsible, "synthetic-complete"); assert.equal(final.appointmentState, "REALISE"); assert.equal(final.canComplete, false);
     assert.equal((await f.service.decide(request.id, completed, f.responsible, "replay-complete")).version, final.version);
     assert.deepEqual(await f.effects(request.id), { appointments: 1, events: 3, activities: 3, notifications: 6, audits: 3 });
-    assert.equal(final.canWriteReport, true);
+    assert.equal(final.canWriteReport, true); assert.equal(final.outcomeFollowUp.status, "REPORT_EXPECTED");
     const report = { expectedVersion: final.version, idempotencyKey: f.key("interview-report"), result: "NON_DECIDE", comment: "Synthetic report without personal data", recommendation: "Synthetic manual review", followUpAt: at(120) };
     await assert.rejects(() => f.service.report(request.id, report, f.requester, "denied-report"), (error) => errorCode(error) === "permission_denied");
-    const reported = await f.service.report(request.id, report, f.responsible, "synthetic-report"); assert.equal(reported.reportResult, "NON_DECIDE"); assert.equal(reported.canWriteReport, false);
+    const reported = await f.service.report(request.id, report, f.responsible, "synthetic-report"); assert.equal(reported.reportResult, "NON_DECIDE"); assert.equal(reported.canWriteReport, false); assert.equal(reported.outcomeFollowUp.status, "REPORTED");
     assert.equal((await f.service.report(request.id, report, f.responsible, "replay-report")).version, reported.version);
     const persisted = await f.db.interviewReport.findMany({ where: { appointmentId: request.id } }); assert.equal(persisted.length, 1); assert.equal(persisted[0]?.redactedComment, "[REDACTED]");
     assert.equal((await f.db.lead.findUniqueOrThrow({ where: { id: f.lead.id } })).status, "PROSPECT", "A report never auto-enrolls a Lead");
@@ -133,7 +136,7 @@ test("CRMY-175 PostgreSQL journey: no-show is traced only after the appointment 
     const input = { action: "NO_SHOW" as const, reason: "SYNTHETIC_NO_SHOW", expectedVersion: accepted.version, idempotencyKey: f.key("no-show") };
     await assert.rejects(() => f.service.decide(request.id, input, f.responsible, "early"), (error) => errorCode(error) === "admissions_transition_refused");
     context.mock.timers.enable({ apis: ["Date"], now: base + 31 * 60_000 });
-    const absent = await f.service.decide(request.id, input, f.responsible, "synthetic-no-show"); assert.equal(absent.appointmentState, "ABSENT"); assert.equal(absent.canNoShow, false); assert.equal(absent.canWriteReport, false);
+    const absent = await f.service.decide(request.id, input, f.responsible, "synthetic-no-show"); assert.equal(absent.appointmentState, "ABSENT"); assert.equal(absent.canNoShow, false); assert.equal(absent.canWriteReport, false); assert.equal(absent.outcomeFollowUp.status, "ABSENT");
     assert.equal((await f.service.decide(request.id, input, f.responsible, "replay")).version, absent.version);
     assert.deepEqual(await f.effects(request.id), { appointments: 1, events: 3, activities: 3, notifications: 6, audits: 3 });
   } finally { context.mock.timers.reset(); await f.close(); }

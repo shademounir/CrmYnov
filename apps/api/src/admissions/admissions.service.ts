@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { admissionsOutcomeStatus } from "./admissions-outcome.js";
 import type { AdmissionsResponsibility, Prisma } from "@prisma/client";
 import type { Principal, Role } from "../auth/auth.types.js";
 import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
@@ -357,8 +358,10 @@ export class AdmissionsService {
     const designated = this.profileActive(row.responsibility) && Boolean(row.responsibility.user.campusId && campusKeys.includes(row.responsibility.user.campusId));
     const active = designated && !terminal.has(appointment.state);
     const endsAt = new Date(appointment.startsAt.valueOf() + appointment.durationMinutes * 60_000);
-    const canOutcome = active && (owns || admin) && !requester && row.state === "ACCEPTED" && endsAt <= new Date();
+    const generatedAt = new Date();
+    const canOutcome = active && (owns || admin) && !requester && row.state === "ACCEPTED" && endsAt <= generatedAt;
     return { id: appointment.id, leadId: appointment.leadId, leadIdentifier: appointment.lead.leadCode, leadLabel: `${appointment.lead.firstName} ${appointment.lead.lastName}`.trim(), responsibilityId: row.responsibilityId, responsibleId: row.responsibility.userId, responsibleLabel: row.responsibility.user.professionalDisplayName?.trim() || "Responsable Admissions", requesterId: appointment.organizerId, campus: row.responsibility.campus, campusLabel, type: appointment.type, mode: appointment.mode, state: row.state as BookingView["state"], appointmentState: appointment.state, startsAt: appointment.startsAt.toISOString(), endsAt: endsAt.toISOString(), durationMinutes: appointment.durationMinutes, version: appointment.version,
+      outcomeFollowUp: { status: admissionsOutcomeStatus(row.state, appointment.state, endsAt, appointment.interviewReports.length > 0, generatedAt, Boolean(appointment.evaluatorId)), generatedAt: generatedAt.toISOString() },
       canDecide: active && (owns || admin) && !requester && row.state === "PENDING", canCancel: !terminal.has(appointment.state) && (owns && active || requester || admin), canReschedule: active && (owns || requester || admin), canComplete: canOutcome, canNoShow: canOutcome,
       canWriteReport: designated && owns && !requester && appointment.state === "REALISE" && appointment.evaluatorId === actor.userId && !appointment.interviewReports.length,
       ...(appointment.interviewReports[0] ? { reportResult: appointment.interviewReports[0].result } : {}) };
