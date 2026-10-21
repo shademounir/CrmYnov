@@ -47,18 +47,40 @@ export function parseWorkReport(value: unknown): WorkReport {
       if (!rate || rate.numerator !== numerator || rate.denominator !== expected || rate.denominatorQueue !== denominatorKey || rate.unit !== unit || typeof rate.label !== "string" || numerator > expected || (expected === 0 ? rate.value !== null : rate.value !== numerator / expected)) throw new Error("commercial_work_rate_inconsistent");
     }
   }
-  return { ...value, page } as unknown as WorkReport;
+  const report = { ...value, page } as unknown as WorkReport;
+  if (new Set(report.advisers.map(adviser => adviser.adviserId)).size !== report.advisers.length) throw new Error("commercial_work_advisers_inconsistent");
+  for (const total of report.queues) {
+    const rows = report.advisers.map(adviser => adviser.queues.find(item => item.key === total.key));
+    if (rows.some(item => !item || item.itemUnit !== total.itemUnit)
+      || rows.reduce((sum, item) => sum + (item?.leadCount ?? 0), 0) > total.leadCount
+      || rows.reduce((sum, item) => sum + (item?.itemCount ?? 0), 0) > total.itemCount) throw new Error("commercial_work_advisers_inconsistent");
+  }
+  return report;
 }
 function ActionStates({ data }: Readonly<{ data: Actions }>): React.JSX.Element {
   const labels = { active: "Actions actives", future: "Futures", dueNow: "Échues maintenant", overdue: "En retard", invalidDeadline: "Échéance à vérifier", completed: "Réalisées", cancelled: "Annulées — pas réalisées" };
   return <dl className="pipeline-lead-cards">{(Object.keys(labels) as Array<keyof Actions>).map((key) => <div key={key}><dt>{labels[key]}</dt><dd>{data[key]}</dd></div>)}</dl>;
 }
-function QueueLink({ item, onSelect, selected = false }: Readonly<{ item: Queue; onSelect?: ((href: string) => void) | undefined; selected?: boolean }>): React.JSX.Element {
+export function QueueAdviserBreakdown({ item, advisers }: Readonly<{ item: Queue; advisers: WorkReport["advisers"] }>): React.JSX.Element {
+  const rows = advisers.map(adviser => ({ adviser, queue: adviser.queues.find(row => row.key === item.key)! }));
+  const unassignedLeads = item.leadCount - rows.reduce((sum, row) => sum + row.queue.leadCount, 0);
+  const unassignedItems = item.itemCount - rows.reduce((sum, row) => sum + row.queue.itemCount, 0);
+  const amount = (leads: number, items: number): React.JSX.Element => <span className="work-queue-adviser-count"><strong>{leads}</strong> {leads === 1 ? "Lead" : "Leads"}{item.itemUnit === "LEADS" ? null : <small>{items} {item.itemUnit === "ACTIONS" ? items === 1 ? "action" : "actions" : items === 1 ? "demande" : "demandes"}</small>}</span>;
+  return <section className="work-queue-advisers" aria-label={`Leads par conseiller · ${item.label}`}>
+    <p>Par conseiller principal · nom d’utilisateur CRM</p>
+    <ul>{rows.map(({ adviser, queue }) => <li key={adviser.adviserId}><bdi dir="auto" className="work-queue-adviser-label">{adviser.adviserLabel?.trim() ? adviser.adviserLabel : "Conseiller · nom indisponible"}</bdi>{amount(queue.leadCount, queue.itemCount)}</li>)}
+      {unassignedLeads > 0 || unassignedItems > 0 ? <li><span>Sans conseiller principal</span>{amount(unassignedLeads, unassignedItems)}</li> : null}
+    </ul>
+    {rows.length === 0 && unassignedLeads === 0 && unassignedItems === 0 ? <p>Aucun conseiller principal dans cette cohorte.</p> : null}
+  </section>;
+}
+function QueueLink({ item, onSelect, selected = false, advisers }: Readonly<{ item: Queue; onSelect?: ((href: string) => void) | undefined; selected?: boolean; advisers?: WorkReport["advisers"] }>): React.JSX.Element {
   const unit = item.itemUnit === "ACTIONS" ? "actions" : item.itemUnit === "REQUESTS" ? "demandes" : "leads";
   const rate = item.subsetRate;
   return <div className="pipeline-lead-card work-queue" data-selected={selected}><h3>{onSelect ? <button className="text-button" type="button" aria-pressed={selected} onClick={() => onSelect(item.href)}>{item.label}</button> : <Link href={item.href} aria-current={selected ? "page" : undefined}>{item.label}</Link>}</h3><p><strong>{item.itemCount} {unit}</strong> · {item.leadCount} leads distincts</p>
     <small>Part de la cohorte : {item.leadShare.numerator}/{item.leadShare.denominator} · {percent(item.leadShare.value)}</small>
-    {rate ? <p className="work-subset-rate">{rate.label} : <strong>{percent(rate.value)}</strong><small>{rate.numerator}/{rate.denominator} {rate.unit === "ACTIONS" ? "actions" : "leads distincts"}</small></p> : null}</div>;
+    {rate ? <p className="work-subset-rate">{rate.label} : <strong>{percent(rate.value)}</strong><small>{rate.numerator}/{rate.denominator} {rate.unit === "ACTIONS" ? "actions" : "leads distincts"}</small></p> : null}
+    {advisers ? <QueueAdviserBreakdown item={item} advisers={advisers} /> : null}</div>;
 }
 function percent(value: number | null): string { return value === null ? "non calculable" : `${(value * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %`; }
 export default function CommercialWork({ query, embedded = false }: Readonly<{ query: string; embedded?: boolean }>): React.JSX.Element {
@@ -90,7 +112,7 @@ export default function CommercialWork({ query, embedded = false }: Readonly<{ q
       <p>Période d’ajout au CRM : {state.report.cohort.from ?? "sans borne de début"} (incluse) → {state.report.cohort.to ?? "sans borne de fin"} (exclue). Stock actuel, pas activité réalisée aujourd’hui.</p>
       <p>Campus : {state.report.filters?.campus ?? "périmètre autorisé"} · Campagne : {state.report.filters?.campaign ?? "toutes les campagnes autorisées"} · Source : {state.report.filters?.source ?? "toutes les sources autorisées"}. Conseiller et dernier traitement : filtres de la sélection courante conservés.</p>
       <p>Priorité aux retards de cette cohorte. Le tri des nouveaux entrants ne remplace pas les files urgentes.</p>
-      <div className="pipeline-lead-cards" aria-label="Vues de travail">{[...state.report.queues].sort((left, right) => queuePriority(left.key) - queuePriority(right.key)).map((item) => <QueueLink key={item.key} item={item} onSelect={select} selected={item.key === state.report.selectedQueue} />)}</div>
+      <div className="pipeline-lead-cards" aria-label="Vues de travail">{[...state.report.queues].sort((left, right) => queuePriority(left.key) - queuePriority(right.key)).map((item) => <QueueLink key={item.key} item={item} advisers={state.report.advisers} onSelect={select} selected={item.key === state.report.selectedQueue} />)}</div>
       <details><summary>États des actions de la cohorte</summary><ActionStates data={state.report.actions} /></details>
       <h2>{state.report.queues.find((item) => item.key === state.report.selectedQueue)?.label}</h2>
       <p role="status">{state.report.page.total} dossiers distincts · page {state.report.page.page} · {state.report.page.items.length} affichés</p>

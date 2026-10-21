@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
-import CommercialWork, { parseWorkReport, workApiEndpoint, workCohortQuery } from "../app/manager/reports/commercial-work/work";
+import CommercialWork, { parseWorkReport, QueueAdviserBreakdown, workApiEndpoint, workCohortQuery } from "../app/manager/reports/commercial-work/work";
 import { preserveFilters } from "../app/manager/reports/dashboard/reporting-ui";
 import { syntheticWorkReport } from "../e2e/work-report-fixture";
 
@@ -63,6 +63,55 @@ test("v2 preserves exact subset rates and shared cohort filters, rejecting inven
   assert.equal(params.has("returnTo"), false); assert.equal(params.has("page"), false);
 });
 
+test("each work card shows the exact CRM adviser label and its own Lead count, including zero", () => {
+  const report = parseWorkReport(syntheticWorkReport(new URLSearchParams("contractVersion=2&queue=NEW_RECEIVED")));
+  const advisers = report.advisers.map(adviser => ({ ...adviser, adviserLabel: "mounir.baali · Admissions" }));
+  for (const item of report.queues) {
+    const html = renderToStaticMarkup(React.createElement(QueueAdviserBreakdown, { item, advisers }));
+    const dom = new JSDOM(html);
+    const row = dom.window.document.querySelector("li")!;
+    assert.equal(row.querySelector("bdi")?.textContent, "mounir.baali · Admissions");
+    assert.equal(row.querySelector("strong")?.textContent, String(item.leadCount));
+    assert.ok(dom.window.document.querySelector('section[aria-label="Leads par conseiller · ' + item.label + '"]'));
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /adviser-synthetic/u);
+    dom.window.close();
+  }
+});
+
+test("per-adviser counts distinguish actions from Leads and retain unattributed dossiers", () => {
+  const report = parseWorkReport(syntheticWorkReport(new URLSearchParams("contractVersion=2&queue=NEW_RECEIVED")));
+  const item = { ...report.queues.find(row => row.key === "ACTIVE_FOLLOW_UP")!, leadCount: 3, itemCount: 5 };
+  const advisers = [
+    { ...report.advisers[0]!, adviserId: "one", adviserLabel: "Imane Hannoud", queues: [{ ...item, leadCount: 1, itemCount: 2 }] },
+    { ...report.advisers[0]!, adviserId: "two", adviserLabel: "Laaziza", queues: [{ ...item, leadCount: 1, itemCount: 1 }] },
+  ];
+  const html = renderToStaticMarkup(React.createElement(QueueAdviserBreakdown, { item, advisers }));
+  const dom = new JSDOM(html), rows = [...dom.window.document.querySelectorAll("li")];
+  assert.deepEqual(rows.map(row => row.querySelector("strong")?.textContent), ["1", "1", "1"]);
+  assert.deepEqual(rows.map(row => row.querySelector("small")?.textContent), ["2 actions", "1 action", "2 actions"]);
+  assert.match(rows[2]!.textContent ?? "", /Sans conseiller principal/u);
+  dom.window.close();
+  const missing = renderToStaticMarkup(React.createElement(QueueAdviserBreakdown, { item: { ...item, leadCount: 0, itemCount: 0 }, advisers: [{ ...advisers[0]!, adviserLabel: "", queues: [{ ...item, leadCount: 0, itemCount: 0 }] }] }));
+  assert.match(missing, /Conseiller · nom indisponible/u);
+  assert.doesNotMatch(missing, />one</u);
+});
+
+test("rejects duplicate or irreconcilable adviser counters instead of showing false totals", () => {
+  const original = syntheticWorkReport(new URLSearchParams("contractVersion=2&queue=NEW_RECEIVED"));
+  const duplicate = structuredClone(original), duplicateRows = duplicate.advisers as unknown[];
+  duplicateRows.push(structuredClone(duplicateRows[0]));
+  assert.throws(() => parseWorkReport(duplicate), /commercial_work_advisers_inconsistent/u);
+  const excessive = structuredClone(original);
+  const rows = excessive.advisers as Array<{ queues: Array<{ leadCount: number; itemCount: number; leadShare: { numerator: number; denominator: number; value: number | null } }> }>;
+  const first = rows[0]!.queues[0]!;
+  first.itemCount = 4; first.leadCount = 4; first.leadShare = { numerator: 4, denominator: 3, value: 4 / 3 };
+  assert.throws(() => parseWorkReport(excessive));
+  const units = structuredClone(original);
+  const unitRows = units.advisers as Array<{ queues: Array<{ key: string; itemUnit: string }> }>;
+  unitRows[0]!.queues.find(row => row.key === "ACTIVE_FOLLOW_UP")!.itemUnit = "REQUESTS";
+  assert.throws(() => parseWorkReport(units), /commercial_work_advisers_inconsistent/u);
+});
+
 test("work contract requires all six queues, exact selected total and explicit rate denominator", () => {
   assert.equal(parseWorkReport(fixture()).page.total, 1);
   for (const mutate of [
@@ -89,12 +138,24 @@ test("work UI reads server units and selected dossiers then removes them after s
   const { act } = await import("react"), { createRoot } = await import("react-dom/client"); const host = dom.window.document.getElementById("root")!; const root = createRoot(host);
   t.after(async () => { await act(async () => { root.unmount(); await Promise.resolve(); }); dom.window.close(); for (const [key, descriptor] of prior) if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
   let session = false; const paths: string[] = [];
-  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => { paths.push(path); const report = v2Fixture(); report.selectedQueue = new URL(path, "https://example.invalid").searchParams.get("queue"); return Promise.resolve(session ? Response.json({}, { status: 401 }) : Response.json(report)); });
+  t.mock.method(globalThis, "fetch", (path: string): Promise<Response> => {
+    paths.push(path); const report = v2Fixture(); report.selectedQueue = new URL(path, "https://example.invalid").searchParams.get("queue");
+    report.advisers = [{ adviserId: "synthetic-user-id", adviserLabel: "Imane Hannoud", leadCount: 1, actions: report.actions,
+      queues: (report.queues as Array<Record<string, unknown>>).map(row => ({ ...row, href: `${String(row.href)}&adviserId=synthetic-user-id&adviserScope=PRIMARY` })) }];
+    return Promise.resolve(session ? Response.json({}, { status: 401 }) : Response.json(report));
+  });
   const render = async (query: string): Promise<void> => { await act(async () => { root.render(React.createElement(CommercialWork, { query, embedded: true })); await new Promise<void>((resolve) => setImmediate(resolve)); }); };
   await render("campus=SYNTHETIC&queue=TO_CONTACT");
   assert.equal(paths[0], "/api/crm/reports/commercial-work?campus=SYNTHETIC&queue=TO_CONTACT&contractVersion=2");
   assert.match(host.textContent ?? "", /1 leads distincts/u); assert.match(host.textContent ?? "", /1\/1/u); assert.ok(host.querySelector('a[href="/leads/synthetic"]'));
   assert.match(host.textContent ?? "", /Annulées — pas réalisées/u); assert.match(host.textContent ?? "", /pas activité réalisée aujourd’hui/u);
+  const cards = [...host.querySelectorAll('[aria-label="Vues de travail"] > .work-queue')];
+  assert.equal(cards.length, 7);
+  for (const card of cards) {
+    assert.equal(card.querySelector('.work-queue-advisers bdi')?.textContent, "Imane Hannoud");
+    assert.ok(card.querySelector('.work-queue-advisers strong'));
+    assert.doesNotMatch(card.textContent ?? "", /synthetic-user-id/u);
+  }
   const button = [...host.querySelectorAll("button")].find(item => item.textContent === "Nouveaux reçus")!;
   await act(async () => { button.click(); await new Promise<void>(resolve => setImmediate(resolve)); });
   assert.equal(paths.at(-1), "/api/crm/reports/commercial-work?campus=SYNTHETIC&queue=NEW_RECEIVED&contractVersion=2");
@@ -104,4 +165,5 @@ test("work UI reads server units and selected dossiers then removes them after s
   assert.equal(paths.at(-1), "/api/crm/reports/commercial-work?campus=SYNTHETIC&campaign=CHANGED&queue=TO_CONTACT&contractVersion=2");
   session = true; await render("campus=SYNTHETIC&queue=ACTIVE_FOLLOW_UP");
   assert.match(host.textContent ?? "", /Session expirée/u); assert.equal(host.querySelectorAll("table").length, 0);
+  assert.equal(host.querySelectorAll('.work-queue-advisers').length, 0, "never retain adviser counts after access/session failure");
 });
