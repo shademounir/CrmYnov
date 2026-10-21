@@ -29,7 +29,7 @@ function unquotedToken(source, at) {
 function nextSqlToken(source, at) {
   if (source.startsWith("/*", at) || source.startsWith("*/", at)) throw new Error("ambiguous_sql_comment");
   if (source[at] === "$") {
-    const delimiter = /^\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$/u.exec(source.slice(at))?.[0];
+    const delimiter = /^\$(?:[A-Za-z_]\w*)?\$/u.exec(source.slice(at))?.[0];
     if (!delimiter) throw new Error("unknown_sql_token");
     const end = source.indexOf(delimiter, at + delimiter.length);
     if (end < 0 || end - at > 10000) throw new Error("unbounded_sql_body");

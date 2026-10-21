@@ -4,15 +4,16 @@ import {randomUUID} from 'node:crypto';
 import {readFileSync,statSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {analyzeMigrationSql} from '../pr-policy/migration-policy.mjs';
-if(process.env.DATABASE_URL)throw Error('protective_journal_no_inherited_database');
+import {waitForPostgres} from './postgres-readiness.mjs';
+if(process.env.DATABASE_URL)throw new Error('protective_journal_no_inherited_database');
 const executable=process.platform==='win32'?'C:/Program Files/Docker/Docker/resources/bin/docker.exe':'/usr/bin/docker';
-if(!['win32','linux'].includes(process.platform)||!statSync(executable).isFile())throw Error('protective_journal_docker_unsupported');
+if(!['win32','linux'].includes(process.platform)||!statSync(executable).isFile())throw new Error('protective_journal_docker_unsupported');
 const docker=args=>execFileSync(executable,args,{encoding:'utf8',windowsHide:true,timeout:90000,stdio:'pipe'}),container='crm-protective-journal-'+randomUUID();
 const specimen=readFileSync(new URL('../pr-policy/fixtures/protective-mail-journal.sql',import.meta.url),'utf8');assert(analyzeMigrationSql(specimen).approved);
 let created=false;const sql=source=>execFileSync(executable,['exec','-i',container,'psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','crm_protective_synthetic','-At'],{input:source,encoding:'utf8',windowsHide:true,timeout:30000,stdio:'pipe'}).trim();
 try{
  docker(['run','-d','--name',container,'--network','none','--env','POSTGRES_HOST_AUTH_METHOD=trust','--env','POSTGRES_DB=crm_protective_synthetic','postgres:17.6-bookworm']);created=true;
- for(let attempt=0;;attempt++){try{docker(['exec',container,'pg_isready','-U','postgres','-d','crm_protective_synthetic']);break;}catch{if(attempt>=40)throw Error('protective_journal_postgres_not_ready');await new Promise(resolve=>setTimeout(resolve,200));}}
+ await waitForPostgres(container,docker);
  sql("CREATE TABLE existing_business_rows(id integer PRIMARY KEY, value text NOT NULL);INSERT INTO existing_business_rows VALUES(1,'synthetic-preserve');");
  const before=sql('SELECT row_to_json(t) FROM existing_business_rows t ORDER BY id;');sql(specimen);assert.equal(sql('SELECT row_to_json(t) FROM existing_business_rows t ORDER BY id;'),before);
  const key='a'.repeat(64),fingerprint='b'.repeat(64),token=randomUUID();

@@ -53,17 +53,23 @@ function safeVarcharWidening(lexemes, evidence) {
   return Boolean(candidate);
 }
 
-function statementReason(lexemes, newTables, uniquenessValidated, evidence, protectiveTable = false) {
+function unsafeStatementReason(lexemes, tokens, upper, protectiveTable) {
   // New lexical forms do not broaden unrelated CREATE TABLE/default/function SQL.
   if (lexemes.some(token => token.kind === "body" || token.kind === "symbol" && token.value === "~" && !protectiveTable)) return "migration_sql_ambiguous";
-  const statement = statementText(lexemes);
-  const upper = statement.toUpperCase();
-  const allowedActions = recognizedForeignKeyWords(lexemes);
-  const tokens = new Set(lexemes.filter(token => token.kind === "word" && !allowedActions.has(token)).map(token => token.value.toUpperCase()));
   if ([...FORBIDDEN_WORDS].some((word) => tokens.has(word))) return "migration_destructive_or_data_statement";
   if (tokens.has("RENAME") || (upper.includes("ALTER COLUMN") && upper.includes(" SET NOT NULL"))) {
     return "migration_destructive_alteration";
   }
+  return undefined;
+}
+
+function statementReason(lexemes, newTables, uniquenessValidated, evidence, protectiveTable = false) {
+  const statement = statementText(lexemes);
+  const upper = statement.toUpperCase();
+  const allowedActions = recognizedForeignKeyWords(lexemes);
+  const tokens = new Set(lexemes.filter(token => token.kind === "word" && !allowedActions.has(token)).map(token => token.value.toUpperCase()));
+  const unsafe = unsafeStatementReason(lexemes, tokens, upper, protectiveTable);
+  if (unsafe) return unsafe;
   if (upper.includes("ALTER COLUMN") && tokens.has("TYPE")) return safeVarcharWidening(lexemes, evidence) ? undefined : "migration_destructive_alteration";
   if (upper.startsWith("CREATE TABLE ") || (upper.startsWith("CREATE TYPE ") && upper.includes(" AS ENUM"))) return undefined;
   if (upper.startsWith("CREATE UNIQUE INDEX ")) return uniquenessValidated ? undefined : "migration_unique_index_proof_missing";

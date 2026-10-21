@@ -23,7 +23,7 @@ BEGIN
   RETURN NEW;
 END;
 `;
-const columns = ["key", "event_type", "resource_id", "template_version", "fingerprint", "recipient_user_ids", "status", "sending_token", "created_at", "sending_at", "accepted_at", "uncertain_at", "provider_message_id", "uncertainty_code"].sort();
+const columns = ["key", "event_type", "resource_id", "template_version", "fingerprint", "recipient_user_ids", "status", "sending_token", "created_at", "sending_at", "accepted_at", "uncertain_at", "provider_message_id", "uncertainty_code"].sort((left, right) => left.localeCompare(right, "en"));
 const word = (t, value) => t?.kind === "word" && t.value.toUpperCase() === value;
 const id = t => t?.kind === "identifier" || t?.kind === "word";
 const name = t => id(t) && /^[a-z][a-z0-9_]{0,62}$/u.test(t.value) ? t.value : undefined;
@@ -37,7 +37,7 @@ function journalTables(items) {
   return items.filter(tokens => word(tokens[0], "CREATE") && word(tokens[1], "TABLE") && name(tokens[2]))
     .filter(tokens => {
       const parts = tableDefinitionParts(tokens);
-      const names = parts.filter(part => !word(part[0], "CONSTRAINT")).map(part => name(part[0])).sort();
+      const names = parts.filter(part => !word(part[0], "CONSTRAINT")).map(part => name(part[0])).sort((left, right) => String(left).localeCompare(String(right), "en"));
       return JSON.stringify(names) === JSON.stringify(columns);
     });
 }
