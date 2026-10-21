@@ -52,7 +52,10 @@ async function port(): Promise<number> {
 async function api(databaseUrl: string, bundle: OwnedApiBundle): Promise<string> {
   const number = await port();
   const child = spawn(process.execPath, [resolve(bundle.directory, "main.js")], {
-    env: { ...process.env, DATABASE_URL: databaseUrl, API_PORT: String(number), LOG_LEVEL: "error" }, windowsHide: true, stdio: "ignore",
+    // Match PROD's external-worker topology: unrelated one-second background
+    // transactions must not contaminate this HTTP permission/zero-idle proof.
+    // Every SQL fence, revocation, authentication and zero-idle assertion stays.
+    env: { ...process.env, DATABASE_URL: databaseUrl, API_PORT: String(number), LOG_LEVEL: "error", CRM_BACKGROUND_WORKERS: "external" }, windowsHide: true, stdio: "ignore",
   });
   bundle.onClose(async () => {
     if (child.exitCode === null && child.signalCode === null) {

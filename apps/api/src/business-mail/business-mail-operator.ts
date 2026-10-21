@@ -83,7 +83,7 @@ export class BusinessMailOperator {
       }
       const result = await tx.businessMailConfiguration.findUniqueOrThrow({ where: { id } });
       await tx.auditEvent.create({ data: { resourceType: "BUSINESS_MAIL_CONFIGURATION", resourceId: id, campusId: settings.campusId, eventType: "BUSINESS_MAIL_" + request.mode,
-        actorId: "system:codex-internal-mail-operator", actorRoles: [], correlationId: request.operationId, result: "SUCCESS", idempotencyKey: "business-mail-operator:" + request.operationId,
+        actorId: "system:codex-internal-mail-operator", actorRoles: ["SYSTEM"], correlationId: request.operationId, result: "SUCCESS", idempotencyKey: "business-mail-operator:" + request.operationId,
         ...(before ? { before } : {}), after: { fingerprint, executor: "Codex", delegation: "crm-ynov-po-delegation-20261001", authorizationSubjectId: request.authorizationSubjectId,
           sourceSha: request.sourceSha, decisionSha256: request.decisionSha256, version: result.version, enabled: result.enabled,
           activatedAt: result.activatedAt?.toISOString() ?? null, settings: settings as unknown as Prisma.InputJsonObject, ...(preflight ? { preflight: preflight as unknown as Prisma.InputJsonObject } : {}), personalHumanAcceptanceClaimed: false } } });
@@ -127,7 +127,7 @@ export class BusinessMailOperator {
       const previous = await tx.businessMailMembership.findUnique({ where: { campusId_campaignId_userId: membership } });
       await tx.businessMailMembership.upsert({ where: { campusId_campaignId_userId: membership }, create: membership, update: { active: true } });
       if (!previous?.active) await tx.auditEvent.create({ data: { resourceType: "BUSINESS_MAIL_MEMBERSHIP", resourceId: membership.userId, campusId: membership.campusId,
-        eventType: "BUSINESS_MAIL_MEMBERSHIP_ACTIVATED", actorId: "system:codex-internal-mail-operator", actorRoles: [], correlationId: request.operationId, result: "SUCCESS",
+        eventType: "BUSINESS_MAIL_MEMBERSHIP_ACTIVATED", actorId: "system:codex-internal-mail-operator", actorRoles: ["SYSTEM"], correlationId: request.operationId, result: "SUCCESS",
         idempotencyKey: "business-mail-membership:" + digest([request.operationId, membership]), after: { ...membership, active: true, executor: "Codex", authorizationSubjectId: request.authorizationSubjectId, decisionSha256: request.decisionSha256 } } });
     }
     const data = { settings: settings as unknown as Prisma.InputJsonObject, enabled: false };
