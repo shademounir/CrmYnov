@@ -11,6 +11,7 @@ export interface AdmissionsBooking {
   responsibleId: string; responsibleLabel: string; requesterId: string; campus: string; campusLabel?: string; type: string; mode: string;
   state: "PENDING" | "ACCEPTED" | "REFUSED" | "CANCELLED"; appointmentState: string;
   startsAt: string; endsAt: string; durationMinutes: number; version: number;
+  outcomeFollowUp?: { status: string; generatedAt: string };
   canDecide: boolean; canCancel: boolean; canReschedule: boolean; canComplete?: boolean; canNoShow?: boolean; canWriteReport?: boolean; reportResult?: string;
 }
 export interface AdmissionsBookingsPage { items: AdmissionsBooking[]; timezone?: string; hasMore?: boolean; nextCursor?: string }

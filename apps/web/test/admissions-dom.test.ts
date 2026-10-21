@@ -12,6 +12,37 @@ async function setup(t: TestContext): Promise<{ dom: JSDOM; root: import("react-
   return { dom, root, act, createElement, settle: async (): Promise<void> => { await act(async () => { await new Promise<void>((resolve) => setImmediate(resolve)); }); } };
 }
 
+test("Admissions outcome displays only the server observation, never derives an absence or exposes outcome actions to a reader", async (t) => {
+  const { dom, root, act, createElement } = await setup(t);
+  const { AdmissionsBookingOutcome } = await import("../app/appointments/admissions/booking-outcome");
+  const reader = { ...syntheticBooking, state: "ACCEPTED" as const, canDecide: false, canCancel: false, canReschedule: false, canComplete: false, canNoShow: false };
+  act(() => root.render(createElement(AdmissionsBookingOutcome, { booking: { ...reader, outcomeFollowUp: { status: "RETURN_EXPECTED", generatedAt: "2099-10-04T09:31:00Z" } } })));
+  assert.match(dom.window.document.body.textContent ?? "", /Retour attendu/u); assert.match(dom.window.document.body.textContent ?? "", /aucune absence ni réalisation n’est déduite/u); assert.equal(dom.window.document.querySelectorAll("button, form").length, 0);
+  act(() => root.render(createElement(AdmissionsBookingOutcome, { booking: { ...reader, startsAt: "2000-01-01T00:00:00Z", outcomeFollowUp: { status: "UPCOMING", generatedAt: "2099-10-04T09:31:00Z" } } })));
+  assert.match(dom.window.document.body.textContent ?? "", /confirmé à venir/u); assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Retour attendu/u);
+  act(() => root.render(createElement(AdmissionsBookingOutcome, { booking: reader })));
+  assert.match(dom.window.document.body.textContent ?? "", /Suivi à actualiser/u); assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Absence déclarée/u);
+  for (const outcomeFollowUp of [{ status: "__proto__", generatedAt: "2099-10-04T09:31:00Z" }, { status: "RETURN_EXPECTED", generatedAt: "invalid" }]) {
+    act(() => root.render(createElement(AdmissionsBookingOutcome, { booking: { ...reader, outcomeFollowUp } })));
+    assert.match(dom.window.document.body.textContent ?? "", /Suivi à actualiser/u); assert.doesNotMatch(dom.window.document.body.textContent ?? "", /La fin prévue est atteinte/u);
+  }
+});
+
+test("Admissions loaded-page return filter selects only server expected outcomes without changing bookings", async (t) => {
+  const { dom, root, act, createElement, settle } = await setup(t); const { AdmissionsAgenda } = await import("../app/appointments/admissions/admissions-agenda");
+  t.mock.method(globalThis, "fetch", (path: string, init?: RequestInit): Promise<Response> => {
+    assert.equal(init?.method, undefined, "This expectation view is read-only");
+    if (path.endsWith("/admissions/context")) return Promise.resolve(Response.json({ ownResponsibilities: [], canManageResponsibilities: false, campuses: [], eligibleUsers: [] }));
+    return Promise.resolve(Response.json({ items: ["RETURN_EXPECTED", "REPORT_EXPECTED", "UPCOMING", "ABSENT"].map((status, index) => ({ ...syntheticBooking, id: `outcome-${index}`, leadLabel: `Dossier ${index}`, state: "ACCEPTED", canDecide: false, canCancel: false, canReschedule: false, outcomeFollowUp: { status, generatedAt: "2099-10-04T09:31:00Z" } })), hasMore: true, nextCursor: "synthetic-cursor" }));
+  });
+  act(() => root.render(createElement(AdmissionsAgenda))); await settle();
+  const selector = dom.window.document.querySelector<HTMLSelectElement>('[name="bookingState"]')!;
+  act(() => { selector.value = "RETURN_EXPECTED"; selector.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+  const list = dom.window.document.querySelector(".admissions-booking-list")!;
+  assert.equal(list.children.length, 2); assert.match(list.textContent ?? "", /Dossier 0/u); assert.match(list.textContent ?? "", /Dossier 1/u); assert.doesNotMatch(list.textContent ?? "", /Dossier [23]/u);
+  assert.match(dom.window.document.body.textContent ?? "", /compteurs portent uniquement sur les demandes chargées/u);
+});
+
 test("designated recipients stay visible with activation, permission or availability needs, without requesting fictitious slots", async (t) => {
   const { dom, root, act, createElement, settle } = await setup(t);
   const { AdmissionsBookingForm } = await import("../app/appointments/admissions/booking-form");
