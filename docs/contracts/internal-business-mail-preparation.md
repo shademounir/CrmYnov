@@ -1,9 +1,21 @@
 # Préparation des rappels métier internes — non activée
 
-Ce socle pur prépare des messages sur des faits fournis par le serveur. Il ne constitue
-pas une autorisation, un journal durable, un worker ou un envoi Gmail. Aucun module
-Nest, job, outbox existante, invitation, variable PROD ou migration ne le référence.
+Ce socle prépare des messages sur des faits fournis par le serveur. Il ne constitue
+pas une autorisation, un worker ou un envoi Gmail. Aucun module
+Nest, job, outbox existante, invitation ou variable PROD ne le référence.
 `PREPARED` signifie uniquement « modèle et sélection préparés », jamais « envoyé ».
+
+Un journal séparé et sa migration additive sont préparés localement, sans déploiement.
+Le client racine dédié attend le commit d’une réservation unique `SENDING` avant de
+retourner son token. Les passages suivants, y compris après interruption du processus,
+ne reçoivent aucun nouveau token. Les terminaisons sont `ACCEPTED` (acceptation du
+transport seulement) ou `UNCERTAIN`. Une ancienne réservation interrompue devient
+`UNCERTAIN`, pas une tâche à réémettre. Métadonnées, états terminaux, DELETE et TRUNCATE
+sont protégés par les contraintes/triggers. Le journal n’implémente ni l’autorisation
+ni les verrous du dossier et n’est pas branché au transport. Son empreinte devra lier
+le contenu rendu, les destinataires ordonnés et le périmètre effectivement autorisé.
+Une panne avant le commit de réservation ne permet aucun appel fournisseur ; après
+commit, une panne reste conservativement incertaine même si aucun appel n’a eu lieu.
 
 ## Sélection et contenu
 
@@ -40,7 +52,7 @@ Cela n’assure pas la déduplication sans stockage transactionnel.
 - Lecture serveur des propriétaires, désignations, autorisations, états et échéances ;
   revalidation sous les verrous/fences adaptés juste avant l’émission, pas des booléens
   venant d’une requête client ni un instantané ancien.
-- Journal durable à unicité événement/échéance/occurrence ; conserver version et
+- Intégrer le journal durable à unicité événement/échéance/occurrence ; conserver version et
   empreinte du contenu, destinataires autorisés, état et identifiant transport.
 - Barrière SENDING durable avant l’appel irréversible ; après timeout, crash, réponse
   ambiguë ou acceptation suivie d’un échec de commit : UNCERTAIN, jamais renvoi automatique.

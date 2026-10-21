@@ -145,6 +145,26 @@ model CrmLeadTag {
   @@map("crm_lead_tags")
 }
 
+// Separate irreversible-emission fence; never reclaimed as a retryable outbox lease.
+model BusinessMailDelivery {
+  key String @id @db.VarChar(64)
+  eventType String @map("event_type") @db.VarChar(40)
+  resourceId String @map("resource_id") @db.VarChar(100)
+  templateVersion String @map("template_version") @db.VarChar(24)
+  fingerprint String @db.VarChar(64)
+  recipientUserIds Json @map("recipient_user_ids")
+  status String @default("SENDING") @db.VarChar(16)
+  sendingToken String @unique @map("sending_token") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  sendingAt DateTime @default(now()) @map("sending_at") @db.Timestamptz(6)
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz(6)
+  uncertainAt DateTime? @map("uncertain_at") @db.Timestamptz(6)
+  providerMessageId String? @map("provider_message_id") @db.VarChar(128)
+  uncertaintyCode String? @map("uncertainty_code") @db.VarChar(40)
+  @@index([status, sendingAt])
+  @@map("business_mail_deliveries")
+}
+
 model LocalOutboxEvent {
   id             String    @id @default(uuid()) @db.Uuid
   topic          String    @db.VarChar(80)
