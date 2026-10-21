@@ -39,7 +39,7 @@ export async function commitNewEntrant(tx: Prisma.TransactionClient, reservation
     return;
   }
   const lead = await tx.lead.findUnique({ where: { id: leadId }, select: { acquisitionKind: true, assignedToId: true, campus: true } });
-  if (!lead || lead.acquisitionKind !== "NEW" || lead.assignedToId !== userId || (await canonicalCampus(tx, lead.campus)).id !== campusId) throw new ConflictException({ code: "assignment_balance_new_lead_required" });
+  if (lead?.acquisitionKind !== "NEW" || lead.assignedToId !== userId || (await canonicalCampus(tx, lead.campus)).id !== campusId) throw new ConflictException({ code: "assignment_balance_new_lead_required" });
   const key = { campusId, version, ruleId, userId };
   const counter = await tx.campusNewAssignmentCounter.findUnique({ where: { campusId_version_ruleId_userId: key } });
   if ((counter?.assignedCount ?? 0) !== previousCount) throw new ConflictException({ code: "assignment_balance_reservation_stale" });

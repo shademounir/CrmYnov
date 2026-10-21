@@ -35,7 +35,8 @@ export async function campusPoolAdministration(tx: Prisma.TransactionClient, cam
     counters.push({ ruleId: rule.id, userId: member.userId, label: current?.label ?? "Conseiller actuellement indisponible",
       assignedCount: rows.find(r => r.ruleId === rule.id && r.userId === member.userId)?.assignedCount ?? 0 });
   }
-  return { campusId: campus.id, version, candidates: candidates.sort((a, b) => a.label.localeCompare(b.label, "fr") || a.id.localeCompare(b.id)), counters,
+  candidates.sort((a, b) => a.label.localeCompare(b.label, "fr") || a.id.localeCompare(b.id));
+  return { campusId: campus.id, version, candidates, counters,
     fairnessScope: "CAMPUS_CONFIGURATION_VERSION_RULE_NEW_ENTRANTS" };
 }
 

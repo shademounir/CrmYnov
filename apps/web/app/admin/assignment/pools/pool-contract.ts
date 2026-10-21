@@ -3,7 +3,12 @@ export interface PoolRule { id: string; scope: "GLOBAL" | "SOURCE" | "CAMPAIGN";
 export interface PoolConfiguration { campusId: string; version: number; automaticEnabled: boolean; rules: PoolRule[] }
 export interface PoolAdministration { campusId: string; version: number; candidates: Array<{ id: string; label: string; activeLeadCount: number }>; counters: Array<{ ruleId: string; userId: string; label: string; assignedCount: number }>; fairnessScope: "CAMPUS_CONFIGURATION_VERSION_RULE_NEW_ENTRANTS" }
 export const poolSourceLabels: Record<string, string> = { WEB_FORM: "Formulaire Web", PHONE_CALL: "Appel téléphonique", PHYSICAL_VISIT: "Visite", WEBSITE: "Site Internet", EVENT: "Événement", PARTNER: "Partenaire", JOBINTECH: "Jobintech", LEGACY_IMPORT: "Import historique", MANUAL_ENTRY: "Saisie manuelle", OTHER_CONTROLLED: "Autre source contrôlée" };
-function object(v: unknown): Record<string, unknown> { if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("Réponse de configuration invalide."); return v as Record<string, unknown>; }
+function object(v: unknown): Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) {
+    throw new Error("Réponse de configuration invalide.");
+  }
+  return v as Record<string, unknown>;
+}
 function count(v: unknown): v is number { return typeof v === "number" && Number.isSafeInteger(v) && v >= 0; }
 export function poolConfiguration(value: unknown): PoolConfiguration {
   const v = object(value);

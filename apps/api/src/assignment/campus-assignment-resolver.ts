@@ -16,6 +16,14 @@ export interface SheetAssignment { targetUserId?: string; selection?: Selection;
 
 export interface AssignmentEligibility { commercialOnly: true; permissions: readonly ConfigurationSnapshot[] }
 
+async function fixedSheetTarget(tx: Prisma.TransactionClient, candidates: readonly AssignmentCandidate[], targetUserId: string | undefined, campusId: string, eligibility?: AssignmentEligibility): Promise<string> {
+  const candidate = candidates.find(item => item.userId === targetUserId);
+  if (!candidate) throw new ConflictException({ code: "assignment_target_ineligible" });
+  const current = await eligibleAssignmentCandidate(tx, candidate, campusId, eligibility);
+  if (!current.active || current.suspended || current.excluded || current.activeLeadCount >= current.capacity) throw new ConflictException({ code: "assignment_target_ineligible" });
+  return current.userId;
+}
+
 export async function eligibleAssignmentCandidate(tx: Prisma.TransactionClient, candidate: AssignmentCandidate, campusId: string, eligibility?: AssignmentEligibility): Promise<AssignmentCandidate> {
   const user = await tx.collaborator.findUnique({ where: { id: candidate.userId } });
   if (!user?.active || user.firstLoginRequired || !user.campusId || !user.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER")) return { ...candidate, active: false };
@@ -40,11 +48,7 @@ export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input
   if (!rule) return { ...evidence, reason: "assignment_configuration_absent" };
   if (!rule.id) throw new ConflictException({ code: "assignment_rule_invalid" });
   if (input.strategy === "FIXED") {
-    const candidate = rule.candidates.find((item) => item.userId === input.targetUserId);
-    if (!candidate) throw new ConflictException({ code: "assignment_target_ineligible" });
-    const current = await eligibleAssignmentCandidate(tx, candidate, campusId, eligibility);
-    if (!current.active || current.suspended || current.excluded || current.activeLeadCount >= current.capacity) throw new ConflictException({ code: "assignment_target_ineligible" });
-    return { ...evidence, targetUserId: current.userId };
+    return { ...evidence, targetUserId: await fixedSheetTarget(tx, rule.candidates, input.targetUserId, campusId, eligibility) };
   }
   if (rule.strategy !== input.strategy) throw new ConflictException({ code: "assignment_strategy_conflict" });
   const cursor = await tx.campusAssignmentCursor.findUnique({ where: { campusId_version_ruleId: { campusId, version: configuration.version, ruleId: rule.id } } });
@@ -55,7 +59,7 @@ export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input
     if (!eligibility?.commercialOnly) throw new ConflictException({ code: "assignment_balance_permissions_required" });
     const reservation = await reserveNewEntrant(tx, campusId, configuration.version, rule.id, eventKey, candidates);
     if (!reservation) return { ...evidence, reason: "assignment_candidate_unavailable" };
-    const candidateIds = candidates.filter(c => c.active && !c.suspended && !c.excluded && c.activeLeadCount < c.capacity).map(c => c.userId).sort();
+    const candidateIds = candidates.filter(c => c.active && !c.suspended && !c.excluded && c.activeLeadCount < c.capacity).map(c => c.userId).sort((a, b) => a.localeCompare(b, "en"));
     const legacyEvidence = selectAssignmentCandidate({ id: rule.id, strategy: rule.strategy, cursor: 0, candidates }, eventKey);
     return { ...evidence, targetUserId: reservation.userId, newEntrantReservation: reservation,
       selection: { ...legacyEvidence, candidateIds, selectedUserId: reservation.userId }, reason: "assignment_balanced_new_entrant_v1" };

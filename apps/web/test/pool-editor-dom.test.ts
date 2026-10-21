@@ -16,14 +16,18 @@ test("pool editor uses CRM names, explicit version confirmation and no blind rep
   let saved: PoolConfiguration = { campusId: "synthetic-campus", version: 3, automaticEnabled: false, rules: [{ id: "synthetic-rule", scope: "GLOBAL", strategy: "CONTROLLED_RANDOM", balanceNewEntrants: true, enabled: true,
     candidates: [{ userId: "synthetic-adviser", active: true, capacity: 20, activeLeadCount: 0 }] }] };
   let mode: "success" | "conflict" | "lost" = "success", attempts = 0, confirmedWrites = 0;
+  let projectionMode: "current" | "lost" | "stale" = "current";
   const requests: string[] = [];
   t.mock.method(globalThis, "fetch", (url: string, init?: RequestInit): Promise<Response> => {
     requests.push(url);
     assert.equal(init?.cache, "no-store"); assert.equal(init?.credentials, "same-origin");
     if (url.includes("/references?")) return Promise.resolve(Response.json({ items: url.includes("kind=CAMPAIGN") ? [{ id: "campaign-id", code: "SYN-CAMPAIGN", label: "Campagne synthétique", state: "ACTIVE" }] : [{ id: "synthetic-campus", code: "SYN-CAMPUS", label: "Campus synthétique", state: "ACTIVE" }] }));
-    if (url.includes("pool-administration?")) return Promise.resolve(Response.json({ campusId: "synthetic-campus", version: saved.version, fairnessScope: "CAMPUS_CONFIGURATION_VERSION_RULE_NEW_ENTRANTS",
+    if (url.includes("pool-administration?")) {
+      if (projectionMode === "lost") return Promise.reject(new TypeError("synthetic counters response lost"));
+      return Promise.resolve(Response.json({ campusId: "synthetic-campus", version: saved.version + (projectionMode === "stale" ? 1 : 0), fairnessScope: "CAMPUS_CONFIGURATION_VERSION_RULE_NEW_ENTRANTS",
       candidates: [{ id: "synthetic-adviser", label: "Alice Conseil CRM", activeLeadCount: 12 }, { id: "other-adviser", label: "Bruno Conseil CRM", activeLeadCount: 5 }],
       counters: [{ ruleId: "synthetic-rule", userId: "synthetic-adviser", label: "Alice Conseil CRM", assignedCount: saved.version === 3 ? 4 : 0 }] }));
+    }
     if (init?.method !== "PUT") return Promise.resolve(Response.json(saved));
     attempts++; assert.equal(url, "/api/crm/assignment/config"); assert.equal(typeof init.body, "string");
     const body = JSON.parse(init.body as string) as PoolConfiguration & { expectedVersion: number; confirmedNewCohort: boolean };
@@ -48,7 +52,7 @@ test("pool editor uses CRM names, explicit version confirmation and no blind rep
   assert.doesNotMatch(host.textContent ?? "", /synthetic-adviser|other-adviser/);
   await submit(); assert.equal(attempts, 0, "No write without explicit confirmation");
   await clickConfirmation(); await submit(); assert.equal(attempts, 1); assert.equal(confirmedWrites, 1);
-  assert.match(host.querySelector('[role="status"]')?.textContent ?? "", /version 4/);
+  assert.match(host.querySelector('output')?.textContent ?? "", /version 4/);
   mode = "conflict"; await clickConfirmation(); await submit(); assert.equal(attempts, 2);
   assert.match(host.querySelector('[role="alert"]')?.textContent ?? "", /Conflit de version/);
   assert.equal(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled, true);
@@ -58,5 +62,21 @@ test("pool editor uses CRM names, explicit version confirmation and no blind rep
   assert.match(host.querySelector('[role="alert"]')?.textContent ?? "", /Aucun rejeu automatique/);
   await submit(); assert.equal(attempts, 3);
   await reload(); assert.match(host.textContent ?? "", /Version enregistrée : 5/); assert.equal(attempts, 3);
+  mode = "success"; projectionMode = "lost";
+  await clickConfirmation(); await submit();
+  assert.equal(attempts, 4); assert.equal(confirmedWrites, 3);
+  assert.match(host.querySelector('output')?.textContent ?? "", /version 6/);
+  assert.match(host.querySelector('[role="alert"]')?.textContent ?? "", /Enregistrement confirmé, mais compteurs indisponibles/);
+  assert.doesNotMatch(host.querySelector('[role="alert"]')?.textContent ?? "", /Réponse non confirmée/);
+  await submit(); assert.equal(attempts, 4, "Counter read failure must not replay the confirmed write");
+  projectionMode = "current"; await reload();
+  projectionMode = "stale"; await clickConfirmation(); await submit();
+  assert.equal(attempts, 5); assert.equal(confirmedWrites, 4);
+  assert.match(host.querySelector('output')?.textContent ?? "", /version 7/);
+  assert.match(host.querySelector('[role="alert"]')?.textContent ?? "", /Une autre version a été enregistrée/);
+  assert.equal(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled, true);
+  await submit(); assert.equal(attempts, 5, "Stale counter projection blocks another mutation");
+  projectionMode = "current"; await reload();
+  assert.match(host.textContent ?? "", /Version enregistrée : 7/);
   assert.ok(requests.every(url => !url.includes("/users") && !url.includes("scheduled-sheets")), "No administrative directory and no Sheet activation");
 });

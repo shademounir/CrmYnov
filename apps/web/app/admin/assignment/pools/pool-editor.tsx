@@ -5,9 +5,16 @@ import { loadReferences, ReferenceSelect, type ReferenceOption } from "../../../
 import { sheetApiValue } from "../../scheduled-sheets/sheets-client";
 import { poolAdministration, poolConfiguration, poolSourceLabels, type PoolAdministration, type PoolConfiguration, type PoolRule } from "./pool-contract";
 
+function apiError(status: number): string {
+  if (status === 409) return "Conflit de version : rechargez avant toute nouvelle modification.";
+  if (status === 403) return "Administration des pools non autorisée dans ce campus.";
+  if (status === 401) return "Session expirée.";
+  return "Service indisponible ou configuration refusée.";
+}
+
 async function api(endpoint: string, body?: unknown): Promise<unknown> {
   const response = await fetch(`/api/crm/assignment/${endpoint}`, { credentials: "same-origin", cache: "no-store", method: body ? "PUT" : "GET", headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
-  if (!response.ok) throw new Error(response.status === 409 ? "Conflit de version : rechargez avant toute nouvelle modification." : response.status === 403 ? "Administration des pools non autorisée dans ce campus." : response.status === 401 ? "Session expirée." : "Service indisponible ou configuration refusée.");
+  if (!response.ok) throw new Error(apiError(response.status));
   return sheetApiValue(await response.json());
 }
 
@@ -33,21 +40,29 @@ export function PoolEditor(): React.JSX.Element {
   }
   function changeRule(index: number, patch: Partial<PoolRule>): void { setConfirmed(false); setMessage(""); setRules(rows => rows.map((rule, i) => {
     if (i !== index) return rule;
-    const next = { ...rule, ...patch }; if (patch.scope === "GLOBAL") delete next.matchValue; return next;
+    const next = { ...rule, ...patch };
+    if (patch.scope === "GLOBAL") { delete next.matchValue; }
+    return next;
   })); }
   function addRule(): void { setConfirmed(false); setRules(rows => [...rows, { id: crypto.randomUUID(), scope: rows.length ? "CAMPAIGN" : "GLOBAL", strategy: "CONTROLLED_RANDOM", balanceNewEntrants: true, enabled: true, candidates: [] }]); }
+  async function refreshSavedAdministration(saved: PoolConfiguration, token: number): Promise<void> {
+    try {
+      const current = poolAdministration(await api(`pool-administration?campusId=${encodeURIComponent(saved.campusId)}`));
+      if (token !== revision.current) return;
+      if (current.version === saved.version) setAdministration(current);
+      else { setMustReload(true); setError("Une autre version a été enregistrée. Actualisez avant une nouvelle modification."); }
+    } catch {
+      if (token === revision.current) setError("Enregistrement confirmé, mais compteurs indisponibles. Actualisez en lecture seule.");
+    }
+  }
   async function save(): Promise<void> {
-    if (!configuration || !confirmed || mustReload) return; const token = ++revision.current; setBusy(true); setError(""); setMessage("");
+    if (!configuration || !confirmed || mustReload) { return; }
+    const token = ++revision.current; setBusy(true); setError(""); setMessage("");
     try {
       const saved = poolConfiguration(await api("config", { campusId: configuration.campusId, expectedVersion: configuration.version, automaticEnabled: automatic, confirmedNewCohort: true, rules }));
       if (token !== revision.current) return;
       setConfiguration(saved); setRules(saved.rules); setConfirmed(false); setAdministration(null); setMessage(`Configuration enregistrée : version ${saved.version}. Aucun dossier historique n’a été réaffecté.`);
-      try { const current = poolAdministration(await api(`pool-administration?campusId=${encodeURIComponent(saved.campusId)}`));
-        if (token === revision.current) {
-          if (current.version === saved.version) setAdministration(current);
-          else { setMustReload(true); setError("Une autre version a été enregistrée. Actualisez avant une nouvelle modification."); }
-        }
-      } catch { if (token === revision.current) setError("Enregistrement confirmé, mais compteurs indisponibles. Actualisez en lecture seule."); }
+      await refreshSavedAdministration(saved, token);
     } catch (e) { if (token === revision.current) { setMustReload(true); setError(`${e instanceof Error ? e.message : "Réponse non confirmée."} Aucun rejeu automatique. Rechargez la version serveur avant une autre tentative.`); } }
     finally { if (token === revision.current) setBusy(false); }
   }
@@ -64,8 +79,10 @@ export function PoolEditor(): React.JSX.Element {
       {!rules.length ? <p>Aucune règle : les nouveaux dossiers resteront dans « À affecter ».</p> : null}
       <label className="pool-admin__check"><input type="checkbox" checked={confirmed} disabled={disabled} onChange={event => setConfirmed(event.target.checked)} />Je confirme ce routage prospectif et la nouvelle version, sans redistribution des dossiers existants.</label>
       <button type="submit" disabled={disabled || !confirmed}>Enregistrer les pools et le routage</button>
-    </form> : !busy && !error ? <p>Choisissez un campus pour lire sa configuration et ses conseillers autorisés.</p> : null}
-    {busy ? <p role="status">Contrôle auprès du serveur…</p> : message ? <p role="status">{message}</p> : null}{error ? <p role="alert">{error}</p> : null}
+    </form> : null}
+    {!configuration && !busy && !error ? <p>Choisissez un campus pour lire sa configuration et ses conseillers autorisés.</p> : null}
+    {busy ? <output>Contrôle auprès du serveur…</output> : null}
+    {!busy && message ? <output>{message}</output> : null}{error ? <p role="alert">{error}</p> : null}
   </section>;
 }
 
@@ -73,11 +90,15 @@ function PoolRuleEditor({ rule, index, campaigns, administration, disabled, onCh
   const members = rule.candidates, available = administration?.candidates.filter(c => !members.some(m => m.userId === c.id)) ?? [];
   return <fieldset className="pool-admin__rule" disabled={disabled}><legend>Pool {index + 1}</legend>
     <div className="pool-admin__fields"><label>Périmètre de la règle<select value={rule.scope} onChange={event => onChange({ scope: event.target.value as PoolRule["scope"], ...(event.target.value === "GLOBAL" ? {} : { matchValue: "" }) })}><option value="GLOBAL">Repli du campus</option><option value="CAMPAIGN">Campagne</option><option value="SOURCE">Source</option></select></label>
-      {rule.scope === "CAMPAIGN" ? <ReferenceSelect name={`pool-campaign-${index}`} label="Campagne active" options={campaigns} value={rule.matchValue ?? ""} onChange={value => onChange({ matchValue: value })} /> : rule.scope === "SOURCE" ? <label>Source<select required value={rule.matchValue ?? ""} onChange={event => onChange({ matchValue: event.target.value })}><option value="">Choisir une source</option>{Object.entries(poolSourceLabels).map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label> : null}
+      {rule.scope === "CAMPAIGN" ? <ReferenceSelect name={`pool-campaign-${index}`} label="Campagne active" options={campaigns} value={rule.matchValue ?? ""} onChange={value => onChange({ matchValue: value })} /> : null}
+      {rule.scope === "SOURCE" ? <label>Source<select required value={rule.matchValue ?? ""} onChange={event => onChange({ matchValue: event.target.value })}><option value="">Choisir une source</option>{Object.entries(poolSourceLabels).map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label> : null}
       <label>Répartition<select value={rule.balanceNewEntrants ? "BALANCED_NEW" : rule.strategy} onChange={event => onChange({ strategy: event.target.value === "ROUND_ROBIN" ? "ROUND_ROBIN" : "CONTROLLED_RANDOM", balanceNewEntrants: event.target.value === "BALANCED_NEW" })}><option value="BALANCED_NEW">Aléatoire équilibré · nouveaux entrants</option><option value="ROUND_ROBIN">Tour de rôle · historique</option><option value="CONTROLLED_RANDOM">Aléatoire reproductible · non équilibré</option></select></label></div>
     <label className="pool-admin__check"><input type="checkbox" checked={rule.enabled} onChange={event => onChange({ enabled: event.target.checked })} />Règle active</label>
     {members.map((member, memberIndex) => { const candidate = administration?.candidates.find(c => c.id === member.userId), counter = administration?.counters.find(c => c.ruleId === rule.id && c.userId === member.userId);
-      return <div className="pool-admin__member" key={member.userId}><div><strong>{candidate?.label ?? counter?.label ?? "Conseiller indisponible · membre conservé"}</strong><p>Charge ouverte actuelle : {candidate?.activeLeadCount ?? "indisponible"} · Nouveaux entrants de la version enregistrée : {rule.balanceNewEntrants ? counter?.assignedCount ?? (administration ? 0 : "indisponible") : "non applicable"}</p>{member.suspended || member.excluded ? <p>Suspension ou exclusion conservée : ce membre n’est pas éligible.</p> : null}</div>
+      let assignedCount: number | string = "non applicable";
+      if (rule.balanceNewEntrants) { assignedCount = counter?.assignedCount ?? 0; }
+      if (rule.balanceNewEntrants && !administration) { assignedCount = "indisponible"; }
+      return <div className="pool-admin__member" key={member.userId}><div><strong>{candidate?.label ?? counter?.label ?? "Conseiller indisponible · membre conservé"}</strong><p>Charge ouverte actuelle : {candidate?.activeLeadCount ?? "indisponible"} · Nouveaux entrants de la version enregistrée : {assignedCount}</p>{member.suspended || member.excluded ? <p>Suspension ou exclusion conservée : ce membre n’est pas éligible.</p> : null}</div>
         <label>Capacité ouverte<input type="number" min="1" max="1000000" required value={member.capacity === 0 ? "" : member.capacity} onChange={event => onChange({ candidates: members.map((m, i) => i === memberIndex ? { ...m, capacity: Number(event.target.value) } : m) })} /></label>
         <label className="pool-admin__check"><input type="checkbox" checked={member.active} onChange={event => onChange({ candidates: members.map((m, i) => i === memberIndex ? { ...m, active: event.target.checked } : m) })} />Participe</label>
         <button type="button" className="secondary-button" onClick={() => onChange({ candidates: members.filter((_, i) => i !== memberIndex) })}>Retirer du pool</button></div>;

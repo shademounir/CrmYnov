@@ -378,9 +378,7 @@ export class PersistentIngestionService {
     } });
     await this.activity(tx, leadId, "LEAD_CREATED", mappedStatus, actorId, `${correlationId}:${record.lineNumber}:created`);
     await this.provenance(tx, batchId, leadId, record);
-    for (const [index, historical] of (record.historicalActivities ?? []).entries()) {
-      await tx.leadActivity.create({ data: { id: randomUUID(), leadId, type: historical.type, result: historical.result.slice(0, 240), authorId: "LEGACY_IMPORT", correlationId: `${correlationId}:${record.lineNumber}:historical:${index}`, occurredAt: new Date(historical.occurredAt) } });
-    }
+    await this.appendHistoricalActivities(tx, leadId, record, correlationId);
     if (!selected) await commitSheetAssignment(tx, selection, leadId);
     if (!selected || assignedToId) {
       await tx.auditEvent.create({ data: { actorId, actorRoles: [...actorRoles], campusId: campus.id, resourceType: "LEAD", resourceId: leadId,
@@ -391,6 +389,12 @@ export class PersistentIngestionService {
           ...(selection.newEntrantReservation ? { algorithmVersion: "balanced-new-entrant-v1" } : {}) } } });
     }
     return { lineNumber: record.lineNumber, outcome: "CREATED", leadId, ...(selection.reason ? { reason: selection.reason } : {}) };
+  }
+
+  private async appendHistoricalActivities(tx: Prisma.TransactionClient, leadId: string, record: IngestionRecordInput, correlationId: string): Promise<void> {
+    for (const [index, historical] of (record.historicalActivities ?? []).entries()) {
+      await tx.leadActivity.create({ data: { id: randomUUID(), leadId, type: historical.type, result: historical.result.slice(0, 240), authorId: "LEGACY_IMPORT", correlationId: `${correlationId}:${record.lineNumber}:historical:${index}`, occurredAt: new Date(historical.occurredAt) } });
+    }
   }
 
   private async provenance(tx: Prisma.TransactionClient, batchId: string, leadId: string, record: IngestionRecordInput): Promise<void> {
