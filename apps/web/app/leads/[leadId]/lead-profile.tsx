@@ -299,7 +299,7 @@ function ProfileFact({ icon, label, value, emphasized = false }: Readonly<{ icon
   </div>;
 }
 
-function RelationRow({ icon, label, value, href }: Readonly<{ icon: React.ReactNode; label: string; value: string; href?: string }>): React.JSX.Element {
+function RelationRow({ icon, label, value, href }: Readonly<{ icon: React.ReactNode; label: string; value: React.ReactNode; href?: string }>): React.JSX.Element {
   const content = <><span aria-hidden="true">{icon}</span><div><dt>{label}</dt><dd>{value || "Non renseigné"}</dd></div></>;
   return href ? <Link className="lead-profile__relation-row" href={href}>{content}</Link> : <div className="lead-profile__relation-row">{content}</div>;
 }
@@ -376,6 +376,8 @@ function RelationPanel({ lead, callTriggerId }: Readonly<{ lead: LeadProfileReco
   return <aside className="panel lead-profile__relation" aria-labelledby="lead-relation-title">
     <div className="lead-profile__panel-heading"><div><p className="eyebrow">Dossier</p><h2 id="lead-relation-title">Relation & dossier</h2></div></div>
     <dl className="lead-profile__relation-list">
+      <RelationRow icon={<Clock size={20} />} label="Ajouté le" value={lead.createdAt && Number.isFinite(Date.parse(lead.createdAt)) ? <time dateTime={lead.createdAt}>{addedAtLabel(lead.createdAt)}</time> : addedAtLabel("")} />
+      {lead.acquisitionKind === "BASELINE" ? <RelationRow icon={<FileText size={20} />} label="Portefeuille" value="Reprise historique · hors acquisitions nouvelles" /> : null}
       <RelationRow icon={<MapPin size={20} />} label="Campus" value={lead.campus || "Campus à vérifier"} />
       <RelationRow icon={<GraduationCap size={20} />} label="Formation" value={lead.program || "Formation à vérifier"} />
       <RelationRow icon={<Megaphone size={20} />} label="Campagne" value={lead.campaign} />
@@ -437,7 +439,6 @@ export function LeadProfileView({ lead, events, actionMessage, onLeadChanged, on
       <dl>
         <InformationRow label="Source" value={leadSourceLabel(lead.source)} />
         <InformationRow label="Campagne" value={lead.campaign} />
-        <InformationRow label="Ajouté le" value={addedAtLabel(lead.createdAt ?? "")} />
         {lead.acquisitionKind === "BASELINE" ? <><InformationRow label="Portefeuille" value="Reprise historique · hors acquisitions nouvelles" /><InformationRow label="Cycle de reprise" value="Voir la provenance historique" /></> : null}
       </dl>
     </details>
