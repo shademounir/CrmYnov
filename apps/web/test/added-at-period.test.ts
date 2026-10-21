@@ -5,6 +5,28 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { addedAtLabel, addedDayStart, addedPeriod, addedPeriodQuery, addedPreset, casablancaDay } from "../app/leads/added-at-period.js";
 import { AddedAtFilters } from "../app/leads/added-at-filters.js";
 import { LeadDirectoryTable } from "../app/leads/lead-directory.js";
+import { LeadProfileView, type LeadProfileRecord } from "../app/leads/[leadId]/lead-profile.js";
+
+test("profile entry timestamp stays in the visible dossier, never in the hidden secondary panel", () => {
+  const lead: LeadProfileRecord = { id: "synthetic-profile", leadCode: "LD-SYNTH-PROFILE", firstName: "Test", lastName: "Synthétique",
+    campus: "Casablanca", campaign: "Synthétique", educationLevel: "BAC", program: "Synthétique", source: "WEB_FORM",
+    status: "CONTACTED", collaboratorIds: [], temperature: "UNEVALUATED", temperatureLabel: "Non évalué", qualificationVersion: 0,
+    createdAt: "2026-10-20T09:00:00.000Z", acquisitionKind: "BASELINE", nextActionAt: "2026-10-21T09:30:00.000Z" };
+  const html = renderToStaticMarkup(React.createElement(LeadProfileView, { lead, events: [] }));
+  const dossier = html.match(/<aside[^>]*lead-profile__relation[\s\S]*?<\/aside>/u)?.[0] ?? "";
+  assert.match(dossier, /<dt>Ajouté le<\/dt><dd><time dateTime="2026-10-20T09:00:00.000Z">/u);
+  assert.ok(dossier.includes(addedAtLabel(lead.createdAt!)));
+  assert.match(dossier, /Reprise historique · hors acquisitions nouvelles/u);
+  assert.equal((html.match(/<dt>Ajouté le<\/dt>/gu) ?? []).length, 1);
+  for (const createdAt of [undefined, "not-a-date"]) {
+    const fixture = { ...lead };
+    if (createdAt === undefined) delete fixture.createdAt;
+    else fixture.createdAt = createdAt;
+    const fallback = renderToStaticMarkup(React.createElement(LeadProfileView, { lead: fixture, events: [] }));
+    assert.match(fallback, /<dt>Ajouté le<\/dt><dd>Date d’ajout indisponible<\/dd>/u);
+    assert.doesNotMatch(fallback, /dateTime="not-a-date"/u);
+  }
+});
 
 test("Casablanca presets freeze calendar days, not a guessed fixed UTC offset", () => {
   const now = new Date("2026-10-20T18:30:00Z");

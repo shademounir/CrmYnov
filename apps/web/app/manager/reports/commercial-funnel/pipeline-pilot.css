@@ -151,6 +151,12 @@
 .pipeline-work-supervision .work-queue h3 { margin: 0 0 8px; font-size: 14px; }
 .pipeline-work-supervision .work-queue h3 button, .pipeline-work-supervision .work-queue h3 a { min-height: 44px; padding: 6px 0; color: var(--teal-dark); font: inherit; font-weight: 700; text-align: left; white-space: normal; background: transparent; border: 0; }
 .pipeline-work-supervision .work-subset-rate { padding-top: 8px; border-top: 1px solid var(--border); }
+.pipeline-work-supervision .work-queue-advisers { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.pipeline-work-supervision .work-queue-advisers > p { margin: 0 0 6px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.pipeline-work-supervision .work-queue-advisers ul { margin: 0; padding: 0; list-style: none; }
+.pipeline-work-supervision .work-queue-advisers li { min-width: 0; padding-block: 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; font-size: 12px; line-height: 1.5; }
+.pipeline-work-supervision .work-queue-adviser-label { min-width: 0; overflow-wrap: anywhere; }
+.pipeline-work-supervision .work-queue-adviser-count { text-align: end; font-variant-numeric: tabular-nums; }
 .pipeline-work-supervision summary { min-height: 44px; padding-block: 12px; cursor: pointer; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 .pipeline-work-supervision nav { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-block: 16px; }
 .pipeline-work-supervision :is(button, a, summary):focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
