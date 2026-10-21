@@ -13,6 +13,7 @@ import type { PreparedBusinessMail } from "../src/business-mail/business-mail-po
 import type { BusinessMailSettings } from "../src/business-mail/business-mail-settings.js";
 import { referenceKey } from "../src/references/reference.contract.js";
 import { currentMailFacts } from "../src/business-mail/business-mail-facts.js";
+import { auditView } from "../src/audit/audit-view.js";
 import type { CrmReference, Collaborator } from "@prisma/client";
 
 const options = { skip: process.env.CRMY_MAIL_EPHEMERAL_TEST !== "true", timeout: 90000 };
@@ -116,5 +117,14 @@ test("Internal mail real PostgreSQL: explicit32 memberships, fixture/activation,
     const paused = await operation("PAUSE"); assert.equal(paused.enabled, false); assert.equal(paused.activatedAt, activated.activatedAt, "Pause never resets the historical activation fence");
     assert.equal((await runtime.run("SEND")).held.DISABLED, 1);
     assert.equal((await db.lead.findUniqueOrThrow({ where: { id: closed.id } })).status, "CLOSED_LOST");
+    const audits = await db.auditEvent.findMany({ where: { campusId: campus.id, actorId: "system:codex-internal-mail-operator" } });
+    assert.equal(audits.length, 37, "32 memberships and five successful operator actions; refused operations add no false success");
+    assert.deepEqual(new Set(audits.filter(row => row.resourceType === "BUSINESS_MAIL_CONFIGURATION").map(row => row.eventType)),
+      new Set(["BUSINESS_MAIL_PREPARE", "BUSINESS_MAIL_FIXTURE", "BUSINESS_MAIL_PREFLIGHT", "BUSINESS_MAIL_ACTIVATE", "BUSINESS_MAIL_PAUSE"]));
+    for (const audit of audits) {
+      assert.deepEqual(audit.actorRoles, ["SYSTEM"], "System attribution is not the authorizing Super Admin's role");
+      assert.equal(auditView(audit).actorDisplay.kind, "SYSTEM", "The carried API audit projection must identify the technical executor");
+      assert.equal(auditView(audit).actorId, null, "No human identity is manufactured from the system actor ID");
+    }
   } finally { await Promise.all([journal.close(), prisma.onModuleDestroy()]); }
 });
