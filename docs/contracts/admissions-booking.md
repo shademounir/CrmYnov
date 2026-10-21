@@ -1,5 +1,13 @@
 # CRMY-175 — Disponibilités et réservation Admissions
 
+## Suivi explicite après la fin prévue — lot candidat du 21 octobre 2026
+
+Les projections de demande portent `outcomeFollowUp: { status, generatedAt }`, calculé côté serveur après les contrôles existants. Cette observation en lecture ne crée aucun événement, notification ou résultat métier et ne donne aucun droit supplémentaire. Une demande acceptée `CONFIRME` reste `UPCOMING` avant sa fin, puis `RETURN_EXPECTED` dès la fin prévue (égalité incluse), tant qu’aucun résultat n’est déclaré. Une absence de retour ne signifie jamais candidat absent.
+
+Les résultats persistés restent distincts : `ABSENT` exige la déclaration habilitée existante ; `REALISE` devient `REPORT_EXPECTED` si un évaluateur est désigné sans compte rendu, `REPORTED` si un compte rendu existe, ou `HELD` pour un rendez-vous sans évaluateur. Les états décision attendue, refus, annulation et report restent séparés. Le report proposé attend sa nouvelle décision. Les états inconnus ou dates invalides ne fabriquent pas un résultat : `UNAVAILABLE`.
+
+L’agenda et le détail montrent l’observation et sa date, avec actualisation explicite. Le filtre « Retour ou compte rendu attendu » porte uniquement sur les demandes chargées, pas sur un total global ni une cohorte complète. L’heure du navigateur ne reclassifie pas les rendez-vous. Un ancien reçu immuable de mutation reste historique ; relire la demande pour son suivi courant. La conservation expurgée du texte des comptes rendus n’est pas relâchée. Aucun e-mail métier, avertissement périodique ni présence/absence du rendez-vous réel futur n’est exécuté par ce lot.
+
 Statut : implémentation candidate du 3 octobre 2026, livraison conditionnée aux contrôles du SHA publié et à la recette du build DEV déployé. Décision utilisateur : agenda CRM et indisponibilités manuelles pour le premier lot. Calendrier externe, réservation publique, email/SMS et décision automatique d'admission exclus.
 
 ## Écart constaté sur develop 95a963800b68671b0801d9700e086f47a0086991

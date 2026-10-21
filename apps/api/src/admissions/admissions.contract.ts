@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import type { AdmissionsOutcomeStatus } from "./admissions-outcome.js";
 
 export interface ResponsibilityView { id: string; userId: string; label: string; campus: string; campusLabel: string; active: boolean; version: number;
   readiness?: "ACTIVATION_REQUIRED" | "PERMISSION_REQUIRED" | "AVAILABILITY_REQUIRED" | "SLOTS_TO_CHECK" | "INACTIVE";
@@ -10,6 +11,7 @@ export interface BookingView {
   responsibleId: string; responsibleLabel: string; requesterId: string; campus: string; campusLabel: string; type: string; mode: string;
   state: "PENDING" | "ACCEPTED" | "REFUSED" | "CANCELLED"; appointmentState: string;
   startsAt: string; endsAt: string; durationMinutes: number; version: number;
+  outcomeFollowUp: { status: AdmissionsOutcomeStatus; generatedAt: string };
   canDecide: boolean; canCancel: boolean; canReschedule: boolean; canComplete: boolean; canNoShow: boolean; canWriteReport: boolean; reportResult?: string;
 }
 export interface ResponsibilityInput { userId: string; campus: string; active: boolean; expectedVersion: number; idempotencyKey: string }
