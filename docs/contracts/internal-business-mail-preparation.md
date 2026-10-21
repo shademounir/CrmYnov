@@ -60,6 +60,16 @@ afin de ne pas doubler immédiatement le rappel d’échéance. Les occurrences 
 sont ancrées à l’échéance, avec plafond, jamais au démarrage du worker. La clé stable
 ne change pas lors d’un déploiement de modèle ou d’une modification des copies.
 Cela n’assure pas la déduplication sans stockage transactionnel.
+La réservation du journal sérialise désormais les nouveaux événements sous un
+verrou PostgreSQL global dédié. Elle compte les réservations de toutes les issues
+dans des fenêtres UTC heure/jour fixes, en messages et destinataires ; aucune remise
+à zéro lors d'un redémarrage ou d'une désactivation. Vérification des plafonds et
+INSERT SENDING commis sont atomiques. Un rejeu du même événement ne débite pas
+de nouveau budget. Un avertissement exige aussi une cadence minimale depuis la
+dernière tentative commise du même rappel (y compris incertaine).
+Les plafonds effectifs doivent encore venir d'une configuration durable contrôlée,
+avec estimation fraîche du volume avant activation ; les valeurs des tests ne
+constituent pas une décision de volume PROD.
 
 ## Conditions restant requises avant tout branchement et activation
 

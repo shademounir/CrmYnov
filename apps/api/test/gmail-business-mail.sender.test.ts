@@ -107,7 +107,7 @@ test("internal OAuth refresh uses real library merge retry zero; no Google netwo
       attempts = 0; retries: number | undefined;
       protected override createClient(signal: AbortSignal): OAuth2Client {
         const client = super.createClient(signal);
-        client.transporter.defaults.adapter = options => {
+        client.transporter.defaults.adapter = (options): Promise<never> => {
           this.attempts++; this.retries = options.retryConfig?.retry; assert.equal(options.signal, signal);
           controller.abort(); return Promise.reject(new DOMException("synthetic-timeout", "TimeoutError"));
         };

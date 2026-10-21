@@ -10,11 +10,12 @@ const identifier = (value: unknown): value is string => typeof value === "string
 const email = (value: unknown): value is string => typeof value === "string" && value.length <= 254 && /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$/.test(value);
 export function canonicalMailRecipients(rows: readonly MailRecipientSnapshot[]): string {
   if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) throw new Error("business_mail_recipient_evidence_invalid");
+  const first = rows[0] as MailRecipientSnapshot;
   const ids = new Set<string>(), addresses = new Set<string>();
   for (const [index, row] of rows.entries()) {
     if (!Array.isArray(row) || row.length !== 6 || row[0] !== 1 || !identifier(row[1]) || !email(row[2])
       || row[3] !== (index === 0 ? "TO" : "CC") || !identifier(row[4]) || (row[5] !== null && !identifier(row[5]))
-      || ids.has(row[1]) || addresses.has(row[2].toLowerCase()) || row[4] !== rows[0]![4] || row[5] !== rows[0]![5]) throw new Error("business_mail_recipient_evidence_invalid");
+      || ids.has(row[1]) || addresses.has(row[2].toLowerCase()) || row[4] !== first[4] || row[5] !== first[5]) throw new Error("business_mail_recipient_evidence_invalid");
     ids.add(row[1]); addresses.add(row[2].toLowerCase());
   }
   return JSON.stringify(rows);

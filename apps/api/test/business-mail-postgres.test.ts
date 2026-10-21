@@ -7,7 +7,7 @@ import { BusinessMailJournal, type MailJournalInput } from "../src/business-mail
 
 const options = { skip: process.env.CRMY_MAIL_EPHEMERAL_TEST !== "true" };
 const digest = (s: string): string => createHash("sha256").update(s).digest("hex");
-const input = (label: string): MailJournalInput => ({ key: digest(label), eventType: "FOLLOW_UP_DUE", resourceId: "synthetic-task", templateVersion: "fr-v1", fingerprint: digest("synthetic-content"), recipientSnapshots: [[1, "synthetic-owner", "owner@example.test", "TO", "synthetic-campus", "synthetic-campaign"]] });
+const input = (label: string): MailJournalInput => ({ key: digest(label), eventType: "FOLLOW_UP_DUE", resourceId: "synthetic-task", templateVersion: "fr-v1", fingerprint: digest("synthetic-content"), recipientSnapshots: [[1, "synthetic-owner", "owner@example.test", "TO", "synthetic-campus", "synthetic-campaign"]], limits: { messagesPerHour: 1000, messagesPerDay: 1000, recipientsPerHour: 1000, recipientsPerDay: 1000, warningIntervalHours: 1 } });
 
 test("Business mail real PG: committed unique sending fence, process restart, faults and immutable terminal evidence", options, async () => {
   const url = new URL(process.env.DATABASE_URL ?? ""); assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.pathname, "/crmy_mail_synthetic");
@@ -74,5 +74,20 @@ test("Business mail real PG: committed unique sending fence, process restart, fa
     const statuses = await db.businessMailDelivery.findMany({ select: { status: true } });
     assert.equal(statuses.filter(x => x.status === "SENDING").length, 0);
     assert(statuses.every(x => ["ACCEPTED", "UNCERTAIN"].includes(x.status)));
+
+    const warning = { ...input(randomUUID()), eventType: "FOLLOW_UP_OVERDUE" as const };
+    assert.deepEqual(await a.reserveSending(warning), { reserved: false, reason: "WARNING_CADENCE_HELD" }, "Late due reminder and warning cannot create an immediate double send");
+    const count = await db.businessMailDelivery.count();
+    const capped = { ...input(randomUUID()), limits: { ...input("limits").limits, messagesPerHour: count + 1 } };
+    const bounded = await Promise.all(Array.from({ length: 24 }, () => b.reserveSending({ ...capped, key: digest(randomUUID()) })));
+    assert.equal(bounded.filter(result => result.reserved).length, 1, "Global quota reservation and SENDING commit are one serialized durable transaction");
+    assert.equal(bounded.filter(result => !result.reserved && "reason" in result && result.reason === "GLOBAL_BUDGET_REACHED").length, 23);
+    assert.deepEqual(await a.reserveSending(key), { reserved: false, state: "ACCEPTED" }, "Duplicate does not consume a second budget");
+    const restart = new BusinessMailJournal();
+    try { assert.deepEqual(await restart.reserveSending({ ...capped, key: digest(randomUUID()) }), { reserved: false, reason: "GLOBAL_BUDGET_REACHED" }); }
+    finally { await restart.close(); }
+    const recipientCap = { ...input(randomUUID()), limits: { ...input("limits").limits, recipientsPerHour: count + 1 } };
+    assert.deepEqual(await a.reserveSending(recipientCap), { reserved: false, reason: "GLOBAL_BUDGET_REACHED" }, "All committed states including UNCERTAIN and SENDING count as recipient deliveries");
+    assert.equal(await db.businessMailDelivery.count(), count + 1, "Held candidates leave no fake sending records");
   } finally { await Promise.all([a.close(), b.close(), db.$disconnect()]); }
 });
