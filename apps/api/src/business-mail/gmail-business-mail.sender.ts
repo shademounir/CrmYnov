@@ -1,5 +1,5 @@
 import { OAuth2Client } from "google-auth-library";
-import { renderBusinessMail } from "./business-mail-template.js";
+import { renderBusinessMail, renderBusinessMailFixture } from "./business-mail-template.js";
 import type { PreparedBusinessMail } from "./business-mail-policy.js";
 
 const address = (value: string): boolean => typeof value === "string" && value.length <= 254
@@ -64,6 +64,12 @@ export class GmailBusinessMailSender {
   }
 
   async sendPrepared(message: PreparedBusinessMail, callerSignal: AbortSignal): Promise<{ providerMessageId: string }> {
+    return this.send(message, callerSignal, false);
+  }
+  async sendFixture(message: PreparedBusinessMail, callerSignal: AbortSignal): Promise<{ providerMessageId: string }> {
+    return this.send(message, callerSignal, true);
+  }
+  private async send(message: PreparedBusinessMail, callerSignal: AbortSignal, fixture: boolean): Promise<{ providerMessageId: string }> {
     if (!this.configured()) throw new Error("business_mail_transport_unconfigured");
     const from = process.env.GMAIL_SENDER_EMAIL!;
     const recipients = [message.to, ...message.cc];
@@ -72,7 +78,7 @@ export class GmailBusinessMailSender {
       || message.recipientUserIds.length !== recipients.length || new Set(message.recipientUserIds).size !== recipients.length
       || message.recipientUserIds.some(id => !/^[a-zA-Z0-9_-]{1,100}$/.test(id))
       || !/^[a-f0-9]{64}$/.test(message.key) || message.templateVersion !== "fr-v1") throw new Error("business_mail_transport_input_invalid");
-    const content = renderBusinessMail(message, process.env.CRM_PUBLIC_ORIGIN!);
+    const content = fixture ? renderBusinessMailFixture(message, process.env.CRM_PUBLIC_ORIGIN!) : renderBusinessMail(message, process.env.CRM_PUBLIC_ORIGIN!);
     // Generated content only: no caller-supplied subject/body/header or prospect data.
     const boundary = "crm-business-" + message.key.slice(0, 40);
     const mime = [`From: ${from}`, `To: ${message.to}`, ...(message.cc.length ? [`Cc: ${message.cc.join(",\r\n ")}`] : []),

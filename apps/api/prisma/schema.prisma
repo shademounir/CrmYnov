@@ -146,6 +146,35 @@ model CrmLeadTag {
 }
 
 // Separate irreversible-emission fence; never reclaimed as a retryable outbox lease.
+// Logical identity/scope references are checked under the permission write fence.
+// These settings never grant a role, dossier access or an assignment.
+model BusinessMailConfiguration {
+  id String @id @db.VarChar(40)
+  settings Json
+  enabled Boolean @default(false)
+  activatedAt DateTime? @map("activated_at") @db.Timestamptz(6)
+  qualificationKey String? @map("qualification_key") @db.VarChar(64)
+  preflight Json?
+  preflightAt DateTime? @map("preflight_at") @db.Timestamptz(6)
+  version Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  @@map("business_mail_configurations")
+}
+
+model BusinessMailMembership {
+  id String @id @default(uuid()) @db.Uuid
+  campusId String @map("campus_id") @db.Uuid
+  campaignId String @map("campaign_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  active Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  @@unique([campusId, campaignId, userId])
+  @@index([campusId, campaignId, active])
+  @@map("business_mail_memberships")
+}
+
 model BusinessMailDelivery {
   key String @id @db.VarChar(64)
   eventType String @map("event_type") @db.VarChar(40)

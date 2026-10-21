@@ -1,14 +1,17 @@
-# Préparation des rappels métier internes — non activée
+# Rappels métier internes — activation contrôlée, non livrée à ce stade
 
-Ce socle prépare des messages sur des faits fournis par le serveur. Il ne constitue
-pas une autorisation ni un worker. Un transport Gmail séparé est préparé et testé
+Ce lot implémente un worker externe séparé sur des faits relus par le serveur,
+une configuration durable et des appartenances explicites campus/campagne. Il
+n'est ni activé ni réputé livré tant que les gates et la recette réelle ne sont
+pas terminés. Un transport Gmail séparé est testé
 hors réseau : To/Cc validés, MIME français texte/HTML, délai total de 15 secondes,
 zéro retry OAuth/POST, erreurs privées masquées et identifiant fournisseur requis.
 Il ne résout pas les droits et exige en amont les fences métier et un SENDING commis.
-Il ne fournit aucune garantie d'appartenance à partir d'une adresse : seul l'adaptateur
-serveur futur pourra établir les destinataires internes autorisés.
-Aucun module
-Nest, job, outbox existante, invitation ou variable PROD ne le référence.
+Il ne fournit aucune garantie d'appartenance à partir d'une adresse : l'adaptateur
+serveur établit les destinataires internes depuis les comptes CRM activés et
+leurs permissions/plafonds effectifs, sous les verrous adaptés.
+Aucun module Nest, outbox existante ou chemin d'invitation ne le référence. Le
+nouveau point d'entrée `jobs/business-mail` n'altère pas le job RC36.
 `PREPARED` signifie uniquement « modèle et sélection préparés », jamais « envoyé ».
 
 Un journal séparé et sa migration additive sont préparés localement, sans déploiement.
@@ -18,7 +21,7 @@ ne reçoivent aucun nouveau token. Les terminaisons sont `ACCEPTED` (acceptation
 transport seulement) ou `UNCERTAIN`. Une ancienne réservation interrompue devient
 `UNCERTAIN`, pas une tâche à réémettre. Métadonnées, états terminaux, DELETE et TRUNCATE
 sont protégés par les contraintes/triggers. Le journal n’implémente ni l’autorisation
-ni les verrous du dossier et n’est pas branché au transport. Son empreinte devra lier
+ni les verrous du dossier. Son empreinte lie
 le contenu rendu, les destinataires ordonnés et le périmètre effectivement autorisé.
 Une panne avant le commit de réservation ne permet aucun appel fournisseur ; après
 commit, une panne reste conservativement incertaine même si aucun appel n’a eu lieu.
@@ -43,7 +46,7 @@ elle n’est jamais inventée. Un retour suppose réservation ACCEPTED et rendez
 CONFIRME arrivé à son terme. Cela ne produit aucun statut de réalisation ou d’absence.
 
 Le destinataire est le propriétaire persistant de l’action ou le responsable Admissions
-désigné, résolu par le futur adaptateur serveur. Une réaffectation du Lead ne suffit
+désigné, résolu par l'adaptateur serveur. Une réaffectation du Lead ne suffit
 pas à remplacer ce propriétaire. To exige activité, droit effectif sur cette action,
 responsabilité persistée du type attendu et périmètre campus/campagne exact. Cette
 projection serveur est distincte de la liste des copies : le responsable réel peut
@@ -52,6 +55,10 @@ appartenance explicite au couple campus/campagne. Une appartenance au seul campu
 ne vaut pas participation à toutes ses campagnes ; un candidat de pool n’est pas une
 appartenance d’équipe. Pas de repli vers l’adresse du prospect ou tout le campus.
 Les identités/adresses ambiguës sont retenues plutôt que fusionnées silencieusement.
+Un compte sélectionné dans une appartenance peut encore être en premier accès :
+cela ne l'active pas et ne lui accorde aucun droit. Il reste exclu de tous les To/Cc
+tant que son accès officiel n'est pas achevé. Le préflight distingue ces états des
+volumes de destinataires effectivement autorisés sur chaque dossier.
 
 La préparation est OFF sans décision et borne d’activation explicites. Les échéances
 antérieures à cette borne sont retenues : une vague historique nécessite un objectif
@@ -71,9 +78,56 @@ Les plafonds effectifs doivent encore venir d'une configuration durable contrôl
 avec estimation fraîche du volume avant activation ; les valeurs des tests ne
 constituent pas une décision de volume PROD.
 
-## Conditions restant requises avant tout branchement et activation
+## Branchement et barrières d'activation
 
-- Appartenances CRM campus/campagne explicites, réellement administrées et auditées.
+Le worker maintient le verrou partagé de permissions et les verrous métier
+(tâche puis Lead partagé, ou participants/rendez-vous puis Lead partagé). Chaque
+émission utilise un délai de 20 secondes inférieur à la transaction de 30 secondes,
+transport compris (15 secondes maximum). Les révocations prennent le verrou
+exclusif. Les clôtures attendent le verrou partagé du Lead. Le journal racine ne
+reprend jamais un verrou extérieur, ce qui évite un interblocage de commit.
+
+La découverte et le préflight sont bornés : un dépassement de 10000 lignes par
+famille échoue explicitement, sans tronquer silencieusement une file. La réception
+et les compensations de traitement réutilisent les projections CRM canoniques.
+Le contrat actuel des réservations n'a pas d'échéance de confirmation persistée :
+ces confirmations sont comptées comme retenues et aucune date n'est inventée.
+
+Le job opérateur est un outillage délégué, pas une session HTTP fabriquée. Il
+exige la cible base/environnement/projet exacte, le SHA source qualifié et le grant
+`crm-ynov-po-delegation-20261001`. Il vérifie le véritable compte d'autorité Super
+Admin et ses permissions globales et campus. L'audit nomme l'exécutant système
+Codex, séparément de ce compte d'autorité ; il ne revendique aucune action ou
+acceptation personnelle PO. Chaque paire d'appartenance créée possède son audit.
+
+Ordre opérateur, sous objectif qualifié et identifiants d'opération uniques :
+
+1. `PREPARE` : configuration OFF et seules appartenances explicitement autorisées,
+   sans modification d'affectation, rôle, secret, session ou invitation.
+2. `FIXTURE` : un message synthétique explicitement TEST, au seul compte Super
+   Admin d'autorité autorisé ; clé durable unique et zéro renvoi si incertain.
+   ACCEPTED prouve uniquement l'acceptation du transport Gmail.
+3. `PREFLIGHT` : estimation native fraîche par type et scope, destinataires,
+   historiques exclus et états du roster ; source, version et empreinte des
+   réglages sont liés au résultat durable.
+4. `ACTIVATE` : refuse sans fixture ACCEPTED, préflight de moins de cinq minutes
+   lié à la même version/source/réglages et volume compatible avec les quatre
+   plafonds. La première activation fixe l'heure serveur. `PAUSE` la conserve ;
+   un redémarrage ne la remplace jamais. Un historique dépassant la vague bornée
+   nécessite un objectif séparé, pas une remise à zéro.
+5. Activer seulement le nouveau job/Scheduler après recette et contrôles natifs.
+   `CRM_BACKGROUND_WORKERS=external` et la qualification sont obligatoires ; le
+   flag d'envoi OFF retourne avant SQL/OAuth. Ne pas retoucher RC36 ni ses révisions.
+
+L'opérateur ne supprime/désactive pas silencieusement d'anciennes appartenances
+hors de l'objectif. Les révisions de configuration sont optimistes et chaque
+mutation est auditée/idempotente. Une issue inconnue exige lecture du reçu avant
+toute reprise ; le code ne relance jamais automatiquement un envoi.
+
+## Conditions restant requises avant livraison réelle
+
+- Publier les appartenances CRM campus/campagne explicitement approuvées sous
+  l'objectif déployé, après revalidation des comptes et références actuels.
 - Lecture serveur des propriétaires, désignations, autorisations, états et échéances ;
   revalidation sous les verrous/fences adaptés juste avant l’émission, pas des booléens
   venant d’une requête client ni un instantané ancien.
@@ -90,5 +144,5 @@ constituent pas une décision de volume PROD.
   Distinguer acceptation transport, réception et lecture humaine.
 - Qualification complète du lot, gouvernance et recette officielle avant activation.
 
-Ces fonctions pures et leurs tests ne satisfont pas ces conditions restantes. Ni le
+Le code et ses tests locaux ne satisfont pas à eux seuls ces conditions restantes. Ni le
 rendez-vous réel du 21 octobre, ni sa préparation, ni les données PROD ne sont modifiés.

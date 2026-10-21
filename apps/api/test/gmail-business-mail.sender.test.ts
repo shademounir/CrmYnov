@@ -66,6 +66,20 @@ test("internal mail rejects injection, duplicate recipients, cap overflow, inval
   });
 });
 
+test("explicit transport fixture uses the same bounded Gmail POST but unmistakable TEST MIME and one internal recipient", async () => {
+  await configured(async () => {
+    const sender = new FakeSender();
+    const message = { ...fixture(), leadReference: "LD-SYNTHETIC-TEST", cc: [], recipientUserIds: ["owner"] };
+    await sender.sendFixture(message, new AbortController().signal);
+    assert.equal(sender.attempts, 1); assert.doesNotMatch(sender.raw, /\r\nCc:|\r\nBcc:/u);
+    const subject = [...sender.raw.matchAll(/=\?UTF-8\?B\?([^?]+)\?=/g)].map(match => Buffer.from(match[1]!, "base64").toString("utf8")).join("");
+    assert.match(subject, /^\[TEST TECHNIQUE INTERNE\]/u);
+    const body = sender.raw.split("Content-Transfer-Encoding: base64\r\n\r\n")[1]!.split("\r\n--crm-business-")[0]!;
+    assert.match(Buffer.from(body.replaceAll("\r\n", ""), "base64").toString("utf8"), /dossier synthétique inexistant/u);
+    const invalid = new FakeSender(); await assert.rejects(invalid.sendFixture(fixture(), new AbortController().signal)); assert.equal(invalid.oauth, 0);
+  });
+});
+
 test("internal mail treats non-OK, missing/invalid ID, JSON and provider errors as uncertain without retry or private errors", async () => {
   await configured(async () => {
     for (const response of [Response.json({ error: "private-response" }, { status: 429 }), Response.json({}), Response.json({ id: "bad\r\nid" }), new Response("invalid-json")]) {

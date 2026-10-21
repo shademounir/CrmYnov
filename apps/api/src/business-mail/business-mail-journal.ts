@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { BusinessMailType } from "./business-mail-policy.js";
 import { canonicalMailRecipients, type MailRecipientSnapshot } from "./business-mail-evidence.js";
@@ -38,22 +38,8 @@ export class BusinessMailJournal {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(174,149)`;
       const existing = await tx.$queryRaw<JournalRow[]>`SELECT key,status,fingerprint,event_type,resource_id,template_version,recipient_user_ids FROM business_mail_deliveries WHERE key=${input.key}`;
       if (existing[0]) return this.replay(existing[0], input, recipients);
-      const totals = await tx.$queryRaw<Array<{ hour_messages: bigint; day_messages: bigint; hour_recipients: bigint; day_recipients: bigint }>>`
-        SELECT count(*) FILTER (WHERE sending_at >= to_timestamp(floor(extract(epoch FROM CURRENT_TIMESTAMP)/3600)*3600)) AS hour_messages,
-          count(*) AS day_messages,
-          COALESCE(sum(jsonb_array_length(recipient_user_ids)) FILTER (WHERE sending_at >= to_timestamp(floor(extract(epoch FROM CURRENT_TIMESTAMP)/3600)*3600)),0)::bigint AS hour_recipients,
-          COALESCE(sum(jsonb_array_length(recipient_user_ids)),0)::bigint AS day_recipients
-        FROM business_mail_deliveries WHERE sending_at >= to_timestamp(floor(extract(epoch FROM CURRENT_TIMESTAMP)/86400)*86400)`;
-      const total = totals[0]!;
-      if (total.hour_messages >= BigInt(limits.messagesPerHour) || total.day_messages >= BigInt(limits.messagesPerDay)
-        || total.hour_recipients + BigInt(input.recipientSnapshots.length) > BigInt(limits.recipientsPerHour)
-        || total.day_recipients + BigInt(input.recipientSnapshots.length) > BigInt(limits.recipientsPerDay)) return { reserved: false as const, reason: "GLOBAL_BUDGET_REACHED" as const };
-      if (input.eventType === "FOLLOW_UP_OVERDUE") {
-        const recent = await tx.$queryRaw<Array<{ key: string }>>`SELECT key FROM business_mail_deliveries
-          WHERE resource_id=${input.resourceId} AND event_type IN ('FOLLOW_UP_DUE','FOLLOW_UP_OVERDUE')
-          AND sending_at > CURRENT_TIMESTAMP - (${limits.warningIntervalHours} * INTERVAL '1 hour') LIMIT 1`;
-        if (recent.length) return { reserved: false as const, reason: "WARNING_CADENCE_HELD" as const };
-      }
+      const reason = await this.quotaHold(tx, input);
+      if (reason) return { reserved: false as const, reason };
       const inserted = await tx.$queryRaw<Array<{ key: string }>>`INSERT INTO business_mail_deliveries
         (key,event_type,resource_id,template_version,fingerprint,recipient_user_ids,sending_token)
         VALUES (${input.key},${input.eventType},${input.resourceId},${input.templateVersion},${input.fingerprint},${recipients}::jsonb,${token}::uuid)
@@ -63,6 +49,27 @@ export class BusinessMailJournal {
       if (!rows[0]) throw new Error("business_mail_journal_key_conflict");
       return this.replay(rows[0], input, recipients);
     }, { isolationLevel: "ReadCommitted", maxWait: 5000, timeout: 10000 });
+  }
+
+  private async quotaHold(tx: Prisma.TransactionClient, input: MailJournalInput): Promise<"GLOBAL_BUDGET_REACHED" | "WARNING_CADENCE_HELD" | null> {
+    const limits = input.limits;
+    const totals = await tx.$queryRaw<Array<{ hour_messages: bigint; day_messages: bigint; hour_recipients: bigint; day_recipients: bigint }>>`
+      SELECT count(*) FILTER (WHERE sending_at >= to_timestamp(floor(extract(epoch FROM CURRENT_TIMESTAMP)/3600)*3600)) AS hour_messages,
+        count(*) AS day_messages,
+        COALESCE(sum(jsonb_array_length(recipient_user_ids)) FILTER (WHERE sending_at >= to_timestamp(floor(extract(epoch FROM CURRENT_TIMESTAMP)/3600)*3600)),0)::bigint AS hour_recipients,
+        COALESCE(sum(jsonb_array_length(recipient_user_ids)),0)::bigint AS day_recipients
+      FROM business_mail_deliveries WHERE sending_at >= to_timestamp(floor(extract(epoch FROM CURRENT_TIMESTAMP)/86400)*86400)`;
+    const total = totals[0]!;
+    if (total.hour_messages >= BigInt(limits.messagesPerHour) || total.day_messages >= BigInt(limits.messagesPerDay)
+      || total.hour_recipients + BigInt(input.recipientSnapshots.length) > BigInt(limits.recipientsPerHour)
+      || total.day_recipients + BigInt(input.recipientSnapshots.length) > BigInt(limits.recipientsPerDay)) return "GLOBAL_BUDGET_REACHED";
+    if (input.eventType === "FOLLOW_UP_OVERDUE") {
+      const recent = await tx.$queryRaw<Array<{ key: string }>>`SELECT key FROM business_mail_deliveries
+        WHERE resource_id=${input.resourceId} AND event_type IN ('FOLLOW_UP_DUE','FOLLOW_UP_OVERDUE')
+        AND sending_at > CURRENT_TIMESTAMP - (${limits.warningIntervalHours} * INTERVAL '1 hour') LIMIT 1`;
+      if (recent.length) return "WARNING_CADENCE_HELD";
+    }
+    return null;
   }
 
   private replay(row: JournalRow, input: MailJournalInput, recipients: string): { reserved: false; state: MailJournalState } {

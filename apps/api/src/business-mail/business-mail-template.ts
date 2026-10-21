@@ -28,3 +28,12 @@ export function renderBusinessMail(message: PreparedBusinessMail, configuredOrig
     "Recherchez la référence du dossier dans votre périmètre autorisé.", "", "Ce message interne ne vaut ni réalisation de l’action ni décision commerciale.", "CRM Ynov"];
   return { subject, text: lines.join("\n"), html: lines.map(line => line ? `<p>${escapeHtml(line)}</p>` : "").join("\n") };
 }
+
+/** Explicit synthetic transport qualification, not an invitation or business action. */
+export function renderBusinessMailFixture(message: PreparedBusinessMail, configuredOrigin: string): { subject: string; text: string; html: string } {
+  if (message.leadReference !== "LD-SYNTHETIC-TEST" || message.cc.length !== 0 || message.recipientUserIds.length !== 1) throw new Error("business_mail_fixture_invalid");
+  const content = renderBusinessMail(message, configuredOrigin);
+  const notice = "TEST TECHNIQUE INTERNE — dossier synthétique inexistant. Aucune action commerciale, invitation ou modification de rendez-vous. Ce test vérifie uniquement le transport ; il ne prouve pas la réception ni la lecture.";
+  return { subject: "[TEST TECHNIQUE INTERNE] " + content.subject, text: notice + "\n\n" + content.text,
+    html: "<p><strong>" + notice + "</strong></p>\n" + content.html };
+}

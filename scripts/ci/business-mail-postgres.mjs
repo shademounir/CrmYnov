@@ -17,5 +17,5 @@ try{
   const env={...process.env,DATABASE_URL:`postgresql://postgres@127.0.0.1:${port}/crmy_mail_synthetic`,CRMY_MAIL_EPHEMERAL_TEST:'true',CRMY_MAIL_DATABASE_NONCE:nonce,SHEETS_ENABLED:'false'};
   execFileSync(process.execPath,['node_modules/prisma/build/index.js','migrate','deploy','--schema','apps/api/prisma/schema.prisma'],{env,stdio:'inherit',windowsHide:true,timeout:120000});
   // Generate Prisma BEFORE starting this fixture, never while synthetic PG is alive.
-  execFileSync(process.execPath,['--import','tsx','--test','test/business-mail-postgres.test.ts'],{cwd:'apps/api',env,stdio:'inherit',windowsHide:true,timeout:180000});
+  execFileSync(process.execPath,['--import','tsx','--test','--test-concurrency=1','test/business-mail-postgres.test.ts','test/business-mail-runtime-postgres.test.ts'],{cwd:'apps/api',env,stdio:'inherit',windowsHide:true,timeout:180000});
 }finally{if(created){docker(['stop','--timeout','60',container]);console.log(JSON.stringify({proof:'business-mail-isolated-postgres',container,preserved:true}));}}

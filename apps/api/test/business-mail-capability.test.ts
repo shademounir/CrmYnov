@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Role } from "../src/auth/auth.types.js";
 import { configurationKey, type ConfigurationSnapshot, type ConfigurationTarget } from "../src/permissions/dynamic-contract.js";
-import { businessMailRecipientCapability, defaultConfiguration, type EvaluationContext } from "../src/permissions/dynamic-evaluator.js";
+import { businessMailRecipientCapability, businessMailConfigurationCapability, defaultConfiguration, type EvaluationContext } from "../src/permissions/dynamic-evaluator.js";
 
 const context: EvaluationContext = { campus: "SYNTHETIC", active: true, own: false, team: false, campusAllowed: true, globalAllowed: false };
 const purposes = ["COPY", "FOLLOW_UP_OWNER", "LEAD_PRIMARY", "ADMISSIONS_RESPONSIBLE"] as const;
@@ -42,4 +42,14 @@ test("Role NONE has no fallback; another legitimate role may contribute its gran
   assert.equal(businessMailRecipientCapability(["ADMISSIONS"], "FOLLOW_UP_OWNER", [own], { ...context, own: true }), true);
   for (const role of ["AUDITOR", "UNKNOWN"] as Role[]) assert.equal(businessMailRecipientCapability([role], "COPY", [], context), false);
   assert.equal(businessMailRecipientCapability(["ADMISSIONS"], "FOLLOW_UP_OWNER", [row, row], context), false);
+});
+test("Mail operator requires real global Super Admin plus separate global and selected-campus settings grants", () => {
+  const global = { ...context, globalAllowed: true };
+  assert.equal(businessMailConfigurationCapability(["SUPER_ADMIN"], [], global), true);
+  assert.equal(businessMailConfigurationCapability(["SUPER_ADMIN"], [], context), false);
+  assert.equal(businessMailConfigurationCapability(["ADMIN"], [], global), false);
+  assert.equal(businessMailConfigurationCapability(["SUPER_ADMIN"], [], { ...global, active: false }), false);
+  for (const [campus, permission] of [["GLOBAL", "settings.global.manage"], ["SYNTHETIC", "settings.campus.manage"]]) {
+    assert.equal(businessMailConfigurationCapability(["SUPER_ADMIN"], [denied({ kind: "CEILING", role: "*", campus: campus! }, permission!)], global), false);
+  }
 });
