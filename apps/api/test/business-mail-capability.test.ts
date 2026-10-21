@@ -53,3 +53,8 @@ test("Mail operator requires real global Super Admin plus separate global and se
     assert.equal(businessMailConfigurationCapability(["SUPER_ADMIN"], [denied({ kind: "CEILING", role: "*", campus: campus! }, permission!)], global), false);
   }
 });
+test("SYSTEM audit attribution never grants a CRM recipient or operator identity", () => {
+  const system = ["SYSTEM"] as unknown as Role[];
+  for (const purpose of purposes) assert.equal(businessMailRecipientCapability(system, purpose, [], { ...context, globalAllowed: true }), false);
+  assert.equal(businessMailConfigurationCapability(system, [], { ...context, globalAllowed: true }), false);
+});
