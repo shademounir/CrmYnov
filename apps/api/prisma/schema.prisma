@@ -1661,6 +1661,30 @@ model CampusAssignmentCursor {
   @@map("campus_assignment_cursors")
 }
 
+// Prospective counters are isolated from historical lead load and immutable rule versions.
+model CampusNewAssignmentCounter {
+  campusId String @map("campus_id") @db.Uuid
+  version Int
+  ruleId String @map("rule_id") @db.VarChar(64)
+  userId String @map("user_id") @db.Uuid
+  assignedCount Int @default(0) @map("assigned_count")
+  @@id([campusId, version, ruleId, userId])
+  @@map("campus_new_assignment_counters")
+}
+
+model CampusNewAssignmentReceipt {
+  eventHash String @id @map("event_hash") @db.Char(64)
+  leadId String @unique @map("lead_id") @db.Uuid
+  campusId String @map("campus_id") @db.Uuid
+  version Int
+  ruleId String @map("rule_id") @db.VarChar(64)
+  userId String @map("user_id") @db.Uuid
+  countAfter Int @map("count_after")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@index([campusId, version, ruleId])
+  @@map("campus_new_assignment_receipts")
+}
+
 model AssignmentRule {
   id         String                    @id @default(uuid()) @db.Uuid
   scope      String                    @db.VarChar(16)

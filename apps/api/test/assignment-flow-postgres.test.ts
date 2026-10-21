@@ -12,6 +12,8 @@ import type { CreateLeadResult, LeadRecord } from "../src/leads/lead.service.js"
 import type { CreateReassignmentInput, ReassignmentRequest } from "../src/assignment/reassignment.service.js";
 import { DynamicPermissionService } from "../src/permissions/dynamic-service.js";
 import { FollowUpService } from "../src/follow-up/follow-up.service.js";
+import { PersistentIngestionService } from "../src/ingestion/persistent-ingestion.service.js";
+import type { IngestionRecordInput } from "../src/ingestion/ingestion.service.js";
 import { referenceKey } from "../src/references/reference.contract.js";
 import { assignmentFlowFixture, type AssignmentActor, type AssignmentFixture } from "./fixtures/assignment-flow-fixture.js";
 
@@ -55,6 +57,7 @@ async function journey(): Promise<Journey> {
       const previous = await http<{ version: number }>("GET", `/assignment/config?campusId=${f.campus.id}`, admin.token);
       assert.equal(previous.status, 200);
       const response = await http<{ version: number }>("PUT", "/assignment/config", admin.token, { campusId: f.campus.id, expectedVersion: previous.body.version, automaticEnabled,
+        confirmedNewCohort: rules?.some(rule => Boolean(rule && typeof rule === "object" && "balanceNewEntrants" in rule && rule.balanceNewEntrants === true)) ?? false,
         rules: rules ?? [{ id: f.key("fallback"), scope: "GLOBAL", strategy, enabled: true, candidates }] });
       assert.equal(response.status, 200); return response.body.version;
     };
@@ -72,6 +75,155 @@ const candidate = (userId: string, capacity = 100): Candidate => ({ userId, acti
 const requestInput = (f: AssignmentFixture, label: string, moveOpenTasks = false): CreateReassignmentInput => ({ targetUserId: f.target.id, reason: "Synthetic motivated reassignment", moveOpenTasks, idempotencyKey: f.key(label) });
 const decisionInput = { approved: true, reason: "Synthetic distinct Manager approval" };
 
+test("balanced NEW entrants persist fairness across APIs, replay and audit rollback without moving old owners", options, async () => {
+  const f = await journey();
+  try {
+    const historic = await f.ownedLead("bal-old");
+    const historicBefore = await effects(f, historic.id);
+    const ruleId = f.key("balance-new-only");
+    const version = await f.configure("CONTROLLED_RANDOM", [], true, [{ id: ruleId, scope: "GLOBAL", strategy: "CONTROLLED_RANDOM", balanceNewEntrants: true,
+      enabled: true, candidates: [candidate(f.commercial.id), candidate(f.target.id), candidate(f.secondTarget.id), candidate(f.firstLogin.id), candidate(f.manager.id)] }]);
+    const inputs = Array.from({ length: 12 }, (_, i) => f.leadInput(`balance-new-${i}`));
+    const created: CreateLeadResult[] = [];
+    // Two independent API instances use the same durable per-campus ledger.
+    for (const [i, input] of inputs.entries()) {
+      const result = await f.http<CreateLeadResult>("POST", "/leads", f.commercialSession.token, input, i % 2);
+      assert.equal(result.status, 201); created.push(result.body);
+      assert.equal(result.body.assignment?.reason, "assignment_balanced_new_entrant_v1");
+    }
+    const where = { campusId: f.campus.id, version, ruleId };
+    type PoolProjection = { version: number; candidates: Array<{ id: string; label: string; activeLeadCount: number }>; counters: Array<{ ruleId: string; userId: string; label: string; assignedCount: number }>; fairnessScope: string };
+    const projection = await f.http<PoolProjection>("GET", `/assignment/pool-administration?campusId=${f.campus.id}`, f.adminSession.token);
+    assert.equal(projection.status, 200); assert.equal(projection.body.version, version);
+    assert.equal(projection.body.fairnessScope, "CAMPUS_CONFIGURATION_VERSION_RULE_NEW_ENTRANTS");
+    assert.ok(projection.body.candidates.some(c => c.id === f.commercial.id));
+    assert.ok(projection.body.candidates.every(c => ![f.outsider.id, f.firstLogin.id, f.manager.id].includes(c.id)));
+    assert.ok(projection.body.candidates.every(c => Object.keys(c).sort().join(",") === "activeLeadCount,id,label"));
+    assert.equal(projection.body.counters.filter(c => c.assignedCount === 4).length, 3);
+    const currentRules = await f.http<{ rules: unknown[] }>("GET", `/assignment/config?campusId=${f.campus.id}`, f.adminSession.token);
+    const unconfirmed = await f.http("PUT", "/assignment/config", f.adminSession.token, { campusId: f.campus.id, expectedVersion: version, automaticEnabled: true, rules: currentRules.body.rules });
+    assert.equal(unconfirmed.status, 400); assert.equal(unconfirmed.body.code, "assignment_balance_confirmation_required");
+    assert.equal((await f.db.campusAssignmentConfiguration.findUniqueOrThrow({ where: { campusId: f.campus.id } })).version, version);
+    for (const token of [f.commercialSession.token, f.readerSession.token, f.firstLoginSession.token, f.otherManagerSession.token]) {
+      assert.equal((await f.http("GET", `/assignment/pool-administration?campusId=${f.campus.id}`, token)).status, 403);
+    }
+    for (const invalid of [{ scope: "CAMPAIGN", matchValue: "UNKNOWN-CAMPAIGN" }, { scope: "SOURCE", matchValue: "UNKNOWN-SOURCE" }]) {
+      const rejected = await f.http("PUT", "/assignment/config", f.adminSession.token, { campusId: f.campus.id, expectedVersion: version, automaticEnabled: true, confirmedNewCohort: true,
+        rules: [{ id: ruleId, scope: "GLOBAL", strategy: "CONTROLLED_RANDOM", balanceNewEntrants: true, enabled: true, candidates: [candidate(f.commercial.id)] },
+          { id: f.key("invalid-route"), ...invalid, strategy: "CONTROLLED_RANDOM", balanceNewEntrants: true, enabled: true, candidates: [candidate(f.target.id)] }] });
+      assert.equal(rejected.status, 400);
+      assert.equal(rejected.body.code, invalid.scope === "CAMPAIGN" ? "assignment_campaign_invalid" : "assignment_source_invalid");
+      assert.equal((await f.db.campusAssignmentConfiguration.findUniqueOrThrow({ where: { campusId: f.campus.id } })).version, version);
+    }
+    const counts = await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } });
+    assert.equal(counts.length, 3); assert.deepEqual(counts.map(r => r.assignedCount), [4, 4, 4]);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 12);
+    const replay = await f.http<CreateLeadResult>("POST", "/leads", f.commercialSession.token, inputs[0], 1);
+    assert.equal(replay.status, 201); assert.deepEqual(replay.body, created[0]);
+    assert.deepEqual(await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } }), counts);
+    const decide = await f.http<{ strategy: string }>("POST", "/assignment/auto", f.adminSession.token, { leadId: historic.id, eventKey: f.key("balance-decision-only") });
+    assert.equal(decide.status, 201); assert.equal(decide.body.strategy, "UNASSIGNED");
+    const historicAfter = await effects(f, historic.id);
+    assert.deepEqual(historicAfter.lead, historicBefore.lead); assert.deepEqual(historicAfter.activities, historicBefore.activities);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 12);
+    const failedInput = f.leadInput("balance-audit-failure");
+    const failed = await denyAudit(f, "LEAD_ASSIGNED", () => f.http("POST", "/leads", f.commercialSession.token, failedInput));
+    assert.ok(failed.status >= 400);
+    assert.equal(await f.db.lead.count({ where: { email: failedInput.email } }), 0);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 12);
+    assert.deepEqual(await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } }), counts);
+    // Race two creations. A visible version conflict may be retried with its original key.
+    const concurrentInputs = [f.leadInput("balance-race-a"), f.leadInput("balance-race-b")];
+    const concurrent = await Promise.all(concurrentInputs.map((input, i) => f.http<CreateLeadResult | { code?: string }>("POST", "/leads", f.commercialSession.token, input, i)));
+    for (const [i, result] of concurrent.entries()) {
+      if (result.status === 409) assert.equal((await f.http("POST", "/leads", f.commercialSession.token, concurrentInputs[i], i)).status, 201);
+      else assert.equal(result.status, 201);
+    }
+    const final = await f.db.campusNewAssignmentCounter.findMany({ where });
+    assert.equal(final.reduce((sum, r) => sum + r.assignedCount, 0), 14);
+    assert.ok(Math.max(...final.map(r => r.assignedCount)) - Math.min(...final.map(r => r.assignedCount)) <= 1);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 14);
+    // Empty eligible pool keeps the new Lead in the existing unassigned queue.
+    const nextVersion = await f.configure("CONTROLLED_RANDOM", [], true, [{ id: ruleId, scope: "GLOBAL", strategy: "CONTROLLED_RANDOM", balanceNewEntrants: true,
+      enabled: true, candidates: [candidate(f.firstLogin.id)] }]);
+    const unassigned = await f.http<CreateLeadResult>("POST", "/leads", f.commercialSession.token, f.leadInput("balance-no-eligible"));
+    assert.equal(unassigned.status, 201); assert.equal(unassigned.body.assignment?.outcome, "UNASSIGNED");
+    assert.equal(unassigned.body.assignment?.reason, "assignment_candidate_unavailable");
+    assert.equal(await f.db.campusNewAssignmentCounter.count({ where: { campusId: f.campus.id, version: nextVersion } }), 0);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 14, "New versions retain the previous cohort, never reset it");
+    assert.deepEqual((await effects(f, historic.id)).lead, historicBefore.lead);
+  } finally { await f.close(); }
+});
+
+test("balanced Sheet and cutover NEW paths share durable fairness, roll back audit faults and notify only eligible campus managers once", options, async () => {
+  const f = await journey();
+  let syntheticConnectorId: string | undefined;
+  try {
+    const old = await f.ownedLead("sheet-old");
+    const oldOwner = old.assignedToId;
+    const ruleId = f.key("sheet-balance");
+    const rules = (ids: string[]): unknown[] => [{ id: ruleId, scope: "GLOBAL", strategy: "CONTROLLED_RANDOM", enabled: true,
+      balanceNewEntrants: true, candidates: ids.map(id => candidate(id)) }];
+    const version = await f.configure("CONTROLLED_RANDOM", [], true, rules([f.commercial.id, f.target.id, f.secondTarget.id]));
+    const connector = await f.db.sheetImportConnector.create({ data: { campusId: f.campus.id, workbookId: f.key("synthetic-sheet"), tab: "Synthetic",
+      configuration: {}, updatedBy: f.admin.id, enabled: true } });
+    syntheticConnectorId = connector.id;
+    const mapping = { id: "mapping-1234567890abcdef12345678", version: 1 };
+    const actor: Principal = { userId: f.admin.id, roles: ["SUPER_ADMIN"], scopes: [{ kind: "GLOBAL" }], sessionId: f.adminSession.sessionId };
+    const record = (label: string): IngestionRecordInput => ({ ...f.leadInput(label), lineNumber: 1, source: "WEB_FORM", technicalSystem: "FORMINATOR_ZAPIER",
+      originalSource: "FORMINATOR", recentSource: "GOOGLE_SHEETS", externalId: f.key(label) });
+    const ingestion = f.apps.map(app => app.get(PersistentIngestionService));
+    const persist = (kind: "sheet" | "cutover", row: IngestionRecordInput, instance = 0): Promise<{ batchId: string; outcome: string }> => f.db.$transaction(tx => kind === "sheet"
+      ? ingestion[instance]!.persistSheetRecord(tx, connector.id, row, mapping, f.key("sheet-proof"), { strategy: "CONTROLLED_RANDOM" })
+      : ingestion[instance]!.persistCutoverRecord(tx, row, mapping, f.key(`cutover-${row.externalId}`), actor, f.key("cutover-proof"), { strategy: "CONTROLLED_RANDOM" }));
+    const where = { campusId: f.campus.id, version, ruleId };
+    const initialRows = Array.from({ length: 6 }, (_, i) => ({ kind: i % 2 ? "cutover" as const : "sheet" as const, row: record(`sheet-balanced-${i}`) }));
+    for (const [i, input] of initialRows.entries()) assert.equal((await persist(input.kind, input.row, i % 2)).outcome, "CREATED");
+    const counters = await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } });
+    assert.deepEqual(counters.map(c => c.assignedCount), [2, 2, 2]);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 6);
+    for (const input of initialRows.slice(0, 2)) await assert.rejects(persist(input.kind, input.row, 1), error => {
+      assert.ok(error instanceof Error && "getResponse" in error);
+      const response = (error as Error & { getResponse(): { code: string } }).getResponse();
+      assert.equal(response.code, input.kind === "sheet" ? "sheet_receipt_reconciliation_required" : "cutover_effect_reconciliation_required"); return true;
+    });
+    assert.deepEqual(await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } }), counters);
+    for (const kind of ["sheet", "cutover"] as const) {
+      const row = record(`sheet-fault-${kind}`);
+      await assert.rejects(denyAudit(f, kind === "sheet" ? "SHEET_IMPORT_ROW_PROCESSED" : "CUTOVER_NEW_INGESTION", () => persist(kind, row)), /synthetic_assignment_audit_failure/u);
+      assert.equal(await f.db.lead.count({ where: { email: row.email! } }), 0);
+      assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 6);
+      assert.deepEqual(await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } }), counters);
+    }
+    // A contact match is not a new entrant and cannot consume a fairness count.
+    assert.equal((await persist("sheet", { ...record("sheet-existing"), email: old.email! })).outcome, "ATTACHED");
+    assert.equal((await persist("cutover", { ...record("cutover-existing"), email: old.email! })).outcome, "MANUAL_REVIEW");
+    assert.equal((await f.db.lead.findUniqueOrThrow({ where: { id: old.id } })).assignedToId, oldOwner);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 6);
+    const nextVersion = await f.configure("CONTROLLED_RANDOM", [], true, rules([f.firstLogin.id]));
+    for (const kind of ["sheet", "cutover"] as const) {
+      const row = record(`sheet-no-pool-${kind}`);
+      assert.equal((await persist(kind, row)).outcome, "CREATED");
+      const lead = await f.db.lead.findFirstOrThrow({ where: { email: row.email! } });
+      assert.equal(lead.acquisitionKind, "NEW"); assert.equal(lead.assignedToId, null);
+      const alerts = await f.db.internalNotification.findMany({ where: { resourceId: lead.id, type: "ASSIGNMENT" }, orderBy: { recipientId: "asc" } });
+      const globalAdmins = await f.db.collaborator.findMany({ where: { active: true, firstLoginRequired: false, roles: { has: "SUPER_ADMIN" } }, select: { id: true } });
+      assert.deepEqual(alerts.map(a => a.recipientId), [...new Set([...globalAdmins.map(a => a.id), f.manager.id, f.otherManager.id])].sort());
+      assert.ok(alerts.every(a => ![f.commercial.id, f.target.id, f.secondTarget.id, f.outsider.id, f.reader.id, f.firstLogin.id].includes(a.recipientId)));
+      assert.ok(alerts.every(a => a.href === `/leads/${lead.id}/collaborators`));
+      await assert.rejects(persist(kind, row, 1));
+      assert.deepEqual(await f.db.internalNotification.findMany({ where: { resourceId: lead.id, type: "ASSIGNMENT" }, orderBy: { recipientId: "asc" } }), alerts);
+    }
+    assert.equal(await f.db.campusNewAssignmentCounter.count({ where: { campusId: f.campus.id, version: nextVersion } }), 0);
+    assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 6);
+    assert.equal((await f.db.lead.findUniqueOrThrow({ where: { id: old.id } })).assignedToId, oldOwner);
+  } finally {
+    // Retain synthetic history, but never leak an enabled connector into later cases.
+    try { if (syntheticConnectorId) await f.db.sheetImportConnector.update({ where: { id: syntheticConnectorId }, data: { enabled: false } }); }
+    finally { await f.close(); }
+  }
+});
+
 async function effects(f: AssignmentFixture, leadId: string): Promise<Effects> {
   return {
     lead: await f.db.lead.findUnique({ where: { id: leadId } }),
@@ -85,14 +237,14 @@ async function effects(f: AssignmentFixture, leadId: string): Promise<Effects> {
   };
 }
 
-async function denyAudit<T>(f: AssignmentFixture, eventType: "LEAD_CREATED" | "LEAD_REASSIGNMENT_REQUESTED" | "LEAD_REASSIGNMENT_APPROVED", operation: () => Promise<T>): Promise<T> {
+async function denyAudit<T>(f: AssignmentFixture, eventType: "LEAD_CREATED" | "LEAD_ASSIGNED" | "LEAD_REASSIGNMENT_REQUESTED" | "LEAD_REASSIGNMENT_APPROVED" | "SHEET_IMPORT_ROW_PROCESSED" | "CUTOVER_NEW_INGESTION", operation: () => Promise<T>): Promise<T> {
   // Static allowlist plus an internally generated hexadecimal identifier. The
   // nonce fixture guard has already proved ownership before any DDL is possible.
   const name = `crmy94_fault_${f.suffix.toLowerCase()}`;
   assert.match(name, /^crmy94_fault_[0-9a-f]{8}$/u);
   assert.match(f.campus.code, /^ASG-CAMPUS-[A-F0-9]{8}$/u);
   assert.match(f.campus.id, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu);
-  assert.ok(["LEAD_CREATED", "LEAD_REASSIGNMENT_REQUESTED", "LEAD_REASSIGNMENT_APPROVED"].includes(eventType));
+  assert.ok(["LEAD_CREATED", "LEAD_ASSIGNED", "LEAD_REASSIGNMENT_REQUESTED", "LEAD_REASSIGNMENT_APPROVED", "SHEET_IMPORT_ROW_PROCESSED", "CUTOVER_NEW_INGESTION"].includes(eventType));
   await f.db.$executeRawUnsafe(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type = '${eventType}' AND NEW.campus_id IN ('${f.campus.code}', '${f.campus.id}') THEN RAISE EXCEPTION 'synthetic_assignment_audit_failure'; END IF; RETURN NEW; END; $$`);
   try {
     await f.db.$executeRawUnsafe(`CREATE TRIGGER ${name} BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION ${name}()`);

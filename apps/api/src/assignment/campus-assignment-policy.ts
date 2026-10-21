@@ -25,8 +25,10 @@ export function parseCampusRules(value: unknown): AssignmentRuleInput[] {
     const rule = object(raw);
     if (rule.scope !== "GLOBAL" && rule.scope !== "SOURCE" && rule.scope !== "CAMPAIGN") throw new BadRequestException({ code: "assignment_rule_invalid" });
     if (rule.strategy !== "ROUND_ROBIN" && rule.strategy !== "CONTROLLED_RANDOM") throw new BadRequestException({ code: "assignment_rule_invalid" });
+    if (rule.balanceNewEntrants !== undefined && (typeof rule.balanceNewEntrants !== "boolean" || rule.balanceNewEntrants && rule.strategy !== "CONTROLLED_RANDOM")) throw new BadRequestException({ code: "assignment_balance_policy_invalid" });
     if (typeof rule.enabled !== "boolean" || !Array.isArray(rule.candidates) || rule.candidates.length > 100) throw new BadRequestException({ code: "assignment_rule_invalid" });
     return { ...(rule.id !== undefined ? { id: text(rule.id) } : {}), scope: rule.scope, strategy: rule.strategy, enabled: rule.enabled,
+      ...(rule.balanceNewEntrants !== undefined ? { balanceNewEntrants: rule.balanceNewEntrants } : {}),
       ...(rule.matchValue !== undefined ? { matchValue: text(rule.matchValue) } : {}), candidates: rule.candidates.map((rawCandidate) => {
         const candidate = object(rawCandidate);
         if (typeof candidate.active !== "boolean" || typeof candidate.capacity !== "number" || !Number.isSafeInteger(candidate.capacity) || candidate.capacity < 1

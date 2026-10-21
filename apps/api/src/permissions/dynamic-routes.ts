@@ -14,7 +14,7 @@ const bindings: Readonly<Record<string, Readonly<Record<string, readonly string[
   LeadCollaborationController: { request: ["lead.collaborators.manage"], list: ["lead.view"], decide: ["lead.collaborators.manage"] },
   UserController: { create: ["users.create"], list: ["users.view"], setStatus: ["users.disable"], updateAuthorization: ["users.roles.assign"], updateProfile: ["users.roles.assign"], issueTemporarySecret: ["users.roles.assign"], issueInvitation: ["users.roles.assign"] },
   QuickLeadController: { matches: ["lead.view"], submit: ["lead.create"] },
-  AssignmentController: { config: ["lead.assign"], configure: ["settings.campus.manage"], simulate: ["lead.assign"], assign: ["lead.assign"], history: ["lead.assign"] },
+  AssignmentController: { config: ["lead.assign"], configure: ["settings.campus.manage"], poolAdministration: ["settings.campus.manage"], simulate: ["lead.assign"], assign: ["lead.assign"], history: ["lead.assign"] },
   IngestionController: { ingest: ["import.execute"], confirmPersistent: ["import.execute", "import.confirm"], provenance: ["import.view"] },
   ImportMappingController: { list: ["import.view"], save: ["import.execute"], dryRun: ["import.execute"], confirm: ["import.confirm"] },
   ImportProfileController: { profile: ["import.view"] },

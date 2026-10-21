@@ -21,6 +21,8 @@ export interface AssignmentRuleInput {
   scope: AssignmentScope;
   matchValue?: string;
   strategy: AssignmentStrategy;
+  /** Opt-in persistent policy; never applied to an existing portfolio. */
+  balanceNewEntrants?: boolean;
   enabled: boolean;
   candidates: AssignmentCandidate[];
 }
@@ -129,6 +131,7 @@ export class AssignmentService {
     if (specific.length > 1) throw new ConflictException({ code: "assignment_rule_ambiguous" });
     const rule = specific[0] ?? [...this.rules.values()].find((candidate) => candidate.enabled && candidate.scope === "GLOBAL");
     if (!rule) throw new NotFoundException({ code: "assignment_rule_not_found" });
+    if (rule.balanceNewEntrants) throw new ConflictException({ code: "assignment_balance_persistence_required" });
     const selection = selectAssignmentCandidate(rule, context.eventKey, roundRobinOffset);
     if (mutateCursor && rule.strategy === "ROUND_ROBIN") this.rules.set(rule.id, Object.freeze({ ...rule, cursor: rule.cursor + 1 }));
     return selection;
@@ -136,12 +139,14 @@ export class AssignmentService {
 
   private normalizeRule(input: AssignmentRuleInput, actorId: string): AssignmentRule {
     if (!["GLOBAL", "SOURCE", "CAMPAIGN"].includes(input.scope) || !["ROUND_ROBIN", "CONTROLLED_RANDOM"].includes(input.strategy)) throw new BadRequestException({ code: "assignment_rule_invalid" });
+    if (input.balanceNewEntrants !== undefined && (typeof input.balanceNewEntrants !== "boolean" || input.balanceNewEntrants && input.strategy !== "CONTROLLED_RANDOM")) throw new BadRequestException({ code: "assignment_balance_policy_invalid" });
     const matchValue = input.matchValue?.trim();
     if ((input.scope === "GLOBAL" && matchValue) || (input.scope !== "GLOBAL" && !matchValue)) throw new BadRequestException({ code: "assignment_rule_match_invalid" });
     if (!input.candidates.length || input.candidates.some((candidate) => !IDENTIFIER.test(candidate.userId) || !Number.isInteger(candidate.capacity) || candidate.capacity < 1 || !Number.isInteger(candidate.activeLeadCount) || candidate.activeLeadCount < 0)) throw new BadRequestException({ code: "assignment_candidate_invalid" });
     if (new Set(input.candidates.map((candidate) => candidate.userId)).size !== input.candidates.length) throw new ConflictException({ code: "assignment_candidate_duplicate" });
     return { id: input.id && IDENTIFIER.test(input.id) ? input.id : randomUUID(), scope: input.scope,
       ...(matchValue ? { matchValue } : {}), strategy: input.strategy, enabled: input.enabled,
+      ...(input.balanceNewEntrants !== undefined ? { balanceNewEntrants: input.balanceNewEntrants } : {}),
       candidates: input.candidates.map((candidate) => ({ ...candidate })), version: 1, cursor: 0,
       updatedAt: new Date().toISOString(), updatedBy: actorId };
   }

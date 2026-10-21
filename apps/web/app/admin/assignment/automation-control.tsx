@@ -18,6 +18,7 @@ async function configuration(campus: string, body?: object): Promise<ApiObject> 
 export function AutomationControl(): React.JSX.Element {
   const [campuses, setCampuses] = useState<ReferenceOption[]>([]), [campus, setCampus] = useState("");
   const [snapshot, setSnapshot] = useState<ApiObject | null>(null), [enabled, setEnabled] = useState(false);
+  const [cohortConfirmed, setCohortConfirmed] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: "idle" | "loading" | "success" | "error"; message: string }>({ kind: "idle", message: "" });
   const revision = useRef(0);
   useEffect(() => {
@@ -26,26 +27,29 @@ export function AutomationControl(): React.JSX.Element {
     return (): void => { active = false; revision.current++; };
   }, []);
   async function perform(value: string, save = false): Promise<void> {
+    if (save && snapshot && resourceObjects(snapshot.rules ?? []).some(rule => rule.balanceNewEntrants === true) && !cohortConfirmed) return;
     const current = ++revision.current;
     setFeedback({ kind: "loading", message: "Chargement…" });
     if (!save) setSnapshot(null);
     try {
-      const data = await configuration(value, save && snapshot ? { campusId: value, expectedVersion: snapshot.version, rules: snapshot.rules, automaticEnabled: enabled } : undefined);
+      const data = await configuration(value, save && snapshot ? { campusId: value, expectedVersion: snapshot.version, rules: snapshot.rules, automaticEnabled: enabled, ...(cohortConfirmed ? { confirmedNewCohort: true } : {}) } : undefined);
       if (current !== revision.current) return;
-      setSnapshot(data); setEnabled(data.automaticEnabled === true);
+      setSnapshot(data); setEnabled(data.automaticEnabled === true); setCohortConfirmed(false);
       setFeedback({ kind: "success", message: save ? "Activation d’affectation enregistrée pour ce campus." : "Configuration actualisée." });
     } catch (error) { if (current === revision.current) setFeedback({ kind: "error", message: error instanceof Error ? error.message : "Service indisponible." }); }
   }
   const busy = feedback.kind === "loading";
+  const balanced = snapshot && resourceObjects(snapshot.rules ?? []).some(rule => rule.balanceNewEntrants === true);
   return <section aria-label="Automatisation par campus" aria-busy={busy}>
     <ReferenceSelect name="assignment-campus" label="Campus" options={campuses} value={campus} disabled={busy} onChange={(value) => { setCampus(value); if (value) void perform(value); else { revision.current++; setSnapshot(null); setFeedback({ kind: "idle", message: "" }); } }} />
     <p>L’activation du connecteur Sheets reste indépendante. Cette option contrôle l’affectation automatique des nouveaux Leads et des imports autorisés ; elle ne réaffecte pas les dossiers existants et ne bloque pas les affectations manuelles autorisées.</p>
     {snapshot ? <form onSubmit={(event) => { event.preventDefault(); void perform(campus, true); }}>
       <p>Configuration enregistrée : version {typeof snapshot.version === "number" ? snapshot.version : "indisponible"}</p>
-      <label style={{ display: "flex", alignItems: "center", minHeight: 44 }}><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => { setEnabled(event.target.checked); setFeedback({ kind: "idle", message: "" }); }} />Activer l’affectation automatique</label>
+      <label style={{ display: "flex", alignItems: "center", minHeight: 44 }}><input type="checkbox" checked={enabled} disabled={busy} onChange={(event) => { setEnabled(event.target.checked); setCohortConfirmed(false); setFeedback({ kind: "idle", message: "" }); }} />Activer l’affectation automatique</label>
       <ul>{resourceObjects(snapshot.rules ?? []).map((rule, index) => <li key={index}>{apiString(rule, "scope")} — {apiString(rule, "strategy")} — {rule.enabled ? "Règle active" : "Règle inactive"}</li>)}</ul>
       <p>Priorité : Campagne → Source → repli du campus → UNASSIGNED. Les règles et destinataires existants sont conservés.</p>
-      <button type="submit" disabled={busy} style={{ minHeight: 44 }}>Enregistrer la configuration</button>
+      {balanced ? <label style={{ display: "flex", alignItems: "center", minHeight: 44 }}><input type="checkbox" checked={cohortConfirmed} disabled={busy} onChange={event => setCohortConfirmed(event.target.checked)} />Cette modification ouvre une nouvelle version et une nouvelle cohorte d’équité ; je confirme. Les anciens compteurs et affectations sont conservés.</label> : null}
+      <button type="submit" disabled={busy || Boolean(balanced && !cohortConfirmed)} style={{ minHeight: 44 }}>Enregistrer la configuration</button>
     </form> : null}
     <button type="button" disabled={busy || !campus} onClick={() => { void perform(campus); }} style={{ minHeight: 44 }}>Actualiser</button>
     {feedback.kind === "error" ? <p role="alert">{feedback.message}</p> : feedback.message ? <p role="status">{feedback.message}</p> : null}

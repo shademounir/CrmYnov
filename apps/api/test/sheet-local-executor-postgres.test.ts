@@ -21,10 +21,11 @@ import type { SheetValues } from "../src/sheet-import/google-sheets-adapter.js";
 
 function executor(prisma: PrismaService, source: SheetSource): { worker: SheetImportExecutor; mappings: ImportMappingService; ingestion: PersistentIngestionService } {
   const audit = new AuditService(), leads = new LeadService(audit);
-  const ingestion = new PersistentIngestionService(prisma, audit);
+  const permissions = new DynamicPermissionRepository(prisma);
+  const ingestion = new PersistentIngestionService(prisma, audit, permissions);
   const assignments = new LeadAssignmentService(leads, new AssignmentService(audit), audit);
   const mappings = new ImportMappingService(new IngestionService(leads, assignments, audit), audit, ingestion);
-  return { ingestion, mappings, worker: new SheetImportExecutor(prisma, new DynamicPermissionRepository(prisma), mappings, ingestion, source) };
+  return { ingestion, mappings, worker: new SheetImportExecutor(prisma, permissions, mappings, ingestion, source) };
 }
 
 test("CRMY-171 LOCAL_ROW executor PostgreSQL: atomic ingestion, two-instance replay, same-contact provenance and changed-row suspension", { skip: process.env.CRMY171_EPHEMERAL_TEST !== "true", timeout: 60_000 }, async (t) => {
@@ -264,19 +265,45 @@ test(`CRMY-171 LOCAL_ROW / ${secondIdentity} concurrent distinct sources preserv
   };
   const pids = new Set<number>();
   const transactionFailures: string[] = [];
+  const transactionDiagnostics: string[] = [];
+  const activityDiagnostics: unknown[] = [];
+  for (const service of [prisma, second]) {
+    const original = service.withTransaction.bind(service);
+    t.mock.method(service, "withTransaction", <T>(tx: Prisma.TransactionClient, action: () => Promise<T>): Promise<T> => original(tx, async (): Promise<T> => {
+      try { return await action(); }
+      catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "no_code";
+        transactionDiagnostics.push(`${code}:${error instanceof Error ? error.message : "non_error"}`);
+        throw error;
+      }
+    }));
+  }
+  let bothEntered: () => void = (): void => undefined;
+  const arrivals = new Promise<void>(resolve => { bothEntered = resolve; });
   for (const item of [first, other]) {
     const persist = item.ingestion.persistSheetRecord.bind(item.ingestion);
     t.mock.method(item.ingestion, "persistSheetRecord", async (...args: Parameters<typeof persist>): ReturnType<typeof persist> => {
       const [connection] = await args[0].$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
       assert.ok(connection); pids.add(connection.pid);
-      try { return await persist(...args); }
+      // Align entry before the real INSERT gate. Otherwise the first worker can
+      // spend the production 5s lock timeout waiting for the slower worker's
+      // instrumented startup, rather than exercising a controlled contact race.
+      if (pids.size >= 2) bothEntered();
+      let arrivalTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([arrivals, new Promise<never>((_resolve, reject) => {
+          arrivalTimer = setTimeout(() => reject(new Error("synthetic_contact_arrival_gate_not_reached")), 2500);
+        })]);
+        return await persist(...args);
+      }
       catch (error) {
         const code = error !== null && typeof error === "object" && "code" in error ? String(error.code) : "no_code";
         const meta = error !== null && typeof error === "object" && "meta" in error ? error.meta : undefined;
         const sqlState = meta !== null && typeof meta === "object" && "code" in meta ? String(meta.code) : "no_sqlstate";
-        transactionFailures.push(`${code}:${sqlState}`);
+        transactionFailures.push(`${code}:${sqlState}:${error instanceof Error ? error.message : "non_error"}`);
         throw error;
       }
+      finally { if (arrivalTimer) clearTimeout(arrivalTimer); }
     });
   }
   let unlock: () => void = (): void => undefined;
@@ -291,13 +318,14 @@ test(`CRMY-171 LOCAL_ROW / ${secondIdentity} concurrent distinct sources preserv
   let gateFailure: string | undefined;
   try {
     for (let attempt = 0; ; attempt++) {
+      if ([25, 75, 125, 175].includes(attempt)) activityDiagnostics.push(await client.$queryRaw`SELECT pid, wait_event, state, pg_blocking_pids(pid) AS blockers, left(query,200) AS query FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state<>'idle' ORDER BY pid`);
       if (pids.size >= 2) {
         const [waiting] = await client.$queryRaw<Array<{ count: number }>>(Prisma.sql`SELECT count(*)::int AS count FROM pg_stat_activity WHERE pid IN (${Prisma.join([...pids])}) AND wait_event = 'advisory'`);
         if (waiting?.count === 2) break;
       }
       if (attempt >= 200) {
         const states = pids.size === 0 ? [] : await client.$queryRaw<Array<{ pid: number; wait_event: string | null; state: string }>>(Prisma.sql`SELECT pid, wait_event, state FROM pg_stat_activity WHERE pid IN (${Prisma.join([...pids])})`);
-        gateFailure = `synthetic_contact_concurrency_gate_not_reached:${JSON.stringify(states)}`;
+        gateFailure = `synthetic_contact_concurrency_gate_not_reached:${JSON.stringify(states)}; activities=${JSON.stringify(activityDiagnostics)}; inner=${JSON.stringify(transactionDiagnostics)}`;
         break;
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 20));

@@ -14,6 +14,7 @@ import { evaluatePermission } from "../permissions/dynamic-evaluator.js";
 import { submissionFingerprint } from "./submission-fingerprint.js";
 import { assertCutoverRuntimeAuthority, type CutoverDelegation } from "../cutover/cutover-runtime-authority.js";
 import type { ConfigurationSnapshot } from "../permissions/dynamic-contract.js";
+import { assignmentManagerRecipients, assignmentNotification } from "../assignment/assignment-notifications.js";
 
 export interface ConfirmPersistentImportInput extends IngestionBatchInput {
   confirmed: true;
@@ -117,8 +118,10 @@ export class PersistentIngestionService {
     const normalizedPhone = record.phone?.replace(/[^+\d]/g, "");
     const { matches } = await this.findMatches(tx, record.technicalSystem, externalId, normalizedEmail, normalizedPhone);
     await this.assertMatchedLeadScopes(tx, matches, campus.id);
+    if (!this.permissions) throw new ConflictException({ code: "sheet_permissions_unavailable" });
+    const grants = await this.permissions.snapshots(tx);
     const selected: SheetAssignment = matches.size ? { eventKey: key, reason: "assignment_existing_preserved" }
-      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, true);
+      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, true, { commercialOnly: true, permissions: grants }, true);
     const input = this.sheetPersistenceInput(record, mapping, key, local, assignment, selected);
     await tx.ingestionBatch.create({ data: { id: batchId, idempotencyKey: key, fingerprint: this.fingerprint(input), profile: input.profile,
       assignmentMode: input.assignment.strategy, actorId, totalCount: 1, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
@@ -168,13 +171,14 @@ export class PersistentIngestionService {
     const matches = await this.findMatches(tx, record.technicalSystem, record.externalId, record.email?.trim().toLowerCase(), record.phone?.replace(/[^+\d]/g, ""));
     await this.assertMatchedLeadScopes(tx, matches.matches, campus.id);
     const selected = matches.matches.size ? { eventKey: key, reason: "cutover_identity_review_required" }
-      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, assignment.strategy !== "FIXED", { commercialOnly: true, permissions: grants });
+      : await prepareSheetAssignment(tx, assignment, record, campus.id, key, 0, assignment.strategy !== "FIXED", { commercialOnly: true, permissions: grants }, true);
     const batchId = randomUUID();
     await tx.ingestionBatch.create({ data: { id: batchId, idempotencyKey: key, fingerprint: this.fingerprint(input), profile: input.profile,
       assignmentMode: assignment.strategy, actorId: current.userId, totalCount: 1, createdCount: 0, attachedCount: 0, reviewCount: 0, invalidCount: 0 } });
     const line = matches.matches.size ? await this.review(tx, batchId, record.lineNumber, "CUTOVER_IDENTITY_REVIEW_REQUIRED")
       : await this.persistLine(tx, batchId, record, input, current, correlationId, selected);
     if (line.outcome === "CREATED" && line.leadId) await commitSheetAssignment(tx, selected, line.leadId);
+    if (line.outcome === "CREATED" && line.leadId && !selected.targetUserId) await this.notifyNewUnassigned(tx, campus.id, line.leadId, key, grants);
     await tx.ingestionBatch.update({ where: { id: batchId }, data: { createdCount: Number(line.outcome === "CREATED"), reviewCount: Number(line.outcome === "MANUAL_REVIEW"), invalidCount: Number(line.outcome === "INVALID") } });
     await tx.importReport.create({ data: { jobId: key, batchId, mappingId: mapping.id, mappingVersion: mapping.version, sourceFileSha256: input.sourceFileSha256,
       totalCount: 1, createdCount: Number(line.outcome === "CREATED"), updatedCount: 0, ignoredCount: 0, duplicateCount: 0, errorCount: Number(line.outcome !== "CREATED"),
@@ -232,6 +236,10 @@ export class PersistentIngestionService {
     correlationId: string }): Promise<void> {
     const { connector, campus, batchId, actorId, key, input, line, selected, record, correlationId } = state;
     if (line.outcome === "CREATED" && line.leadId) await commitSheetAssignment(tx, selected, line.leadId);
+    if (line.outcome === "CREATED" && line.leadId && !selected.targetUserId) {
+      if (!this.permissions) throw new ConflictException({ code: "sheet_permissions_unavailable" });
+      await this.notifyNewUnassigned(tx, campus.id, line.leadId, key, await this.permissions.snapshots(tx));
+    }
     await tx.ingestionBatch.update({ where: { id: batchId }, data: { createdCount: Number(line.outcome === "CREATED"), attachedCount: Number(line.outcome === "ATTACHED"),
       reviewCount: Number(line.outcome === "MANUAL_REVIEW"), invalidCount: Number(line.outcome === "INVALID") } });
     await tx.auditEvent.create({ data: { actorId, actorRoles: ["SYSTEM"], campusId: campus.id, resourceType: "SHEET_IMPORT", resourceId: connector.id,
@@ -239,11 +247,17 @@ export class PersistentIngestionService {
       after: { batchId, outcome: line.outcome, connectorVersion: connector.version,
         assignment: { version: selected.configurationVersion ?? null, reason: selected.reason ?? "assignment_selected_or_preserved",
           ...(selected.selection ? { ruleId: selected.selection.ruleId, strategy: selected.selection.strategy, selectedUserId: selected.selection.selectedUserId,
-            candidateFingerprint: selected.selection.candidateFingerprint, algorithmVersion: "assignment-v1" } : {}) } } } });
+            candidateFingerprint: selected.selection.candidateFingerprint, algorithmVersion: selected.newEntrantReservation ? "balanced-new-entrant-v1" : "assignment-v1" } : {}) } } } });
     await tx.importReport.create({ data: { jobId: key, batchId, mappingId: input.mappingId, mappingVersion: input.mappingVersion,
       sourceFileSha256: input.sourceFileSha256, totalCount: 1, createdCount: Number(line.outcome === "CREATED"), updatedCount: 0,
        ignoredCount: Number(line.outcome === "IGNORED"), duplicateCount: Number(line.outcome === "ATTACHED"), errorCount: Number(line.outcome === "INVALID" || line.outcome === "MANUAL_REVIEW"),
        ...(line.reason ? { rejections: { create: { lineNumber: record.lineNumber, category: line.outcome, reasonCode: line.reason } } } : {}) } });
+  }
+
+  private async notifyNewUnassigned(tx: Prisma.TransactionClient, campusId: string, leadId: string, eventKey: string, grants: ConfigurationSnapshot[]): Promise<void> {
+    for (const recipientId of await assignmentManagerRecipients(tx, campusId, grants, "lead.assign")) {
+      await assignmentNotification(tx, recipientId, leadId, "ASSIGNMENT", eventKey, "/collaborators");
+    }
   }
 
   private async validateLocalSheetIdentity(tx: Prisma.TransactionClient, connector: { campusId: string; workbookId: string; configuration: Prisma.JsonValue }, id: string): Promise<void> {
@@ -373,7 +387,8 @@ export class PersistentIngestionService {
         eventType: assignedToId ? "LEAD_ASSIGNED" : "IMPORT_ASSIGNMENT_RESOLVED", result: "SUCCESS", correlationId, idempotencyKey: `import-assignment:${batchId}:${record.lineNumber}`,
         after: { configurationVersion: selection.configurationVersion ?? null, reason: selection.reason ?? "assignment_selected",
           ...(assignedToId ? { origin: actorRoles.includes("SYSTEM") || input.assignment.strategy !== "FIXED" ? "AUTOMATIC" : "MANUAL", decisionRef: `import-assignment:${batchId}:${record.lineNumber}` } : {}),
-          ruleId: selection.selection?.ruleId ?? null, assignedToId: assignedToId ?? null } } });
+          ruleId: selection.selection?.ruleId ?? null, assignedToId: assignedToId ?? null,
+          ...(selection.newEntrantReservation ? { algorithmVersion: "balanced-new-entrant-v1" } : {}) } } });
     }
     return { lineNumber: record.lineNumber, outcome: "CREATED", leadId, ...(selection.reason ? { reason: selection.reason } : {}) };
   }

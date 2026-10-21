@@ -3,6 +3,7 @@ import { CampusAssignmentService, type CampusRules, type CampusAssignmentHistory
 import { PersistentAssignmentService } from "./persistent-assignment.service.js";
 import type { SheetAssignment } from "./campus-assignment-resolver.js";
 import type { RecordedAssignmentDecision } from "./recorded-assignment.js";
+import type { CampusPoolAdministration } from "./campus-pool-administration.js";
 import type { AuthenticatedRequest, Principal } from "../auth/auth.types.js";
 import { RbacGuard, RequireRoles } from "../auth/rbac.guard.js";
 import { AssignmentService, type AssignmentContext, type AssignmentDecision, type AssignmentRule, type AssignmentRuleInput, type AssignmentSimulation } from "./assignment.service.js";
@@ -25,10 +26,16 @@ export class AssignmentController {
   }
 
   @Put("config")
-  configure(@Body() body: { rules?: AssignmentRuleInput[]; campusId?: string; expectedVersion?: number; automaticEnabled?: boolean }, @Req() request: AuthenticatedRequest): { rules: AssignmentRule[] } | Promise<CampusRules> {
+  configure(@Body() body: { rules?: AssignmentRuleInput[]; campusId?: string; expectedVersion?: number; automaticEnabled?: boolean; confirmedNewCohort?: boolean }, @Req() request: AuthenticatedRequest): { rules: AssignmentRule[] } | Promise<CampusRules> {
     const principal = this.principal(request);
-    if (this.campusAssignment) return this.campusAssignment.configure(principal, body.campusId ?? "", body.expectedVersion ?? -1, body.rules, request.header("x-correlation-id") ?? "missing-correlation", body.automaticEnabled);
+    if (this.campusAssignment) return this.campusAssignment.configure(principal, body.campusId ?? "", body.expectedVersion ?? -1, body.rules, request.header("x-correlation-id") ?? "missing-correlation", body.automaticEnabled, body.confirmedNewCohort);
     return { rules: this.assignment.configure(body.rules ?? [], principal, request.header("x-correlation-id") ?? "missing-correlation") };
+  }
+
+  @Get("pool-administration")
+  poolAdministration(@Query("campusId") campusId: string | undefined, @Req() request: AuthenticatedRequest): Promise<CampusPoolAdministration> {
+    if (!this.campusAssignment) throw new BadRequestException({ code: "assignment_balance_persistence_required" });
+    return this.campusAssignment.poolAdministration(this.principal(request), campusId ?? "");
   }
 
   @Post("simulate")
