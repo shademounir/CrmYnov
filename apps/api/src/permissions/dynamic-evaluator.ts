@@ -128,3 +128,18 @@ export function admissionsResponsibleCapability(roleList: readonly Role[], rows:
   return roleList.filter((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))
     .some((role) => explainRole(role, "appointment.manage", rows, context).allowed);
 }
+
+/** Finite recipient eligibility for the internal-mail worker, never HTTP authority.
+ * Callers must resolve an activated CRM account and its actual resource context
+ * inside the shared permission fence. No ownership or scope is manufactured here.
+ */
+export function businessMailRecipientCapability(roleList: readonly Role[], purpose: "COPY" | "FOLLOW_UP_OWNER" | "LEAD_PRIMARY" | "ADMISSIONS_RESPONSIBLE", rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  const permissions: Record<string, readonly string[]> = {
+    COPY: ["lead.view"], FOLLOW_UP_OWNER: ["lead.view", "reminder.manage"],
+    LEAD_PRIMARY: ["lead.view", "interaction.create"], ADMISSIONS_RESPONSIBLE: ["lead.view", "appointment.manage"],
+  };
+  if (!Object.hasOwn(permissions, purpose) || !context.active || context.restriction) return false;
+  if (new Set(rows.map(row => configurationKey(row))).size !== rows.length) return false;
+  const recipients = [...new Set(roleList)].filter(role => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+  return permissions[purpose]!.every(key => recipients.some(role => explainRole(role, key, rows, context).allowed));
+}
