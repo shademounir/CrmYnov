@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
-  "version": "v0.1.0-rc.38",
+  "version": "v0.1.0-rc.39",
   "profile": "application",
-  "targetCommit": "ded5f22d3d7a4394221bdff39f72c45804f80c19",
+  "targetCommit": "f862738b0c0c4a340bc61487cbd09549f3ca2c8a",
   "projectKey": "CRMY",
   "tickets": [
     "CRMY-48"
   ],
-  "sha256": "9663b5fa35f4341dfe8062afc68f4533619836d33d1e57b1520b554e17559e82"
+  "sha256": "c9b7741fc55d3ed55bfbdeb233c4a6fbaadb28f752186dd70f5810cd10537fc8"
 }
