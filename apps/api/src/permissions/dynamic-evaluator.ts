@@ -128,3 +128,31 @@ export function admissionsResponsibleCapability(roleList: readonly Role[], rows:
   return roleList.filter((role) => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role))
     .some((role) => explainRole(role, "appointment.manage", rows, context).allowed);
 }
+
+/** Finite recipient eligibility for the internal-mail worker, never HTTP authority.
+ * Callers must resolve an activated CRM account and its actual resource context
+ * inside the shared permission fence. No ownership or scope is manufactured here.
+ */
+export function businessMailRecipientCapability(roleList: readonly Role[], purpose: "COPY" | "FOLLOW_UP_OWNER" | "LEAD_PRIMARY" | "ADMISSIONS_RESPONSIBLE", rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  const permissions: Record<string, readonly string[]> = {
+    COPY: ["lead.view"], FOLLOW_UP_OWNER: ["lead.view", "reminder.manage"],
+    LEAD_PRIMARY: ["lead.view", "interaction.create"], ADMISSIONS_RESPONSIBLE: ["lead.view", "appointment.manage"],
+  };
+  if (!Object.hasOwn(permissions, purpose) || !context.active || context.restriction) return false;
+  if (new Set(rows.map(row => configurationKey(row))).size !== rows.length) return false;
+  const recipients = [...new Set(roleList)].filter(role => ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"].includes(role));
+  return permissions[purpose]!.every(key => recipients.some(role => explainRole(role, key, rows, context).allowed));
+}
+
+/** Configuration of one system-owned mail job includes global budgets. This
+ * narrowly checks the actual activated Super Admin anchor for delegated tooling;
+ * it grants no HTTP identity, role or permission and never represents that person
+ * as the executor of the operator audit. */
+export function businessMailConfigurationCapability(roleList: readonly Role[], rows: readonly ConfigurationSnapshot[], context: EvaluationContext): boolean {
+  if (!roleList.includes("SUPER_ADMIN") || !context.globalAllowed || new Set(rows.map(row => configurationKey(row))).size !== rows.length) return false;
+  // Like the canonical HTTP resource resolver, a reserved global permission is
+  // evaluated against GLOBAL. The separate campus permission still uses the real
+  // selected campus and its ceilings. No global scope is invented for a non-global identity.
+  return explainRole("SUPER_ADMIN", "settings.global.manage", rows, { ...context, campus: GLOBAL_CAMPUS, campusAllowed: false }).allowed
+    && explainRole("SUPER_ADMIN", "settings.campus.manage", rows, context).allowed;
+}

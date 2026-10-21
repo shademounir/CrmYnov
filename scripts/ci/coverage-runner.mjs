@@ -93,4 +93,8 @@ run(process.execPath, ["scripts/ci/access-recovery-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/bootstrap-import-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/cutover-postgres.mjs"]);
 run(process.execPath, ["scripts/ci/sheet-append-postgres.mjs"]);
+// The protective SQL proof contributes real execution coverage as well as its
+// separate migration-policy gate; do not exclude the new guard from analysis.
+run(process.execPath, ["scripts/ci/protective-journal-postgres.mjs"]);
+run(process.execPath, ["scripts/ci/business-mail-postgres.mjs"]);
 leadWorkflowPostgresProofs();

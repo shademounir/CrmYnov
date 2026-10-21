@@ -448,7 +448,14 @@ export class LeadPersistenceRepository {
   }
 
   private mapActivity(row: PrismaLeadActivity): LeadActivityRecord {
-    return {
+    return mapPersistedLeadActivity(row);
+  }
+}
+
+/** Shared persisted treatment projection. No recording timestamp is substituted
+ * for the original exchange; compensation semantics remain those of the CRM. */
+export function mapPersistedLeadActivity(row: PrismaLeadActivity): LeadActivityRecord {
+  return {
       id: row.id, leadId: row.leadId, type: row.type as LeadActivityRecord["type"], result: row.result,
       ...(row.note ? { note: row.note } : {}), authorId: row.authorId,
       ...(row.nextActionAt ? { nextActionAt: row.nextActionAt.toISOString() } : {}), correlationId: row.correlationId,
@@ -459,6 +466,5 @@ export class LeadPersistenceRepository {
           previous: row.previousSnapshot as unknown as NonNullable<LeadActivityRecord["correction"]>["previous"],
           ...(row.replacementSnapshot ? { replacement: row.replacementSnapshot as unknown as NonNullable<LeadActivityRecord["correction"]>["replacement"] } : {}) } as ActivityCorrection,
       } : {}),
-    };
-  }
+  };
 }

@@ -21,13 +21,22 @@ function unquotedToken(source, at) {
     const value = (word ?? number)[0];
     return { token: { kind: word ? "word" : "number", value }, at: at + value.length };
   }
-  const operator = [">=", "<=", "<>", "!=", "(", ")", ",", ">", "<", "=", "+", "-", ".", "[", "]"].find(value => rest.startsWith(value));
+  const operator = [">=", "<=", "<>", "!=", "(", ")", ",", ">", "<", "=", "+", "-", ".", "[", "]", "~"].find(value => rest.startsWith(value));
   if (!operator) throw new Error("unknown_sql_token");
   return { token: { kind: "symbol", value: operator }, at: at + operator.length };
 }
 
 function nextSqlToken(source, at) {
   if (source.startsWith("/*", at) || source.startsWith("*/", at)) throw new Error("ambiguous_sql_comment");
+  if (source[at] === "$") {
+    const delimiter = /^\$(?:[A-Za-z_]\w*)?\$/u.exec(source.slice(at))?.[0];
+    if (!delimiter) throw new Error("unknown_sql_token");
+    const end = source.indexOf(delimiter, at + delimiter.length);
+    if (end < 0 || end - at > 10000) throw new Error("unbounded_sql_body");
+    // Lexical support is NOT authorization: function bodies remain fail-closed
+    // unless the complete protective group is structurally recognized.
+    return { token: { kind: "body", value: source.slice(at + delimiter.length, end) }, at: end + delimiter.length };
+  }
   if (source[at] === "'" || source[at] === '"') return quotedToken(source, at);
   return unquotedToken(source, at);
 }
@@ -89,7 +98,7 @@ function completedTableParts(tokens, at, start, parts) {
   return parts.some(part => part.length === 0) ? [] : parts;
 }
 
-function tableDefinitionParts(tokens) {
+export function tableDefinitionParts(tokens) {
   let depth = 1; let start = 4; const parts = [];
   for (let at = 4; at < tokens.length; at += 1) {
     if (symbol(tokens[at], "(")) depth += 1;

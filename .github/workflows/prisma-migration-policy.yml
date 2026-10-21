@@ -87,3 +87,8 @@ jobs:
           npx prisma validate --schema apps/api/prisma/schema.prisma
           npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
           npx prisma migrate status --schema apps/api/prisma/schema.prisma
+
+      - name: Prove bounded protective journal grammar and enforcement on isolated PostgreSQL
+        run: |
+          node --test scripts/pr-policy/tests/protective-journal-grammar.test.mjs
+          node scripts/ci/protective-journal-postgres.mjs

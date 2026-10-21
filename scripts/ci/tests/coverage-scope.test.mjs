@@ -35,6 +35,8 @@ test("canonical coverage remaps before the unchanged filters and is used by CI",
   assert.match(runner, /npm\(\["test"\]\)/);
   assert.match(runner, /await postgresProofs\(\)/);
   assert.match(runner, /run\(process\.execPath, \["scripts\/ci\/reporting-freshness-postgres\.mjs"\]\)/);
+  assert.match(runner, /run\(process\.execPath, \["scripts\/ci\/protective-journal-postgres\.mjs"\]\)/);
+  assert.match(runner, /run\(process\.execPath, \["scripts\/ci\/business-mail-postgres\.mjs"\]\)/);
   assert.match(runner, /leadWorkflowPostgresProofs\(\)/);
   assert.match(runner, /coverage_instrumentation_required/);
   assert.match(runner, /coverage_database_identity_mismatch/);
