@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { recognizedForeignKeyWords, sqlStatements, statementText, structuredAddColumn } from "./migration-grammar.mjs";
+import { recognizedProtectiveJournalPlan } from "./protective-journal-grammar.mjs";
 
 const MIGRATION_SQL = /^apps\/api\/prisma\/migrations\/([^/]+)\/migration\.sql$/;
 const ROLLBACK_DOC = /^apps\/api\/prisma\/migrations\/([^/]+)\/rollback\.md$/;
@@ -52,7 +53,9 @@ function safeVarcharWidening(lexemes, evidence) {
   return Boolean(candidate);
 }
 
-function statementReason(lexemes, newTables, uniquenessValidated, evidence) {
+function statementReason(lexemes, newTables, uniquenessValidated, evidence, protectiveTable = false) {
+  // New lexical forms do not broaden unrelated CREATE TABLE/default/function SQL.
+  if (lexemes.some(token => token.kind === "body" || token.kind === "symbol" && token.value === "~" && !protectiveTable)) return "migration_sql_ambiguous";
   const statement = statementText(lexemes);
   const upper = statement.toUpperCase();
   const allowedActions = recognizedForeignKeyWords(lexemes);
@@ -93,7 +96,8 @@ export function analyzeMigrationSql(sql, evidence = undefined) {
   catch { return result([...reasons, "migration_sql_ambiguous"], { statementCount: 0 }); }
   const newTables = createdTables(items.map(statementText));
   const uniquenessValidated = lines.has("-- prisma-policy: uniqueness-validated") || evidenceMarkers.has("uniqueness-validated");
-  reasons.push(...items.map((statement) => statementReason(statement, newTables, uniquenessValidated, evidence)).filter(Boolean));
+  const protective = recognizedProtectiveJournalPlan(items);
+  reasons.push(...items.filter(statement => !protective.statements.has(statement)).map((statement) => statementReason(statement, newTables, uniquenessValidated, evidence, protective.tables.has(statement))).filter(Boolean));
   return result(reasons, { statementCount: items.length });
 }
 
