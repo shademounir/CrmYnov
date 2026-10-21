@@ -1,7 +1,13 @@
 # Préparation des rappels métier internes — non activée
 
 Ce socle prépare des messages sur des faits fournis par le serveur. Il ne constitue
-pas une autorisation, un worker ou un envoi Gmail. Aucun module
+pas une autorisation ni un worker. Un transport Gmail séparé est préparé et testé
+hors réseau : To/Cc validés, MIME français texte/HTML, délai total de 15 secondes,
+zéro retry OAuth/POST, erreurs privées masquées et identifiant fournisseur requis.
+Il ne résout pas les droits et exige en amont les fences métier et un SENDING commis.
+Il ne fournit aucune garantie d'appartenance à partir d'une adresse : seul l'adaptateur
+serveur futur pourra établir les destinataires internes autorisés.
+Aucun module
 Nest, job, outbox existante, invitation ou variable PROD ne le référence.
 `PREPARED` signifie uniquement « modèle et sélection préparés », jamais « envoyé ».
 
