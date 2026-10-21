@@ -7,7 +7,7 @@ import { BusinessMailJournal, type MailJournalInput } from "../src/business-mail
 
 const options = { skip: process.env.CRMY_MAIL_EPHEMERAL_TEST !== "true" };
 const digest = (s: string): string => createHash("sha256").update(s).digest("hex");
-const input = (label: string): MailJournalInput => ({ key: digest(label), eventType: "FOLLOW_UP_DUE", resourceId: "synthetic-task", templateVersion: "fr-v1", fingerprint: digest("synthetic-content"), recipientUserIds: ["synthetic-owner"] });
+const input = (label: string): MailJournalInput => ({ key: digest(label), eventType: "FOLLOW_UP_DUE", resourceId: "synthetic-task", templateVersion: "fr-v1", fingerprint: digest("synthetic-content"), recipientSnapshots: [[1, "synthetic-owner", "owner@example.test", "TO", "synthetic-campus", "synthetic-campaign"]] });
 
 test("Business mail real PG: committed unique sending fence, process restart, faults and immutable terminal evidence", options, async () => {
   const url = new URL(process.env.DATABASE_URL ?? ""); assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.pathname, "/crmy_mail_synthetic");
@@ -27,6 +27,9 @@ test("Business mail real PG: committed unique sending fence, process restart, fa
     assert.deepEqual(await b.reserveSending(key), { reserved: false, state: "ACCEPTED" });
     await assert.rejects(() => b.reserveSending({ ...key, fingerprint: digest("different content") }), /business_mail_journal_key_conflict/);
     const accepted = await db.businessMailDelivery.findUniqueOrThrow({ where: { key: key.key } });
+    assert.deepEqual(accepted.recipientUserIds, key.recipientSnapshots, "Historical addresses, recipient roles and exact scope survive independently of current profiles");
+    await assert.rejects(() => b.reserveSending({ ...key, recipientSnapshots: [[1, "synthetic-owner", "changed@example.test", "TO", "synthetic-campus", "synthetic-campaign"]] }), /business_mail_journal_key_conflict/);
+    await assert.rejects(() => db.$executeRaw`UPDATE business_mail_deliveries SET recipient_user_ids=${JSON.stringify([[1, "synthetic-owner", "changed@example.test", "TO", "synthetic-campus", "synthetic-campaign"]])}::jsonb WHERE key=${key.key}`);
     await assert.rejects(() => db.$executeRaw`UPDATE business_mail_deliveries SET status='SENDING',accepted_at=NULL,provider_message_id=NULL WHERE key=${key.key}`);
     await assert.rejects(() => db.$executeRaw`DELETE FROM business_mail_deliveries WHERE key=${key.key}`);
     await assert.rejects(() => db.$executeRawUnsafe('TRUNCATE business_mail_deliveries'));

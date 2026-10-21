@@ -1,14 +1,15 @@
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import type { BusinessMailType } from "./business-mail-policy.js";
+import { canonicalMailRecipients, type MailRecipientSnapshot } from "./business-mail-evidence.js";
 
 export interface MailJournalInput {
   key: string; eventType: BusinessMailType; resourceId: string; templateVersion: string;
-  fingerprint: string; recipientUserIds: readonly string[];
+  fingerprint: string; recipientSnapshots: readonly MailRecipientSnapshot[];
 }
 export type MailJournalState = "SENDING" | "ACCEPTED" | "UNCERTAIN";
 export type MailUncertaintyCode = "TRANSPORT_UNCONFIRMED" | "PROCESS_INTERRUPTED" | "ACCEPTANCE_COMMIT_UNCONFIRMED";
-interface JournalRow { key: string; status: MailJournalState; fingerprint: string; event_type: string; resource_id: string; template_version: string; recipient_user_ids: string[] }
+interface JournalRow { key: string; status: MailJournalState; fingerprint: string; event_type: string; resource_id: string; template_version: string; recipient_user_ids: MailRecipientSnapshot[] }
 const events = new Set(["FOLLOW_UP_DUE", "FOLLOW_UP_OVERDUE", "FIRST_TREATMENT_OVERDUE", "CONFIRMATION_EXPECTED", "RETURN_EXPECTED"]);
 
 /** Dedicated root client: SENDING must commit independently BEFORE any provider call.
@@ -19,10 +20,8 @@ export class BusinessMailJournal {
 
   async reserveSending(input: MailJournalInput): Promise<{ reserved: true; token: string } | { reserved: false; state: MailJournalState }> {
     if (!/^[a-f0-9]{64}$/.test(input.key) || !/^[a-f0-9]{64}$/.test(input.fingerprint) || !events.has(input.eventType)
-      || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.resourceId) || !/^[a-zA-Z0-9_-]{1,24}$/.test(input.templateVersion)
-      || input.recipientUserIds.length < 1 || input.recipientUserIds.length > 1000
-      || input.recipientUserIds.some(id => !/^[a-zA-Z0-9_-]{1,100}$/.test(id)) || new Set(input.recipientUserIds).size !== input.recipientUserIds.length) throw new Error("business_mail_journal_input_invalid");
-    const token = randomUUID(), recipients = JSON.stringify(input.recipientUserIds);
+      || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.resourceId) || !/^[a-zA-Z0-9_-]{1,24}$/.test(input.templateVersion)) throw new Error("business_mail_journal_input_invalid");
+    const token = randomUUID(), recipients = canonicalMailRecipients(input.recipientSnapshots);
     return this.client.$transaction(async tx => {
       const inserted = await tx.$queryRaw<Array<{ key: string }>>`INSERT INTO business_mail_deliveries
         (key,event_type,resource_id,template_version,fingerprint,recipient_user_ids,sending_token)

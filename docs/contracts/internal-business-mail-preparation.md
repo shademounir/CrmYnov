@@ -22,6 +22,12 @@ ni les verrous du dossier et n’est pas branché au transport. Son empreinte de
 le contenu rendu, les destinataires ordonnés et le périmètre effectivement autorisé.
 Une panne avant le commit de réservation ne permet aucun appel fournisseur ; après
 commit, une panne reste conservativement incertaine même si aucun appel n’a eu lieu.
+Le JSON immuable `recipient_user_ids` conserve désormais des tuples versionnés,
+ordonnés : version, identifiant CRM, adresse historique, To/Cc, campus et campagne.
+Le nom SQL historique et les quatorze colonnes protégées restent inchangés. Le
+fingerprint lie aussi les faits rendus et le contenu exact du modèle. Ce format
+évite toute dépendance à l'ordre des clés d'objet JSONB ; aucun ancien journal
+PROD n'est converti (cette migration n'y est pas encore déployée).
 
 ## Sélection et contenu
 
