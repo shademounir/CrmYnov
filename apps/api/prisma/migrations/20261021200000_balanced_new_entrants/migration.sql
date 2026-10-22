@@ -13,7 +13,7 @@ CREATE TABLE "campus_new_assignment_counters" (
   FOREIGN KEY ("user_id") REFERENCES "collaborators" ("id")
 );
 CREATE TABLE "campus_new_assignment_receipts" (
-  "event_hash" VARCHAR(64) PRIMARY KEY CHECK (length("event_hash") = 64 AND translate("event_hash", '0123456789abcdef', '') = ''),
+  "event_hash" VARCHAR(64) PRIMARY KEY CHECK (length("event_hash") = 64 AND length(translate("event_hash", '0123456789abcdef', '')) = 0),
   "lead_id" UUID NOT NULL,
   "campus_id" UUID NOT NULL,
   "version" INTEGER NOT NULL CHECK ("version" > 0),
