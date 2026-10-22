@@ -7,6 +7,7 @@ import { prepareBusinessMail, type BusinessMailPolicy, type PreparedBusinessMail
 import { businessMailEvidence } from "./business-mail-evidence.js";
 import { BusinessMailJournal } from "./business-mail-journal.js";
 import { GmailBusinessMailSender } from "./gmail-business-mail.sender.js";
+import { mailStage } from "../permissions/safe-mail-diagnostic.js";
 
 export interface MailRuntimeReport { configurationVersion: number; proposedActivationAt: string | null; inspected: number; prepared: number; accepted: number; uncertain: number; recipientDeliveries: number; held: Record<string, number>; byType: Record<string, number>; byScope: Record<string, number>; roster: Record<string, number> }
 export const emptyMailReport = (): MailRuntimeReport => ({ configurationVersion: 0, proposedActivationAt: null, inspected: 0, prepared: 0, accepted: 0, uncertain: 0, recipientDeliveries: 0, held: {}, byType: {}, byScope: {}, roster: {} });
@@ -23,7 +24,8 @@ export class BusinessMailRuntime {
 
   async run(mode: "PREFLIGHT" | "SEND", signal = AbortSignal.timeout(240000)): Promise<MailRuntimeReport> {
     const report = emptyMailReport();
-    const configuration = await this.client.businessMailConfiguration.findUnique({ where: { id: BUSINESS_MAIL_CONFIGURATION_ID } });
+    signal.throwIfAborted();
+    const configuration = await mailStage("CONFIGURATION_READ", () => this.client.businessMailConfiguration.findUnique({ where: { id: BUSINESS_MAIL_CONFIGURATION_ID } }));
     if (!configuration) { hold(report, "CONFIGURATION_MISSING"); return report; }
     if (mode === "SEND" && (!configuration.enabled || !configuration.activatedAt || !configuration.qualificationKey)) { hold(report, "DISABLED"); return report; }
     if (mode === "SEND" && !this.sender.configured()) throw new Error("business_mail_transport_unconfigured");
@@ -32,15 +34,17 @@ export class BusinessMailRuntime {
     const now = clock[0]!.now;
     const baseline = configuration.activatedAt ?? now;
     report.configurationVersion = configuration.version; report.proposedActivationAt = baseline.toISOString();
-    const candidates = await this.permissions.readTransaction(tx => discoverMailCandidates(tx, settings, baseline, now));
-    if (mode === "PREFLIGHT") await this.permissions.readTransaction(async tx => {
+    const options = { businessMailFence: { signal } };
+    const candidates = await mailStage("DISCOVERY_FENCE", () => this.permissions.readTransaction(tx => discoverMailCandidates(tx, settings, baseline, now), options));
+    if (mode === "PREFLIGHT") await mailStage("DISCOVERY_FENCE", () => this.permissions.readTransaction(async tx => {
       report.held = await estimateHeldMailBacklog(tx, settings, baseline);
       const members = await tx.collaborator.findMany({ where: { id: { in: settings.memberUserIds } }, select: { active: true, firstLoginRequired: true } });
       report.roster = { configuredAccounts: settings.memberUserIds.length, configuredMemberships: await tx.businessMailMembership.count({ where: { campusId: settings.campusId, campaignId: { in: settings.campaignIds }, active: true } }),
         activatedAccounts: members.filter(row => row.active && !row.firstLoginRequired).length, firstLoginPending: members.filter(row => row.active && row.firstLoginRequired).length,
         inactiveOrUnavailable: settings.memberUserIds.length - members.filter(row => row.active).length };
-    });
-    if (mode === "SEND") await this.journal.retainInterrupted(new Date(now.valueOf() - 300000));
+    }, options));
+    signal.throwIfAborted();
+    if (mode === "SEND") await mailStage("RETAIN_INTERRUPTED", () => this.journal.retainInterrupted(new Date(now.valueOf() - 300000)));
     for (const candidate of candidates) {
       signal.throwIfAborted();
       await this.inspect(candidate, mode, signal, report);
@@ -49,8 +53,12 @@ export class BusinessMailRuntime {
   }
 
   private async inspect(candidate: MailCandidate, mode: "PREFLIGHT" | "SEND", signal: AbortSignal, report: MailRuntimeReport): Promise<void> {
-    signal = AbortSignal.any([signal, AbortSignal.timeout(20000)]);
-    await this.permissions.transaction(async tx => {
+    await mailStage("CANDIDATE_FENCE", () => this.permissions.transaction(async tx => {
+      signal.throwIfAborted();
+      // Waiting for the initial fence must not consume a fresh candidate's
+      // bounded action window. The original global deadline is never reset.
+      const candidateSignal = AbortSignal.any([signal, AbortSignal.timeout(20000)]);
+      await mailStage("CANDIDATE_FACTS", async () => {
       report.inspected++;
       const configuration = await tx.businessMailConfiguration.findUniqueOrThrow({ where: { id: BUSINESS_MAIL_CONFIGURATION_ID } });
       if (configuration.version !== report.configurationVersion) throw new Error("business_mail_configuration_changed_during_scan");
@@ -71,15 +79,16 @@ export class BusinessMailRuntime {
       const scope = facts.scope.campusId + "/" + facts.scope.campaignId; report.byScope[scope] = (report.byScope[scope] ?? 0) + 1;
       report.recipientDeliveries += prepared.message.recipientUserIds.length;
       if (mode === "PREFLIGHT") return;
-      await this.emit(tx, facts.resourceId, facts.scope, prepared.message, settings, signal, report);
-    }, "read-audited");
+      await this.emit(tx, facts.resourceId, facts.scope, prepared.message, settings, candidateSignal, report);
+      });
+    }, "read-audited", { businessMailFence: { signal } }));
   }
 
   private async emit(tx: Prisma.TransactionClient, resourceId: string, scope: { campusId: string; campaignId: string | null }, message: PreparedBusinessMail,
     limits: Parameters<BusinessMailJournal["reserveSending"]>[0]["limits"], signal: AbortSignal, report: MailRuntimeReport): Promise<void> {
     signal.throwIfAborted();
     const evidence = businessMailEvidence(message, scope, this.origin);
-    const reservation = await this.journal.reserveSending({ key: message.key, eventType: message.type, resourceId, templateVersion: message.templateVersion, ...evidence, limits });
+    const reservation = await mailStage("JOURNAL_RESERVATION", () => this.journal.reserveSending({ key: message.key, eventType: message.type, resourceId, templateVersion: message.templateVersion, ...evidence, limits }));
     if (!reservation.reserved) { hold(report, "reason" in reservation ? reservation.reason : "ALREADY_RETAINED_NO_REPLAY"); return; }
     // Check the outer transaction and caller deadline after the independent commit.
     // A failed fence/deadline after SENDING is uncertain, never a free retry token.
@@ -87,13 +96,13 @@ export class BusinessMailRuntime {
     try {
       await tx.$queryRaw`SELECT 1`;
       signal.throwIfAborted();
-      const result = await this.sender.sendPrepared(message, signal);
+      const result = await mailStage("TRANSPORT", () => this.sender.sendPrepared(message, signal));
       transportAccepted = true;
-      if (!await this.journal.accepted(message.key, reservation.token, result.providerMessageId)) throw new Error("business_mail_acceptance_commit_unconfirmed");
+      if (!await mailStage("JOURNAL_ACCEPTANCE", () => this.journal.accepted(message.key, reservation.token, result.providerMessageId))) throw new Error("business_mail_acceptance_commit_unconfirmed");
       report.accepted++;
     } catch {
       report.uncertain++;
-      await this.journal.uncertain(message.key, reservation.token, transportAccepted ? "ACCEPTANCE_COMMIT_UNCONFIRMED" : "TRANSPORT_UNCONFIRMED");
+      await mailStage("JOURNAL_UNCERTAIN", () => this.journal.uncertain(message.key, reservation.token, transportAccepted ? "ACCEPTANCE_COMMIT_UNCONFIRMED" : "TRANSPORT_UNCONFIRMED"));
     }
   }
 }
