@@ -5,6 +5,7 @@ import type { Principal } from "../auth/auth.types.js";
 import { PrismaService } from "../persistence/prisma.service.js";
 import type { AppointmentEvent, AppointmentRecord, InterviewReport } from "./appointment.service.js";
 import { assertAppointmentFree, lockAppointmentParticipants } from "./appointment-locks.js";
+import { appointmentCreationSignature, creationSignatureFromAudit } from "./appointment-creation-signature.js";
 
 type AppointmentRow = Prisma.AppointmentGetPayload<{
   include: { participants: true; events: true; interviewReports: true; admissionsBooking: true };
@@ -14,6 +15,7 @@ export interface AppointmentSnapshot {
   items: AppointmentRecord[];
   events: AppointmentEvent[];
   reports: InterviewReport[];
+  creationReceipts?: Array<{ id: string; idempotencyKey: string; signature: string }>;
 }
 
 @Injectable()
@@ -47,7 +49,19 @@ export class AppointmentPersistenceRepository {
       where: { id: { in: collaboratorIds } },
       select: { id: true, professionalDisplayName: true },
     })).map((collaborator) => [collaborator.id, collaborator.professionalDisplayName?.trim() || undefined]));
+    const creationKeys = rows.flatMap((row) => row.events.filter((event) => event.eventType === "APPOINTMENT_CREATED").map((event) => `appointment-audit-${this.hash(event.idempotencyKey)}`));
+    const creationAudits = creationKeys.length ? await client.auditEvent.findMany({
+      where: { resourceType: "APPOINTMENT", eventType: "APPOINTMENT_CREATED", result: "SUCCESS", idempotencyKey: { in: creationKeys } },
+      select: { resourceId: true, idempotencyKey: true, after: true },
+    }) : [];
+    const byKey = new Map(creationAudits.map((audit) => [audit.idempotencyKey, audit]));
     return {
+      creationReceipts: rows.flatMap((row) => row.events.filter((event) => event.eventType === "APPOINTMENT_CREATED").flatMap((event) => {
+        const audit = byKey.get(`appointment-audit-${this.hash(event.idempotencyKey)}`);
+        if (audit?.resourceId !== row.id) return [];
+        const signature = creationSignatureFromAudit(this.mapAppointment(row, collaboratorLabels), audit.after);
+        return signature ? [{ id: row.id, idempotencyKey: event.idempotencyKey, signature }] : [];
+      })),
       items: rows.map((row) => this.mapAppointment(row, collaboratorLabels)),
       events: rows.flatMap((row) => row.events.map((event) => ({
         id: event.id, appointmentId: event.appointmentId, type: event.eventType,
@@ -195,7 +209,7 @@ export class AppointmentPersistenceRepository {
     await tx.auditEvent.create({ data: {
       eventType, campusId: record.campus ?? null, resourceType: "APPOINTMENT", resourceId: record.id,
       actorId: principal.userId, actorRoles: principal.roles, sessionId: principal.sessionId, correlationId,
-      after: { appointmentId: record.id, leadId: record.leadId, type: record.type, mode: record.mode, state: record.state, startsAt: record.startsAt, durationMinutes: record.durationMinutes, campus: record.campus, version: record.version },
+      after: { appointmentId: record.id, leadId: record.leadId, type: record.type, mode: record.mode, state: record.state, startsAt: record.startsAt, durationMinutes: record.durationMinutes, campus: record.campus, version: record.version, ...(eventType === "APPOINTMENT_CREATED" ? { creationSignature: appointmentCreationSignature(record) } : {}) },
       result: "SUCCESS", idempotencyKey: `appointment-audit-${this.hash(idempotencyKey)}`,
     } });
   }
