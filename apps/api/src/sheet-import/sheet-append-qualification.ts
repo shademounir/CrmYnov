@@ -5,11 +5,15 @@ import type { DynamicPermissionRepository, PermissionTransaction } from "../perm
 import { APPEND_MODE, APPEND_POLICY, appendInvalid } from "./sheet-append-contract.js";
 import type { AppendStream } from "./sheet-append-ledger.js";
 import { BOUNDED_BOOTSTRAP_POLICY } from "../bootstrap-import/bounded-bootstrap.js";
+import { historicalExact, historicalCheck, historicalHash, readHistoricalPin, type HistoricalPin } from "./sheet-historical-contract.js";
+import { verifiedHistoricalFingerprints } from "./sheet-historical-ledger.js";
+import type { HistoricalRuntimeEvidence } from "./sheet-append-boundary-file.js";
 
 export const DEFERRED_RESERVATION_POLICY = "CONTACT_OR_EXACT_NAME_REVIEW_NO_AUTO_LINK" as const;
 
 export interface SheetAppendQualificationArtifact {
-  schemaVersion: 1 | 2; mode: typeof APPEND_MODE; policy: typeof APPEND_POLICY; boundaryArtifactSha256: string;
+  schemaVersion: 1 | 2 | 3; mode: typeof APPEND_MODE; policy: typeof APPEND_POLICY; boundaryArtifactSha256: string;
+  bootstrapProofVersion?: 2; historicalAmendments?: HistoricalPin;
   bootstrapPackageId: string; excelSha256: string; reportSha256: string; bindingSha256: string; evidenceSha256: string; qualifiedAt: string;
   producerCondition: { confirmedAt: string; evidenceSha256: string };
   boundedBootstrap?: { policy: typeof BOUNDED_BOOTSTRAP_POLICY; inventorySha256: string; deferredOccurrences: number; deferredWithoutUsableContact: number; reservationPolicy: typeof DEFERRED_RESERVATION_POLICY };
@@ -17,6 +21,16 @@ export interface SheetAppendQualificationArtifact {
 export interface SheetAppendQualification extends SheetAppendQualificationArtifact { artifactSha256: string; delegation: CutoverDelegation }
 export function readAppendQualification(raw: unknown): SheetAppendQualificationArtifact {
   const value = cutoverObject(raw), producer = cutoverObject(value.producerCondition);
+  if (value.schemaVersion === 3) {
+    const fields = ["schemaVersion","mode","policy","boundaryArtifactSha256","bootstrapPackageId","excelSha256","reportSha256","bindingSha256","evidenceSha256","qualifiedAt","producerCondition","boundedBootstrap","bootstrapProofVersion","historicalAmendments"];
+    historicalExact(value,[...fields,...("artifactSha256" in value?["artifactSha256"]:[]),...("delegation" in value?["delegation"]:[])]);
+    historicalCheck(value.bootstrapProofVersion===2,"bootstrap_version");readHistoricalPin(value.historicalAmendments);
+    historicalExact(value.producerCondition,["confirmedAt","evidenceSha256"]);
+    historicalExact(value.boundedBootstrap,["policy","inventorySha256","deferredOccurrences","deferredWithoutUsableContact","reservationPolicy"]);
+    const legacy={...value};delete legacy.bootstrapProofVersion;delete legacy.historicalAmendments;
+    readAppendQualification({...legacy,schemaVersion:2});return value as unknown as SheetAppendQualificationArtifact;
+  }
+  if ("historicalAmendments" in value || "bootstrapProofVersion" in value) appendInvalid("qualification_invalid");
   const bounded = value.schemaVersion === 2 ? cutoverObject(value.boundedBootstrap) : {};
   if (![1, 2].includes(Number(value.schemaVersion)) || value.schemaVersion !== Number(value.schemaVersion) || value.mode !== APPEND_MODE || value.policy !== APPEND_POLICY
     || (value.schemaVersion === 1 ? value.boundedBootstrap !== undefined : bounded.policy !== BOUNDED_BOOTSTRAP_POLICY || bounded.reservationPolicy !== DEFERRED_RESERVATION_POLICY
@@ -46,7 +60,7 @@ export function appendBootstrapProofHash(raw: unknown, schemaVersion: 1 | 2 = 1)
 }
 
 export function appendBootstrapQualified(report: Record<string, unknown>, qualification: SheetAppendQualificationArtifact): boolean {
-  if (appendBootstrapProofHash(report, qualification.schemaVersion) !== qualification.reportSha256) return false;
+  if (appendBootstrapProofHash(report, qualification.schemaVersion === 3 ? 2 : qualification.schemaVersion) !== qualification.reportSha256) return false;
   if (qualification.schemaVersion === 1) return report.cutoverBlocked === false;
   const bounded = cutoverObject(report.boundedReconciliation), expected = qualification.boundedBootstrap;
   return !!expected && bounded.policy === BOUNDED_BOOTSTRAP_POLICY && bounded.qualified === true && bounded.executedComplete === true
@@ -59,15 +73,24 @@ export function appendBootstrapQualified(report: Record<string, unknown>, qualif
  * explicitly binds a fully disposed inventory with durable unresolved DEFERRED
  * cases; it never asserts complete or changes the legacy cutover contract. */
 export async function assertAppendQualification(tx: PermissionTransaction, stream: AppendStream, permissions: DynamicPermissionRepository,
-  bootstrap: BootstrapImportService | undefined, assignment: boolean): Promise<void> {
+  bootstrap: BootstrapImportService | undefined, assignment: boolean, historical?: HistoricalRuntimeEvidence): Promise<void> {
   const qualification = stream.qualification, contract = stream.contract;
   if (!bootstrap || !contract || !qualification || stream.suspended || qualification.mode !== APPEND_MODE || qualification.policy !== APPEND_POLICY
     || qualification.boundaryArtifactSha256 !== contract.artifactSha256 || qualification.bindingSha256 !== contract.bindingSha256) appendInvalid("qualification_required");
   readAppendQualification(qualification);
+  if (qualification.schemaVersion === 3) await assertHistoricalQualification(tx,stream,historical);
   if (qualification.producerCondition.confirmedAt < contract.capturedAt) appendInvalid("producer_condition_before_boundary");
   await assertCutoverRuntimeAuthority(tx, permissions, qualification.delegation, stream.campusId, stream.id, assignment);
   const pack = await tx.bootstrapImportPackage.findUnique({ where: { id: qualification.bootstrapPackageId } });
   if (!pack?.sealedAt || pack.campusId !== stream.campusId || pack.sha256 !== qualification.excelSha256) appendInvalid("bootstrap_binding_changed");
   const report = cutoverObject(await bootstrap.reportCutoverRuntime(tx, pack.id, qualification.delegation, stream.id, assignment));
   if (!appendBootstrapQualified(report, qualification)) appendInvalid("bootstrap_reconciliation_required");
+}
+export async function assertHistoricalQualification(tx:PermissionTransaction,stream:AppendStream,historical:HistoricalRuntimeEvidence|undefined):Promise<Array<{row:number;fingerprint:string}>>{
+  const q=stream.qualification;historicalCheck(q?.schemaVersion===3&&historical&&q.historicalAmendments,"runtime_evidence_required");
+  const raw:Record<string,unknown>={...q};delete raw.artifactSha256;delete raw.delegation;
+  historicalCheck(q.artifactSha256===historical.qualificationSha256&&historicalHash(raw)===historicalHash(historical.qualification),"qualification_file_changed");
+  const connectors=await tx.sheetImportConnector.findMany({where:{campusId:stream.campusId,workbookId:historical.capability.workbookId,tab:historical.capability.tab},orderBy:{id:"asc"},take:2});
+  historicalCheck(connectors.length===1,"connector_binding");const connector=connectors[0]!;
+  return verifiedHistoricalFingerprints(tx,{files:historical,stream,connectorId:connector.id},readHistoricalPin(q.historicalAmendments),q.qualifiedAt);
 }

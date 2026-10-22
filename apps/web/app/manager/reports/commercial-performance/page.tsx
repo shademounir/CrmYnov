@@ -9,7 +9,7 @@ const metricDefinitions = [
   ["Traitements anciens", "Dossiers principaux ouverts dont le dernier traitement commercial daté connu précède strictement le seuil figé. Historiques non datés, dossiers jamais traités et clôturés exclus. Les affectations et écritures techniques ne rajeunissent pas ce délai."],
 ] as const;
 
-export default async function CommercialPerformancePage({ searchParams = Promise.resolve({}) }: Readonly<{ searchParams?: Promise<Record<string, string | string[] | undefined>> }> = {}): Promise<React.JSX.Element> {
+export default async function CommercialPerformancePage({ searchParams = Promise.resolve({}) }: Readonly<{ searchParams?: Promise<Record<string, string | string[] | undefined>> }>): Promise<React.JSX.Element> {
   const values = await searchParams;
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(values)) {

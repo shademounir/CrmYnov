@@ -1,5 +1,7 @@
 import { Inject, Injectable, HttpException, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { privateHistoricalRuntime, type HistoricalRuntimeEvidence } from "./sheet-append-boundary-file.js";
 import type { Prisma, SheetImportConnector, SheetLocalRow } from "@prisma/client";
 import { PrismaService } from "../persistence/prisma.service.js";
 import { DynamicPermissionRepository } from "../permissions/dynamic-repository.js";
@@ -25,7 +27,7 @@ import { assertAppendQualification } from "./sheet-append-qualification.js";
 import type { IngestionRecordInput } from "../ingestion/ingestion.service.js";
 import { deferredHistoricalCollision, normalizeHistoricalEmail, normalizeHistoricalPhone } from "../bootstrap-import/bootstrap-create-guards.js";
 
-type RunContext = { lease: SheetLease; configuration: SheetConfiguration; authorizedBy: string; campusId: string; workbookId: string; tab: string };
+type RunContext = { lease: SheetLease; configuration: SheetConfiguration; authorizedBy: string; campusId: string; workbookId: string; tab: string; historical:HistoricalRuntimeEvidence|undefined };
 type LocalPositionInput = { streamId: string; position: SheetObservedPosition; row: Record<string, string>; columns: string[] };
 
 function receiptOutcome(outcome: string): "CREATED" | "DUPLICATE" | "IGNORED" | "REVIEW" {
@@ -53,9 +55,10 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     try {
       if (process.env.FORMINATOR_WEBHOOK_ENABLED === "true") throw new Error("sheet_automatic_channel_active");
       const snapshot = sheetObject(claimed.run.configurationSnapshot);
+      const configuration=readSheetConfiguration(snapshot.configuration);
       const context: RunContext = { lease: claimed.lease, configuration: readSheetConfiguration(snapshot.configuration),
         authorizedBy: sheetText(snapshot.authorizedBy), campusId: sheetText(snapshot.campusId),
-        workbookId: sheetText(snapshot.workbookId), tab: sheetText(snapshot.tab) };
+        workbookId: sheetText(snapshot.workbookId), tab: sheetText(snapshot.tab),historical:configuration.source?.identityMode===APPEND_MODE?await privateHistoricalRuntime(process.env,resolve(__dirname,"../../../..")):undefined };
       await this.authorized(context, (): void => undefined);
       // All external I/O occurs outside PostgreSQL transactions and advisory locks.
       const values = await this.source.read(context.workbookId, context.tab, context.configuration);
@@ -107,7 +110,7 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
     const connector = { id: context.lease.connectorId, campusId: context.campusId, workbookId: context.workbookId, tab: context.tab };
     const persisted = await this.authorized(context, async (tx) => {
       this.appendFlags();
-      const result = await persistAppendObservation(tx, connector, context.configuration, context.lease.runId, raw.values);
+      const result = await persistAppendObservation(tx, connector, context.configuration, context.lease.runId, raw.values,new Date(),context.historical);
       this.appendFlags(); return result;
     });
     if (!persisted) return false;
@@ -259,7 +262,7 @@ export class SheetImportExecutor extends ScheduledSheetExecutor {
         if (context.configuration.source?.identityMode === APPEND_MODE) {
           this.appendFlags();
           const stream = await assertAppendBinding(joined, { workbookId: context.workbookId, tab: context.tab, campusId: context.campusId }, context.configuration);
-          await assertAppendQualification(joined, stream, this.permissions, this.bootstrap, context.configuration.assignment.strategy !== "UNASSIGNED");
+          await assertAppendQualification(joined, stream, this.permissions, this.bootstrap, context.configuration.assignment.strategy !== "UNASSIGNED",context.historical);
         }
         else if (context.configuration.source?.sheetId !== undefined) {
           const stream = await appendStream(joined, sheetStreamId(context.workbookId, context.configuration.source.sheetId));

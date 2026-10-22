@@ -58,4 +58,12 @@ export class SheetImportController {
   observeAppend(@Req() request: AuthenticatedRequest, @Param("id") id: string, @Body() body: unknown): ReturnType<SheetImportAdminService["observeAppend"]> {
     return this.service.observeAppend(principal(request), id, body);
   }
+  @Get(":id/historical-review")
+  historicalReview(@Req() request:AuthenticatedRequest,@Param("id") id:string):ReturnType<SheetImportAdminService["historicalReview"]>{
+    return this.service.historicalReview(principal(request),id);
+  }
+  @Post(":id/historical-acknowledgements")
+  historicalAcknowledge(@Req() request:AuthenticatedRequest,@Param("id") id:string,@Body() body:unknown):ReturnType<SheetImportAdminService["historicalAcknowledge"]>{
+    return this.service.historicalAcknowledge(principal(request),id,body);
+  }
 }
