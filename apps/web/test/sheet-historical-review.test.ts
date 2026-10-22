@@ -38,6 +38,15 @@ test("historical client rejects incomplete, forged success and changed pilot bou
  for(const patch of [{activationAllowed:true},{businessEffects:1},{boundaryRow:2587},{revision:2},{connectorVersion:0},{transitions:[]}])assert.throws(()=>historicalReviewState({...valid,...patch}));
 });
 
+test("historical review exposes individually named reason help and semantic full fingerprints without a write",async t=>{
+ const calls:string[]=[];const ui=await recoveryUi(t,(url,init):Promise<Response>=>{calls.push(`${init?.method??"GET"} ${url}`);return Promise.resolve(Response.json(state()));});
+ assert.equal(calls.length,0);await ui.read();
+ assert.ok(ui.doc.querySelector(".sheets-historical-review"));assert.equal(ui.doc.querySelectorAll(".sheets-historical-fingerprints dt").length,4);
+ assert.deepEqual(Array.from(ui.doc.querySelectorAll(".sheets-historical-fingerprints code")).map(x=>x.textContent),["b".repeat(64),"c".repeat(64),"d".repeat(64),"e".repeat(64)]);
+ for(const row of [2585,2586]){const field=ui.doc.querySelector<HTMLTextAreaElement>(`textarea[aria-label="Motif individuel H${row}"]`);assert.ok(field);assert.equal(field.rows,4);assert.equal(field.maxLength,1000);const help=ui.doc.getElementById(field.getAttribute("aria-describedby")??"");assert.match(help?.textContent??"",/sans donnée personnelle/);assert.match(help?.textContent??"",/une seule ligne/);}
+ assert.equal(calls.length,1);assert.ok(calls.every(c=>c.startsWith("GET ")));assert.equal(ui.doc.querySelector("[role=status]"),null);
+});
+
 test("historical UI reconciles a lost acknowledgement response without replaying or inventing success",async t=>{
  const dom=new JSDOM("<!doctype html><div id='root'></div>",{url:"http://localhost/admin/scheduled-sheets"}),saved=new Map<string,PropertyDescriptor|undefined>();
  for(const [key,value]of Object.entries({window:dom.window,self:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,IS_REACT_ACT_ENVIRONMENT:true})){saved.set(key,Object.getOwnPropertyDescriptor(globalThis,key));Object.defineProperty(globalThis,key,{value,configurable:true});}
