@@ -185,7 +185,7 @@ test("CRMY-171 PostgreSQL: technical ingestion, receipt and audit commit or roll
   const coordinator = new SheetImportCoordinator(prisma);
   const claim = await coordinator.claim(connector.id, "MANUAL");
   assert.ok(claim);
-  const ingestion = new PersistentIngestionService(prisma, new AuditService());
+  const ingestion = new PersistentIngestionService(prisma, new AuditService(), new DynamicPermissionRepository(prisma));
   const mapping = { id: "mapping-1234567890abcdef12345678", version: 1 };
   const record = { lineNumber: 1, firstName: "Lead", lastName: "Synthétique", email: `synthetic-${marker}@example.invalid`, campus: campus.code, program: program.code,
     campaign: campaign.code, educationLevel: "BAC", source: "WEB_FORM" as const, technicalSystem: "FORMINATOR_ZAPIER", originalSource: "FORMINATOR", recentSource: "GOOGLE_SHEETS", externalId: `synthetic-${marker}` };
@@ -231,11 +231,12 @@ test("CRMY-171 PostgreSQL: technical ingestion, receipt and audit commit or roll
 
 function executor(prisma: PrismaService, source: SheetSource = new SyntheticSheetSource()): { worker: SheetImportExecutor; mappings: ImportMappingService } {
   const audit = new AuditService();
-  const persistent = new PersistentIngestionService(prisma, audit);
+  const permissions = new DynamicPermissionRepository(prisma);
+  const persistent = new PersistentIngestionService(prisma, audit, permissions);
   const leads = new LeadService(audit);
   const assignments = new LeadAssignmentService(leads, new AssignmentService(audit), audit);
   const mappings = new ImportMappingService(new IngestionService(leads, assignments, audit), audit, persistent);
-  return { mappings, worker: new SheetImportExecutor(prisma, new DynamicPermissionRepository(prisma), mappings, persistent, source) };
+  return { mappings, worker: new SheetImportExecutor(prisma, permissions, mappings, persistent, source) };
 }
 
 test("CRMY-171 PostgreSQL: bounded external retry, revoked read, unknown reference and partial-run takeover", { skip: process.env.CRMY171_EPHEMERAL_TEST !== "true", timeout: 60_000 }, async (t) => {

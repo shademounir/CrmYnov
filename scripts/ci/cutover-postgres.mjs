@@ -68,6 +68,16 @@ const nonce = randomUUID(), container = `crmy63-cutover-ci-${nonce}`, database =
 const { docker, ownedContainer, assertContainerAvailable, pinImage, loopbackBinding } = createPostgresDocker({ errorPrefix: "cutover", container, nonce, nonceLabel: "crmy63-cutover-test-nonce" });
 const runNode = (args, options = {}) => execFileSync(process.execPath, args, { cwd: repository, encoding: "utf8", windowsHide: true, timeout: 120000, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024, ...options });
 const prisma = (schema, env) => runNode(["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", schema], { env });
+// Generation must finish before any synthetic PostgreSQL is alive, even when
+// its output is private. It parses the schema against an intentionally closed
+// loopback target; the actual migrated databases are still queried below.
+if (docker(["ps", "-q"]).trim()) throw new Error("cutover_generation_requires_no_running_containers");
+const clientDirectory = join(proofDirectory, "generated-client"), clientSchema = join(proofDirectory, "schema-client.prisma");
+writeFileSync(clientSchema, readFileSync(schemaPath, "utf8").replace('provider = "prisma-client-js"', `provider = "prisma-client-js"\n  output = ${JSON.stringify(clientDirectory)}`), { flag: "wx" });
+const generate = runNode(["node_modules/prisma/build/index.js", "generate", "--schema", clientSchema], {
+  env: { ...process.env, DATABASE_URL: `postgresql://postgres@127.0.0.1:1/${database}` },
+});
+writeFileSync(join(proofDirectory, "private-client-generation.log"), generate, { flag: "wx" });
 let created = false, image;
 await withPreservedCleanup(async () => {
   assertContainerAvailable(); image = pinImage();
@@ -103,11 +113,7 @@ await withPreservedCleanup(async () => {
   const emptyOutput = prisma(schemaPath, { ...env, DATABASE_URL: `postgresql://postgres@${binding}/${emptyDatabase}` });
   writeFileSync(join(proofDirectory, "migration-empty.log"), emptyOutput, { flag: "wx" });
   for (const migration of newMigrations) if (sql(emptyDatabase, `SELECT checksum FROM _prisma_migrations WHERE migration_name='${migration.id}' AND finished_at IS NOT NULL AND rolled_back_at IS NULL`) !== migration.sha256) throw new Error(`cutover_empty_checksum_mismatch:${migration.id}`);
-  // Fresh client generation is isolated too, then queried against both actual migrated schemas.
-  const clientDirectory = join(proofDirectory, "generated-client"), clientSchema = join(proofDirectory, "schema-client.prisma");
-  writeFileSync(clientSchema, readFileSync(schemaPath, "utf8").replace('provider = "prisma-client-js"', `provider = "prisma-client-js"\n  output = ${JSON.stringify(clientDirectory)}`), { flag: "wx" });
-  const generate = runNode(["node_modules/prisma/build/index.js", "generate", "--schema", clientSchema], { env });
-  writeFileSync(join(proofDirectory, "private-client-generation.log"), generate, { flag: "wx" });
+  // The already-generated private client now queries both actual migrated schemas.
   const clientSmoke = `const {PrismaClient}=require(${JSON.stringify(clientDirectory)}); const p=new PrismaClient();
     (async()=>{try{const counts={manifests:await p.importCutoverManifest.count(),receipts:await p.importCutoverReceipt.count(),effects:await p.importCutoverEffect.count(),
       runtimes:await p.importCutoverRuntime.count(),runtimeRuns:await p.importCutoverRuntimeRun.count(),runtimeReceipts:await p.importCutoverRuntimeReceipt.count(),
@@ -116,7 +122,8 @@ await withPreservedCleanup(async () => {
       console.log(JSON.stringify({newClient:true,counts}));}finally{await p.$disconnect();}})().catch(e=>{console.error(e.message);process.exitCode=1});`;
   const smoke = [database, emptyDatabase].map(db => ({ database: db, result: JSON.parse(runNode(["-e", clientSmoke], { env: { ...env, DATABASE_URL: `postgresql://postgres@${binding}/${db}` } })) }));
   writeFileSync(join(proofDirectory, "migration-proof.json"), `${JSON.stringify({ migrations: newMigrations, checksumsAndFinishedHistoryVerifiedOnBothDatabases: true, emptyApplied: true, populatedApplied: true,
-    preservedSystemProbe: true, preservedOldHistoryAndChecksums: true, oldMigrationCount: oldHistory.split("\n").length, isolatedGeneratedClient: smoke, noSharedGeneration: true }, null, 2)}\n`, { flag: "wx" });
+    preservedSystemProbe: true, preservedOldHistoryAndChecksums: true, oldMigrationCount: oldHistory.split("\n").length, isolatedGeneratedClient: smoke, noSharedGeneration: true,
+    generatedBeforePostgres: true, generationUsedDisconnectedLoopback: true }, null, 2)}\n`, { flag: "wx" });
   const run = { runtime: process.version, image, container, nonce, binding, generatedAt: new Date().toISOString(), database, emptyDatabase, baselineRef,
     initialBackup, gitAtStart, sourcesMayDifferFromHead: gitAtStart.status.length > 0, unitProof, compiledProofCount: compiledProofs.length,
     realDataUsed: false, sheetsEnabled: false, bindings: bindingsBefore };

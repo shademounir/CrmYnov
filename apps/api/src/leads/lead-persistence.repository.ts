@@ -142,6 +142,7 @@ export class LeadPersistenceRepository {
           origin: "AUTOMATIC", decisionRef: `initial-assignment:${createHash("sha256").update(idempotencyKey).digest("hex")}`,
           configurationVersion: assignment.configurationVersion ?? null, ruleId: assignment.selection?.ruleId ?? null,
           requestHash: fingerprint, selectedUserId: assignment.targetUserId,
+          ...(assignment.newEntrantReservation ? { algorithmVersion: "balanced-new-entrant-v1" as const } : {}),
         });
       } else if (assignment) {
         await tx.auditEvent.create({ data: { eventType: "LEAD_ASSIGNMENT_PENDING", resourceType: "LEAD", resourceId: lead.id, campusId: assignment.campusId ?? lead.campus,
@@ -181,7 +182,7 @@ export class LeadPersistenceRepository {
     if (!configuration.automaticEnabled) return { ...evidence, reason: configuration.version ? "assignment_automation_disabled" : "assignment_configuration_absent" };
     const rule = applicableCampusRule(configuration.rules, lead.source, lead.campaign);
     if (!rule) return { ...evidence, reason: "assignment_configuration_absent" };
-    try { return await prepareSheetAssignment(tx, { strategy: rule.strategy }, lead, campus.id, eventKey, 0, true, { commercialOnly: true, permissions }); }
+    try { return await prepareSheetAssignment(tx, { strategy: rule.strategy }, lead, campus.id, eventKey, 0, true, { commercialOnly: true, permissions }, lead.acquisitionKind !== "BASELINE"); }
     catch (error) {
       if (error instanceof ConflictException && (error.getResponse() as { code?: string }).code === "assignment_candidate_unavailable") return { ...evidence, reason: "assignment_candidate_unavailable" };
       throw error;

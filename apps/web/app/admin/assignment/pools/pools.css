@@ -1,0 +1,18 @@
+.pool-admin-page { max-width: 1440px; margin: 0 auto; padding: clamp(16px, 3vw, 36px); }
+.pool-admin-page nav { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.pool-admin { min-width: 0; }
+.pool-admin__toolbar, .pool-admin__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; align-items: end; }
+.pool-admin label { display: grid; gap: 8px; min-width: 0; }
+.pool-admin input:not([type="checkbox"]), .pool-admin select { width: 100%; max-width: 100%; min-height: 44px; box-sizing: border-box; }
+.pool-admin button { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.pool-admin .pool-admin__check { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 12px 0; }
+.pool-admin__check input { flex: 0 0 auto; width: 20px; height: 20px; }
+.pool-admin__rule { min-width: 0; margin: 24px 0; padding: clamp(12px, 2vw, 24px); border: 1px solid var(--border-color, #dce4e6); border-radius: 12px; background: var(--surface-color, #fff); }
+.pool-admin__rule legend { font-weight: 700; padding: 0 8px; }
+.pool-admin__member { display: grid; grid-template-columns: minmax(0, 2fr) minmax(100px, 1fr) auto auto; align-items: center; gap: 16px; border-top: 1px solid #dce4e6; padding: 16px 0; }
+.pool-admin__member strong, .pool-admin__member p { overflow-wrap: anywhere; }
+.pool-admin__member p { margin: 8px 0; }
+.pool-admin [role="alert"] { color: #92262c; padding: 12px; border-left: 4px solid currentColor; }
+.pool-admin :is(button, select, input):focus-visible { outline: 3px solid #087f7a; outline-offset: 3px; }
+@media (max-width: 900px) { .pool-admin__member { grid-template-columns: minmax(0, 1fr) minmax(120px, 1fr); } }
+@media (max-width: 520px) { .pool-admin__member { grid-template-columns: minmax(0, 1fr); } .pool-admin__toolbar button { width: 100%; } }
