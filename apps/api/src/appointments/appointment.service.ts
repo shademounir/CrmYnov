@@ -5,6 +5,7 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadService } from "../leads/lead.service.js";
 import { NotificationService } from "../notifications/notification.service.js";
 import { AppointmentPersistenceRepository } from "./appointment-persistence.repository.js";
+import { appointmentCreationSignature } from "./appointment-creation-signature.js";
 
 export const appointmentTypes = ["APPEL_INFORMATION", "VISITE_CAMPUS", "ENTRETIEN_ADMISSION", "ENTRETIEN_MOTIVATION", "TEST_ADMISSION", "RENDEZ_VOUS_DIRECTION", "RENDEZ_VOUS_LIBRE"] as const;
 export const appointmentModes = ["SUR_SITE", "TELEPHONE", "DISTANCIEL_NON_CONNECTE"] as const;
@@ -144,7 +145,7 @@ export class AppointmentService implements OnModuleInit {
     this.assertOperationalRole(principal); const lead = this.leads.getLead(leadId, principal, correlationId); this.assertCampus(lead.campus, principal);
     const type = input.type as AppointmentType; const mode = input.mode as AppointmentMode; const state = (input.state ?? "PLANIFIE") as AppointmentState;
     const start = new Date(input.startsAt ?? ""); const duration = input.durationMinutes ?? 0; const key = input.idempotencyKey ?? "";
-    if (!appointmentTypes.includes(type) || !appointmentModes.includes(mode) || !["BROUILLON", "PLANIFIE"].includes(state) || Number.isNaN(start.valueOf()) || start.valueOf() <= Date.now() || !Number.isInteger(duration) || duration < 15 || duration > 480 || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new BadRequestException({ code: "appointment_invalid" });
+    if (!appointmentTypes.includes(type) || !appointmentModes.includes(mode) || !["BROUILLON", "PLANIFIE"].includes(state) || Number.isNaN(start.valueOf()) || !Number.isInteger(duration) || duration < 15 || duration > 480 || !/^[A-Za-z0-9_-]{8,128}$/.test(key)) throw new BadRequestException({ code: "appointment_invalid" });
     const requestedCampus = input.campus?.trim();
     if (mode === "SUR_SITE" && (!requestedCampus || requestedCampus !== lead.campus)) {
       throw new BadRequestException({ code: "appointment_campus_required" });
@@ -152,7 +153,7 @@ export class AppointmentService implements OnModuleInit {
     const campus = requestedCampus ?? lead.campus;
     const adviserId = input.adviserId ?? lead.assignedToId ?? principal.userId;
     const participantIds = [...new Set((input.participantIds ?? []).filter(Boolean))].sort((left, right) => left.localeCompare(right, "en"));
-    const signature = JSON.stringify({ leadId, type, mode, startsAt: start.toISOString(), duration, campus, adviserId, evaluatorId: input.evaluatorId, participantIds, state });
+    const signature = appointmentCreationSignature({ leadId, type, mode, startsAt: start.toISOString(), durationMinutes: duration, campus, adviserId, ...(input.evaluatorId ? { evaluatorId: input.evaluatorId } : {}), participantIds, state });
     const receipt = this.receipts.get(key);
     if (receipt) {
       if (receipt.signature !== signature) {
@@ -160,6 +161,7 @@ export class AppointmentService implements OnModuleInit {
       }
       return this.copy(this.items.get(receipt.id)!);
     }
+    if (start.valueOf() <= Date.now()) throw new BadRequestException({ code: "appointment_invalid" });
     const involved = new Set([adviserId, ...participantIds, ...(input.evaluatorId ? [input.evaluatorId] : [])]); const end = start.valueOf() + duration * 60_000;
     const conflictWarning = [...this.items.values()].some((item) => !finalStates.has(item.state) && this.involved(item).some((id) => involved.has(id)) && this.overlaps(start.valueOf(), end, item));
     const localDay = this.localDay(start); const overloadWarning = [...this.items.values()].filter((item) => item.adviserId === adviserId && this.localDay(new Date(item.startsAt)) === localDay && !finalStates.has(item.state)).length >= 7;
@@ -222,7 +224,26 @@ export class AppointmentService implements OnModuleInit {
     }
     return [...new Set(userIds)].slice(0, 20).map((userId) => ({ userId, busyRanges: [...this.items.values()].filter((item) => this.canAccess(item, principal) && this.involved(item).includes(userId) && !finalStates.has(item.state) && this.overlaps(start.valueOf(), end.valueOf(), item)).map((item) => ({ startsAt: item.startsAt, endsAt: new Date(new Date(item.startsAt).valueOf() + item.durationMinutes * 60_000).toISOString() })) }));
   }
-  kpis(principal: Principal): AppointmentKpis { const values = [...this.items.values()].filter((item) => this.canAccess(item, principal)); const counts = Object.fromEntries(appointmentStates.map((state) => [state, values.filter((item) => item.state === state).length])) as Record<AppointmentState, number>; const attendanceDenominator = counts.REALISE + counts.ABSENT; const delayValues = values.map((item) => (new Date(item.startsAt).valueOf() - new Date(item.createdAt).valueOf()) / 3_600_000).filter((value) => value >= 0); const results = Object.fromEntries(interviewResults.map((result) => [result, [...this.reports.values()].filter((item) => item.result === result).length])) as Record<InterviewResult, number>; const workload = new Map<string, { adviserId: string; campus: string; count: number }>(); for (const item of values) { const key = `${item.adviserId}:${item.campus ?? "DISTANT"}`; const row = workload.get(key) ?? { adviserId: item.adviserId, campus: item.campus ?? "DISTANT", count: 0 }; row.count += 1; workload.set(key, row); } return { timezone: "Africa/Casablanca", counts, attendanceRate: { numerator: counts.REALISE, denominator: attendanceDenominator, exclusions: ["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE", "ANNULE", "REFUSE"], value: attendanceDenominator ? counts.REALISE / attendanceDenominator : 0 }, firstAppointmentDelayHours: { numerator: delayValues.reduce((sum, value) => sum + value, 0), denominator: delayValues.length, exclusions: ["negative_or_missing_dates"], value: delayValues.length ? delayValues.reduce((sum, value) => sum + value, 0) / delayValues.length : 0 }, results, workload: [...workload.values()].sort((a, b) => a.adviserId.localeCompare(b.adviserId) || a.campus.localeCompare(b.campus)), safeguards: { disciplinaryScore: false, automaticAdmission: false } }; }
+  kpis(principal: Principal): AppointmentKpis {
+    const values = [...this.items.values()].filter((item) => this.canAccess(item, principal));
+    const authorizedIds = new Set(values.map((item) => item.id));
+    const reports = [...this.reports.values()].filter((report) => authorizedIds.has(report.appointmentId));
+    const counts = Object.fromEntries(appointmentStates.map((state) => [state, values.filter((item) => item.state === state).length])) as Record<AppointmentState, number>;
+    const attendanceDenominator = counts.REALISE + counts.ABSENT;
+    const delayValues = values.map((item) => (new Date(item.startsAt).valueOf() - new Date(item.createdAt).valueOf()) / 3_600_000).filter((value) => value >= 0);
+    const results = Object.fromEntries(interviewResults.map((result) => [result, reports.filter((item) => item.result === result).length])) as Record<InterviewResult, number>;
+    const workload = new Map<string, { adviserId: string; campus: string; count: number }>();
+    for (const item of values) {
+      const key = `${item.adviserId}:${item.campus ?? "DISTANT"}`;
+      const row = workload.get(key) ?? { adviserId: item.adviserId, campus: item.campus ?? "DISTANT", count: 0 };
+      row.count += 1; workload.set(key, row);
+    }
+    return { timezone: "Africa/Casablanca", counts,
+      attendanceRate: { numerator: counts.REALISE, denominator: attendanceDenominator, exclusions: ["BROUILLON", "PLANIFIE", "CONFIRME", "REPORTE", "ANNULE", "REFUSE"], value: attendanceDenominator ? counts.REALISE / attendanceDenominator : 0 },
+      firstAppointmentDelayHours: { numerator: delayValues.reduce((sum, value) => sum + value, 0), denominator: delayValues.length, exclusions: ["negative_or_missing_dates"], value: delayValues.length ? delayValues.reduce((sum, value) => sum + value, 0) / delayValues.length : 0 },
+      results, workload: [...workload.values()].sort((a, b) => a.adviserId.localeCompare(b.adviserId) || a.campus.localeCompare(b.campus)),
+      safeguards: { disciplinaryScore: false, automaticAdmission: false } };
+  }
 
   private async preparePersistentMutation(): Promise<void> {
     await this.leads.refreshReportingForApi();
@@ -244,11 +265,14 @@ export class AppointmentService implements OnModuleInit {
     this.reports.clear();
     for (const report of snapshot.reports) this.reports.set(report.appointmentId, Object.freeze({ ...report }));
     this.receipts.clear();
+    const creationReceipts = new Map(snapshot.creationReceipts?.map((receipt) => [receipt.idempotencyKey, receipt]));
     for (const event of this.events) {
       const record = this.items.get(event.appointmentId);
       if (!record) continue;
       this.receipts.set(event.idempotencyKey, {
-        signature: event.type === "APPOINTMENT_CREATED" ? this.createSignature(record) : `${record.id}:${event.toState ?? record.state}`,
+        signature: event.type === "APPOINTMENT_CREATED"
+          ? (creationReceipts.get(event.idempotencyKey)?.id === record.id ? creationReceipts.get(event.idempotencyKey)!.signature : "missing_creation_evidence")
+          : `${record.id}:${event.toState ?? record.state}`,
         id: record.id,
       });
     }
@@ -271,14 +295,6 @@ export class AppointmentService implements OnModuleInit {
       const overloadWarning = (activeByDay.get(`${current.adviserId}:${days.get(id)!}`) ?? 0) - (finalStates.has(current.state) ? 0 : 1) >= 7;
       this.items.set(id, Object.freeze({ ...current, conflictWarning, overloadWarning }));
     }
-  }
-
-  private createSignature(record: Readonly<AppointmentRecord>): string {
-    return JSON.stringify({
-      leadId: record.leadId, type: record.type, mode: record.mode, startsAt: record.startsAt,
-      duration: record.durationMinutes, campus: record.campus, adviserId: record.adviserId,
-      evaluatorId: record.evaluatorId, participantIds: [...record.participantIds].sort((left, right) => left.localeCompare(right, "en")), state: record.state,
-    });
   }
 
   private authorized(id: string, principal: Principal, correlationId: string): Readonly<AppointmentRecord> {
