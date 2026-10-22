@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-/** Only immutable reference/grant reads inside ONE fenced import transaction.
+/** Only immutable reference/grant/sealed-source reads inside ONE fenced import transaction.
  * Never use for principals, sessions, contacts, receipts or mutable Lead state.
  * No value survives the block or is reused by a different transaction. */
 export class BlockReadMemo<Transaction extends object> {
@@ -9,6 +9,8 @@ export class BlockReadMemo<Transaction extends object> {
   run<T>(tx: Transaction, action: () => Promise<T>): Promise<T> {
     return this.scope.run({ tx, reads: new Map() }, action);
   }
+
+  active(tx: Transaction): boolean { return this.scope.getStore()?.tx === tx; }
 
   read<T>(tx: Transaction, key: string, load: () => Promise<T>): Promise<T> {
     const current = this.scope.getStore();

@@ -36,21 +36,23 @@ export default function ReferencesPage(): React.JSX.Element {
   }
   return <main><PageHeader eyebrow="Administration" title="Tags et référentiels" description="Valeurs gouvernées. Les droits sont contrôlés côté serveur ; les archives restent conservées." />
     <Link href="/admin/users">Retour aux utilisateurs</Link>
-    <section className="panel reference-admin"><label>Référentiel<select value={kind} onChange={(event) => { setKind(event.target.value as ReferenceKind); setEditing(null); setScope("GLOBAL"); }}>{Object.entries(referenceLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+    <section className="panel reference-admin"><label>Référentiel<select value={kind} onChange={(event) => { setKind(event.target.value as ReferenceKind); setEditing(null); setSaved(false); setScope(event.target.value === "CAMPAIGN" ? "CAMPUS" : "GLOBAL"); }}>{Object.entries(referenceLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       {state === "loading" ? <output>Chargement / enregistrement…</output> : null}
       {state === "error" ? <p role="alert">Opération refusée ou service indisponible. Vérifiez vos droits et les valeurs saisies.</p> : null}
       {state === "conflict" ? <p role="alert">Conflit de version, alias ambigu ou valeur déjà utilisée. Actualisez avant de réessayer.</p> : null}
       {saved && state === "ready" ? <output>Modification enregistrée et auditée.</output> : null}
       <button type="button" onClick={() => setRevision((value) => value + 1)}>Actualiser</button>
       <form key={`${kind}-${editing?.id ?? "new"}`} action={save} className="reference-fields"><h2>{editing ? "Modifier la définition" : "Créer une définition"}</h2>
-        {!editing ? <label>Code stable<input name="code" required maxLength={120} /></label> : <p>Code stable : {editing.code}</p>}
-        <label>Libellé<input name="label" required maxLength={120} defaultValue={editing?.label ?? ""} /></label>
+        <p>Le libellé et, à la création, le code stable sont obligatoires. Une portée campus exige un campus actif autorisé. Les alias sont facultatifs.</p>
+        {!editing ? <label>Code stable · obligatoire<input name="code" required maxLength={120} aria-describedby="reference-code-help" /><small id="reference-code-help">Identifiant durable de la définition, distinct du libellé affiché.</small></label> : <p>Code stable : {editing.code}</p>}
+        <label>Libellé · obligatoire<input name="label" required maxLength={120} defaultValue={editing?.label ?? ""} /></label>
         {kind === "TAG" || kind === "CAMPAIGN" ? <label>Portée<select value={scope} onChange={(event) => setScope(event.target.value)}><option value="GLOBAL">Globale — Super Admin</option><option value="CAMPUS">Campus</option></select></label> : <p>Définition globale — Super Admin</p>}
-        {scope === "CAMPUS" ? <label>Campus<select name="campusId" required defaultValue={editing?.campusId ?? ""}><option value="">Choisir</option>{campuses.map((campus) => <option key={campus.id} value={campus.id}>{campus.label}</option>)}</select></label> : null}
+        {scope === "CAMPUS" ? <label>Campus · obligatoire<select name="campusId" required defaultValue={editing?.campusId ?? ""}><option value="">Choisir un campus autorisé</option>{campuses.map((campus) => <option key={campus.id} value={campus.id}>{campus.label}</option>)}</select></label> : null}
         <label>Ajouter des alias explicites (séparés par une virgule)<input name="aliases" maxLength={1000} /></label>
         <p>Les anciens libellés et alias restent conservés. Bourses autorisées : 20, 30 ou 40.</p>
+        {kind === "CAMPAIGN" ? <p>Créer une campagne ne réaffecte aucun dossier et ne change aucun routage. Configurez séparément ses participants et capacités dans <Link href="/admin/assignment/pools">Pools et nouveaux entrants</Link>.</p> : null}
         <button disabled={state === "loading"} type="submit">Enregistrer la définition</button>
-        {editing ? <button type="button" onClick={() => { setEditing(null); setScope("GLOBAL"); }}>Annuler la modification</button> : null}
+        {editing ? <button type="button" onClick={() => { setEditing(null); setScope(kind === "CAMPAIGN" ? "CAMPUS" : "GLOBAL"); }}>Annuler la modification</button> : null}
       </form>
       <h2>Définitions et archives</h2>{!rows.length && state === "ready" ? <p>Aucune valeur disponible.</p> : null}
       <ul className="reference-list">{rows.map((row) => <li key={row.id}><h3>{row.label}</h3><p>{row.code} · {row.scope} · {row.state} · v{row.version}</p>

@@ -5,8 +5,11 @@ import { configurationKey, historicalGrants, validateTarget, type ConfigurationI
 import type { Principal } from "../auth/auth.types.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { acquirePermissionFence, type PermissionTransactionMode } from "./permission-fence.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { initialFenceLockUnavailable, mailDiagnostic, retainMailFailure } from "./safe-mail-diagnostic.js";
 
 export type PermissionTransaction = Prisma.TransactionClient;
+export interface MailFenceOptions { businessMailFence: { signal: AbortSignal } }
 
 /** Only a fence conflict before the business handler is safe to retry. */
 function retryFenceOrThrow(error: unknown, handlerStarted: boolean, attempt: number): void {
@@ -24,10 +27,13 @@ export class DynamicPermissionRepository {
   private readonly execution = new AsyncLocalStorage<{ tx: PermissionTransaction; mode: PermissionTransactionMode }>();
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
   get enabled(): boolean { return this.prisma.enabled; }
-  readTransaction<T>(action: (tx: PermissionTransaction) => Promise<T>): Promise<T> {
-    return this.transaction(action, "read");
+  readTransaction<T>(action: (tx: PermissionTransaction) => Promise<T>, options?: MailFenceOptions): Promise<T> {
+    return this.transaction(action, "read", options);
   }
-  async transaction<T>(action: (tx: PermissionTransaction) => Promise<T>, mode: PermissionTransactionMode = "write"): Promise<T> {
+  async transaction<T>(action: (tx: PermissionTransaction) => Promise<T>, mode: PermissionTransactionMode = "write", options?: MailFenceOptions): Promise<T> {
+    const recovery = options?.businessMailFence;
+    if (recovery && mode === "write") throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
+    recovery?.signal.throwIfAborted();
     const current = this.execution.getStore();
     if (current) {
       if (current.mode !== "write" && mode !== "read" && current.mode !== mode) throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
@@ -36,15 +42,33 @@ export class DynamicPermissionRepository {
     const client = this.prisma.client;
     if (!client) throw new ServiceUnavailableException({ code: "permission_store_unavailable" });
     for (let attempt = 0; ; attempt++) {
-      let handlerStarted = false;
+      recovery?.signal.throwIfAborted();
+      let handlerStarted = false, acquiring = false;
       try {
         return await client.$transaction(async (tx) => {
+          acquiring = true;
           await acquirePermissionFence(tx, mode);
+          acquiring = false;
+          recovery?.signal.throwIfAborted();
           handlerStarted = true;
           return this.prisma.withTransaction(tx, () => this.execution.run({ tx, mode }, () => action(tx)));
         }, { isolationLevel: mode === "write" ? "Serializable" : "ReadCommitted", timeout: 30_000, maxWait: 5_000 });
       } catch (error) {
-        retryFenceOrThrow(error, handlerStarted, attempt);
+        if (!recovery) { retryFenceOrThrow(error, handlerStarted, attempt); continue; }
+        const phase = mode === "read" ? "DISCOVERY_FENCE" : "CANDIDATE_FENCE";
+        // The rejected $transaction has finished rollback before any backoff.
+        // One total budget also bounds the pre-existing P2034 acquisition retry.
+        const retry = acquiring && !handlerStarted && attempt < 3 && (initialFenceLockUnavailable(error) || mailDiagnostic(error).vendorCode === "P2034");
+        if (retry) {
+          recovery.signal.throwIfAborted();
+          await delay([250, 750, 1500][attempt], undefined, { signal: recovery.signal });
+          continue;
+        }
+        try { retryFenceOrThrow(error, handlerStarted, 4); }
+        catch (mapped) {
+          const safe = retainMailFailure(error, phase, { attempts: attempt + 1, handlerStarted });
+          throw retainMailFailure(mapped, phase, { ...mailDiagnostic(safe), attempts: attempt + 1, handlerStarted });
+        }
       }
     }
   }
