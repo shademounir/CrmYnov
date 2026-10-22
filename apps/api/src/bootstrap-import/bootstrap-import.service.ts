@@ -14,6 +14,7 @@ import { historicalReconciliation } from "./historical-reconciliation.js";
 import { boundedBootstrapReconciliation, deferralBinding, deferralReceiptResponse, isDeferralInput, validDeferral } from "./bounded-bootstrap.js";
 import { baselineOptionalValues, BASELINE_OPTIONAL_INFORMATION } from "./baseline-unknown-fields.js";
 import { BlockReadMemo } from "./block-read-memo.js";
+import { readBlockPackage } from "./block-package-read.js";
 import { assertMapping, bytesHash, CHUNK_BYTES, decodeChunk, hash, HISTORICAL_SHEETS, IMPORT_FIELDS, KEY, MAX_PACKAGE_BYTES, refuse, SHA, UUID,
   record, COLUMN, type BootstrapBlockInput, type BootstrapChunkInput, type BootstrapConfirmInput, type BootstrapReopenInput, type CreateBootstrapInput, type HistoricalDecisionInput, type HistoricalMappingInput, type HistoricalSheetMapping, type HistoricalCycle } from "./bootstrap-import.contract.js";
 
@@ -684,7 +685,7 @@ export class BootstrapImportService {
     return { ...(cycle ?? { state: "UNSPECIFIED", sourceColumns: [], reason: "" }), evidence: (cycle?.sourceColumns ?? []).map((column) => ({ column, reference: `${column}${source.rowNumber}`, text: text(source.cells[column]), formula: !!source.cells[column]?.formula })) };
   }
   private async package(tx: PermissionTransaction, id: string, actor: Principal, keys: string[]): Promise<BootstrapImportPackage> {
-    if (!UUID.test(id)) this.notFound(); const row = await tx.bootstrapImportPackage.findUnique({ where: { id } }); if (!row) this.notFound();
+    if (!UUID.test(id)) this.notFound(); const row = await readBlockPackage(tx, id, this.blockReads); if (!row) this.notFound();
     await this.authorize(tx, actor, row.campusId, keys); return row;
   }
   private async authorize(tx: PermissionTransaction, actor: Principal, campusId: string, keys: string[]): Promise<void> {

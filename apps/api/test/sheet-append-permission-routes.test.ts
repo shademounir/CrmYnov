@@ -42,7 +42,7 @@ function fixture(handler: string): {
   return { interceptor, context, request, inTransaction: () => active, checks: () => checks };
 }
 
-for (const handler of ["appendBoundary", "appendReconciliation", "qualifyAppend", "observeAppend"]) {
+for (const handler of ["appendBoundary", "appendReconciliation", "qualifyAppend", "observeAppend", "historicalReview", "historicalAcknowledge"]) {
   test(`CRMY-63 ${handler} refreshes server identity and releases the outer read fence before its own handler`, async () => {
     const f = fixture(handler);
     const result = await lastValueFrom(f.interceptor.intercept(f.context, { handle: () => {

@@ -55,6 +55,19 @@
 .sheets-runs dt { font-size: 12px; }.sheets-runs dd { margin: 8px 0 0; font-weight: 700; font-size: 22px; }
 .sheets-simulation { border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-top: 18px; overflow-wrap: anywhere; }
 .sheets-append-monitor { border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-block: 18px; overflow-wrap: anywhere; }
+.sheets-historical-review > p { line-height: 1.6; margin-block: 12px 16px; }
+.sheets-historical-review fieldset { display: grid; gap: 14px; }
+.sheets-historical-fingerprints { display: grid; gap: 12px; margin: 0; min-width: 0; }
+.sheets-historical-fingerprints > div { min-width: 0; }
+.sheets-historical-fingerprints dt { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.sheets-historical-fingerprints dd { margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); min-width: 0; }
+.sheets-historical-fingerprints code { white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.sheets-historical-review textarea { width: 100%; min-width: 0; max-width: 100%; min-height: 104px; resize: vertical; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--onyx); font: inherit; line-height: 1.5; }
+.sheets-historical-review textarea:focus-visible { outline: 3px solid var(--teal-dark); outline-offset: 2px; }
+.sheets-historical-review .sheets-historical-help { margin: 0; font-size: 12px; line-height: 1.6; }
+.sheets-historical-review fieldset > button { justify-self: start; max-width: 100%; white-space: normal; }
+.sheets-historical-feedback { display: block; margin-top: 16px; padding: 12px 14px; border: 1px solid var(--border); border-inline-start: 3px solid var(--teal-dark); border-radius: 6px; line-height: 1.6; }
+@media (max-width: 600px) { .sheets-historical-review { padding: 12px; }.sheets-historical-review > button, .sheets-historical-review fieldset > button { width: 100%; }.sheets-historical-fingerprints dd { padding: 8px; } }
 .sheets-append-positions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 16px; }
 .sheets-append-positions dd { margin: 6px 0 0; font-weight: 600; }
 .sheets-simulation dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }

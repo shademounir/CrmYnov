@@ -28,7 +28,10 @@ test("append proof uses only its owned nonce-bound loopback tmpfs database", asy
   for (const marker of ["crmy63_append_synthetic", "crmy63_append_test_identity.marker", "sheet-row-append-synthetic-qualification",
     "crmy63-sheet-append-test-nonce", 'CRMY63_APPEND_EPHEMERAL_TEST: "true"', "CRMY63_APPEND_DATABASE_NONCE: nonce",
     '"127.0.0.1::5432"', '"--pull", "never"', "sheet_append_database_not_empty", "loopbackBinding(image)", "withPreservedCleanup",
-    "ownedContainer(image); docker", "stopped: true, preserved: true", "tmpfsDatabaseNotABackup: true"]) assert.ok(runner.includes(marker), marker);
+    "stopped: true, preserved: true", "tmpfsDatabaseNotABackup: true"]) assert.ok(runner.includes(marker), marker);
+  // Whitespace is not the ownership guard: require the checked owner immediately
+  // before the exact stop operation, on one line or several formatted lines.
+  assert.match(runner, /ownedContainer\(image\);\s*docker\(\["stop", "--timeout", "60", container\]\)/u);
 });
 
 test("append proof clears real transport and private artifacts and refuses skipped execution", async () => {

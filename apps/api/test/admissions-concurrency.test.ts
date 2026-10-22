@@ -9,6 +9,11 @@ import type { BookingInput, BookingView, ResponsibilityView, WindowView } from "
 import { AppointmentPersistenceRepository } from "../src/appointments/appointment-persistence.repository.js";
 import { assertAppointmentFree, lockAppointmentParticipants } from "../src/appointments/appointment-locks.js";
 import type { AppointmentEvent, AppointmentRecord } from "../src/appointments/appointment.service.js";
+import { AppointmentService } from "../src/appointments/appointment.service.js";
+import { AuditService } from "../src/audit/audit.service.js";
+import { LeadService } from "../src/leads/lead.service.js";
+import { LeadPersistenceRepository } from "../src/leads/lead-persistence.repository.js";
+import { NotificationService } from "../src/notifications/notification.service.js";
 import { currentPrincipal } from "../src/permissions/dynamic-context.js";
 import { defaultConfiguration } from "../src/permissions/dynamic-evaluator.js";
 import { DynamicPermissionRepository } from "../src/permissions/dynamic-repository.js";
@@ -115,6 +120,83 @@ async function assertExactlyOneDecisionEffects(client: PrismaClient, booking: Bo
   assert.equal(await client.auditEvent.count({ where: { resourceId: booking.id, eventType: { startsWith: "ADMISSIONS_" } } }), decisions);
   assert.equal(await client.internalNotification.count({ where: { resourceId: booking.id } }), decisions * 2);
 }
+
+test("Legacy PostgreSQL creation replay survives confirmation, reschedule, cancellation, restart and elapsed original slot without new effects", options, async () => {
+  const f = await fixture();
+  const instance = (prisma: PrismaService): AppointmentService => {
+    const audit = new AuditService();
+    return new AppointmentService(new LeadService(audit, new LeadPersistenceRepository(prisma)), new NotificationService(audit), audit, new AppointmentPersistenceRepository(prisma));
+  };
+  try {
+    const service = instance(f.first);
+    const key = `legacy-review-${f.marker}`;
+    const input = { type: "APPEL_INFORMATION", mode: "TELEPHONE", startsAt: at(0), durationMinutes: 30, adviserId: f.requester.userId, idempotencyKey: key };
+    const created = await service.createForApi(f.lead1.id, input, f.admin, "synthetic-create");
+    const effects = async (): Promise<unknown> => ({
+      appointment: await f.client.appointment.findUnique({ where: { id: created.id } }),
+      events: await f.client.appointmentEvent.count({ where: { appointmentId: created.id } }),
+      audits: await f.client.auditEvent.count({ where: { resourceId: created.id } }),
+      activities: await f.client.leadActivity.count({ where: { leadId: f.lead1.id } }),
+    });
+    const audit = await f.client.auditEvent.findFirstOrThrow({ where: { resourceId: created.id, eventType: "APPOINTMENT_CREATED" } });
+    assert.match((audit.after as { creationSignature: string }).creationSignature, /^[a-f0-9]{64}$/u);
+    let version = created.version;
+    for (const state of ["CONFIRME", "REPORTE", "ANNULE"] as const) {
+      const changed = await service.transitionForApi(created.id, { state, expectedVersion: version, idempotencyKey: `legacy-${state}-${f.marker}`, ...(state === "CONFIRME" ? {} : { reason: "SYNTHETIC_TEST_ONLY" }), ...(state === "REPORTE" ? { startsAt: at(360) } : {}) }, f.admin, "synthetic-transition");
+      version = changed.version;
+      const before = await effects();
+      const replay = await instance(f.second).createForApi(f.lead1.id, input, f.admin, "synthetic-restart");
+      assert.equal(replay.id, created.id); assert.equal(replay.state, state); assert.equal(replay.startsAt, changed.startsAt);
+      assert.deepEqual(await effects(), before);
+      await assert.rejects(instance(f.second).createForApi(f.lead1.id, { ...input, durationMinutes: 45 }, f.admin, "synthetic-conflict"), (error) => responseCode(error) === "appointment_idempotency_conflict");
+      assert.deepEqual(await effects(), before);
+    }
+    const beforeElapsed = await effects(), now = Date.now;
+    try {
+      Date.now = (): number => Date.parse("2100-01-01T00:00:00.000Z");
+      assert.equal((await instance(f.second).createForApi(f.lead1.id, input, f.admin, "synthetic-elapsed")).id, created.id);
+    } finally { Date.now = now; }
+    assert.deepEqual(await effects(), beforeElapsed);
+    assert.equal(await f.client.appointment.count({ where: { leadId: f.lead1.id } }), 1);
+  } finally { await f.close(); }
+});
+
+test("Legacy PostgreSQL historical creation audit without a signature reconstructs original inputs without rewriting evidence", options, async () => {
+  const f = await fixture();
+  try {
+    const id = randomUUID(), key = `legacy-unsigned-${f.marker}`;
+    const record = await f.client.appointment.create({ data: { id, leadId: f.lead1.id, type: "APPEL_INFORMATION", mode: "TELEPHONE", state: "REPORTE", startsAt: new Date(at(360)), durationMinutes: 30, campus: f.campus.code, adviserId: f.requester.userId, organizerId: f.admin.userId, version: 2 } });
+    await f.client.appointmentEvent.create({ data: { appointmentId: id, idempotencyKey: key, eventType: "APPOINTMENT_CREATED", toState: "PLANIFIE", actorId: f.admin.userId } });
+    const after = { appointmentId: id, leadId: record.leadId, type: record.type, mode: record.mode, state: "PLANIFIE", startsAt: at(0), durationMinutes: record.durationMinutes, campus: record.campus, version: 1 };
+    const audit = await f.client.auditEvent.create({ data: { resourceType: "APPOINTMENT", resourceId: id, eventType: "APPOINTMENT_CREATED", actorId: f.admin.userId, actorRoles: f.admin.roles, correlationId: "synthetic-legacy-fixture", result: "SUCCESS", idempotencyKey: `appointment-audit-${createHash("sha256").update(key).digest("hex")}`, after } });
+    const runtimeAudit = new AuditService();
+    const service = new AppointmentService(new LeadService(runtimeAudit, new LeadPersistenceRepository(f.first)), new NotificationService(runtimeAudit), runtimeAudit, new AppointmentPersistenceRepository(f.first));
+    const input = { type: record.type, mode: record.mode, startsAt: at(0), durationMinutes: 30, adviserId: f.requester.userId, idempotencyKey: key };
+    const replay = await service.createForApi(f.lead1.id, input, f.admin, "synthetic-legacy-replay");
+    assert.equal(replay.id, id); assert.equal(replay.state, "REPORTE"); assert.equal(replay.startsAt, at(360));
+    assert.deepEqual(await f.client.auditEvent.findUnique({ where: { id: audit.id } }), audit);
+    assert.equal(await f.client.appointmentEvent.count({ where: { appointmentId: id } }), 1);
+    assert.equal(await f.client.leadActivity.count({ where: { leadId: f.lead1.id } }), 0);
+  } finally { await f.close(); }
+});
+
+test("Legacy PostgreSQL KPI reports respect campus scope and involvement after a complete persisted snapshot", options, async () => {
+  const f = await fixture();
+  try {
+    for (const [lead, owner, campus, result] of [[f.lead1, f.requester, f.campus, "FAVORABLE"], [f.otherLead, f.outsider, f.otherCampus, "DEFAVORABLE"]] as const) {
+      const appointment = await f.client.appointment.create({ data: { leadId: lead.id, type: "ENTRETIEN_ADMISSION", mode: "TELEPHONE", state: "REALISE", startsAt: new Date("2020-01-01T09:00:00.000Z"), durationMinutes: 30, campus: campus.code, adviserId: owner.userId, organizerId: owner.userId } });
+      await f.client.interviewReport.create({ data: { appointmentId: appointment.id, result, redactedComment: "[REDACTED]", redactedRecommendation: "[REDACTED]", validatedBy: owner.userId, validatedAt: new Date("2020-01-01T10:00:00.000Z") } });
+    }
+    const audit = new AuditService();
+    const service = new AppointmentService(new LeadService(audit), new NotificationService(audit), audit, new AppointmentPersistenceRepository(f.first));
+    const local = { ...f.requester, scopes: [{ kind: "CAMPUS" as const, id: f.campus.code }] };
+    for (const principal of [local, { ...local, roles: ["MANAGER" as const] }]) {
+      const result = await service.kpisForApi(principal);
+      assert.equal(result.results.FAVORABLE, 1); assert.equal(result.results.DEFAVORABLE, 0);
+    }
+    assert.equal((await service.kpisForApi({ ...local, userId: f.participant.userId })).results.FAVORABLE, 0);
+  } finally { await f.close(); }
+});
 
 test("CRMY-175 PostgreSQL: two independent API services cannot reserve the same responsible slot", options, async () => {
   const f = await fixture();
