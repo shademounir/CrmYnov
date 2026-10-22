@@ -5,6 +5,7 @@ import { BusinessMailJournal } from "../business-mail/business-mail-journal.js";
 import { BusinessMailRuntime } from "../business-mail/business-mail-runtime.js";
 import { BusinessMailOperator, parseMailOperatorRequest } from "../business-mail/business-mail-operator.js";
 import { assertRuntimeDatabaseIdentity, runtimeDatabaseTarget, type RuntimeDatabaseTarget } from "./runtime-database-target.js";
+import { mailDiagnostic, mailStage, withMailCleanup } from "../permissions/safe-mail-diagnostic.js";
 
 export function businessMailJobContract(env: NodeJS.ProcessEnv, mode: string): { skipped: true } | { skipped: false; target: RuntimeDatabaseTarget } {
   if (mode === "SEND" && env.CRM_BUSINESS_MAIL_ENABLED !== "true") return { skipped: true };
@@ -27,25 +28,25 @@ export async function runBusinessMailJob(mode = "SEND"): Promise<void> {
   // Only this new isolated process is affected; no URL/secret is ever logged.
   databaseUrl.searchParams.set("connection_limit", "2"); process.env.DATABASE_URL = databaseUrl.toString();
   const prisma = new PrismaService(), journal = new BusinessMailJournal();
-  try {
+  await withMailCleanup(async () => {
     const client = prisma.client; if (!client) throw new Error("business_mail_database_unavailable");
-    assertRuntimeDatabaseIdentity(await client.$queryRaw`SELECT current_database() AS "databaseName"`, contract.target);
+    await mailStage("DATABASE_IDENTITY", async () => assertRuntimeDatabaseIdentity(await client.$queryRaw`SELECT current_database() AS "databaseName"`, contract.target));
     const permissions = new DynamicPermissionRepository(prisma);
     if (mode === "OPERATOR") {
       const raw = process.env.CRM_BUSINESS_MAIL_OPERATION;
       if (!raw || Buffer.byteLength(raw, "utf8") > 16384) throw new Error("business_mail_operator_invalid");
       const request = parseMailOperatorRequest(JSON.parse(raw) as unknown);
       if (request.sourceSha !== process.env.CRM_BUSINESS_MAIL_SOURCE_SHA) throw new Error("business_mail_source_mismatch");
-      const result = await new BusinessMailOperator(client, permissions, journal).execute(request);
+      const result = await mailStage("OPERATOR", () => new BusinessMailOperator(client, permissions, journal).execute(request));
       process.stdout.write(JSON.stringify({ job: "internal-business-mail-operator", completed: true, mode: request.mode, operationId: request.operationId, ...result }) + "\n");
     } else {
-      const report = await new BusinessMailRuntime(client, permissions, journal).run("SEND");
+      const report = await mailStage("CONFIGURATION_READ", () => new BusinessMailRuntime(client, permissions, journal).run("SEND"));
       process.stdout.write(JSON.stringify({ job: "internal-business-mail", completed: true, sourceSha: process.env.CRM_BUSINESS_MAIL_SOURCE_SHA, ...report }) + "\n");
     }
-  } finally { await Promise.all([prisma.onModuleDestroy(), journal.close()]); }
+  }, [(): Promise<void> => prisma.onModuleDestroy(), (): Promise<void> => journal.close()]);
 }
 if (process.argv[1]?.replaceAll("\\", "/").endsWith("/jobs/business-mail.js")) {
-  void runBusinessMailJob(process.argv[2] ?? "SEND").catch(() => {
-    process.stderr.write(JSON.stringify({ job: "internal-business-mail", completed: false, code: "business_mail_failed_reconcile_before_retry" }) + "\n"); process.exitCode = 1;
+  void runBusinessMailJob(process.argv[2] ?? "SEND").catch((error: unknown) => {
+    process.stderr.write(JSON.stringify({ job: "internal-business-mail", completed: false, code: "business_mail_failed_reconcile_before_retry", ...mailDiagnostic(error) }) + "\n"); process.exitCode = 1;
   });
 }

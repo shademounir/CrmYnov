@@ -14,10 +14,54 @@ import type { BusinessMailSettings } from "../src/business-mail/business-mail-se
 import { referenceKey } from "../src/references/reference.contract.js";
 import { currentMailFacts } from "../src/business-mail/business-mail-facts.js";
 import { auditView } from "../src/audit/audit-view.js";
-import type { CrmReference, Collaborator } from "@prisma/client";
+import { Prisma, type CrmReference, type Collaborator } from "@prisma/client";
+import { initialFenceLockUnavailable } from "../src/permissions/safe-mail-diagnostic.js";
 
 const options = { skip: process.env.CRMY_MAIL_EPHEMERAL_TEST !== "true", timeout: 90000 };
 const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+test("Mail acquisition real PG: exact lock timeout, fresh revoked authorization after retry, global abort before handler", options, async () => {
+  const url = new URL(process.env.DATABASE_URL ?? ""); assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.pathname, "/crmy_mail_synthetic");
+  const prisma = new PrismaService(), db = prisma.client!, permissions = new DynamicPermissionRepository(prisma);
+  let release: (() => void) | undefined, holding: Promise<void> | undefined;
+  const hold = async (action: (tx: Prisma.TransactionClient) => Promise<void>): Promise<void> => {
+    let ready!: () => void;
+    const acquired = new Promise<void>(resolve => { ready = resolve; });
+    const finish = new Promise<void>(resolve => { release = resolve; });
+    holding = db.$transaction(async tx => {
+      await acquirePermissionFence(tx, "write"); await action(tx); ready(); await finish;
+    }, { timeout: 30000 });
+    await Promise.race([acquired, holding.then(() => { throw Error("synthetic_holder_ended_before_acquisition"); })]);
+  };
+  try {
+    assert.deepEqual(await db.$queryRaw`SELECT nonce FROM business_mail_test_identity.marker`, [{ nonce: process.env.CRMY_MAIL_DATABASE_NONCE }]);
+    const owner = await db.collaborator.create({ data: { professionalEmail: `synthetic-fence-${randomUUID()}@example.test`, roles: ["MANAGER"], active: true, firstLoginRequired: false } });
+    await hold(async tx => { await tx.collaborator.update({ where: { id: owner.id }, data: { active: false } }); });
+    // Verify the actual vendor class/SQLSTATE, not a fabricated lookalike or exception message.
+    await assert.rejects(db.$transaction(tx => acquirePermissionFence(tx, "read"), { timeout: 30000 }), error => {
+      assert(error instanceof Prisma.PrismaClientKnownRequestError); assert(initialFenceLockUnavailable(error)); return true;
+    });
+    let actions = 0;
+    // Release after the production 5s lock timeout: the first mail attempt must roll back.
+    const timer = setTimeout(() => release?.(), 5500);
+    try {
+      const active = await permissions.readTransaction(async tx => {
+        actions++; return (await tx.collaborator.findUniqueOrThrow({ where: { id: owner.id } })).active;
+      }, { businessMailFence: { signal: AbortSignal.timeout(20000) } });
+      assert.equal(active, false, "The recovered handler must see the revocation committed during its fence wait");
+      assert.equal(actions, 1, "Acquisition recovery must not replay the authorization/action handler");
+      await holding;
+    } finally { clearTimeout(timer); release?.(); await holding; }
+
+    await hold(() => Promise.resolve());
+    const controller = new AbortController(); let abortedActions = 0;
+    const abortTimer = setTimeout(() => controller.abort(), 50), releaseTimer = setTimeout(() => release?.(), 150);
+    try {
+      await assert.rejects(permissions.readTransaction(() => { abortedActions++; return Promise.resolve(); }, { businessMailFence: { signal: controller.signal } }));
+      assert.equal(abortedActions, 0, "An aborted global budget cannot authorize a handler after lock acquisition");
+    } finally { clearTimeout(abortTimer); clearTimeout(releaseTimer); release?.(); await holding; }
+  } finally { release?.(); await holding; await prisma.onModuleDestroy(); }
+});
 class SyntheticTransport extends GmailBusinessMailSender {
   business: PreparedBusinessMail[] = []; fixtures: PreparedBusinessMail[] = [];
   failNext = false; block: ((message: PreparedBusinessMail) => Promise<void>) | undefined;
