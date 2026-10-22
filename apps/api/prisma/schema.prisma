@@ -1673,7 +1673,7 @@ model CampusNewAssignmentCounter {
 }
 
 model CampusNewAssignmentReceipt {
-  eventHash String @id @map("event_hash") @db.Char(64)
+  eventHash String @id @map("event_hash") @db.VarChar(64)
   leadId String @unique @map("lead_id") @db.Uuid
   campusId String @map("campus_id") @db.Uuid
   version Int

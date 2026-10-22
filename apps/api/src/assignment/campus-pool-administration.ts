@@ -20,12 +20,12 @@ export async function campusPoolAdministration(tx: Prisma.TransactionClient, cam
   const users = await tx.collaborator.findMany({ where: { campusId: { in: campus.keys }, active: true, firstLoginRequired: false, roles: { has: "ADMISSIONS" } },
     select: { id: true, professionalDisplayName: true, professionalEmail: true, roles: true }, orderBy: { id: "asc" }, take: 501 });
   if (users.length > 500) throw new ConflictException({ code: "assignment_candidates_limit" });
-  const candidates: CampusPoolCandidate[] = [];
-  for (const user of users) {
-    if (!assignmentCandidateCapability(user.roles as Role[], permissions, { campus: campus.id, active: true, own: true, team: false, campusAllowed: true, globalAllowed: false })) continue;
-    candidates.push({ id: user.id, label: user.professionalDisplayName?.trim() || user.professionalEmail,
-      activeLeadCount: await tx.lead.count({ where: { assignedToId: user.id, status: { notIn: ["CLOSED_LOST", "ENROLLED"] } } }) });
-  }
+  const eligible = users.filter(user => assignmentCandidateCapability(user.roles as Role[], permissions,
+    { campus: campus.id, active: true, own: true, team: false, campusAllowed: true, globalAllowed: false }));
+  const candidates: CampusPoolCandidate[] = await Promise.all(eligible.map(async user => ({
+    id: user.id, label: user.professionalDisplayName?.trim() || user.professionalEmail,
+    activeLeadCount: await tx.lead.count({ where: { assignedToId: user.id, status: { notIn: ["CLOSED_LOST", "ENROLLED"] } } })
+  })));
   const rows = version ? await tx.campusNewAssignmentCounter.findMany({ where: { campusId: campus.id, version }, take: 10_001 }) : [];
   if (rows.length > 10_000) throw new ConflictException({ code: "assignment_balance_capacity" });
   const counters: CampusPoolAdministration["counters"] = [];
@@ -42,11 +42,11 @@ export async function campusPoolAdministration(tx: Prisma.TransactionClient, cam
 
 /** New balanced routing uses current canonical reference codes; old snapshots are never remapped. */
 export async function validateBalancedPoolReferences(tx: Prisma.TransactionClient, campusId: string, rules: readonly AssignmentRuleInput[]): Promise<void> {
-  for (const rule of rules.filter(r => r.balanceNewEntrants)) {
+  await Promise.all(rules.filter(r => r.balanceNewEntrants).map(async rule => {
     if (rule.scope === "SOURCE" && !ingestionSources.includes(rule.matchValue as typeof ingestionSources[number])) throw new BadRequestException({ code: "assignment_source_invalid" });
-    if (rule.scope !== "CAMPAIGN") continue;
+    if (rule.scope !== "CAMPAIGN") return;
     const reference = await resolveReference(tx, "CAMPAIGN", rule.matchValue ?? "", campusId);
     if (reference?.state !== "ACTIVE" || reference.scope === "CAMPUS" && reference.campusId !== campusId) throw new BadRequestException({ code: "assignment_campaign_invalid" });
     if (reference.code !== rule.matchValue) throw new BadRequestException({ code: "assignment_campaign_canonical_code_required" });
-  }
+  }));
 }

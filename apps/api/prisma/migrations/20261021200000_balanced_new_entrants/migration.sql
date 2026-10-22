@@ -13,7 +13,7 @@ CREATE TABLE "campus_new_assignment_counters" (
   FOREIGN KEY ("user_id") REFERENCES "collaborators" ("id")
 );
 CREATE TABLE "campus_new_assignment_receipts" (
-  "event_hash" CHAR(64) PRIMARY KEY,
+  "event_hash" VARCHAR(64) PRIMARY KEY CHECK ("event_hash" ~ '^[0-9a-f]{64}$'),
   "lead_id" UUID NOT NULL,
   "campus_id" UUID NOT NULL,
   "version" INTEGER NOT NULL CHECK ("version" > 0),

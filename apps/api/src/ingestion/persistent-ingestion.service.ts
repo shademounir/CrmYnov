@@ -255,9 +255,8 @@ export class PersistentIngestionService {
   }
 
   private async notifyNewUnassigned(tx: Prisma.TransactionClient, campusId: string, leadId: string, eventKey: string, grants: ConfigurationSnapshot[]): Promise<void> {
-    for (const recipientId of await assignmentManagerRecipients(tx, campusId, grants, "lead.assign")) {
-      await assignmentNotification(tx, recipientId, leadId, "ASSIGNMENT", eventKey, "/collaborators");
-    }
+    const recipients = await assignmentManagerRecipients(tx, campusId, grants, "lead.assign");
+    await Promise.all(recipients.map(recipientId => assignmentNotification(tx, recipientId, leadId, "ASSIGNMENT", eventKey, "/collaborators")));
   }
 
   private async validateLocalSheetIdentity(tx: Prisma.TransactionClient, connector: { campusId: string; workbookId: string; configuration: Prisma.JsonValue }, id: string): Promise<void> {

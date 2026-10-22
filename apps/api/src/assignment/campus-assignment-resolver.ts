@@ -1,7 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { selectAssignmentCandidate } from "./assignment-selection.js";
-import type { AssignmentCandidate, AssignmentDecision } from "./assignment.service.js";
+import type { AssignmentCandidate, AssignmentDecision, AssignmentRule } from "./assignment.service.js";
 import type { IngestionBatchInput } from "../ingestion/ingestion.service.js";
 import { canonicalCampus } from "../permissions/dynamic-resources.js";
 import { readCampusRules } from "./campus-assignment.service.js";
@@ -34,6 +34,19 @@ export async function eligibleAssignmentCandidate(tx: Prisma.TransactionClient, 
   return { ...candidate, active: candidate.active && campus.id === campusId, activeLeadCount };
 }
 
+async function prepareBalancedAssignment(tx: Prisma.TransactionClient, rule: Pick<AssignmentRule, "id" | "strategy">, candidates: AssignmentCandidate[],
+  evidence: { eventKey: string; campusId: string; configurationVersion: number }, automatic: boolean, newEntrant: boolean, eligibility?: AssignmentEligibility): Promise<SheetAssignment> {
+  // A decision-only request or assignment of an old Lead must never consume prospective fairness.
+  if (!newEntrant || !automatic) return { ...evidence, reason: "assignment_new_entrants_only" };
+  if (!eligibility?.commercialOnly) throw new ConflictException({ code: "assignment_balance_permissions_required" });
+  const reservation = await reserveNewEntrant(tx, evidence.campusId, evidence.configurationVersion, rule.id, evidence.eventKey, candidates);
+  if (!reservation) return { ...evidence, reason: "assignment_candidate_unavailable" };
+  const candidateIds = candidates.filter(c => c.active && !c.suspended && !c.excluded && c.activeLeadCount < c.capacity).map(c => c.userId).sort((a, b) => a.localeCompare(b, "en"));
+  const legacyEvidence = selectAssignmentCandidate({ ...rule, cursor: 0, candidates }, evidence.eventKey);
+  return { ...evidence, targetUserId: reservation.userId, newEntrantReservation: reservation,
+    selection: { ...legacyEvidence, candidateIds, selectedUserId: reservation.userId }, reason: "assignment_balanced_new_entrant_v1" };
+}
+
 /** Selection and cursor movement stay inside the caller's fenced business transaction. */
 export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input: IngestionBatchInput["assignment"], record: { source: string; campaign?: string | undefined },
   campusId: string, eventKey: string, previewOffset = 0, automatic = input.strategy !== "FIXED", eligibility?: AssignmentEligibility, newEntrant = false): Promise<SheetAssignment> {
@@ -54,15 +67,7 @@ export async function prepareSheetAssignment(tx: Prisma.TransactionClient, input
   const cursor = await tx.campusAssignmentCursor.findUnique({ where: { campusId_version_ruleId: { campusId, version: configuration.version, ruleId: rule.id } } });
   const candidates = await Promise.all(rule.candidates.map((candidate) => eligibleAssignmentCandidate(tx, candidate, campusId, eligibility)));
   if (rule.balanceNewEntrants) {
-    // A decision-only request or assignment of an old Lead must never consume prospective fairness.
-    if (!newEntrant || !automatic) return { ...evidence, reason: "assignment_new_entrants_only" };
-    if (!eligibility?.commercialOnly) throw new ConflictException({ code: "assignment_balance_permissions_required" });
-    const reservation = await reserveNewEntrant(tx, campusId, configuration.version, rule.id, eventKey, candidates);
-    if (!reservation) return { ...evidence, reason: "assignment_candidate_unavailable" };
-    const candidateIds = candidates.filter(c => c.active && !c.suspended && !c.excluded && c.activeLeadCount < c.capacity).map(c => c.userId).sort((a, b) => a.localeCompare(b, "en"));
-    const legacyEvidence = selectAssignmentCandidate({ id: rule.id, strategy: rule.strategy, cursor: 0, candidates }, eventKey);
-    return { ...evidence, targetUserId: reservation.userId, newEntrantReservation: reservation,
-      selection: { ...legacyEvidence, candidateIds, selectedUserId: reservation.userId }, reason: "assignment_balanced_new_entrant_v1" };
+    return prepareBalancedAssignment(tx, { id: rule.id, strategy: rule.strategy }, candidates, evidence, automatic, newEntrant, eligibility);
   }
   const selection = selectAssignmentCandidate({ id: rule.id, strategy: rule.strategy, cursor: cursor?.cursor ?? 0, candidates }, eventKey, previewOffset);
   return { ...evidence, targetUserId: selection.selectedUserId, selection };

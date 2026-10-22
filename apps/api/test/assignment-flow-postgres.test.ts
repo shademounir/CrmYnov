@@ -118,6 +118,14 @@ test("balanced NEW entrants persist fairness across APIs, replay and audit rollb
     const counts = await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } });
     assert.equal(counts.length, 3); assert.deepEqual(counts.map(r => r.assignedCount), [4, 4, 4]);
     assert.equal(await f.db.campusNewAssignmentReceipt.count({ where }), 12);
+    const originalReceipt = await f.db.campusNewAssignmentReceipt.findFirstOrThrow({ where });
+    assert.match(originalReceipt.eventHash, /^[0-9a-f]{64}$/u);
+    for (const malformed of ["", "a".repeat(63), "A".repeat(64), "g".repeat(64)]) {
+      await assert.rejects(f.db.$executeRaw`UPDATE campus_new_assignment_receipts SET event_hash = ${malformed} WHERE event_hash = ${originalReceipt.eventHash}`,
+        (error: unknown) => (error as { meta?: { code?: string } }).meta?.code === "23514");
+      assert.deepEqual(await f.db.campusNewAssignmentReceipt.findUniqueOrThrow({ where: { eventHash: originalReceipt.eventHash } }), originalReceipt,
+        "Malformed digest is rejected atomically; the valid unique replay receipt is preserved");
+    }
     const replay = await f.http<CreateLeadResult>("POST", "/leads", f.commercialSession.token, inputs[0], 1);
     assert.equal(replay.status, 201); assert.deepEqual(replay.body, created[0]);
     assert.deepEqual(await f.db.campusNewAssignmentCounter.findMany({ where, orderBy: { userId: "asc" } }), counts);
