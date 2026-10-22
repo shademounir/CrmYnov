@@ -73,7 +73,7 @@ await withPreservedCleanup(async () => {
   let output;
   try {
     output = execFileSync(process.execPath, ["--test", "--test-concurrency=1", "compiled/test/integration/sheet-append-postgres.test.js"],
-      { cwd: applicationDirectory, env, encoding: "utf8", windowsHide: true, timeout: 240_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+      { cwd: applicationDirectory, env, encoding: "utf8", windowsHide: true, timeout: 540_000, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
     writeFileSync(join(proofDirectory, "postgres-test.stdout.log"), output, { flag: "wx" });
     if (!/^# tests [1-9]\d*$/mu.test(output) || !/^# skipped 0$/mu.test(output) || !/^# fail 0$/mu.test(output)) throw new Error("sheet_append_test_did_not_execute_fully");
     if (JSON.stringify(sourceHashes()) !== JSON.stringify(sourcesBefore) || JSON.stringify(bindings()) !== JSON.stringify(bindingsBefore)) throw new Error("sheet_append_test_source_changed");
@@ -89,6 +89,22 @@ await withPreservedCleanup(async () => {
     producerAttested: false, automaticActivationPerformed: false }));
 }, () => {
   if (created) {
+    // A stopped tmpfs is not a backup. Preserve a complete synthetic SQL dump
+    // and restore it into a distinct empty database before stopping the owner.
+    ownedContainer(image);
+    const executable = process.platform === "win32" ? "C:/Program Files/Docker/Docker/resources/bin/docker.exe" : "/usr/bin/docker";
+    const invoke = (args, input) => execFileSync(executable,args,{input,encoding:"utf8",windowsHide:true,timeout:120_000,maxBuffer:64*1024*1024,stdio:[input===undefined?"ignore":"pipe","pipe","pipe"]});
+    const dump = invoke(["exec",container,"pg_dump","-U","postgres","-d",database,"--no-owner","--no-acl"]);
+    writeFileSync(join(proofDirectory,"synthetic-backup.sql"),dump,{flag:"wx"});
+    const restored = "crmy63_append_restore";
+    invoke(["exec",container,"createdb","-U","postgres",restored]);
+    invoke(["exec","-i",container,"psql","-U","postgres","-d",restored,"-v","ON_ERROR_STOP=1"],dump);
+    const inventorySql = "SELECT schemaname,tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY 1,2";
+    const tables = db => invoke(["exec",container,"psql","-U","postgres","-d",db,"-At","-F","|","-c",inventorySql]).trim().split(/\r?\n/u).filter(Boolean);
+    const originalTables=tables(database);if(JSON.stringify(originalTables)!==JSON.stringify(tables(restored)))throw new Error("sheet_append_backup_table_mismatch");
+    const inventory=db=>originalTables.map(line=>{const [schema,table]=line.split("|");if(!/^[a-zA-Z0-9_]+$/u.test(schema)||!/^[a-zA-Z0-9_]+$/u.test(table))throw new Error("sheet_append_backup_identifier");const sql=`SELECT row_to_json(t)::text FROM "${schema}"."${table}" t ORDER BY row_to_json(t)::text`;return {table:line,sha256:hash(invoke(["exec",container,"psql","-U","postgres","-d",db,"-At","-c",sql]))};});
+    const original=inventory(database),copy=inventory(restored);if(JSON.stringify(original)!==JSON.stringify(copy))throw new Error("sheet_append_backup_content_mismatch");
+    writeFileSync(join(proofDirectory,"backup-restore-result.json"),`${JSON.stringify({syntheticOnly:true,database,restored,dumpSha256:hash(dump),tables:original,verified:true},null,2)}\n`,{flag:"wx"});
     ownedContainer(image); docker(["stop", "--timeout", "60", container]);
     if (ownedContainer(image).State.Running) throw new Error("sheet_append_owned_container_not_stopped");
     writeFileSync(join(proofDirectory, "cleanup-result.json"), `${JSON.stringify({ container, image, ownedNonceMatched: true, stopped: true, preserved: true, tmpfsDatabaseNotABackup: true }, null, 2)}\n`, { flag: "wx" });

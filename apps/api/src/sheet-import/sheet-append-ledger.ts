@@ -5,14 +5,17 @@ import { APPEND_MODE, APPEND_POLICY, appendBinding, appendCompletion, appendHash
 import { sheetStreamId } from "./sheet-local-ledger.js";
 import type { SheetConfiguration } from "./sheet-import-configuration.js";
 import type { SheetAppendQualification } from "./sheet-append-qualification.js";
+import { assertHistoricalQualification } from "./sheet-append-qualification.js";
+import type { HistoricalRuntimeEvidence } from "./sheet-append-boundary-file.js";
 
 export interface AppendStream { id: string; campusId: string; suspended: boolean; errorCode: string | null; contract: SheetAppendContract | null; qualification: SheetAppendQualification | null; lastObservedRow: number; lastDurableRow: number | null }
 export interface AppendRow { id: string; rowNumber: number; fingerprint: string; status: string; payload: string[]; occurrenceKey: string; firstObservedAt: Date }
 export const appendRowMayComplete = (row: Pick<AppendRow, "status" | "payload">, cells: string[]): boolean => ["PENDING", "INCOMPLETE"].includes(row.status) && appendCompletion(row.payload, cells);
-export function appendObservationConflict(stream: AppendStream & { contract: SheetAppendContract }, observation: ReturnType<typeof appendPositions>, rows: AppendRow[]): string | null {
+export function appendObservationConflict(stream: AppendStream & { contract: SheetAppendContract }, observation: ReturnType<typeof appendPositions>, rows: AppendRow[], approved: Array<{row:number;fingerprint:string}> = []): string | null {
   if (appendHash(observation.header) !== stream.contract.headerFingerprint || observation.lastOccupiedRow < stream.lastObservedRow) return "append_source_structure_changed";
   const present = new Map(observation.positions.map((position) => [position.row, position]));
-  if (stream.contract.historicalFingerprints.some((position) => present.get(position.row)?.fingerprint !== position.fingerprint)) return "append_historical_row_changed";
+  const accepted=new Map(approved.map(p=>[p.row,p.fingerprint]));
+  if (stream.contract.historicalFingerprints.some((position) => present.get(position.row)?.fingerprint !== (accepted.get(position.row)??position.fingerprint))) return "append_historical_row_changed";
   if (rows.some((row) => { const current = present.get(row.rowNumber); return !current || current.fingerprint !== row.fingerprint && !appendRowMayComplete(row, current.cells); })) return "append_observed_row_changed";
   return null;
 }
@@ -65,13 +68,14 @@ export async function suspendAppend(tx: Prisma.TransactionClient, stream: Append
 /** Caller owns permission and connector lease fences. Persist the ENTIRE bounded
  * observation before any business effect. No cursor is an ingestion decision. */
 export async function persistAppendObservation(tx: Prisma.TransactionClient, connector: { id: string; workbookId: string; tab: string; campusId: string },
-  configuration: SheetConfiguration, runId: string, values: string[][], observedAt = new Date()): Promise<boolean> {
+  configuration: SheetConfiguration, runId: string, values: string[][], observedAt = new Date(), historical?:HistoricalRuntimeEvidence): Promise<boolean> {
   const stream = await assertAppendBinding(tx, connector, configuration, true);
   let observation: ReturnType<typeof appendPositions>;
   try { observation = appendPositions(stream.contract.range, values); }
   catch { return suspendAppend(tx, stream, connector.id, runId, "append_observation_invalid"); }
   const rows = await appendRows(tx, stream.id), earlier = new Map(rows.map((row) => [row.rowNumber, row]));
-  const conflict = appendObservationConflict(stream, observation, rows);
+  const approved=stream.qualification?.schemaVersion===3?await assertHistoricalQualification(tx,stream,historical):[];
+  const conflict = appendObservationConflict(stream, observation, rows,approved);
   // Bound cumulative private journal growth as well as each Google response.
   // Never purge old versions to make room. A bound hit is an explicit halt.
   const budget = await tx.$queryRaw<Array<{ versions: number; bytes: bigint }>>`SELECT count(*)::int AS versions,COALESCE(sum(octet_length(payload::text)),0)::bigint AS bytes FROM sheet_append_observations WHERE stream_id=${stream.id}`;

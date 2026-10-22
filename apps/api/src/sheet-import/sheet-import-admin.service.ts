@@ -23,9 +23,11 @@ import { cutoverConnectorBound } from "../cutover/cutover.store.js";
 import { parseSheetLocalRange, reconcileSheetObservation, type SheetLocalObservation } from "./sheet-local-observation.js";
 import { APPEND_MODE, appendPositions } from "./sheet-append-contract.js";
 import { appendObservationConflict, appendRows, appendStream, appendWorkerEnabled, assertAppendBinding, persistAppendObservation, registerAppendBoundary } from "./sheet-append-ledger.js";
-import { privateAppendBoundary, privateAppendQualification } from "./sheet-append-boundary-file.js";
+import { privateAppendBoundary, privateAppendQualification, privateHistoricalFiles, privateHistoricalRuntime, type HistoricalRuntimeEvidence } from "./sheet-append-boundary-file.js";
+import { historicalCheck, readHistoricalRequest, validateHistoricalSource, historicalHash, type HistoricalFiles } from "./sheet-historical-contract.js";
+import { acknowledgeHistorical, historicalMonitor } from "./sheet-historical-ledger.js";
 import { BootstrapImportService } from "../bootstrap-import/bootstrap-import.service.js";
-import { assertAppendQualification, type SheetAppendQualification } from "./sheet-append-qualification.js";
+import { assertAppendQualification, assertHistoricalQualification, type SheetAppendQualification } from "./sheet-append-qualification.js";
 
 type SimulationResult = { rows: number; mapped: number; review: number; mutated: false; simulated: boolean; reconciliationRequired: boolean; reason: string | null };
 
@@ -105,6 +107,7 @@ export class SheetImportAdminService {
   }
 
   async save(actor: Principal, raw: unknown, id?: string): Promise<ConnectorView> {
+    const historical = id ? await this.historicalRuntime(actor,id) : undefined;
     const body = sheetObject(raw);
     const expected = body.expectedVersion;
     if (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 0 || typeof body.enabled !== "boolean") throw new BadRequestException({ code: "sheet_configuration_invalid" });
@@ -136,7 +139,7 @@ export class SheetImportAdminService {
       if (configuration.source?.identityMode === APPEND_MODE && enabled) {
         if (!appendWorkerEnabled(process.env) || process.env.CRM_SHEET_APPEND_POLICY_QUALIFIED !== "true") throw new ConflictException({ code: "sheet_append_policy_not_qualified" });
         const stream = await assertAppendBinding(tx, { workbookId: workbook, tab: sheetText(body.tab, 100), campusId: campus.id }, configuration, true);
-        await assertAppendQualification(tx, stream, this.repository, this.bootstrap, configuration.assignment.strategy !== "UNASSIGNED");
+        await assertAppendQualification(tx, stream, this.repository, this.bootstrap, configuration.assignment.strategy !== "UNASSIGNED",historical);
       } else if (configuration.source?.sheetId !== undefined) {
         const bound = await appendStream(tx, sheetStreamId(workbook, configuration.source.sheetId));
         if (bound?.contract && configuration.source.identityMode !== APPEND_MODE) throw new ConflictException({ code: "sheet_append_legacy_execution_refused" });
@@ -177,6 +180,7 @@ export class SheetImportAdminService {
   }
 
   async requestRun(actor: Principal, id: string, expectedVersion: number): Promise<{ queued: true; version: number }> {
+    const historical=await this.historicalRuntime(actor,id);
     return this.repository.transaction(async (tx) => {
       const row = await this.connector(tx, actor, id);
       if (await cutoverConnectorBound(tx, row.id)) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
@@ -184,7 +188,7 @@ export class SheetImportAdminService {
       if (config.source?.identityMode === APPEND_MODE) {
         if (!appendWorkerEnabled(process.env) || process.env.CRM_SHEET_APPEND_POLICY_QUALIFIED !== "true") throw new ConflictException({ code: "sheet_append_policy_not_qualified" });
         const stream = await assertAppendBinding(tx, row, config, true);
-        await assertAppendQualification(tx, stream, this.repository, this.bootstrap, config.assignment.strategy !== "UNASSIGNED");
+        await assertAppendQualification(tx, stream, this.repository, this.bootstrap, config.assignment.strategy !== "UNASSIGNED",historical);
       }
       if (typeof config.source?.sheetId === "number" && await cutoverConnectorBound(tx, row.id, { workbookId: row.workbookId, sheetId: config.source.sheetId })) throw new ConflictException({ code: "sheet_cutover_preparation_only" });
       if ((!row.enabled && !["LOCAL_ROW", APPEND_MODE].includes(config.source?.identityMode ?? "")) || row.version !== expectedVersion) throw new ConflictException({ code: "sheet_disabled_or_version_conflict" });
@@ -258,6 +262,7 @@ export class SheetImportAdminService {
       if (row.version !== body.expectedVersion) throw new ConflictException({ code: "sheet_version_conflict" });
     });
     const artifact = await privateAppendQualification(process.env, resolve(__dirname, "../../../.."));
+    const historical=await this.historicalRuntime(actor,id);
     return this.repository.transaction(async (tx) => {
       const row = await this.connector(tx, actor, id), current = await this.authorize(tx, actor, row.campusId, ["settings.campus.manage", "import.confirm"]);
       await tx.$queryRaw`SELECT id FROM sheet_import_connectors WHERE id=${row.id}::uuid FOR UPDATE`;
@@ -267,7 +272,7 @@ export class SheetImportAdminService {
       const user = await tx.collaborator.findUniqueOrThrow({ where: { id: current.userId } });
       const qualification: SheetAppendQualification = { ...artifact.qualification, artifactSha256: artifact.sha256, delegation: {
         creatorId: current.userId, authorizedBy: current.userId, creatorAuthenticationVersion: user.authenticationVersion, authorizerAuthenticationVersion: user.authenticationVersion } };
-      await assertAppendQualification(tx, { ...stream, qualification }, this.repository, this.bootstrap, config.assignment.strategy !== "UNASSIGNED");
+      await assertAppendQualification(tx, { ...stream, qualification }, this.repository, this.bootstrap, config.assignment.strategy !== "UNASSIGNED",historical);
       if (stream.qualification?.artifactSha256 === artifact.sha256) return { qualified: true, producerAttested: false, automaticActivationPerformed: false, artifactSha256: artifact.sha256, reportSha256: qualification.reportSha256 };
       await tx.$executeRaw`UPDATE sheet_local_streams SET append_qualification=${JSON.stringify(qualification)}::jsonb WHERE id=${stream.id}`;
       await this.audit(tx, current, latest, "SHEET_APPEND_QUALIFIED", { artifactSha256: artifact.sha256, evidenceSha256: qualification.evidenceSha256,
@@ -278,6 +283,7 @@ export class SheetImportAdminService {
 
   async observeAppend(actor: Principal, id: string, raw: unknown): Promise<unknown> {
     const body = appendCommand(raw);
+    const historical=await this.historicalRuntime(actor,id);
     const row = await this.repository.readTransaction(async (tx) => {
       const connector = await this.connector(tx, actor, id); await this.authorize(tx, actor, connector.campusId, ["settings.campus.manage", "import.execute", "import.confirm"]);
       if (connector.version !== body.expectedVersion || connector.enabled || connector.activeRunId || connector.manualRequested) throw new ConflictException({ code: "sheet_append_execution_must_be_stopped" });
@@ -292,7 +298,7 @@ export class SheetImportAdminService {
       if (locked.version !== row.version || locked.enabled || locked.activeRunId || locked.manualRequested) throw new ConflictException({ code: "sheet_append_execution_must_be_stopped" });
       const run = await tx.sheetImportRun.create({ data: { connectorId: locked.id, status: "RUNNING", trigger: "MANUAL", configurationVersion: locked.version,
         configurationSnapshot: { observationOnly: true, configuration: locked.configuration } } });
-      const consistent = await persistAppendObservation(tx, locked, config, run.id, observation.values);
+      const consistent = await persistAppendObservation(tx, locked, config, run.id, observation.values,new Date(),historical);
       await tx.sheetImportRun.update({ where: { id: run.id }, data: { status: consistent ? "COMPLETED" : "FAILED", completedAt: new Date(), errorCode: consistent ? null : "sheet_append_reconciliation_required" } });
       return { runId: run.id, observationDurable: consistent, businessEffects: 0, automaticActivationPerformed: false };
     });
@@ -325,6 +331,7 @@ export class SheetImportAdminService {
   }
 
   private async simulateAppend(actor: Principal, row: SheetImportConnector, configuration: SheetConfiguration): Promise<SimulationResult> {
+    const historical=await this.historicalRuntime(actor,row.id);
     const values = await this.source.read(row.workbookId, row.tab, configuration), raw = values.observation;
     if (!raw || raw.sheetId !== configuration.source?.sheetId || raw.range !== configuration.source.range) throw new BadRequestException({ code: "sheet_append_observation_missing" });
     const observed = appendPositions(raw.range, raw.values);
@@ -332,7 +339,8 @@ export class SheetImportAdminService {
       const latest = await this.connector(tx, actor, row.id); if (latest.version !== row.version) throw new ConflictException({ code: "sheet_version_conflict" });
       const stream = await assertAppendBinding(tx, latest, configuration);
       const durable = await appendRows(tx, stream.id), earlier = new Map(durable.map((entry) => [entry.rowNumber, entry]));
-      const reason = appendObservationConflict(stream, observed, durable), bad = reason !== null;
+      const approved=stream.qualification?.schemaVersion===3?await assertHistoricalQualification(tx,stream,historical):[];
+      const reason = appendObservationConflict(stream, observed, durable,approved), bad = reason !== null;
       const after = observed.positions.filter((position) => position.row > stream.contract.boundaryRow && !["CREATED", "DUPLICATE", "IGNORED", "REVIEW"].includes(earlier.get(position.row)?.status ?? ""));
       const rows = after.map((position) => Object.fromEntries(observed.header.map((column, index) => [column, position.cells[index] ?? ""])));
       const mapped = bad ? 0 : await this.countSimulationRows(tx, row.id, configuration, rows, observed.header);
@@ -370,6 +378,56 @@ export class SheetImportAdminService {
     });
   }
 
+  private async historicalRuntime(actor:Principal,id:string):Promise<HistoricalRuntimeEvidence|undefined>{
+    if(!process.env.CRM_SHEET_HISTORICAL_CAPABILITY_FILE&&!process.env.CRM_SHEET_HISTORICAL_CAPABILITY_SHA256)return undefined;
+    const row=await this.repository.readTransaction(tx=>this.connector(tx,actor,id));
+    if(readSheetConfiguration(row.configuration).source?.identityMode!==APPEND_MODE)return undefined;
+    return privateHistoricalRuntime(process.env,resolve(__dirname,"../../../.."));
+  }
+  private async historicalContext(actor:Principal,id:string):Promise<{row:SheetImportConnector;config:SheetConfiguration;stream:Awaited<ReturnType<typeof assertAppendBinding>>;files:HistoricalFiles}>{
+    const prepared=await this.repository.readTransaction(async tx=>{
+      const row=await this.connector(tx,actor,id);await this.historicalAuthorize(tx,actor,row.campusId);
+      const config=readSheetConfiguration(row.configuration),stream=await assertAppendBinding(tx,row,config);
+      historicalCheck(!row.enabled&&!row.activeRunId&&!row.manualRequested&&(!row.leaseUntil||row.leaseUntil<=new Date()),"execution_must_be_stopped");
+      return {row,config,stream};
+    });
+    const files=await privateHistoricalFiles(process.env,resolve(__dirname,"../../../.."));
+    const values=await this.source.read(prepared.row.workbookId,prepared.row.tab,prepared.config),observation=values.observation;
+    historicalCheck(observation&&observation.sheetId===prepared.config.source?.sheetId&&observation.range===prepared.config.source.range,"source_binding");
+    validateHistoricalSource(files,prepared.stream.contract,prepared.row.campusId,observation.values);
+    const after=await privateHistoricalFiles(process.env,resolve(__dirname,"../../../.."));
+    historicalCheck(after.boundarySha256===files.boundarySha256&&after.capabilitySha256===files.capabilitySha256,"private_file_changed");
+    return {...prepared,files};
+  }
+  private async historicalAuthorize(tx:Prisma.TransactionClient,actor:Principal,campusId:string):Promise<Principal>{
+    const current=await this.authorize(tx,actor,campusId,["settings.campus.manage","import.view","import.review.resolve","import.confirm"]);
+    const user=await tx.collaborator.findUniqueOrThrow({where:{id:current.userId}});
+    historicalCheck(!user.firstLoginRequired&&!current.mustChangeSecret,"first_login");
+    if(!current.roles.includes("SUPER_ADMIN"))historicalCheck(user.campusId&&(await canonicalCampus(tx,user.campusId)).id===(await canonicalCampus(tx,campusId)).id,"campus_identity");
+    return current;
+  }
+  async historicalReview(actor:Principal,id:string):Promise<Record<string,unknown>>{
+    const context=await this.historicalContext(actor,id);
+    return this.repository.readTransaction(async tx=>{
+      const row=await this.connector(tx,actor,id);await this.historicalAuthorize(tx,actor,row.campusId);
+      historicalCheck(row.version===context.row.version&&!row.enabled&&!row.activeRunId&&!row.manualRequested&&(!row.leaseUntil||row.leaseUntil<=new Date()),"context_changed");
+      const stream=await assertAppendBinding(tx,row,readSheetConfiguration(row.configuration));
+      historicalCheck(historicalHash(stream.contract)===historicalHash(context.stream.contract),"context_changed");
+      return {...await historicalMonitor(tx,{files:context.files,stream,connectorId:row.id}),connectorVersion:row.version};
+    });
+  }
+  async historicalAcknowledge(actor:Principal,id:string,raw:unknown):Promise<Record<string,unknown>>{
+    const request=readHistoricalRequest(raw),context=await this.historicalContext(actor,id);
+    return this.repository.transaction(async tx=>{
+      await tx.$queryRaw`SELECT id FROM sheet_import_connectors WHERE id=${context.row.id}::uuid FOR UPDATE`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${context.stream.id},171))`;
+      const row=await this.connector(tx,actor,id),current=await this.historicalAuthorize(tx,actor,row.campusId);
+      historicalCheck(row.version===request.expectedVersion&&row.version===context.row.version&&!row.enabled&&!row.activeRunId&&!row.manualRequested&&(!row.leaseUntil||row.leaseUntil<=new Date()),"context_changed");
+      const stream=await assertAppendBinding(tx,row,readSheetConfiguration(row.configuration),true);
+      historicalCheck(historicalHash(stream.contract)===historicalHash(context.stream.contract),"context_changed");
+      return acknowledgeHistorical(tx,{files:context.files,stream,connectorId:row.id},current,request);
+    });
+  }
   private async connector(tx: Prisma.TransactionClient, actor: Principal, id: string): Promise<SheetImportConnector> {
     const row = await tx.sheetImportConnector.findUnique({ where: { id: identifier(id) } });
     if (!row) throw new NotFoundException({ code: "sheet_connector_not_found" });

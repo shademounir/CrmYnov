@@ -1,8 +1,10 @@
 import React from "react";
 import { apiString, type ApiObject } from "../../_components/connected-resource";
 import { sheetApiObject } from "./sheets-client";
+import { SheetHistoricalReview } from "./sheet-historical-review";
 
-export function SheetAppendMonitor({ state, busy, sourceUnavailable, connectorEnabled, action }: {
+export function SheetAppendMonitor({ state, busy, sourceUnavailable, connectorEnabled, action,connectorId }: {
+  connectorId?:string;
   state: ApiObject | null; busy: boolean; sourceUnavailable: boolean; connectorEnabled: boolean;
   action: (value: "status" | "boundary" | "observations" | "qualification") => Promise<void>;
 }): React.JSX.Element {
@@ -35,5 +37,6 @@ export function SheetAppendMonitor({ state, busy, sourceUnavailable, connectorEn
       {state.suspended === true ? <p role="alert" className="sheets-error">Réception suspendue. Vérification et résolution explicites requises ; aucune nouvelle baseline automatique.</p> : null}
     </> : <p>Frontière non enregistrée dans cet environnement. Le fichier serveur privé et son empreinte sont nécessaires ; aucun contenu du Sheet n’est envoyé par ce formulaire.</p>}
     <p>Le dossier de qualification lie la frontière, le mapping, le gel Excel et la réconciliation. Des dossiers non résolus restent bloquants pour l’armement global tant qu’un contrat borné distinct n’est pas qualifié. Les données personnelles ne sont pas affichées ici.</p>
+    {connectorId?<SheetHistoricalReview key={connectorId} connectorId={connectorId} disabled={busy||connectorEnabled||sourceUnavailable||!registered||state?.suspended===true}/>:null}
   </section>;
 }

@@ -2,7 +2,7 @@ import "reflect-metadata";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpException } from "@nestjs/common";
@@ -28,6 +28,8 @@ import { appendBootstrapProofHash, type SheetAppendQualificationArtifact } from 
 import { BOUNDED_BOOTSTRAP_POLICY } from "../../src/bootstrap-import/bounded-bootstrap.js";
 import { deferredHistoricalCollision } from "../../src/bootstrap-import/bootstrap-create-guards.js";
 import { DEFERRED_RESERVATION_POLICY } from "../../src/sheet-import/sheet-append-qualification.js";
+import { HISTORICAL_POLICY, type HistoricalRequest } from "../../src/sheet-import/sheet-historical-contract.js";
+import { SheetSource } from "../../src/sheet-import/synthetic-sheet-source.js";
 import { sheetStreamId } from "../../src/sheet-import/sheet-local-ledger.js";
 import { bytesHash, CHUNK_BYTES, HISTORICAL_SHEETS } from "../../src/bootstrap-import/bootstrap-import.contract.js";
 import { syntheticHistoricalParts, syntheticZip } from "../fixtures/import/historical-workbook.synthetic.js";
@@ -44,7 +46,7 @@ class AppendFixtureSource extends SyntheticSheetSource {
   }
 }
 
-test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queue, row isolation, leases and replay", { skip: !enabled, timeout: 180000 }, async () => {
+test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queue, row isolation, leases and replay", { skip: !enabled, timeout: 480000 }, async () => {
   const url = new URL(process.env.DATABASE_URL ?? "http://invalid"), nonce = process.env.CRMY63_APPEND_DATABASE_NONCE;
   assert.equal(url.protocol, "postgresql:"); assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.pathname, "/crmy63_append_synthetic");
   assert.match(nonce ?? "", /^[a-f0-9-]{36}$/u);
@@ -73,7 +75,7 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
       const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`), path = join(directory, `${name}.json`), sha = bytesHash(bytes);
       await writeFile(path, bytes, { flag: "wx" }); process.env[`${environmentKey}_FILE`] = path; process.env[`${environmentKey}_SHA256`] = sha; return sha;
     };
-    const fixture = async (name: string, bounded = false): Promise<{ id: string; packId: string; streamId: string; configuration: SheetConfiguration; source: AppendFixtureSource; admin: SheetImportAdminService; worker: SheetImportExecutor; deferred?: { id: string; version: number } }> => {
+    const fixture = async (name: string, bounded = false, historical = false): Promise<{ id: string; packId: string; streamId: string; configuration: SheetConfiguration; source: AppendFixtureSource; admin: SheetImportAdminService; worker: SheetImportExecutor; deferred?: { id: string; version: number } }> => {
       const parts = syntheticHistoricalParts({ workbookExtra: `<definedNames data-append="${tag}-${name}"/>` });
       // Preserve edge whitespace in the source BEFORE seal/DEFER. All three real
       // worker branches below must reserve the normalized email/name, while an
@@ -100,16 +102,21 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
       const columns = [{ sourceColumn: "First", targetField: "firstName" as const, action: "TRIM" as const }, { sourceColumn: "Last", targetField: "lastName" as const, action: "TRIM" as const },
         { sourceColumn: "Email", targetField: "email" as const, action: "LOWERCASE" as const }, { sourceColumn: "Education", targetField: "educationLevel" as const, action: "TRIM" as const },
         { sourceColumn: "Program", targetField: "program" as const, action: "TRIM" as const }, { sourceColumn: "WhatsApp", action: "METADATA" as const, reason: "Private original metadata, never occurrence identity" }];
+      if(historical)columns.push({sourceColumn:"HistoricalG",action:"METADATA",reason:"Synthetic unchanged historical provenance"},{sourceColumn:"HistoricalH",action:"METADATA",reason:"Synthetic source-only H amendment"});
       const configuration = readSheetConfiguration({ source: { mode: "SIMULATED", identityMode: APPEND_MODE, sheetId: 0, range: "A1:CV10001" },
         mapping: mappings.snapshot({ mappingKey: `append-${tag}-${name}`, name: "Synthetic append", profile: "CUSTOM", expectedVersion: 0, columns }, user.id, new Date().toISOString()),
         context: { source: "WEB_FORM", technicalSystem: "GOOGLE_SHEETS_LOCAL", originalSource: "Synthetic declared channel", campus: campus.code, campaign: campaign.code }, assignment: { strategy: "UNASSIGNED" } });
       const source = new AppendFixtureSource([columns.map((column) => column.sourceColumn), ["Synthetic", "Old", `old-${name}-${tag}@example.invalid`, "BAC", program.code, ""]], configuration.source!.range!);
+      if(historical){while(source.raw.length<2586)source.raw.push([]);source.raw[2584]=["Synthetic","Historical A",`historical-a-${tag}@example.invalid`,"BAC",program.code,"","unchanged","old-A"];source.raw[2585]=["Synthetic","Historical B",`historical-b-${tag}@example.invalid`,"BAC",program.code,"","unchanged","old-B"];}
       const connector = await client.sheetImportConnector.create({ data: { campusId: campus.id, workbookId: `synthetic_append_${tag}_${name}`, tab: "SYNTHETIC", configuration: configuration as unknown as Prisma.InputJsonValue, updatedBy: user.id } });
       const admin = new SheetImportAdminService(permissions, mappings, source, bootstrap), worker = new SheetImportExecutor(prisma, permissions, mappings, app.get(PersistentIngestionService), source, bootstrap);
-      await artifact(`boundary-${name}`, { schemaVersion: 1, mode: APPEND_MODE, workbookId: connector.workbookId, sheetId: 0, tab: connector.tab, generation: randomUUID(), range: configuration.source!.range,
-        capturedAt: "2026-01-01T00:00:00.000Z", boundaryRow: 2, values: source.raw }, "CRM_SHEET_APPEND_BOUNDARY");
+      await artifact(`boundary-${name}`, { schemaVersion: 1, mode: APPEND_MODE, workbookId: connector.workbookId, sheetId: 0, tab: connector.tab, generation: historical?"615e16cf-5029-4b48-90e8-76900990d63f":randomUUID(), range: configuration.source!.range,
+        capturedAt: "2026-01-01T00:00:00.000Z", boundaryRow: historical?2586:2, values: source.raw }, "CRM_SHEET_APPEND_BOUNDARY");
       await admin.appendBoundary(actor, connector.id, { expectedVersion: 1, confirmed: true });
       const streamId = sheetStreamId(connector.workbookId, 0), stream = await permissions.readTransaction((tx) => appendStream(tx, streamId));
+      if(historical){const contract=stream!.contract!,positions=appendPositions(contract.range,source.raw);const transitions=([2585,2586]as const).map(row=>{const p=positions.positions.find(p=>p.row===row)!,cells=[...p.cells];cells[7]=`accepted-${row}`;return{row,column:8,originalFingerprint:p.fingerprint,acceptedFingerprint:appendHash(cells),acceptedCells:cells};});
+        await artifact(`capability-${name}`,{schemaVersion:1,policy:HISTORICAL_POLICY,...Object.fromEntries(["workbookId","sheetId","tab","range","generation","boundaryRow","headerFingerprint"].map(k=>[k,contract[k as keyof typeof contract]])),boundaryArtifactSha256:contract.artifactSha256,bindingSha256:contract.bindingSha256,campusId:campus.id,sourceObservationSha256:"c".repeat(64),transitions},"CRM_SHEET_HISTORICAL_CAPABILITY");
+        for(const t of transitions)source.raw[t.row-1]=[...t.acceptedCells];}
       const report = await permissions.readTransaction((tx) => bootstrap.reportCutoverRuntime(tx, pack.id, delegation, streamId, false));
       assert.equal((report as { cutoverBlocked: boolean }).cutoverBlocked, bounded);
       const boundedReport = (report as { boundedReconciliation: { qualified: boolean; inventorySha256: string; deferredOccurrences: number; deferredWithoutUsableContact: number } }).boundedReconciliation;
@@ -370,6 +377,56 @@ test("CRMY-63 append PostgreSQL: immutable boundary, qualification, durable queu
       } else assert.equal(await client.sheetLocalRow.count({ where: { streamId: sheetStreamId(`synthetic_deferred_local_${tag}`, 0) } }), 2);
     }
     assert.equal(await client.lead.count({ where: { email: "synthetic@example.invalid" } }), 0);
+    // Full schema3 application path: actual HTTP middleware/controller, current
+    // identity, private files, durable ledger, qualification and real worker.
+    const historical=await fixture("historical-v3",true,true);
+    Object.assign(app.get(SheetSource),{read:():Promise<SheetValues>=>historical.source.read()});
+    const historicalHttp=async(path:string,body?:unknown,token:string|undefined=session.token):Promise<{status:number;body:Record<string,unknown>} >=>{
+      const response=await fetch(`${origin}/scheduled-sheets/${historical.id}/${path}`,{method:body===undefined?"GET":"POST",headers:{"content-type":"application/json",...(token?{authorization:`Bearer ${token}`}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)});
+      return{status:response.status,body:await response.json() as Record<string,unknown>};
+    };
+    const beforeH={leads:await client.lead.count(),stream:await client.sheetLocalStream.findUniqueOrThrow({where:{id:historical.streamId}})};
+    const monitor=await historicalHttp("historical-review");assert.equal(monitor.status,200);assert.equal(monitor.body.revision,0);assert.equal(monitor.body.boundaryRow,2586);
+    assert(!JSON.stringify(monitor.body).includes("old-A"));assert(!JSON.stringify(monitor.body).includes("accepted-2585"));
+    const request=(row:2585|2586,revision:0|1):HistoricalRequest=>({row,reason:`Synthetic source-only H${row}; identity unchanged, no business correction.`,confirmed:true,expectedVersion:1,expectedRevision:revision,idempotencyKey:`historical-${randomUUID()}`});
+    const firstRequest=request(2585,0),secondRequest=request(2586,1);
+    assert.equal((await historicalHttp("historical-acknowledgements",{...firstRequest,path:"private.json"})).status,409);
+    const first=await historicalHttp("historical-acknowledgements",firstRequest);assert.equal(first.status,201,JSON.stringify(first.body));
+    assert.deepEqual((await historicalHttp("historical-acknowledgements",firstRequest)).body,first.body,"same durable receipt after response-loss replay");
+    assert.equal((await historicalHttp("historical-acknowledgements",{...firstRequest,reason:"Changed request body"})).status,409);
+    const oldThird=historical.source.raw[2583]!;historical.source.raw[2583]=["third unreviewed source edit"];
+    assert.equal((await historicalHttp("historical-acknowledgements",secondRequest)).status,409);historical.source.raw[2583]=oldThird;
+    historical.source.afterRead=async():Promise<void>=>{delete historical.source.afterRead;await permissions.transaction(tx=>tx.collaborator.update({where:{id:user.id},data:{active:false}}));};
+    const revoked=await historicalHttp("historical-acknowledgements",secondRequest);assert([401,403,404].includes(revoked.status));
+    await permissions.transaction(tx=>tx.collaborator.update({where:{id:user.id},data:{active:true}}));
+    assert.equal(await client.auditEvent.count({where:{resourceType:"SHEET_HISTORICAL",resourceId:historical.streamId}}),1);
+    const second=await historicalHttp("historical-acknowledgements",secondRequest);assert.equal(second.status,201,JSON.stringify(second.body));
+    assert.equal(await client.lead.count(),beforeH.leads);assert.deepEqual(await client.sheetLocalStream.findUniqueOrThrow({where:{id:historical.streamId}}),beforeH.stream,"H acknowledgement never resets cursor, qualification or original contract");
+    const inventory=await historicalHttp("historical-review");assert.equal(inventory.status,200);assert.equal(inventory.body.revision,2);
+    const q2=JSON.parse(await readFile(process.env.CRM_SHEET_APPEND_QUALIFICATION_FILE!,"utf8")) as SheetAppendQualificationArtifact;
+    const qualification:SheetAppendQualificationArtifact={...q2,qualifiedAt:new Date().toISOString(),schemaVersion:3,bootstrapProofVersion:2,historicalAmendments:{policy:HISTORICAL_POLICY,count:2,revision:2,inventorySha256:String(inventory.body.inventorySha256),receiptInventorySha256:String(inventory.body.receiptInventorySha256),capabilityArtifactSha256:String(inventory.body.capabilitySha256)}};
+    await artifact("qualification-historical-v3-complete",qualification,"CRM_SHEET_APPEND_QUALIFICATION");
+    const qualified=await historicalHttp("append-qualification",{expectedVersion:1,confirmed:true});assert.equal(qualified.status,201,JSON.stringify(qualified.body));
+    const qualifiedStream=await client.sheetLocalStream.findUniqueOrThrow({where:{id:historical.streamId}}),qualifiedJson=qualifiedStream.appendQualification as unknown as Record<string,unknown>;
+    await client.sheetLocalStream.update({where:{id:historical.streamId},data:{appendQualification:{...qualifiedJson,historicalAmendments:{...qualification.historicalAmendments,inventorySha256:"0".repeat(64)}}}});
+    const readsBeforeTamper=historical.source.reads;
+    await assert.rejects(()=>historical.admin.requestRun(actor,historical.id,1),e=>errorCode(e)==="sheet_historical_qualification_file_changed");assert.equal(historical.source.reads,readsBeforeTamper);
+    await client.sheetLocalStream.update({where:{id:historical.streamId},data:{appendQualification:qualifiedStream.appendQualification as Prisma.InputJsonObject}});
+    const qualificationBytes=await readFile(process.env.CRM_SHEET_APPEND_QUALIFICATION_FILE!);await writeFile(process.env.CRM_SHEET_APPEND_QUALIFICATION_FILE!,Buffer.concat([qualificationBytes,Buffer.from(" ")]));
+    await assert.rejects(()=>historical.admin.requestRun(actor,historical.id,1),e=>errorCode(e)==="sheet_append_private_boundary_unavailable");
+    await writeFile(process.env.CRM_SHEET_APPEND_QUALIFICATION_FILE!,qualificationBytes);
+    historical.source.raw.push(row("historical-new-one"),["Reserved","Identity","synthetic@example.invalid","BAC",program.code,""],["Bad","Email","invalid","BAC",program.code,""],...Array.from({length:45},()=>[] as string[]),row("historical-new-two"));
+    const originalContract=JSON.stringify(beforeH.stream.appendContract);
+    const runHistorical=async():Promise<void>=>{await historical.admin.requestRun(actor,historical.id,1);await historical.worker.execute(historical.id,"MANUAL");};
+    const beforeNew=await client.lead.count();await runHistorical();assert.equal(await client.lead.count(),beforeNew+2);
+    const historicalRows=await rowsFor(historical.streamId);assert.equal(historicalRows.length,49);assert.equal(historicalRows.filter(r=>r.status==="CREATED").length,2);assert.equal(historicalRows.filter(r=>r.status==="REVIEW").length,2);assert.equal(historicalRows.filter(r=>r.status==="INCOMPLETE").length,45);
+    assert.equal(JSON.stringify((await client.sheetLocalStream.findUniqueOrThrow({where:{id:historical.streamId}})).appendContract),originalContract);
+    const stableRows=historicalRows.map(r=>({id:r.id,key:r.occurrenceKey,status:r.status,fingerprint:r.fingerprint}));await runHistorical();assert.equal(await client.lead.count(),beforeNew+2);assert.deepEqual((await rowsFor(historical.streamId)).map(r=>({id:r.id,key:r.occurrenceKey,status:r.status,fingerprint:r.fingerprint})),stableRows);
+    const pinsBefore=await client.auditEvent.findMany({where:{resourceType:"SHEET_HISTORICAL",resourceId:historical.streamId},orderBy:{id:"asc"}});assert.equal(pinsBefore.length,2);
+    historical.source.raw[2583]=["third edit after qualification"];
+    await runHistorical();const historicalSuspended=await client.sheetLocalStream.findUniqueOrThrow({where:{id:historical.streamId}});assert(historicalSuspended.suspended);assert.equal(historicalSuspended.errorCode,"append_historical_row_changed");assert.equal(await client.lead.count(),beforeNew+2);
+    assert.deepEqual(await client.auditEvent.findMany({where:{resourceType:"SHEET_HISTORICAL",resourceId:historical.streamId},orderBy:{id:"asc"}}),pinsBefore);
+    console.log(JSON.stringify({proof:"schema3-real-application-http-worker",syntheticOnly:true,httpAcknowledgements:2,exactReplay:true,privateFileAndSqlTamperRefused:true,reauthorizationAfterSourceIo:true,boundaryRow:2586,resume:2587,postBoundaryPositions:49,newSyntheticLeads:2,incomplete:45,review:2,thirdChangeSuspended:true,productionActivated:false}));
     console.log(JSON.stringify({ proof: "sheet-append-postgres", syntheticOnly: true, mode: APPEND_MODE, boundaryExcluded: true, producerAttested: false, qualifiedFixtureOnly: true, noRealActivation: true,
       assertions: ["authenticated-http-four-append-handlers", "http-admin-superadmin-notfound", "http-campus-role-grant-session-revocation", "flags-off-zero-io", "server-boundary-and-no-rebaseline", "missing-qualification-refused", "qualification-replay", "durable-observation-zero-business", "pending-completion", "concurrent-workers", "row-content-isolation", "contact-match-review", "incomplete-resume", "no-duplicate-effects", "simulation-coherence", "conflicting-tail-quarantined", "bootstrap-receipt-corruption-refused", "authority-revoked-after-io", "transaction-fault-durable-resume", "bulk-1000-positions-replay", "bounded-v2-preserves-strict-global-guard", "deferred-local-row-real-worker-and-replay", "deferred-external-id-real-worker-and-replay", "terminal-historical-disposition-never-auto-creates-held-sheet-review", "ecmascript-edge-whitespace-reserved-real-workers", "internal-whitespace-never-joined-into-contact"], backlogDurationMs, privateProofDirectory: directory }));
   }
