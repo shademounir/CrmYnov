@@ -3,11 +3,11 @@ import { apiString, type ApiObject } from "../../_components/connected-resource"
 import { sheetApiObject } from "./sheets-client";
 import { SheetHistoricalReview } from "./sheet-historical-review";
 
-export function SheetAppendMonitor({ state, busy, sourceUnavailable, connectorEnabled, action,connectorId }: {
+export function SheetAppendMonitor({ state, busy, sourceUnavailable, connectorEnabled, action,connectorId }: Readonly<{
   connectorId?:string;
   state: ApiObject | null; busy: boolean; sourceUnavailable: boolean; connectorEnabled: boolean;
   action: (value: "status" | "boundary" | "observations" | "qualification") => Promise<void>;
-}): React.JSX.Element {
+}>): React.JSX.Element {
   const registered = state?.boundaryRegistered === true;
   const counts = sheetApiObject(state?.counts);
   return <section className="sheets-append-monitor" aria-label="Frontière et réception des nouvelles lignes">

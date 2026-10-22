@@ -70,13 +70,16 @@ export function sheetError(status: number): string {
   if (status === 400 || status === 422) return "Configuration refusée. Vérifiez le classeur, la plage, la correspondance des colonnes et les références autorisées.";
   return "Service indisponible. Aucune réussite n’a été confirmée.";
 }
+export class SheetRequestError extends Error {
+  constructor(readonly status: number) { super(sheetError(status)); this.name = "SheetRequestError"; }
+}
 export async function sheetRequest(path: string, method = "GET", body?: object): Promise<ApiValue> {
   let response: Response;
   try {
     response = await fetch(`/api/crm/scheduled-sheets${path}`, { method, credentials: "same-origin", cache: "no-store",
       headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
   } catch { throw new Error(sheetError(503)); }
-  if (!response.ok) throw new Error(sheetError(response.status));
+  if (!response.ok) throw new SheetRequestError(response.status);
   try { return sheetApiValue(await response.json()); }
   catch { throw new Error("Réponse du service invalide. Aucune réussite n’a été confirmée."); }
 }

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";import test from "node:test";import * as fs from "node:fs/promises";import{tmpdir}from"node:os";import{join,resolve}from"node:path";
 import {readPinnedPrivateArtifact,artifactSha256,type ArtifactIO} from "../src/sheet-import/sheet-private-artifact.js";
 import{historicalFixture}from"./fixtures/import/historical-amendment.synthetic.js";
-import{readHistoricalCapability,validateHistoricalSource,readHistoricalRequest,readHistoricalPin}from"../src/sheet-import/sheet-historical-contract.js";
+import{readHistoricalCapability,validateHistoricalSource,readHistoricalRequest,readHistoricalPin,historicalHash}from"../src/sheet-import/sheet-historical-contract.js";
 import{appendBootstrapProofHash,appendBootstrapQualified,readAppendQualification}from"../src/sheet-import/sheet-append-qualification.js";
 import{appendObservationConflict,type AppendStream}from"../src/sheet-import/sheet-append-ledger.js";
 import{appendPositions}from"../src/sheet-import/sheet-append-contract.js";
 const repo=resolve(__dirname,"../../.."),redacted=(e:unknown):boolean=>e instanceof Error&&e.message==="historical_private_artifact_unavailable";
+test("canonical historical hashes preserve UTF-16 wire order, not locale collation",()=>{
+ assert.equal(historicalHash({z:1,a:2,A:3,"é":4,"😀":5}),artifactSha256(Buffer.from('{"A":3,"a":2,"z":1,"é":4,"😀":5}')));
+ assert.equal(historicalHash({a:[{z:1,A:2}]}),historicalHash({a:[{A:2,z:1}]}));
+});
 test("historical private artifacts: native filesystem, bounded UTF8 and fail-closed cleanup",async t=>{
  const dir=await fs.mkdtemp(join(process.env.CRMY63_HISTORICAL_ARTIFACT_ROOT??tmpdir(),"crmy63-historical-files-")),file=join(dir,"private.json"),bytes=Buffer.from('{"ok":true}');await fs.writeFile(file,bytes);
  const binding={path:file,sha256:artifactSha256(bytes),maxBytes:bytes.length};assert.deepEqual((await readPinnedPrivateArtifact(binding,repo)).raw,{ok:true});

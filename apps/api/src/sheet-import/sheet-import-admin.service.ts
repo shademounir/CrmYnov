@@ -107,10 +107,12 @@ export class SheetImportAdminService {
   }
 
   async save(actor: Principal, raw: unknown, id?: string): Promise<ConnectorView> {
-    const historical = id ? await this.historicalRuntime(actor,id) : undefined;
     const body = sheetObject(raw);
     const expected = body.expectedVersion;
     if (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 0 || typeof body.enabled !== "boolean") throw new BadRequestException({ code: "sheet_configuration_invalid" });
+    // Disabling must remain possible when execution evidence is unavailable.
+    // Authorization, versions and cancellation remain inside the write fence.
+    const historical = id && body.enabled ? await this.historicalRuntime(actor,id) : undefined;
     if (body.intervalMinutes !== undefined && (typeof body.intervalMinutes !== "number" || !Number.isInteger(body.intervalMinutes) || body.intervalMinutes < 5 || body.intervalMinutes > 15)) throw new BadRequestException({ code: "sheet_interval_invalid" });
     const interval = sheetInterval(typeof body.intervalMinutes === "number" ? body.intervalMinutes : 15);
     let workbook: string;
