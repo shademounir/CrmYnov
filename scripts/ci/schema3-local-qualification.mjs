@@ -28,6 +28,8 @@ const run = (name, cwd, args, timeout = 300000) => {
         throw new Error(`schema3_stage_failed:${name}`);
 };
 try {
+    const rootTests = ["infra/tests", "scripts/bootstrap-phase0/tests", "scripts/ci/tests", "scripts/jira-sync/tests", "scripts/pr-policy/tests", "scripts/release-manifest/tests", "scripts/terraform-plan/tests"].flatMap(folder => readdirSync(join(repository, folder)).filter(p => p.endsWith(".test.mjs")).map(p => `${folder}/${p}`));
+    run("repository-unit", repository, ["--test", ...rootTests]);
     run("api-types", repository, ["node_modules/typescript/bin/tsc", "--noEmit", "-p", "apps/api/tsconfig.json"]);
     run("web-types", repository, ["node_modules/typescript/bin/tsc", "--noEmit", "--incremental", "false", "-p", "apps/web/tsconfig.json"]);
     const api = join(repository, "apps/api"), web = join(repository, "apps/web");
