@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import PerformanceReport, { readPerformance, PerformanceResults, performanceEndpoint } from "../app/manager/reports/commercial-performance/performance.js";
 
 test("renders explicit operational KPIs, filters and non-disciplinary safeguards", async () => {
-  const html = renderToStaticMarkup(await CommercialPerformancePage());
+  const html = renderToStaticMarkup(await CommercialPerformancePage({}));
   for (const expected of ["Performance et activité", "Leads principaux", "contributions secondaires", "Charge active",
     "Africa/Casablanca", "divisions par zéro", "ne doublonnent jamais", "score opaque", "Chargement du portefeuille"])
     assert.match(html, new RegExp(expected, "i"));

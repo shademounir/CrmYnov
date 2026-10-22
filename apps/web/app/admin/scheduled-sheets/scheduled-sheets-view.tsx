@@ -213,7 +213,7 @@ function ExecutionPanel({ model, actions: pageActions }: { model: ScheduledSheet
       <div><strong>Exécuter à la demande</strong><button type="button" disabled={manualDisabled} onClick={() => { void pageActions.runManually(); }}>Lancer manuellement</button></div>
       <div><strong>Consulter les résultats</strong><button type="button" disabled={model.busy} onClick={() => { void pageActions.history(); }}>Actualiser l’historique</button></div></div>
     {localRows ? <><p>Le lancement manuel importe uniquement le lot autorisé. Il n’active pas les prochains imports automatiques.</p><button type="button" disabled={model.busy} onClick={() => { void pageActions.readReconciliation(); }}>Consulter les lignes à vérifier</button><Reconciliation model={model} read={pageActions.readReconciliation} /></> : null}
-    {model.source.identityMode === "LOCAL_ROW_APPEND_ONLY" ? <SheetAppendMonitor state={model.appendState} busy={model.busy} sourceUnavailable={model.savedRealUnavailable} connectorEnabled={model.selected.enabled === true} action={pageActions.appendAction} /> : null}
+    {model.source.identityMode === "LOCAL_ROW_APPEND_ONLY" ? <SheetAppendMonitor connectorId={model.id} state={model.appendState} busy={model.busy} sourceUnavailable={model.savedRealUnavailable} connectorEnabled={model.selected.enabled === true} action={pageActions.appendAction} /> : null}
     {model.feedbackArea === "execution" ? <ExecutionFeedback feedback={model.feedback} /> : null}
     {model.simulation ? <SimulationSummary {...model.simulation} /> : null}
     <RunHistory model={model} history={pageActions.history} />
