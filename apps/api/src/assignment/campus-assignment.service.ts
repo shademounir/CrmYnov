@@ -8,6 +8,7 @@ import { canonicalCampus } from "../permissions/dynamic-resources.js";
 import { AssignmentService, type AssignmentRuleInput, type AssignmentRule } from "./assignment.service.js";
 import { parseCampusRules } from "./campus-assignment-policy.js";
 import type { LeadAssignmentSnapshot } from "../leads/lead.service.js";
+import { campusPoolAdministration, validateBalancedPoolReferences, type CampusPoolAdministration } from "./campus-pool-administration.js";
 
 export interface CampusRules { campusId: string; version: number; automaticEnabled: boolean; rules: AssignmentRuleInput[] }
 export interface AssignmentReportingSnapshot { rules: AssignmentRule[]; automaticDecisions: number; assignedByBatch: number; leads: LeadAssignmentSnapshot; pendingReassignments: number }
@@ -105,10 +106,20 @@ export class CampusAssignmentService {
     });
   }
 
-  async configure(actor: Principal, campusValue: string, expectedVersion: number, input: unknown, correlationId: string, automaticEnabled?: boolean): Promise<CampusRules> {
+  async poolAdministration(actor: Principal, campusValue: string): Promise<CampusPoolAdministration> {
+    return this.repository.readTransaction(async (tx) => {
+      const { campusId } = await this.authorize(tx, actor, campusValue, "settings.campus.manage");
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(171, hashtext(${campusId}))`;
+      const campus = await canonicalCampus(tx, campusId), configuration = await readCampusRules(tx, campusId);
+      return campusPoolAdministration(tx, campus, configuration.version, configuration.rules, await this.repository.snapshots(tx));
+    });
+  }
+
+  async configure(actor: Principal, campusValue: string, expectedVersion: number, input: unknown, correlationId: string, automaticEnabled?: boolean, confirmedNewCohort?: boolean): Promise<CampusRules> {
     if (automaticEnabled !== undefined && typeof automaticEnabled !== "boolean") throw new BadRequestException({ code: "assignment_automation_invalid" });
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new BadRequestException({ code: "assignment_version_invalid" });
     const parsed = parseCampusRules(input);
+    if (parsed.some(rule => rule.balanceNewEntrants) && confirmedNewCohort !== true) throw new BadRequestException({ code: "assignment_balance_confirmation_required" });
     return this.repository.transaction(async (tx) => {
       const { campusId, current } = await this.authorize(tx, actor, campusValue, "settings.campus.manage");
       // Same per-campus lock as the worker; immutable versions never overwrite an old decision.
@@ -117,6 +128,7 @@ export class CampusAssignmentService {
       const enabled = automaticEnabled ?? (previous.version ? previous.automaticEnabled : parsed.some((rule) => rule.enabled));
       if (previous.version !== expectedVersion) throw new ConflictException({ code: "assignment_version_conflict" });
       const rules = parsed.length ? this.engine.snapshotRules(parsed, current.userId) : [];
+      await validateBalancedPoolReferences(tx, campusId, rules);
       for (const rule of rules) for (const candidate of rule.candidates) {
         const user = await tx.collaborator.findUnique({ where: { id: candidate.userId } });
         if (!user?.active || !user.campusId || !user.roles.some((role) => role === "ADMISSIONS" || role === "MANAGER")) permissionDenied();

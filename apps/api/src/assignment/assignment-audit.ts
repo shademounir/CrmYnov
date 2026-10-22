@@ -6,4 +6,5 @@ export interface AssignmentAudit {
   ruleId: string | null;
   requestHash: string;
   selectedUserId: string;
+  algorithmVersion?: "balanced-new-entrant-v1";
 }

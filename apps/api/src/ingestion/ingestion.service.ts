@@ -5,8 +5,9 @@ import { AuditService } from "../audit/audit.service.js";
 import { LeadAssignmentService, type BatchAssignmentStrategy } from "../assignment/lead-assignment.service.js";
 import { LeadService, type LeadStatus } from "../leads/lead.service.js";
 
-export const ingestionSources = ["WEB_FORM", "PHONE_CALL", "PHYSICAL_VISIT", "WEBSITE", "EVENT", "PARTNER", "JOBINTECH", "LEGACY_IMPORT", "MANUAL_ENTRY", "OTHER_CONTROLLED"] as const;
-export type IngestionSource = (typeof ingestionSources)[number];
+import { ingestionSources, type IngestionSource } from "./ingestion-sources.js";
+export { ingestionSources };
+export type { IngestionSource };
 export type IngestionProfile = "LEGACY_CRM" | "FORMINATOR_ZAPIER" | "YNOV_COM" | "JOBINTECH" | "LEGACY_RELAUNCH" | "OTHER_CAMPAIGN" | "CUSTOM";
 export type IngestionOutcome = "CREATED" | "PROVENANCE_ATTACHED" | "MANUAL_REVIEW" | "INVALID";
 export type IngestionDryRunOutcome = "VALID" | "DUPLICATE" | "MANUAL_REVIEW" | "INVALID" | "IGNORED";
