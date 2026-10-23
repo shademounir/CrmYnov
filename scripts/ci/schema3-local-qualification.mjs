@@ -10,7 +10,7 @@ if (!["win32", "linux"].includes(process.platform) || !statSync(gitExecutable).i
     throw new Error("schema3_git_executable_unavailable");
 const directory = mkdtempSync(join(root, "schema3-local-qualification-"));
 const hash = b => createHash("sha256").update(b).digest("hex");
-const snapshot = () => execFileSync(gitExecutable, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: repository, encoding: "utf8", windowsHide: true }).split("\0").filter(Boolean).sort().map(path => ({ path, sha256: hash(readFileSync(resolve(repository, path))) }));
+const snapshot = () => execFileSync(gitExecutable, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: repository, encoding: "utf8", windowsHide: true }).split("\0").filter(Boolean).sort((a, b) => a.localeCompare(b, "en")).map(path => ({ path, sha256: hash(readFileSync(resolve(repository, path))) }));
 const sources = snapshot(), stages = [], env = { ...process.env, CRMY63_HISTORICAL_ARTIFACT_ROOT: root };
 const run = (name, cwd, args, timeout = 300000) => {
     let output, status = 0;
@@ -35,7 +35,7 @@ try {
     const api = join(repository, "apps/api"), web = join(repository, "apps/web");
     for (let i = 1; i <= 5; i++)
         run(`private-artifact-repeat-${i}`, api, ["--require", "../../node_modules/tsx/dist/cjs/index.cjs", "--test", "test/sheet-historical.test.ts"]);
-    const tests = app => readdirSync(join(app, "test")).filter(p => p.endsWith(".test.ts")).sort().map(p => `test/${p}`);
+    const tests = app => readdirSync(join(app, "test")).filter(p => p.endsWith(".test.ts")).sort((a, b) => a.localeCompare(b, "en")).map(p => `test/${p}`);
     run("api-unit", api, ["--require", "../../node_modules/tsx/dist/cjs/index.cjs", "--test", ...tests(api)]);
     run("web-unit", web, ["--import", "tsx", "--test", ...tests(web)]);
     if (JSON.stringify(snapshot()) !== JSON.stringify(sources))
