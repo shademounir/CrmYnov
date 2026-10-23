@@ -34,7 +34,7 @@ export function validateJobEnvironment(env,policy){
 }
 export function preservationProof(snapshot){
  const hashes=Object.fromEntries(invariantKeys.map(k=>[k,digest(snapshot[k])]));
- const journal=snapshot.journal.map(row=>({keyHash:digest(row.key),status:row.status,sha256:digest(row),identitySha256:digest({key:row.key,event_type:row.event_type,fingerprint:row.fingerprint,recipients_sha256:row.recipients_sha256})}));
+ const journal=snapshot.journal.map(row=>({keyHash:digest(row.key),status:row.status,sha256:digest(row),identitySha256:digest({key:row.key,event_type:row.event_type,fingerprint:row.fingerprint,recipients_sha256:row.recipients_sha256,sending_at:row.sending_at})}));
  const counters=snapshot.counters.map(row=>({keyHash:digest([row.campus_id,row.version,row.rule_id,row.user_id]),count:row.assigned_count}));
  return {schemaVersion:1,main:MAIN,imageDigest:IMAGE,hashes,journal,counters};
 }
