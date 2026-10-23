@@ -14,5 +14,21 @@ function checkTask(task,e){
  assert(['1','1000m'].includes(c.resources.limits.cpu));const normalized=structuredClone(task);normalized.containers[0].resources.limits.cpu='1000m';assert.equal(digest(normalized),e.taskTemplateSha256);return task;
 }
 export function validateNativeJob(job,e){validateProbeObjective(e);assert.equal(job.name,e.jobName);assert.equal(job.labels?.['crmynov-probe-objective'],e.objectiveSha256.slice(0,63));assert.equal(typeof job.uid,'string');assert(job.uid.length>8);assert.equal(job.reconciling??false,false);assert.equal(job.deleteTime,undefined);assert.equal(job.template.taskCount,1);assert.equal(job.template.parallelism,1);checkTask(job.template.template,e);return {job:job.name,uid:job.uid,main:MAIN,image:e.image,taskTemplateSha256:e.taskTemplateSha256,observedNativeJob:true};}
-export function validateNativeExecution(job,execution,e){validateNativeJob(job,e);assert.equal(execution.job,e.jobName.split('/').at(-1));assert(execution.name.startsWith(e.jobName+'/executions/'));assert.match(execution.name.slice((e.jobName+'/executions/').length),/^[a-z0-9-]+$/u);assert.equal(execution.taskCount,1);assert.equal(execution.parallelism,1);checkTask(execution.template,e);assert.equal(execution.succeededCount,1);for(const key of['failedCount','cancelledCount','runningCount','retriedCount'])assert.equal(execution[key]??0,0);assert(Number.isFinite(Date.parse(execution.startTime)));assert(Number.isFinite(Date.parse(execution.completionTime)));assert(Date.parse(execution.startTime)>=Date.parse(e.intentAt));assert(Date.parse(execution.completionTime)>=Date.parse(execution.startTime));assert(execution.conditions.some(c=>c.type==='Completed'&&c.state==='CONDITION_SUCCEEDED'));return {job:e.jobName,execution:execution.name,image:e.image,main:MAIN,completed:true,nativeSourceBound:true,productionBusinessMutation:false};}
+export function validateNativeExecution(job,execution,e){
+ validateNativeJob(job,e);
+ const executionPrefix=e.jobName+'/executions/';
+ assert(execution.name.startsWith(executionPrefix));
+ assert.match(execution.name.slice(executionPrefix.length),/^[a-z0-9-]+$/u);
+ // v2 declares a Job resource reference; historical native lists also return its short name.
+ // Normalize only the exact expected short name after the full execution parent was checked.
+ const parent=execution.job===e.jobName.split('/').at(-1)?e.jobName:execution.job;
+ assert.equal(parent,e.jobName);
+ assert.equal(execution.taskCount,1);assert.equal(execution.parallelism,1);
+ checkTask(execution.template,e);assert.equal(execution.succeededCount,1);
+ for(const key of['failedCount','cancelledCount','runningCount','retriedCount'])assert.equal(execution[key]??0,0);
+ assert(Number.isFinite(Date.parse(execution.startTime)));assert(Number.isFinite(Date.parse(execution.completionTime)));
+ assert(Date.parse(execution.startTime)>=Date.parse(e.intentAt));assert(Date.parse(execution.completionTime)>=Date.parse(execution.startTime));
+ assert(execution.conditions.some(c=>c.type==='Completed'&&c.state==='CONDITION_SUCCEEDED'));
+ return {job:e.jobName,execution:execution.name,image:e.image,main:MAIN,completed:true,nativeSourceBound:true,productionBusinessMutation:false};
+}
 export function validateRuntimeBytes(e,files){validateProbeObjective(e);assert.equal(typeof files,'function');for(const r of e.compiledInventory)assert.equal(hash(files(r.path)),r.sha256,'compiled image drift');for(const r of e.helpers)assert.equal(hash(files(r.name)),r.sha256,'probe helper drift');return {files:277,helpers:4,compiledInventorySha256:e.compiledInventorySha256,main:MAIN,image:e.image};}
