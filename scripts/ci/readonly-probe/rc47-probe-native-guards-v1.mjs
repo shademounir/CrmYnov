@@ -1,0 +1,34 @@
+// Pure verification of Cloud Run v2 GET responses and locally qualified file bytes.
+// Never creates a job, reads credentials or treats an environment SHA as image proof.
+import assert from'node:assert/strict';
+import{createHash}from'node:crypto';
+import{MAIN,IMAGE,digest}from'./rc47-select-only-probe-core-v1.mjs';
+const PROJECT='crmynov-prod-n7x4q2',REGION='europe-west1',PREFIX='projects/'+PROJECT+'/locations/'+REGION+'/jobs/',URI='europe-west1-docker.pkg.dev/'+PROJECT+'/crm-ynov-prod/api@'+IMAGE,H=/^[a-f0-9]{64}$/u;
+const hash=b=>createHash('sha256').update(b).digest('hex'),keys=(x,allowed)=>{assert(x&&typeof x==='object'&&!Array.isArray(x));assert(Object.keys(x).every(k=>allowed.includes(k)),'unexpected native field');};
+export function validateProbeObjective(e){
+ assert.equal(e.schemaVersion,1);assert.equal(e.main,MAIN);assert.equal(e.image,URI);assert.equal(e.readOnly,true);assert.equal(e.providerCalls,false);assert.equal(e.ddl,false);assert.equal(e.project,PROJECT);assert.equal(e.region,REGION);assert.match(e.jobName,new RegExp('^'+PREFIX+'crm-prod-rc47-readonly-probe-[a-z0-9-]+$','u'));assert.equal(e.serviceAccount,'crm-prod-api@'+PROJECT+'.iam.gserviceaccount.com');for(const k of['objectiveSha256','bootstrapSha256','bundleSha256','compiledInventorySha256','taskTemplateSha256'])assert(H.test(e[k]??''),k);assert.equal(e.compiledInventorySha256,'723cdbacb94a95b55094b663135ba5763fc56cde8754767491dc428938139dfc');assert.equal(e.compiledInventory.length,277);assert.equal(digest(e.compiledInventory),e.compiledInventorySha256);assert.equal(new Set(e.compiledInventory.map(x=>x.path)).size,277);for(const row of e.compiledInventory){assert(/^\/workspace\/(apps\/api\/dist|node_modules\/\.prisma\/client)\//u.test(row.path));assert(row.path.slice(1).split('/').every(x=>!['..','.',''].includes(x)));assert(H.test(row.sha256));}
+ assert.equal(e.helpers.length,4);assert.deepEqual(e.helpers.map(x=>x.name).sort((a,b)=>a.localeCompare(b,'en')),['adapter','core','entry','native']);for(const row of e.helpers)assert(H.test(row.sha256));assert.equal(e.databaseSecretRef.secret,'crm-prod-runtime-database-url');assert(/^[1-9][0-9]*$/u.test(e.databaseSecretRef.version));assert(Number.isFinite(Date.parse(e.intentAt)));return e;
+}
+function checkTask(task,e){
+ keys(task,['containers','volumes','maxRetries','timeout','serviceAccount','executionEnvironment','vpcAccess']);assert.equal(task.serviceAccount,e.serviceAccount);assert.equal(task.maxRetries??0,0);assert.equal(task.executionEnvironment,'EXECUTION_ENVIRONMENT_GEN2');assert.equal(task.timeout,'120s');assert.equal(task.containers.length,1);const c=task.containers[0];keys(c,['name','image','command','args','env','resources','volumeMounts']);assert.equal(c.image,e.image);assert.deepEqual(c.command,['/nodejs/bin/node']);assert.equal(c.args.length,3);assert.deepEqual(c.args.slice(0,2),['--input-type=module','--eval']);assert.equal(hash(c.args[2]),e.bootstrapSha256);assert.equal(c.env.length,4);assert.equal(new Set(c.env.map(x=>x.name)).size,4);assert.deepEqual(c.env.map(x=>x.name).sort((a,b)=>a.localeCompare(b,'en')),['CRM_PROBE_BUNDLE_BASE64','CRM_PROBE_BUNDLE_SHA256','DATABASE_URL','GOOGLE_CLOUD_PROJECT']);const env=Object.fromEntries(c.env.map(x=>[x.name,x]));assert.deepEqual(env.DATABASE_URL,{name:'DATABASE_URL',valueSource:{secretKeyRef:e.databaseSecretRef}});assert.deepEqual(env.GOOGLE_CLOUD_PROJECT,{name:'GOOGLE_CLOUD_PROJECT',value:PROJECT});assert.deepEqual(env.CRM_PROBE_BUNDLE_SHA256,{name:'CRM_PROBE_BUNDLE_SHA256',value:e.bundleSha256});assert.equal(typeof env.CRM_PROBE_BUNDLE_BASE64.value,'string');keys(env.CRM_PROBE_BUNDLE_BASE64,['name','value']);assert.equal(hash(Buffer.from(env.CRM_PROBE_BUNDLE_BASE64.value,'base64')),e.bundleSha256);keys(c.resources,['limits']);keys(c.resources.limits,['cpu','memory']);assert.equal(c.resources.limits.memory,'512Mi');
+ assert(['1','1000m'].includes(c.resources.limits.cpu));const normalized=structuredClone(task);normalized.containers[0].resources.limits.cpu='1000m';assert.equal(digest(normalized),e.taskTemplateSha256);return task;
+}
+export function validateNativeJob(job,e){validateProbeObjective(e);assert.equal(job.name,e.jobName);assert.equal(job.labels?.['crmynov-probe-objective'],e.objectiveSha256.slice(0,63));assert.equal(typeof job.uid,'string');assert(job.uid.length>8);assert.equal(job.reconciling??false,false);assert.equal(job.deleteTime,undefined);assert.equal(job.template.taskCount,1);assert.equal(job.template.parallelism,1);checkTask(job.template.template,e);return {job:job.name,uid:job.uid,main:MAIN,image:e.image,taskTemplateSha256:e.taskTemplateSha256,observedNativeJob:true};}
+export function validateNativeExecution(job,execution,e){
+ validateNativeJob(job,e);
+ const executionPrefix=e.jobName+'/executions/';
+ assert(execution.name.startsWith(executionPrefix));
+ assert.match(execution.name.slice(executionPrefix.length),/^[a-z0-9-]+$/u);
+ // v2 declares a Job resource reference; historical native lists also return its short name.
+ // Normalize only the exact expected short name after the full execution parent was checked.
+ const parent=execution.job===e.jobName.split('/').at(-1)?e.jobName:execution.job;
+ assert.equal(parent,e.jobName);
+ assert.equal(execution.taskCount,1);assert.equal(execution.parallelism,1);
+ checkTask(execution.template,e);assert.equal(execution.succeededCount,1);
+ for(const key of['failedCount','cancelledCount','runningCount','retriedCount'])assert.equal(execution[key]??0,0);
+ assert(Number.isFinite(Date.parse(execution.startTime)));assert(Number.isFinite(Date.parse(execution.completionTime)));
+ assert(Date.parse(execution.startTime)>=Date.parse(e.intentAt));assert(Date.parse(execution.completionTime)>=Date.parse(execution.startTime));
+ assert(execution.conditions.some(c=>c.type==='Completed'&&c.state==='CONDITION_SUCCEEDED'));
+ return {job:e.jobName,execution:execution.name,image:e.image,main:MAIN,completed:true,nativeSourceBound:true,productionBusinessMutation:false};
+}
+export function validateRuntimeBytes(e,files){validateProbeObjective(e);assert.equal(typeof files,'function');for(const r of e.compiledInventory)assert.equal(hash(files(r.path)),r.sha256,'compiled image drift');for(const r of e.helpers)assert.equal(hash(files(r.name)),r.sha256,'probe helper drift');return {files:277,helpers:4,compiledInventorySha256:e.compiledInventorySha256,main:MAIN,image:e.image};}

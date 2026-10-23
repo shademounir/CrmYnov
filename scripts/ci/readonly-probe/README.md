@@ -1,0 +1,15 @@
+# RC47 read-only preservation probe
+
+Operational helper sources only; no automatic deployment, database write, mail dispatch or Sheets activation.
+
+The core exposes 13 closed, bounded SELECT queries and minimized validation. The adapter sets RepeatableRead/READ ONLY and finite timeouts before reading. Three runtime modules (core, adapter, controlled entry) are transported in an acyclic gzip bundle; the fourth native verifier runs in the external orchestrator. Neither an environment SHA nor a local simulation is a native Cloud Run receipt.
+
+Before a real job: require exact-source review and fresh Jira/delegation, a separate reviewed objective, pinned image and helper/bundle hashes, versioned DATABASE_URL secret reference, actual native job GET matching the objective, single task/attempt with no retry and bounded resources. Reconcile completed native execution separately; never retry an unknown outcome.
+
+The future external transaction executor must use the latest native job etag in its single run request, with no task overrides, and refuse any pre-existing or unknown execution. This repository module only validates metadata; it does not implement that transaction or authorize its execution.
+
+PRE/POST output contains states, counts and hashes, not contacts, database credentials, raw settings or provider IDs. PRE is not deployment/transport/human acceptance. New journal rows and increasing prospective counters are preserved; existing immutable journal evidence and protected records must not diverge.
+
+The checked-in inventory contains only 277 file paths and SHA256 values bound to existing immutable RC47 API bytes. The synthetic image harness must run only in a network-isolated local fixture with a generated client from that image, never against PROD. No Prisma generation is performed while PostgreSQL is alive.
+
+The protected application release, real H2585/H2586, 547 existing dispositions, N0/generation/resume, useful flags, fresh backup, compatible plan, unique apply, and real native/visual role acceptance remain separate gates. These helpers do not waive any gate or modify IAM, DNS, edge, audio, Schedulers, mail configuration or historical data.
