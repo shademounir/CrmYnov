@@ -15,6 +15,44 @@ internal readonly record struct SdkShutdownReceipt(bool CoreOffObserved, bool Re
 
 internal static class SdkShutdownCoordinator
 {
+    // Yield between SDK iterations on the owning context. Never pump messages with
+    // DoEvents or move native objects to a worker thread to make shutdown appear fast.
+    public static async Task<SdkShutdownReceipt> StopAsync(
+        ISdkShutdownControl control, Func<TimeSpan> elapsed, Func<Task> pause, TimeSpan deadline)
+    {
+        if (deadline <= TimeSpan.Zero || deadline > TimeSpan.FromSeconds(30))
+            throw new InvalidOperationException("SDK_SHUTDOWN_DEADLINE_INVALID");
+        var started = elapsed();
+        var previous = started;
+        var first = control.Observe();
+        RequireIdle(first);
+        if (first.State is not (ObservedSdkState.On or ObservedSdkState.Shutdown or ObservedSdkState.Off))
+            throw new InvalidOperationException("SDK_SHUTDOWN_STATE_UNPROVEN");
+        var hasAccount = first.HasAccount;
+        if (first.State == ObservedSdkState.On) control.BeginStopAsync();
+        for (var iterations = 0; iterations < 1500; iterations++)
+        {
+            var current = control.Observe();
+            RequireIdle(current);
+            if (current.HasAccount != hasAccount) throw new InvalidOperationException("SDK_SHUTDOWN_ACCOUNT_CHANGED");
+            var now = elapsed();
+            var duration = now - started;
+            if (now < previous || duration < TimeSpan.Zero || duration >= deadline)
+                throw new InvalidOperationException("SDK_SHUTDOWN_TIMEOUT");
+            previous = now;
+            if (current.State == ObservedSdkState.Off)
+            {
+                if (hasAccount && !current.RegistrationCleared) throw new InvalidOperationException("SDK_UNREGISTER_UNPROVEN");
+                return new(true, hasAccount && current.RegistrationCleared);
+            }
+            if (current.State is not (ObservedSdkState.On or ObservedSdkState.Shutdown))
+                throw new InvalidOperationException("SDK_SHUTDOWN_STATE_UNPROVEN");
+            control.Iterate();
+            await pause().ConfigureAwait(true);
+        }
+        throw new InvalidOperationException("SDK_SHUTDOWN_TIMEOUT");
+    }
+
     public static SdkShutdownReceipt Stop(
         ISdkShutdownControl control, Func<TimeSpan> elapsed, Action pause, TimeSpan deadline)
     {

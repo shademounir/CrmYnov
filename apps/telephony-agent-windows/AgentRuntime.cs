@@ -22,6 +22,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
     private bool maintenanceRequested;
     private bool maintenanceStopAttested;
     private bool sdkEverCreated;
+    private bool engineStopping;
     private AgentSettings? engineProfileSettings;
     private readonly WithdrawalStopBinding withdrawalStop = new();
     private readonly AgentActivityFence activity = new();
@@ -204,7 +205,7 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     public void TickAudio()
     {
-        if (Running || engine is null) return;
+        if (Running || engine is null || engineStopping) return;
         lock (engineGate) engine.Iterate();
         Publish();
     }
@@ -557,7 +558,26 @@ internal sealed class AgentRuntime : IAsyncDisposable
 
     private async Task DisposeRuntimeAsync(bool maintenance = false)
     {
-        DisposeEngine(maintenance);
+        // Keep SDK access on its original context while yielding to the window.
+        // The lifecycle semaphore is held by the caller; UI operations are gated.
+        engineStopping = true;
+        try {
+            if (engine is not null) {
+                if (maintenance) {
+                    AgentMaintenancePolicy.RequireIdle(engine.HasActiveCall, OutstandingEventCount());
+                    await engine.StopAttestedForMaintenanceAsync().ConfigureAwait(true);
+                    AgentMaintenancePolicy.RequireIdle(engine.HasActiveCall, OutstandingEventCount());
+                    maintenanceStopAttested = true;
+                } else {
+                    maintenanceStopAttested = false; withdrawalStop.Invalidate();
+                    await engine.StopForDisconnectAsync().ConfigureAwait(true);
+                }
+                // Off has actually been observed; Dispose cannot call blocking Core.Stop.
+                engine.EventObserved -= OnEventObserved;
+                engine.StatusChanged -= OnEngineStatus;
+                engine.Dispose(); engine = null; engineProfileSettings = null;
+            }
+        } finally { engineStopping = false; }
         client?.Dispose();
         cancellation?.Dispose();
         client = null; cancellation = null; loop = null; journal = null;

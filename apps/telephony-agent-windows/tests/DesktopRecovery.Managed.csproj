@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup><BaseIntermediateOutputPath>obj/recovery/</BaseIntermediateOutputPath><MSBuildProjectExtensionsPath>obj/recovery/</MSBuildProjectExtensionsPath><BaseOutputPath>bin/recovery/</BaseOutputPath></PropertyGroup>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems><RestoreSources>$(MSBuildThisFileDirectory)</RestoreSources><NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../SdkShutdownCoordinator.cs" /><Compile Include="../SdkShutdownSignals.cs" /><Compile Include="../SdkOperationPolicy.cs" />
+    <Compile Include="../SdkShutdownSelfTest.cs" /><Compile Include="../AgentUiOperationGate.cs" /><Compile Include="DesktopRecovery.EntryPoint.cs" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+</Project>

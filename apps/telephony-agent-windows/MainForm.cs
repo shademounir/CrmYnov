@@ -8,7 +8,7 @@ internal sealed class MainForm : Form
     private static readonly Icon ProductIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
     private static readonly Color Navy = Color.FromArgb(7, 34, 68);
     private static readonly Color Teal = Color.FromArgb(21, 177, 168);
-    private static readonly Color Surface = Color.FromArgb(246, 249, 251);
+    private static readonly Color Surface = Color.FromArgb(242, 246, 250);
     private static readonly Color Muted = Color.FromArgb(93, 111, 128);
     private static readonly Color Success = Color.FromArgb(10, 116, 104);
     private static readonly Color Danger = Color.FromArgb(181, 45, 48);
@@ -39,6 +39,8 @@ internal sealed class MainForm : Form
     private Label? callValue;
     private Label? durationValue;
     private Label? accountDisplayValue;
+    private Label? microphoneDisplayValue;
+    private Label? outputDisplayValue;
     private Button? connectButton;
     private Button? disconnectButton;
     private TextBox? pairingCode;
@@ -57,6 +59,10 @@ internal sealed class MainForm : Form
     private volatile bool closing;
     private bool closeCompleted;
     private bool withdrawalBusy;
+    private readonly AgentUiOperationGate operationGate = new();
+    private bool operationBusy => operationGate.IsBusy;
+    private Task? operationTask;
+    private Button? reassociateButton;
     private Task? withdrawalTask;
     private CancellationTokenSource? withdrawalCancellation;
 
@@ -78,6 +84,7 @@ internal sealed class MainForm : Form
         Size = new Size(980, 780);
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
+        DoubleBuffered = true;
 
         tray = new NotifyIcon {
             Icon = ProductIcon,
@@ -88,6 +95,9 @@ internal sealed class MainForm : Form
         tray.DoubleClick += (_, _) => RestoreWindow();
 
         Controls.Add(contentHost);
+        contentHost.SizeChanged += (_, _) => {
+            if (contentHost.Controls.Count > 0) contentHost.Controls[0].Width = Math.Max(0, contentHost.ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
+        };
         FormClosing += OnFormClosing;
         Shown += async (_, _) => await InitializeViewAsync();
         audioTimer.Tick += (_, _) => runtime.TickAudio();
@@ -128,6 +138,7 @@ internal sealed class MainForm : Form
     {
         if (closing || IsDisposed) return;
         RestoreWindow();
+        if (operationBusy) { ShowFeedback("Une opération sur le poste est en cours. Aucune commande d’appel supplémentaire n’a été lancée.", true); return; }
         if (withdrawalBusy || runtime.WithdrawalPending) { Render(); ShowFeedback("Retrait en attente : aucune commande d’appel ni nouvelle connexion n’est autorisée.", true); return; }
         if (request.CommandId is not Guid commandId) {
             ShowFeedback("Agent ouvert. Connectez le poste avant de confirmer un appel dans le CRM.", false);
@@ -145,13 +156,19 @@ internal sealed class MainForm : Form
     private void Render()
     {
         contentHost.SuspendLayout();
+        // Clear does not dispose controls; retain the shared feedback label but
+        // release abandoned wizard/dashboard controls on every transition.
+        feedback.Parent?.Controls.Remove(feedback);
+        var previous = contentHost.Controls.Cast<Control>().ToArray();
         contentHost.Controls.Clear();
+        foreach (var old in previous) old.Dispose();
         inputDevices = null; outputDevices = null; microphoneLevel = null; microphoneLevelText = null; microphoneTestButton = null; localMonitoring = null;
         finishButton = null; readinessLabel = null; crmStatus = null; authorizationStatus = null; sipStatus = null; audioStatus = null;
-        callValue = null; durationValue = null; connectButton = null; disconnectButton = null;
-        accountDisplayValue = null;
+        callValue = null; durationValue = null; connectButton = null; disconnectButton = null; reassociateButton = null;
+        accountDisplayValue = null; microphoneDisplayValue = null; outputDisplayValue = null;
         freeCallPhone = null; freeCallComment = null; freeCallPurpose = null; freeCallButton = null; freeCallClearButton = null;
         var view = withdrawalBusy || runtime.WithdrawalPending ? BuildWithdrawalPending() : wizardVisible ? BuildWizard() : BuildDashboard();
+        view.Width = Math.Max(0, contentHost.ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
         contentHost.Controls.Add(view);
         contentHost.ResumeLayout(true);
         UpdateVisibleState();
@@ -346,14 +363,14 @@ internal sealed class MainForm : Form
         profileStack.Controls.Add(SummaryRow("Environnement CRM", settings is null ? "Non configuré" : AgentSetup.EnvironmentLabel(settings.ApiBaseUrl)));
         profileStack.Controls.Add(SummaryRow("Poste associé", settings?.WorkstationDisplayName ?? Environment.MachineName));
         profileStack.Controls.Add(SummaryRow("Profil téléphonique", settings is null ? "Non configuré" : MaskSip(settings.SipAddress)));
-        profileStack.Controls.Add(SummaryRow("Microphone", DeviceLabel(snapshot.InputDeviceId, true)));
-        profileStack.Controls.Add(SummaryRow("Sortie", DeviceLabel(snapshot.OutputDeviceId, false)));
+        microphoneDisplayValue = SummaryValue(DeviceLabel(snapshot.InputDeviceId, true));
+        outputDisplayValue = SummaryValue(DeviceLabel(snapshot.OutputDeviceId, false));
+        profileStack.Controls.Add(SummaryRow("Microphone", microphoneDisplayValue));
+        profileStack.Controls.Add(SummaryRow("Sortie", outputDisplayValue));
         var profileActions = ButtonRow();
         var modify = ActionButton("Modifier", false); modify.Click += async (_, _) => { wizardVisible = true; wizardStep = 3; Render(); await EnsureAudioForViewAsync(); };
-        var reassociate = ActionButton("Réassocier", false); reassociate.Click += async (_, _) => {
-            try { await runtime.StopForMaintenanceAsync(); wizardVisible = true; wizardStep = 0; Render(); }
-            catch (Exception error) { ShowFeedback(HumanError(error), true); }
-        };
+        reassociateButton = ActionButton("Réassocier le poste", false);
+        reassociateButton.Click += async (_, _) => await ReassociateAsync();
         connectButton = ActionButton("Connecter", true); connectButton.Click += async (_, _) => await ConnectAsync();
         disconnectButton = ActionButton("Déconnecter", false); disconnectButton.Click += async (_, _) => await DisconnectAsync();
         var quit = ActionButton("Quitter", false); quit.Click += (_, _) => { allowClose = true; Close(); };
@@ -370,7 +387,7 @@ internal sealed class MainForm : Form
             catch (Exception error) { ShowFeedback(HumanError(error), true); }
             finally { if (!reconcile.IsDisposed) reconcile.Enabled = true; }
         };
-        profileActions.Controls.Add(modify); profileActions.Controls.Add(reassociate); profileActions.Controls.Add(connectButton); profileActions.Controls.Add(disconnectButton); profileActions.Controls.Add(withdraw); profileActions.Controls.Add(quit);
+        profileActions.Controls.Add(modify); profileActions.Controls.Add(reassociateButton); profileActions.Controls.Add(connectButton); profileActions.Controls.Add(disconnectButton); profileActions.Controls.Add(withdraw); profileActions.Controls.Add(quit);
         reconcile.Margin = new Padding(0, 10, 0, 0);
         profileStack.Controls.Add(profileActions); profileStack.Controls.Add(reconcile); profileStack.Controls.Add(feedback); profile.Controls.Add(profileStack); root.Controls.Add(profile);
 
@@ -486,15 +503,18 @@ internal sealed class MainForm : Form
 
     private async Task PairAsync()
     {
+        if (operationBusy || closing || withdrawalBusy) return;
         if (crmAddress is null || pairingCode is null || workstationName is null || string.IsNullOrWhiteSpace(crmAddress.Text) || string.IsNullOrWhiteSpace(pairingCode.Text) || string.IsNullOrWhiteSpace(workstationName.Text)) { ShowFeedback("Renseignez l’adresse CRM, le code d’association et le nom du poste.", true); return; }
-        try
-        {
+        // Capture the submitted values before yielding; another view must not
+        // change which endpoint/code/name the in-flight single attempt uses.
+        var address = crmAddress.Text; var code = pairingCode.Text; var name = workstationName.Text;
+        await RunOperationAsync("Association en cours… Ne renvoyez pas le code ; le profil précédent reste conservé jusqu’à confirmation.", async () => {
             await runtime.WithProfileMaintenanceAsync(async () => {
-                await setup.PairAsync(crmAddress.Text, pairingCode.Text, workstationName.Text, CancellationToken.None);
+                await setup.PairAsync(address, code, name, CancellationToken.None);
             });
-            pairingCode.Clear(); wizardStep = 1; ShowFeedback("Poste associé. Vérifiez maintenant le profil attribué.", false); Render();
-        }
-        catch (Exception error) { ShowFeedback(HumanError(error), true); }
+            pairingCode?.Clear(); wizardStep = 1;
+            if (!closing) { ShowFeedback("Poste associé. Vérifiez maintenant le profil attribué.", false); Render(); }
+        });
     }
 
     private async Task ConfigureSecretAsync()
@@ -574,15 +594,49 @@ internal sealed class MainForm : Form
     private async Task ConnectAsync()
     {
         if (closing || withdrawalBusy || runtime.WithdrawalPending) { ShowFeedback("Retrait en attente : connexion bloquée. Vérifiez uniquement le reçu.", true); return; }
-        try { await runtime.StartAsync(); ShowFeedback("Connexion en cours. Le poste sera prêt lorsque les quatre contrôles seront confirmés.", false); }
-        catch (Exception error) { ShowFeedback(HumanError(error), true); }
+        await RunOperationAsync("Connexion au CRM et au service téléphonique…", async () => {
+            await runtime.StartAsync(); ShowFeedback("Connexion en cours. Le poste sera prêt lorsque les quatre contrôles seront confirmés.", false);
+        });
     }
 
     private async Task DisconnectAsync()
     {
         if (closing || withdrawalBusy || runtime.WithdrawalPending) return;
-        try { await runtime.StopAsync(); await runtime.EnsureAudioAsync(); ShowFeedback("Poste déconnecté. La configuration reste enregistrée.", false); }
+        await RunOperationAsync("Déconnexion en cours… Votre profil et votre journal sont conservés.", async () => {
+            await runtime.StopAsync();
+            // Do not immediately recreate the SDK after the user explicitly
+            // disconnected. Audio can be initialized by the Audio/Connect actions.
+            ShowFeedback("Poste déconnecté. La configuration reste enregistrée.", false);
+        });
+    }
+
+    private Task ReassociateAsync() => RunOperationAsync("Arrêt sûr du poste avant réassociation…", async () => {
+        await runtime.StopForMaintenanceAsync();
+        wizardVisible = true; wizardStep = 0; Render();
+        ShowFeedback("Poste arrêté. Saisissez un nouveau code d’association ; le profil actuel reste conservé jusqu’à confirmation.", false);
+    });
+
+    private async Task RunOperationAsync(string message, Func<Task> operation)
+    {
+        if (operationBusy || closing || withdrawalBusy || runtime.WithdrawalPending) return;
+        using var operationLease = operationGate.TryBegin();
+        if (operationLease is null) return;
+        ShowFeedback(message, false);
+        contentHost.Enabled = false;
+        UseWaitCursor = true;
+        // Let Windows paint the progress state before any native operation.
+        await Task.Yield();
+        try {
+            if (closing) return;
+            operationTask = operation();
+            await operationTask;
+        }
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
+        finally {
+            operationLease.Dispose();
+            operationTask = null;
+            if (!IsDisposed && !closing) { contentHost.Enabled = true; UseWaitCursor = false; UpdateVisibleState(); }
+        }
     }
 
     private void FillDeviceCombos()
@@ -595,7 +649,12 @@ internal sealed class MainForm : Form
 
     private void OnSnapshotChanged(AgentRuntimeSnapshot next)
     {
-        if (InvokeRequired) { BeginInvoke(() => OnSnapshotChanged(next)); return; }
+        if (closing || IsDisposed || Disposing) return;
+        if (InvokeRequired) {
+            try { if (IsHandleCreated) BeginInvoke(() => OnSnapshotChanged(next)); }
+            catch (InvalidOperationException) when (closing || IsDisposed || Disposing || !IsHandleCreated) { }
+            return;
+        }
         var callJustEnded = AgentCallState.IsActive(snapshot.CallState) && !AgentCallState.IsActive(next.CallState);
         snapshot = next;
         UpdateVisibleState();
@@ -613,10 +672,11 @@ internal sealed class MainForm : Form
         if (sipStatus is not null) sipStatus.Text = snapshot.SipRegistered ? "Connecté" : snapshot.Running ? "Connexion en cours" : "Déconnecté";
         if (audioStatus is not null) audioStatus.Text = snapshot.InputDeviceAvailable && snapshot.OutputDeviceAvailable ? "Utilisable" : snapshot.AudioInitialized ? "À vérifier" : "Non chargé";
         var ready = AgentReadiness.IsReady(snapshot);
-        if (readinessLabel is not null) { readinessLabel.Text = ready ? "Prêt à appeler" : ReadinessExplanation(snapshot); readinessLabel.ForeColor = ready ? Success : Danger; }
+        if (readinessLabel is not null) { readinessLabel.Text = ready ? "Prêt à appeler" : ReadinessExplanation(snapshot); readinessLabel.ForeColor = ready ? Success : snapshot.Running ? Danger : Navy; }
         if (finishButton is not null) finishButton.Enabled = ready;
-        if (connectButton is not null) connectButton.Enabled = !snapshot.Running;
-        if (disconnectButton is not null) disconnectButton.Enabled = snapshot.Running;
+        if (connectButton is not null) connectButton.Enabled = !operationBusy && !snapshot.Running;
+        if (disconnectButton is not null) disconnectButton.Enabled = !operationBusy && snapshot.Running;
+        if (reassociateButton is not null) reassociateButton.Enabled = !operationBusy && !AgentCallState.IsActive(snapshot.CallState);
         var displayedMicrophoneLevel = snapshot.AudioTestActive ? snapshot.MicrophoneLevel : snapshot.LastMicrophonePeak;
         if (microphoneLevel is not null) microphoneLevel.Value = Math.Clamp(displayedMicrophoneLevel, 0, 100);
         if (microphoneLevelText is not null) microphoneLevelText.Text = snapshot.AudioMeterErrorCode is not null
@@ -632,6 +692,7 @@ internal sealed class MainForm : Form
             ? $"{(AgentCallState.IsActive(snapshot.CallState) ? "Durée en cours" : "Durée finale")} : {seconds / 60:00}:{seconds % 60:00}"
             : "Aucun appel actif";
         if (accountDisplayValue is not null) accountDisplayValue.Text = !string.IsNullOrWhiteSpace(snapshot.CrmDisplayName) ? snapshot.CrmDisplayName! : !string.IsNullOrWhiteSpace(snapshot.CrmEmail) ? snapshot.CrmEmail! : AccountLabel(setup.Settings);
+        UpdateDeviceSummary();
         var mute = FindControl("mute") as Button; var hangup = FindControl("hangup") as Button;
         if (mute is not null) { mute.Text = snapshot.Muted ? "Rétablir le micro" : "Couper le micro"; mute.Enabled = snapshot.CallState == "ANSWERED"; }
         var callActive = AgentCallState.IsActive(snapshot.CallState);
@@ -666,11 +727,17 @@ internal sealed class MainForm : Form
         if (closing) return;
         closing = true; audioTimer.Stop(); contentHost.Enabled = false;
         try {
+            if (operationTask is not null) { try { await operationTask; } catch { /* A failed stop never becomes an attestation. */ } }
             withdrawalCancellation?.Cancel();
             if (withdrawalTask is not null) { try { await withdrawalTask; } catch { /* Durable state stays pending. */ } }
             await protocolBroker.DisposeAsync(); await runtime.DisposeAsync();
             closeCompleted = true; tray.Visible = false; Close();
-        } catch (Exception error) { closing = false; contentHost.Enabled = true; ShowFeedback(HumanError(error), true); }
+        } catch (Exception error) {
+            closing = false; contentHost.Enabled = true; UseWaitCursor = false;
+            // Keep audioTimer stopped after an unproven shutdown. Resuming it
+            // would silently iterate/reinitialize an uncertain native runtime.
+            ShowFeedback(HumanError(error), true);
+        }
     }
 
     private ContextMenuStrip BuildTrayMenu()
@@ -680,7 +747,7 @@ internal sealed class MainForm : Form
         menu.Items.Add("Connecter", null, async (_, _) => await ConnectAsync());
         menu.Items.Add("Déconnecter", null, async (_, _) => await DisconnectAsync());
         menu.Items.Add("Quitter", null, (_, _) => { allowClose = true; Close(); });
-        menu.Opening += (_, _) => { var available = !closing && !withdrawalBusy && !runtime.WithdrawalPending; menu.Items[1].Enabled = available; menu.Items[2].Enabled = available; };
+        menu.Opening += (_, _) => { var available = !closing && !operationBusy && !withdrawalBusy && !runtime.WithdrawalPending; menu.Items[1].Enabled = available; menu.Items[2].Enabled = available; };
         return menu;
     }
 
@@ -694,6 +761,7 @@ internal sealed class MainForm : Form
     };
 
     internal static string HumanError(Exception error) => error switch {
+        InvalidOperationException invalid when invalid.Message is "SDK_SHUTDOWN_TIMEOUT" or "SDK_SHUTDOWN_STATE_UNPROVEN" or "SDK_UNREGISTER_UNPROVEN" => "L’arrêt du service téléphonique n’a pas été confirmé dans le délai prévu. Profil et journal conservés. Aucune réassociation ni reconnexion automatique ; vérifiez l’état avant de réessayer.",
         InvalidOperationException invalid when invalid.Message == "WITHDRAWAL_SDK_STOP_UNPROVEN" => "L’arrêt sûr du SDK n’est pas prouvé. Aucun retrait envoyé. Ne reconnectez pas le poste pour fabriquer cette preuve ; faites vérifier l’état par le support.",
         InvalidOperationException invalid when invalid.Message == "PROFILE_WITHDRAWAL_LEGACY_ASSOCIATION" => "Cette association ancienne ne fournit pas la génération requise. Aucun profil supprimé ; utilisez le parcours officiel avec l’administration.",
         InvalidOperationException invalid when invalid.Message == "WITHDRAWAL_PROFILE_CHANGED" => "Le profil a changé depuis la demande. Retrait local refusé : configuration et reçu conservés pour vérification.",
@@ -729,8 +797,8 @@ internal sealed class MainForm : Form
 
     private static string ReadinessExplanation(AgentRuntimeSnapshot state)
     {
+        if (!state.Running) return "Poste déconnecté · profil conservé";
         if (!state.InputDeviceAvailable || !state.OutputDeviceAvailable) return "Périphériques audio à vérifier";
-        if (!state.Running) return "Configuration enregistrée · poste déconnecté";
         if (!state.CrmConnected) return "Connexion CRM à confirmer";
         if (state.AuthorizationState != "Autorisée") return "Autorisation du poste à confirmer";
         if (!state.SipRegistered) return "Connexion téléphonique à confirmer";
@@ -750,15 +818,23 @@ internal sealed class MainForm : Form
         return snapshot.Devices.FirstOrDefault(item => item.Id == id && (input ? item.CanRecord : item.CanPlay))?.Name ?? "Périphérique actuellement déconnecté";
     }
 
+    private void UpdateDeviceSummary()
+    {
+        // Labels created before audio initialization must follow the exact
+        // current snapshot. No implicit device choice or reconnection occurs.
+        if (microphoneDisplayValue is not null) microphoneDisplayValue.Text = DeviceLabel(snapshot.InputDeviceId, true);
+        if (outputDisplayValue is not null) outputDisplayValue.Text = DeviceLabel(snapshot.OutputDeviceId, false);
+    }
+
     private static string CallLabel(string? state) => state switch { "DIALING" => "Numérotation demandée", "RINGING" => "Le poste distant sonne", "ANSWERED" => "Communication établie", "ENDED" => "Appel terminé", "FAILED" => "Échec de l’appel", "MISSED" => "Sans réponse", "CANCELLED" => "Appel annulé", _ => "Aucun appel en cours" };
     private static string MaskSip(string value) { var at = value.IndexOf('@'); var user = value.StartsWith("sip:", StringComparison.OrdinalIgnoreCase) ? value[4..Math.Max(4, at)] : "Extension"; return at < 0 ? "Extension configurée" : $"{user} · {value[(at + 1)..]}"; }
 
-    private static FlowLayoutPanel Page() => new() { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(28), BackColor = Surface };
-    private static Panel Card() => new() { Dock = DockStyle.Top, AutoSize = true, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, MinimumSize = new Size(700, 0) };
+    private static TableLayoutPanel Page() => new ResponsiveStack { Padding = new Padding(24), BackColor = Surface };
+    private static Panel Card() => new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = Color.White, Padding = new Padding(20), BorderStyle = BorderStyle.None };
     private static Label StatusValue() => new() { AutoSize = true, Font = new Font("Segoe UI", 10, FontStyle.Bold), ForeColor = Navy };
     private static Control BuildBrandHeader(string title, string subtitle)
     {
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 20) };
+        var panel = new ResponsiveStack { Margin = new Padding(0, 0, 0, 24) };
         panel.Controls.Add(new Label { AutoSize = true, Text = "RELATION YNOV", Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Teal });
         panel.Controls.Add(new Label { AutoSize = true, Text = title, Font = new Font("Segoe UI", 23, FontStyle.Bold), ForeColor = Navy });
         panel.Controls.Add(new Label { AutoSize = true, Text = subtitle, ForeColor = Muted, MaximumSize = new Size(800, 0) });
@@ -766,8 +842,8 @@ internal sealed class MainForm : Form
     }
     private static Control StatusCard(string label, Control value) { var panel = Card(); panel.Padding = new Padding(14); panel.Margin = new Padding(0, 0, 8, 0); panel.MinimumSize = Size.Empty; var stack = FormStack(); stack.Controls.Add(new Label { AutoSize = true, Text = label, Font = new Font("Segoe UI", 8, FontStyle.Bold), ForeColor = Teal }); stack.Controls.Add(value); panel.Controls.Add(stack); return panel; }
     private static TabPage Tab(string title, Control content) { var page = new TabPage(title) { BackColor = Surface, Padding = new Padding(18), AutoScroll = true }; page.Controls.Add(content); return page; }
-    private static FlowLayoutPanel FormStack() => new() { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(2) };
-    private static FlowLayoutPanel ButtonRow() => new() { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = true, Margin = new Padding(0, 10, 0, 0) };
+    private static TableLayoutPanel FormStack() => new ResponsiveStack { Padding = new Padding(2) };
+    private static FlowLayoutPanel ButtonRow() => new() { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.LeftToRight, WrapContents = true, Margin = new Padding(0, 14, 0, 0), Padding = new Padding(0, 0, 0, 4) };
     private static Control SectionTitle(string title, string description) { var panel = FormStack(); panel.Margin = new Padding(0, 0, 0, 16); panel.Controls.Add(new Label { AutoSize = true, Text = title, Font = new Font("Segoe UI", 15, FontStyle.Bold), ForeColor = Navy }); panel.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(720, 0), Text = description, ForeColor = Muted }); return panel; }
     private static Control Labeled(string label, Control control) { control.Width = 520; var panel = FormStack(); panel.Margin = new Padding(0, 0, 0, 12); panel.Controls.Add(new Label { AutoSize = true, Text = label, Font = new Font("Segoe UI", 9, FontStyle.Bold), ForeColor = Navy }); panel.Controls.Add(control); return panel; }
     private static Control SummaryRow(string label, string value) { var panel = new TableLayoutPanel { AutoSize = true, Width = 690, ColumnCount = 2, Margin = new Padding(0, 0, 0, 8) }; panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200)); panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); panel.Controls.Add(new Label { AutoSize = true, Text = label, ForeColor = Muted }, 0, 0); panel.Controls.Add(new Label { AutoSize = true, Text = value, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = Navy, MaximumSize = new Size(470, 0) }, 1, 0); return panel; }
@@ -776,7 +852,32 @@ internal sealed class MainForm : Form
     private static Control InfoBox(string title, string value) { var panel = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.FromArgb(232, 248, 246), Padding = new Padding(14), Margin = new Padding(0, 0, 0, 14), MaximumSize = new Size(720, 0) }; panel.Controls.Add(new Label { AutoSize = true, Text = title, Font = new Font("Segoe UI", 9, FontStyle.Bold), ForeColor = Success }); panel.Controls.Add(new Label { AutoSize = true, Text = value, ForeColor = Navy, MaximumSize = new Size(680, 0) }); return panel; }
     private static TextBox Field(string value) => new() { Text = value, Width = 520, BorderStyle = BorderStyle.FixedSingle };
     private static ComboBox DeviceCombo() => new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 520 };
-    private static Button ActionButton(string text, bool primary) { var button = new Button { AutoSize = true, Text = text, FlatStyle = FlatStyle.Flat, Padding = new Padding(13, 7, 13, 7), Margin = new Padding(0, 0, 8, 0), BackColor = primary ? Teal : Color.White, ForeColor = primary ? Navy : Navy, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), UseVisualStyleBackColor = false }; button.FlatAppearance.BorderColor = primary ? Teal : Color.FromArgb(188, 202, 213); return button; }
+    private static Button ActionButton(string text, bool primary) { var button = new Button { AutoSize = true, Text = text, FlatStyle = FlatStyle.Flat, Padding = new Padding(13, 7, 13, 7), Margin = new Padding(0, 0, 8, 8), BackColor = primary ? Teal : Color.White, ForeColor = primary ? Navy : Navy, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), UseVisualStyleBackColor = false }; button.FlatAppearance.BorderColor = primary ? Teal : Color.FromArgb(188, 202, 213); return button; }
+
+    // A vertical FlowLayoutPanel does not stretch children, even with Dock=Top.
+    // One percent-width table column gives every card its real available width
+    // before measuring wrapped text/actions and their preferred heights.
+    private sealed class ResponsiveStack : TableLayoutPanel
+    {
+        public ResponsiveStack()
+        {
+            Dock = DockStyle.Top; AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            ColumnCount = 1; ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            GrowStyle = TableLayoutPanelGrowStyle.AddRows;
+            DoubleBuffered = true;
+        }
+        protected override void OnLayout(LayoutEventArgs levent)
+        {
+            var available = Math.Max(1, ClientSize.Width - Padding.Horizontal);
+            foreach (Control child in Controls) {
+                var width = Math.Max(1, available - child.Margin.Horizontal);
+                if (child is Label label) {
+                    if (label.MaximumSize.Width != width) label.MaximumSize = new Size(width, 0);
+                } else if (child is not Button) { child.Dock = DockStyle.Top; if (child.Width != width) child.Width = width; }
+            }
+            base.OnLayout(levent);
+        }
+    }
     private static void FillDevices(ComboBox combo, IEnumerable<AudioDeviceView> devices, string? selectedId) { combo.Items.Clear(); foreach (var item in devices) combo.Items.Add(new AudioDeviceItem(item.Id, item.Name)); var selected = combo.Items.Cast<AudioDeviceItem>().FirstOrDefault(item => item.Id == selectedId); combo.SelectedItem = selected ?? (combo.Items.Count > 0 ? combo.Items[0] : null); }
     private sealed record AudioDeviceItem(string Id, string Label) { public override string ToString() => Label; }
     private sealed record DestinationTypeItem(string Code, string Label) { public override string ToString() => Label; }
