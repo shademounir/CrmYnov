@@ -186,6 +186,14 @@ jobs:
         run: npm exec --workspace=@crm/web -- playwright install --with-deps chromium
       - name: Run synthetic browser journeys
         run: npm run test:e2e:browser --workspace=@crm/web
+      - name: Preserve synthetic telephony visual evidence
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: telephony-visual-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: apps/web/test-results/**/telephony-global-*.png
+          if-no-files-found: error
+          retention-days: 3
       - name: Upload failure traces without repository write permission
         if: failure()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0

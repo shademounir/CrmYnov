@@ -1,0 +1,11 @@
+import '../readonly-probe/tests/rc47-select-only-probe-core-v1.test.mjs';
+import '../readonly-probe/tests/rc47-select-only-probe-adapter-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-native-guards-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-entry-bundle-v2.test.mjs';
+import '../readonly-probe/tests/rc47-probe-single-run-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-exclusive-journal-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-http-contract-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-bounded-exchange-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-composed-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-executor-v1.test.mjs';
+import '../readonly-probe/tests/rc47-probe-official-auth-v1.test.mjs';

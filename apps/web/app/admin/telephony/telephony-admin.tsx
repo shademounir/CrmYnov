@@ -8,11 +8,11 @@ interface Workstation { id: string; displayName: string; active: boolean; connec
 interface UserProfile { id: string; userId: string; sipAddress: string; authUsername: string | null; enabled: boolean; state: string; version: number; user: { id: string; professionalDisplayName: string | null; professionalEmail: string; campusId: string | null; active: boolean }; server: ServerProfile; workstations: Workstation[] }
 interface Provisioning { servers: ServerProfile[]; users: UserProfile[] }
 interface Collaborator { id: string; professionalDisplayName?: string | null; professionalEmail: string; campusId?: string | null; active: boolean }
-interface Configuration { mode: string; clickToCallEnabled: boolean; inboundEnabled: boolean; outboundEnabled: boolean; recordingPolicy: string; maxCallDurationSeconds: number; version: number; outboundReadiness?: { available?: boolean; reason?: string; identityLabel?: string } }
+interface Configuration { mode: string; clickToCallEnabled: boolean; inboundEnabled: boolean; outboundEnabled: boolean; recordingPolicy: string; maxCallDurationSeconds: number; version: number; activationReadiness?: { scope: "GLOBAL"; available: boolean; reason: string; identityLabel?: string } }
 interface PairingCode { code: string; expiresAt: string; profileId: string }
 
 const stateLabels: Readonly<Record<string, string>> = { INCOMPLETE: "À compléter", PAIRING_REQUIRED: "Poste à associer", LOCAL_CONFIGURATION_REQUIRED: "Secret SIP local requis", READY: "Prêt à appeler", DISABLED: "Désactivé" };
-const reasonLabels: Readonly<Record<string, string>> = { MODE_DISABLED: "Mode Liblinphone non activé", USER_PROFILE_DISABLED: "Profil utilisateur désactivé", USER_DISABLED: "Utilisateur CRM désactivé", SERVER_PROFILE_DISABLED: "Serveur SIP désactivé", WORKSTATION_NOT_PAIRED: "Poste non associé", WORKSTATION_OFFLINE: "Agent Windows hors ligne", SDK_NOT_LOADED: "SDK non chargé", SIP_NOT_REGISTERED: "Compte SIP non enregistré", READY: "Poste prêt" };
+const activationReasons: Readonly<Record<string, string>> = { READY: "Au moins un poste éligible est prêt. Le Super Admin n’a pas besoin d’associer son propre poste.", NO_READY_WORKSTATION: "Aucun poste éligible n’est actuellement prêt : vérifiez profil actif, connexion récente, SDK et enregistrement SIP.", ACTIVATION_INVENTORY_LIMIT: "La vérification des postes a atteint sa limite. L’activation reste bloquée ; aucun contrôle n’est ignoré." };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/crm/${path}`, { credentials: "same-origin", cache: "no-store", ...init, headers: { accept: "application/json", ...(init?.body ? { "content-type": "application/json" } : {}), ...init?.headers } });
@@ -66,7 +66,7 @@ export function TelephonyAdmin(): React.JSX.Element {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  const ready = Boolean(configuration?.outboundReadiness?.available);
+  const ready = configuration?.activationReadiness?.scope === "GLOBAL" && configuration.activationReadiness.available;
   const activeProfile = useMemo(() => provisioning.users.find((item) => item.userId === selectedUser), [provisioning.users, selectedUser]);
   const selectedServerProfile = useMemo(() => provisioning.servers.find((item) => item.id === selectedServer), [provisioning.servers, selectedServer]);
   useEffect(() => {
@@ -107,7 +107,7 @@ export function TelephonyAdmin(): React.JSX.Element {
   return <div className="telephony-admin">
     <section className="panel telephony-admin__status" aria-busy={loading}>
       <div className={`telephony-admin__status-icon ${ready ? "is-ready" : ""}`} aria-hidden="true">{ready ? <CheckCircle size={25} /> : <WarningCircle size={25} />}</div>
-      <div><p className="eyebrow">État du pilote</p><h2>{ready ? "Poste prêt pour les appels sortants" : "Activation contrôlée"}</h2><p>{reasonLabels[configuration?.outboundReadiness?.reason ?? "MODE_DISABLED"] ?? "La disponibilité doit être confirmée par l’agent Windows."}</p></div>
+      <div><p className="eyebrow">Activation globale du CRM</p><h2>{ready ? "Poste éligible prêt pour l’activation" : "Activation contrôlée"}</h2><p>{activationReasons[configuration?.activationReadiness?.reason ?? ""] ?? "La disponibilité globale doit être confirmée par le serveur pour un Super Admin autorisé."}</p>{ready && configuration?.activationReadiness?.identityLabel ? <p>Poste vérifié : {configuration.activationReadiness.identityLabel}</p> : null}</div>
       <button className="secondary-button" type="button" disabled={loading || busy} onClick={() => void load()}><ArrowClockwise size={17} /> Actualiser</button>
     </section>
     {error ? <p className="ui-state ui-state--error telephony-admin__feedback" role="alert">{error}</p> : null}
@@ -126,6 +126,6 @@ export function TelephonyAdmin(): React.JSX.Element {
         {pairing ? <div className="telephony-admin__pairing" role="status"><p className="eyebrow">Code à saisir dans l’agent Windows</p><code>{pairing.code}</code><p>Expire à {new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Casablanca" }).format(new Date(pairing.expiresAt))}, heure de Casablanca. Ne le publiez pas.</p></div> : null}
       </li>
     </ol>
-    <section className="panel telephony-admin__activation"><div><PhoneCall size={24} /><div><p className="eyebrow">Dernière barrière</p><h2>Activer uniquement l’émission</h2><p>Le bouton reste soumis au contrôle serveur : poste associé, SDK chargé et compte SIP enregistré. La réception et l’enregistrement audio demeurent désactivés.</p></div></div><button className="primary-button" type="button" disabled={busy || !ready || configuration?.mode === "LINPHONE" && configuration.outboundEnabled} onClick={() => void activate()}>{configuration?.mode === "LINPHONE" && configuration.outboundEnabled ? "Émission activée" : "Activer les appels sortants"}</button></section>
+    <section className="panel telephony-admin__activation"><div><PhoneCall size={24} /><div><p className="eyebrow">Dernière barrière · ensemble du CRM</p><h2>Activer uniquement l’émission</h2><p>Activation globale pour les utilisateurs déjà habilités. Chaque appel reste contrôlé sur le poste de son utilisateur : association unique, connexion récente, SDK chargé et compte SIP enregistré. Aucun droit individuel supplémentaire n’est accordé. La réception et l’enregistrement audio demeurent désactivés.</p></div></div><button className="primary-button" type="button" disabled={loading || busy || Boolean(error) || !ready || configuration?.mode === "LINPHONE" && configuration.outboundEnabled} onClick={() => void activate()}>{configuration?.mode === "LINPHONE" && configuration.outboundEnabled ? "Émission activée" : "Activer les appels sortants"}</button></section>
   </div>;
 }
