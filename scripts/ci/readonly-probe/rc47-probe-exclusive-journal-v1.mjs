@@ -1,0 +1,149 @@
+// Candidate external executor component. Not an authorization or native qualification.
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+const hash = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
+const HASH = /^[a-f0-9]{64}$/u, JOB = /^projects\/crmynov-prod-n7x4q2\/locations\/europe-west1\/jobs\/crm-prod-rc47-readonly-probe-[a-z0-9-]+$/u;
+export function openExclusiveJournal({ directory, jobName, objectiveSha256, initialize = false }) {
+    assert(path.isAbsolute(directory));
+    assert(JOB.test(jobName));
+    assert(HASH.test(objectiveSha256));
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.resolve(directory), resolved, 'journal path must be canonical');
+    assert(fs.lstatSync(directory).isDirectory());
+    assert(!fs.lstatSync(directory).isSymbolicLink());
+    const file = path.join(resolved, 'single-run.sqlite');
+    assert.equal(typeof initialize, 'boolean');
+    if (initialize) {
+        const fd = fs.openSync(file, 'wx');
+        fs.closeSync(fd);
+    }
+    else {
+        assert(fs.existsSync(file), 'existing journal required; never recreate a missing journal');
+    }
+    assert(!fs.lstatSync(file).isSymbolicLink());
+    const db = new DatabaseSync(file);
+    let closed = false;
+    try {
+        db.exec('PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE;');
+        assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+        if (initialize) {
+            db.exec('BEGIN IMMEDIATE; PRAGMA application_id=1129467987; PRAGMA user_version=1; CREATE TABLE claims(job TEXT PRIMARY KEY, objective TEXT NOT NULL, state TEXT NOT NULL, intent TEXT NOT NULL, intent_sha TEXT NOT NULL, operation TEXT); CREATE TABLE events(job TEXT NOT NULL, ordinal INTEGER NOT NULL, state TEXT NOT NULL, receipt TEXT NOT NULL, sha TEXT NOT NULL, PRIMARY KEY(job,ordinal), UNIQUE(job,sha)); COMMIT;');
+        }
+        assert.equal(db.prepare('PRAGMA application_id').get().application_id, 1129467987, 'foreign or incomplete journal');
+        assert.equal(db.prepare('PRAGMA user_version').get().user_version, 1, 'journal schema version');
+    }
+    catch (e) {
+        db.close();
+        throw e;
+    }
+    const live = () => assert.equal(closed, false, 'journal closed');
+    const tx = fn => {
+        live();
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            const value = fn();
+            db.exec('COMMIT');
+            return value;
+        }
+        catch (e) {
+            db.exec('ROLLBACK');
+            throw e;
+        }
+    };
+    function claim() {
+        const row = db.prepare('SELECT * FROM claims WHERE job=?').get(jobName);
+        assert(row, 'no consumed intent');
+        assert.equal(row.objective, objectiveSha256, 'objective mismatch');
+        assert.equal(hash(JSON.parse(row.intent)), row.intent_sha, 'intent integrity');
+        return row;
+    }
+    return {
+        file,
+        acceptedReceipt() {
+            live();
+            const row = claim();
+            assert.equal(row.state, 'OPERATION_OBSERVED', 'only an existing observed operation may be reconciled');
+            const event = db.prepare('SELECT * FROM events WHERE job=? AND ordinal=1').get(jobName);
+            assert(event);
+            const receipt = JSON.parse(event.receipt);
+            assert.equal(hash(receipt), event.sha, 'receipt integrity');
+            assert.equal(receipt.state, row.state);
+            assert.equal(receipt.operation, row.operation);
+            assert.equal(hash(receipt.intent), row.intent_sha, 'intent binding');
+            assert.equal(receipt.canRetry, false);
+            return receipt;
+        },
+        consumeOnce(intent) {
+            return tx(() => {
+                assert.equal(intent.job, jobName);
+                assert.equal(intent.objectiveSha256, objectiveSha256);
+                assert.equal(intent.schemaVersion, 1);
+                assert(Number.isFinite(Date.parse(intent.at)));
+                assert.equal(typeof intent.etag, 'string');
+                assert(intent.etag.length > 0);
+                assert.equal(typeof intent.uid, 'string');
+                assert(intent.uid.length > 0);
+                assert.equal(db.prepare('SELECT count(*) AS n FROM claims WHERE job=?').get(jobName).n, 0, 'intent already consumed; never retry run');
+                const bytes = JSON.stringify(intent), sha = hash(intent);
+                db.prepare('INSERT INTO claims VALUES(?,?,?,?,?,NULL)').run(jobName, objectiveSha256, 'INTENT_CONSUMED', bytes, sha);
+                db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(jobName, 0, 'INTENT_CONSUMED', bytes, sha);
+                return { state: 'INTENT_CONSUMED', intentSha256: sha };
+            });
+        },
+        record(receipt) {
+            return tx(() => {
+                const row = claim();
+                if (receipt.intent) {
+                    assert.equal(hash(receipt.intent), row.intent_sha, 'intent binding');
+                }
+                const allowed = { INTENT_CONSUMED: ['RUN_OUTCOME_UNKNOWN', 'OPERATION_OBSERVED'], OPERATION_OBSERVED: ['OPERATION_FAILED', 'NATIVE_EXECUTION_RECONCILED'] };
+                assert(allowed[row.state]?.includes(receipt.state), 'illegal or repeated journal transition');
+                assert.equal(receipt.canRetry ?? false, false);
+                let operation = row.operation;
+                if (receipt.state === 'OPERATION_OBSERVED') {
+                    assert.match(receipt.operation, /^projects\/crmynov-prod-n7x4q2\/locations\/europe-west1\/operations\/[a-zA-Z0-9_-]+$/u);
+                    operation = receipt.operation;
+                }
+                else {
+                    if (row.state === 'OPERATION_OBSERVED') {
+                        assert.equal(receipt.operation, row.operation, 'operation binding');
+                    }
+                }
+                if (receipt.objectiveSha256) {
+                    assert.equal(receipt.objectiveSha256, objectiveSha256);
+                }
+                if (receipt.state === 'NATIVE_EXECUTION_RECONCILED') {
+                    assert(receipt.execution.startsWith(jobName + '/executions/'));
+                    assert.match(receipt.execution.slice((jobName + '/executions/').length), /^[a-z0-9-]+$/u);
+                    assert.equal(receipt.evidence?.nativeSourceBound, true);
+                    assert.equal(receipt.evidence?.completed, true);
+                }
+                const ordinal = db.prepare('SELECT count(*) AS n FROM events WHERE job=?').get(jobName).n;
+                db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(jobName, ordinal, receipt.state, JSON.stringify(receipt), hash(receipt));
+                db.prepare('UPDATE claims SET state=?,operation=? WHERE job=?').run(receipt.state, operation, jobName);
+                return { state: receipt.state, receiptSha256: hash(receipt), canRetry: false };
+            });
+        },
+        inspect() {
+            live();
+            const row = db.prepare('SELECT * FROM claims WHERE job=?').get(jobName);
+            if (!row) {
+                return null;
+            }
+            const verified = claim(), events = db.prepare('SELECT * FROM events WHERE job=? ORDER BY ordinal').all(jobName);
+            for (const e of events) {
+                assert.equal(hash(JSON.parse(e.receipt)), e.sha, 'receipt integrity');
+            }
+            return { job: jobName, objectiveSha256, state: verified.state, intent: JSON.parse(verified.intent), operation: verified.operation, events: events.map(e => ({ ordinal: e.ordinal, state: e.state, sha256: e.sha })), canRetry: false };
+        },
+        close() {
+            if (!closed) {
+                db.close();
+                closed = true;
+            }
+        }
+    };
+}
