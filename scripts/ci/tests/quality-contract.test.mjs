@@ -48,6 +48,20 @@ test("Sonar gate fails closed and consumes only named repository configuration",
   assert.doesNotMatch(workflow, /sonar\.projectKey\s*=\s*[^$\s]/);
 });
 
+test("successful PR browser runs retain only source-bound synthetic telephony PNG evidence", async () => {
+  const workflow = await readFile(workflowUrl, "utf8");
+  const job = workflow.match(/\n  playwright:[\s\S]+?(?=\n  build:)/)?.[0] ?? "";
+  const evidence = job.match(/      - name: Preserve synthetic telephony visual evidence[\s\S]+?(?=      - name: Upload failure traces)/)?.[0] ?? "";
+  assert.match(evidence, /if: success\(\) && github\.event_name == 'pull_request'/);
+  assert.match(evidence, /uses: actions\/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08/);
+  assert.match(evidence, /name: telephony-visual-\$\{\{ github\.event\.pull_request\.number \}\}-\$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  assert.match(evidence, /path: apps\/web\/test-results\/\*\*\/telephony-global-\*\.png\r?\n/);
+  assert.match(evidence, /if-no-files-found: error/);
+  assert.match(evidence, /retention-days: 3/);
+  assert.doesNotMatch(evidence, /secrets\.|permissions:|continue-on-error|\.zip|\.env/);
+  assert.match(job, /Upload failure traces[^\n]*\r?\n\s+if: failure\(\)/);
+});
+
 test("coverage is reproducible, fail-closed, and imported by Sonar", async () => {
   const pkg = JSON.parse(await readFile(packageUrl, "utf8"));
   const sonar = await readFile(sonarUrl, "utf8");

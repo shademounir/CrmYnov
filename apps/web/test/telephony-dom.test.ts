@@ -21,6 +21,23 @@ async function browser(t: TestContext): Promise<{ dom: JSDOM; act: typeof import
   return { dom, act, createElement, root, settle, button, click, submit, select, text: (): string => dom.window.document.body.textContent ?? "" };
 }
 
+test("global activation uses administrative readiness, never the current caller readiness", async t => {
+  const b = await browser(t); const { TelephonyAdmin } = await import("../app/admin/telephony/telephony-admin.js");
+  let globalReady = false; let ownReady = true; let writes = 0; let failRead = false; let failWrite = false; let omitActivation = false;
+  t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit): Promise<Response> => { await Promise.resolve();
+    if (init?.method) { writes++; assert.equal(url.endsWith("configuration"), true); return failWrite ? Response.json({ code: "telephony_bridge_not_ready" }, { status: 503 }) : Response.json({}); }
+    if (url.endsWith("configuration")) return failRead ? Response.json({}, { status: 503 }) : Response.json({ mode: "DISABLED", outboundEnabled: false, version: 3, outboundReadiness: { available: ownReady, reason: ownReady ? "READY" : "WORKSTATION_NOT_PAIRED" }, ...(!omitActivation ? { activationReadiness: { scope: "GLOBAL", available: globalReady, reason: globalReady ? "READY" : "NO_READY_WORKSTATION", identityLabel: "Synthetic eligible Manager" } } : {}) });
+    return Response.json(url.endsWith("provisioning") ? { servers: [], users: [] } : { users: [] });
+  });
+  b.act(() => b.root.render(b.createElement(TelephonyAdmin))); await b.settle();
+  assert.equal(b.button("Activer les appels sortants").disabled, true); await b.click("Activer les appels sortants"); assert.equal(writes, 0);
+  globalReady = true; ownReady = false; await b.click("Actualiser"); assert.equal(b.button("Activer les appels sortants").disabled, false);
+  assert.match(b.text(), /n’a pas besoin d’associer son propre poste/u); assert.match(b.text(), /Activation globale pour les utilisateurs déjà habilités/u);
+  failWrite = true; await b.click("Activer les appels sortants"); assert.equal(writes, 1); assert.match(b.text(), /avant l’activation/u); assert.equal(b.button("Activer les appels sortants").disabled, true);
+  failWrite = false; await b.click("Actualiser"); omitActivation = true; await b.click("Actualiser"); assert.equal(b.button("Activer les appels sortants").disabled, true);
+  omitActivation = false; await b.click("Actualiser"); failRead = true; await b.click("Actualiser"); assert.equal(b.button("Activer les appels sortants").disabled, true);
+});
+
 test("controlled call drawer guards readiness, double submission, uncertain dispatch and observed termination", async t => {
   const b = await browser(t); const { LeadCallDrawer } = await import("../app/leads/[leadId]/lead-call-drawer.js");
   let reason = "WORKSTATION_OFFLINE"; let mode = "LINPHONE"; let available = false; let postCount = 0; let completed = 0;
@@ -92,7 +109,7 @@ test("provisioning edits retain versions, pairs and revokes explicitly, and acti
       return Response.json(server);
     }
     if (url.endsWith("provisioning")) return Response.json({ servers: [server], users: [profile] });
-    if (url.endsWith("configuration")) return Response.json({ mode: enabled ? "LINPHONE" : "DISABLED", outboundEnabled: enabled, version: 7, outboundReadiness: { available: ready, reason: ready ? "READY" : "WORKSTATION_NOT_PAIRED" } });
+    if (url.endsWith("configuration")) return Response.json({ mode: enabled ? "LINPHONE" : "DISABLED", outboundEnabled: enabled, version: 7, activationReadiness: { scope: "GLOBAL", available: ready, reason: ready ? "READY" : "NO_READY_WORKSTATION" }, outboundReadiness: { available: false, reason: "WORKSTATION_NOT_PAIRED" } });
     return Response.json({ users: [user] });
   });
   b.act(() => b.root.render(b.createElement(TelephonyAdmin))); await b.settle(); assert.equal(b.button("Activer les appels sortants").disabled, true);

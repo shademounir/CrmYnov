@@ -16,12 +16,12 @@ const code = (expected: string) => (error: unknown): boolean => JSON.stringify((
 
 // Unit boundary double: no network, SIP or real persistence. PostgreSQL contracts
 // are separately exercised by the isolated integration suite.
-function fixture(): { service: TelephonyService; calls: Map<string, CallRecord>; lead: ReturnType<LeadService["registerLocalLead"]>; queued: string[]; destinations: string[]; hungUp: string[]; accesses(): number; fail(value: string): void; readiness(value: boolean): void; mode(value: TelephonyConfiguration["mode"]): void } {
+function fixture(): { service: TelephonyService; calls: Map<string, CallRecord>; lead: ReturnType<LeadService["registerLocalLead"]>; queued: string[]; destinations: string[]; hungUp: string[]; accesses(): number; fail(value: string): void; readiness(value: boolean): void; globalReadiness(value: boolean): void; mode(value: TelephonyConfiguration["mode"]): void } {
   const audit = new AuditService(); const leads = new LeadService(audit);
   const lead = leads.registerLocalLead({ leadCode: "LD-SERVICE", firstName: "Synthetic", lastName: "Coverage", phone: "+212600000165", campus: "CAMPUS", campaign: "TEST", program: "TEST", educationLevel: "BAC", source: "MANUAL" });
   let configuration: TelephonyConfiguration = { mode: "LINPHONE", clickToCallEnabled: true, inboundEnabled: false, outboundEnabled: true, recordingPolicy: "DISABLED", maxCallDurationSeconds: 7200, version: 1, updatedBy: admin.userId, updatedAt: new Date().toISOString(), webhookEnabled: false };
   const calls = new Map<string, CallRecord>();
-  let failure = ""; let ready = true; const queued: string[] = []; const destinations: string[] = []; const hungUp: string[] = []; let accesses = 0;
+  let failure = ""; let ready = true; let globalReady: boolean | undefined; const queued: string[] = []; const destinations: string[] = []; const hungUp: string[] = []; let accesses = 0;
   const save = async (_previous: CallRecord, record: CallRecord): Promise<void> => { await Promise.resolve(); if (failure === "transition") throw Error("storage unavailable"); calls.set(record.id, structuredClone(record)); };
   const persistence = {
     enabled: true,
@@ -39,12 +39,40 @@ function fixture(): { service: TelephonyService; calls: Map<string, CallRecord>;
   const agents = {
     enabled: true,
     readiness: () => Promise.resolve({ available: ready, reason: ready ? "READY" : "WORKSTATION_OFFLINE", identityLabel: "Synthetic agent" }),
+    activationReadiness: () => Promise.resolve({ available: globalReady ?? ready, reason: (globalReady ?? ready) ? "READY" : "NO_READY_WORKSTATION", identityLabel: "Synthetic eligible workstation" }),
     enqueue: async (id: string, _userId: string, destination: string) => { await Promise.resolve(); if (failure === "dispatch") throw Error("agent unavailable"); queued.push(id); destinations.push(destination); },
     requestHangup: async (id: string) => { await Promise.resolve(); hungUp.push(id); },
   } as unknown as TelephonyAgentRepository;
   const service = new TelephonyService(audit, leads, persistence, agents);
-  return { service, calls, lead, queued, destinations, hungUp, accesses: (): number => accesses, fail: (value: string): void => { failure = value; }, readiness: (value: boolean): void => { ready = value; }, mode: (value: TelephonyConfiguration["mode"]): void => { configuration.mode = value; configuration.inboundEnabled = value === "MANUAL_EXTERNAL"; } };
+  return { service, calls, lead, queued, destinations, hungUp, accesses: (): number => accesses, fail: (value: string): void => { failure = value; }, readiness: (value: boolean): void => { ready = value; }, globalReadiness: (value: boolean): void => { globalReady = value; }, mode: (value: TelephonyConfiguration["mode"]): void => { configuration.mode = value; configuration.inboundEnabled = value === "MANUAL_EXTERNAL"; } };
 }
+
+test("unpaired global Super Admin may enable using another ready profile but cannot call as it", async () => {
+  const f = fixture(); f.readiness(false); f.globalReadiness(true);
+  const view = await f.service.configurationForApi(admin);
+  assert.equal(view.outboundReadiness.available, false); assert.equal(view.activationReadiness?.available, true); assert.equal(view.activationReadiness?.scope, "GLOBAL");
+  const saved = await f.service.configureForApi({ expectedVersion: 1, mode: "LINPHONE", outboundEnabled: true, clickToCallEnabled: true, inboundEnabled: false, recordingPolicy: "DISABLED", maxCallDurationSeconds: 7200 }, admin, "global-activation");
+  assert.equal(saved.version, 2); assert.equal(saved.inboundEnabled, false); assert.equal(saved.recordingPolicy, "DISABLED");
+  await assert.rejects(f.service.initiateForApi(f.lead.id, { idempotencyKey: "unpaired-admin-call" }, admin, "refuse"), code("telephony_bridge_not_ready"));
+  assert.equal(f.calls.size, 0); assert.deepEqual(f.queued, []);
+});
+
+test("global activation is refused if the last eligible workstation became unavailable", async () => {
+  const f = fixture(); f.globalReadiness(true); assert.equal((await f.service.configurationForApi(admin)).activationReadiness?.available, true);
+  f.globalReadiness(false);
+  await assert.rejects(f.service.configureForApi({ expectedVersion: 1, mode: "LINPHONE", outboundEnabled: true, clickToCallEnabled: true, recordingPolicy: "DISABLED", maxCallDurationSeconds: 7200 }, admin, "recheck"), code("telephony_bridge_not_ready"));
+  assert.equal(f.service.configuration().version, 1); assert.equal(f.calls.size, 0);
+});
+
+test("activation remains restricted to a global Super Admin and preserves optimistic version control", async () => {
+  const f = fixture(); const input = { expectedVersion: 1, mode: "LINPHONE" as const, outboundEnabled: true, clickToCallEnabled: true, recordingPolicy: "DISABLED" as const, maxCallDurationSeconds: 7200 };
+  for (const actor of [{ ...admin, roles: ["MANAGER"] as Principal["roles"] }, { ...admin, roles: ["ADMIN"] as Principal["roles"] }, { ...admin, scopes: [{ kind: "CAMPUS", id: "CAMPUS" }] as Principal["scopes"] }]) {
+    await assert.rejects(f.service.configureForApi(input, actor, "forbidden"), code("telephony_configuration_forbidden"));
+    assert.equal((await f.service.configurationForApi(actor)).activationReadiness, undefined);
+  }
+  await assert.rejects(f.service.configureForApi({ ...input, expectedVersion: 99 }, admin, "stale"), code("telephony_configuration_version_conflict"));
+  assert.equal(f.service.configuration().version, 1); assert.equal(f.calls.size, 0);
+});
 
 test("persistent orchestration reloads configuration, dispatches once and replays without recomposition", async () => {
   const f = fixture(); await f.service.onModuleInit();
