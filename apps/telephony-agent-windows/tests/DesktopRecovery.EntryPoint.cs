@@ -27,6 +27,7 @@ internal static class DesktopRecoveryTests
     private static async Task ShutdownTestsAsync()
     {
         await ExplicitLocalAudioTestsAsync();
+        await ProtocolBrokerShutdownTestsAsync();
         var uiGate = new AgentUiOperationGate(); var attempts = 0;
         async Task SubmittedOperation(bool fail) {
             using var lease=uiGate.TryBegin(); if(lease is null)return;
@@ -69,6 +70,82 @@ internal static class DesktopRecoveryTests
         var clockReads=0;
         try { await SdkShutdownCoordinator.StopAsync(new FakeControl([on,off],owner),()=>clockReads++==0?TimeSpan.Zero:TimeSpan.FromSeconds(1),()=>Task.CompletedTask,TimeSpan.FromSeconds(1));Check(false); }
         catch(InvalidOperationException e) when(e.Message=="SDK_SHUTDOWN_TIMEOUT") { Check(true); }
+    }
+    private static async Task ProtocolBrokerShutdownTestsAsync()
+    {
+        // Production shutdown coordinator only. Never construct ProtocolBroker,
+        // a named pipe, profile, SDK, microphone, network or SIP engine.
+        var cancellation = new CancellationTokenSource(); var cancels = 0;
+        cancellation.Token.Register(() => cancels++);
+        var shutdown = new ProtocolBrokerShutdown(cancellation, Task.CompletedTask);
+        var first = shutdown.DisposeAsync().AsTask(); await first;
+        var second = shutdown.DisposeAsync().AsTask(); await second;
+        Check(ReferenceEquals(first, second) && cancels == 1);
+        try { cancellation.Cancel(); Check(false); } catch (ObjectDisposedException) { Check(true); }
+
+        var delayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pendingCancellation = new CancellationTokenSource(); var pendingCancels = 0;
+        pendingCancellation.Token.Register(() => Interlocked.Increment(ref pendingCancels));
+        var pending = new ProtocolBrokerShutdown(pendingCancellation, delayed.Task);
+        var calls = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Factory.StartNew(
+            () => pending.DisposeAsync().AsTask(), CancellationToken.None, TaskCreationOptions.DenyChildAttach, TaskScheduler.Default)));
+        Check(calls.Length == 16 && calls.All(task => ReferenceEquals(task, calls[0])));
+        Check(calls.All(task => !task.IsCompleted) && pendingCancels == 1);
+        delayed.SetResult();
+        await Task.WhenAll(calls);
+        await pending.DisposeAsync(); Check(pendingCancels == 1);
+
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canceledCts = new CancellationTokenSource();
+        canceledCts.Token.Register(() => canceled.TrySetCanceled());
+        var canceledShutdown = new ProtocolBrokerShutdown(canceledCts, canceled.Task);
+        await canceledShutdown.DisposeAsync(); await canceledShutdown.DisposeAsync(); Check(canceled.Task.IsCanceled);
+
+        var reentrantCts = new CancellationTokenSource(); var reentrantListener = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reentrant = new ProtocolBrokerShutdown(reentrantCts, reentrantListener.Task); Task? callbackCompletion = null;
+        reentrantCts.Token.Register(() => callbackCompletion = reentrant.DisposeAsync().AsTask());
+        var outer = reentrant.DisposeAsync().AsTask(); Check(ReferenceEquals(outer, callbackCompletion));
+        Check(!outer.IsCompleted); reentrantListener.SetResult(); await outer; await reentrant.DisposeAsync();
+
+        var failedCts = new CancellationTokenSource(); var faults = 0;
+        failedCts.Token.Register(() => faults++);
+        var failure = new IOException("SYNTHETIC_LISTENER_FAILURE");
+        var failed = new ProtocolBrokerShutdown(failedCts, Task.FromException(failure));
+        var failedTask = failed.DisposeAsync().AsTask();
+        for (var i = 0; i < 2; i++)
+        {
+            try { await failed.DisposeAsync(); Check(false); }
+            catch (IOException error) when (ReferenceEquals(error, failure)) { Check(true); }
+        }
+        Check(ReferenceEquals(failedTask, failed.DisposeAsync().AsTask()) && faults == 1);
+        try { failedCts.Cancel(); Check(false); } catch (ObjectDisposedException) { Check(true); }
+
+        var callbackCts = new CancellationTokenSource(); var callbackListener = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        callbackCts.Token.Register(() => throw new IOException("SYNTHETIC_CANCEL_CALLBACK"));
+        var callbackFailure = new ProtocolBrokerShutdown(callbackCts, callbackListener.Task);
+        var callbackTask = callbackFailure.DisposeAsync().AsTask(); Check(!callbackTask.IsCompleted);
+        callbackListener.SetResult();
+        for (var i = 0; i < 2; i++)
+        {
+            try { await callbackFailure.DisposeAsync(); Check(false); }
+            catch (AggregateException) { Check(true); }
+        }
+        Check(ReferenceEquals(callbackTask, callbackFailure.DisposeAsync().AsTask()));
+
+        // Same order as OnFormClosing: a successful broker stop must not block
+        // a second runtime-stop attempt after its first fail-closed timeout.
+        var quitCts = new CancellationTokenSource(); var quits = new ProtocolBrokerShutdown(quitCts, Task.CompletedTask);
+        var runtimeStops = 0; var reconnects = 0; var exited = false;
+        async Task FakeQuit()
+        {
+            await quits.DisposeAsync();
+            runtimeStops++;
+            if (runtimeStops == 1) throw new InvalidOperationException("SDK_SHUTDOWN_TIMEOUT");
+            exited = true;
+        }
+        try { await FakeQuit(); Check(false); }
+        catch (InvalidOperationException error) when (error.Message == "SDK_SHUTDOWN_TIMEOUT") { Check(!exited && runtimeStops == 1); }
+        await FakeQuit(); Check(exited && runtimeStops == 2 && reconnects == 0);
     }
     private static async Task ExplicitLocalAudioTestsAsync()
     {

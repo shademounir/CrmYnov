@@ -35,11 +35,13 @@ internal sealed class ProtocolBroker : IAsyncDisposable
     private readonly CancellationTokenSource cancellation = new();
     private readonly Func<ProtocolRequest, Task> handler;
     private readonly Task listener;
+    private readonly ProtocolBrokerShutdown shutdown;
 
     public ProtocolBroker(Func<ProtocolRequest, Task> handler)
     {
         this.handler = handler;
         listener = ListenAsync(cancellation.Token);
+        shutdown = new ProtocolBrokerShutdown(cancellation, listener);
     }
 
     public static async Task<bool> SendAsync(ProtocolRequest request)
@@ -76,10 +78,43 @@ internal sealed class ProtocolBroker : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => shutdown.DisposeAsync();
+}
+
+// Separate managed coordination permits tests without starting a named pipe.
+// Completion is published before Cancel can invoke a reentrant callback.
+internal sealed class ProtocolBrokerShutdown(CancellationTokenSource cancellation, Task listener) : IAsyncDisposable
+{
+    private readonly object gate = new();
+    private Task? completion;
+
+    public ValueTask DisposeAsync()
     {
-        cancellation.Cancel();
-        try { await listener.ConfigureAwait(false); } catch (OperationCanceledException) { }
-        cancellation.Dispose();
+        TaskCompletionSource? owner = null;
+        Task shared;
+        lock (gate)
+        {
+            if (completion is null)
+            {
+                owner = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                completion = owner.Task;
+            }
+            shared = completion;
+        }
+        if (owner is not null) _ = CompleteAsync(owner);
+        return new ValueTask(shared);
+    }
+
+    private async Task CompleteAsync(TaskCompletionSource owner)
+    {
+        Exception? failure = null;
+        try { cancellation.Cancel(); }
+        catch (Exception error) { failure = error; }
+        try { await listener.ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
+        finally { cancellation.Dispose(); }
+        if (failure is null) owner.SetResult();
+        else owner.SetException(failure);
     }
 }
