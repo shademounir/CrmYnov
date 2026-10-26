@@ -8,7 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../SdkShutdownCoordinator.cs" /><Compile Include="../SdkShutdownSignals.cs" /><Compile Include="../SdkOperationPolicy.cs" />
-    <Compile Include="../SdkShutdownSelfTest.cs" /><Compile Include="../AgentUiOperationGate.cs" /><Compile Include="DesktopRecovery.EntryPoint.cs" />
+    <Compile Include="../SdkShutdownSelfTest.cs" /><Compile Include="../AgentUiOperationGate.cs" /><Compile Include="../AgentLocalAudioAction.cs" /><Compile Include="DesktopRecovery.EntryPoint.cs" />
   </ItemGroup>
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 </Project>

@@ -317,9 +317,9 @@ internal sealed class MainForm : Form
             Text = "Désactivée par défaut. Jusqu’à cinq secondes restent uniquement en mémoire, puis sont rejouées une fois et effacées. Aucun retour en direct ni fichier audio.",
         });
         var testRow = ButtonRow();
-        var refresh = ActionButton("Actualiser", false); refresh.Click += (_, _) => RefreshDevices();
-        microphoneTestButton = ActionButton("Tester le microphone", false); microphoneTestButton.Click += (_, _) => ToggleMicrophoneTest();
-        var outputTest = ActionButton("Tester la sortie", false); outputTest.Click += (_, _) => PlayOutputTest();
+        var refresh = ActionButton("Actualiser", false); refresh.Click += async (_, _) => await RefreshDevicesAsync();
+        microphoneTestButton = ActionButton("Tester le microphone", false); microphoneTestButton.Click += async (_, _) => await ToggleMicrophoneTestAsync();
+        var outputTest = ActionButton("Tester la sortie", false); outputTest.Click += async (_, _) => await PlayOutputTestAsync();
         testRow.Controls.Add(refresh); testRow.Controls.Add(microphoneTestButton); testRow.Controls.Add(outputTest); form.Controls.Add(testRow);
         var apply = ActionButton(wizard ? "Enregistrer et continuer" : "Enregistrer les périphériques", true);
         apply.Click += (_, _) => SaveDevices(wizard); form.Controls.Add(apply);
@@ -554,34 +554,32 @@ internal sealed class MainForm : Form
         catch (Exception error) { ShowFeedback(HumanError(error), true); }
     }
 
-    private void RefreshDevices()
-    {
-        try { runtime.RefreshAudioDevices(); FillDeviceCombos(); ShowFeedback("Liste des périphériques actualisée.", false); }
-        catch (Exception error) { ShowFeedback(HumanError(error), true); }
-    }
+    private Task RefreshDevicesAsync() => RunOperationAsync("Actualisation de l’audio local…", () =>
+        AgentLocalAudioAction.RunAsync(runtime.EnsureAudioAsync, () => {
+            if (closing) return;
+            runtime.RefreshAudioDevices(); FillDeviceCombos();
+            ShowFeedback("Liste des périphériques actualisée. Aucune reconnexion téléphonique.", false);
+        }));
 
-    private void ToggleMicrophoneTest()
-    {
-        try
-        {
+    private Task ToggleMicrophoneTestAsync() => RunOperationAsync("Préparation du test audio local…", async () => {
             if (snapshot.AudioTestActive) { runtime.StopMicrophoneTest(); ShowFeedback("Test microphone arrêté. Aucun son n’a été enregistré.", false); }
-            else {
+            else await AgentLocalAudioAction.RunAsync(runtime.EnsureAudioAsync, () => {
+                if (closing) return;
                 ApplySelectedDevicesWithoutSaving();
                 var listenLocally = localMonitoring?.Checked == true;
                 runtime.StartMicrophoneTest(listenLocally);
                 ShowFeedback(listenLocally
                     ? "Parlez normalement puis arrêtez le test : un court échantillon sera rejoué une fois, sans boucle d’écho ni fichier audio."
                     : "Parlez normalement : la jauge et le pourcentage doivent réagir. Aucun retour de voix, appel ou enregistrement n’est produit.", false);
-            }
-        }
-        catch (Exception error) { ShowFeedback(HumanError(error), true); }
-    }
+            });
+    });
 
-    private void PlayOutputTest()
-    {
-        try { ApplySelectedDevicesWithoutSaving(); runtime.PlayOutputTest(); ShowFeedback("Son de test envoyé uniquement vers la sortie sélectionnée.", false); }
-        catch (Exception error) { ShowFeedback(HumanError(error), true); }
-    }
+    private Task PlayOutputTestAsync() => RunOperationAsync("Préparation du son de test local…", () =>
+        AgentLocalAudioAction.RunAsync(runtime.EnsureAudioAsync, () => {
+            if (closing) return;
+            ApplySelectedDevicesWithoutSaving(); runtime.PlayOutputTest();
+            ShowFeedback("Son de test envoyé uniquement vers la sortie sélectionnée.", false);
+        }));
 
     private void ApplySelectedDevicesWithoutSaving()
     {

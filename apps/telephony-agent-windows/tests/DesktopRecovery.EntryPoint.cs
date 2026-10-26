@@ -26,6 +26,7 @@ internal static class DesktopRecoveryTests
     }
     private static async Task ShutdownTestsAsync()
     {
+        await ExplicitLocalAudioTestsAsync();
         var uiGate = new AgentUiOperationGate(); var attempts = 0;
         async Task SubmittedOperation(bool fail) {
             using var lease=uiGate.TryBegin(); if(lease is null)return;
@@ -69,6 +70,38 @@ internal static class DesktopRecoveryTests
         try { await SdkShutdownCoordinator.StopAsync(new FakeControl([on,off],owner),()=>clockReads++==0?TimeSpan.Zero:TimeSpan.FromSeconds(1),()=>Task.CompletedTask,TimeSpan.FromSeconds(1));Check(false); }
         catch(InvalidOperationException e) when(e.Message=="SDK_SHUTDOWN_TIMEOUT") { Check(true); }
     }
+    private static async Task ExplicitLocalAudioTestsAsync()
+    {
+        var owner = Environment.CurrentManagedThreadId;
+        var events = new List<string>();
+        // Same production coordinator; synthetic callbacks only. No SDK/profile.
+        await AgentLocalAudioAction.RunAsync(async () => {
+            events.Add("ensure"); await Task.Yield();
+            Check(Environment.CurrentManagedThreadId == owner);
+            events.Add("audio-ready");
+        }, () => { Check(Environment.CurrentManagedThreadId == owner); events.Add("explicit-local-action"); });
+        Check(string.Join(",", events) == "ensure,audio-ready,explicit-local-action");
+        var actions = 0; var initializations = 0;
+        try {
+            await AgentLocalAudioAction.RunAsync(() => {
+                initializations++; throw new InvalidOperationException("SYNTHETIC_AUDIO_INIT_FAILED");
+            }, () => actions++);
+            Check(false);
+        } catch (InvalidOperationException e) when (e.Message == "SYNTHETIC_AUDIO_INIT_FAILED") { Check(actions == 0 && initializations == 1); }
+        try {
+            await AgentLocalAudioAction.RunAsync(() => { initializations++; return Task.CompletedTask; }, () => {
+                actions++; throw new InvalidOperationException("SYNTHETIC_DEVICE_REMOVED");
+            });
+            Check(false);
+        } catch (InvalidOperationException e) when (e.Message == "SYNTHETIC_DEVICE_REMOVED") { Check(actions == 1 && initializations == 2); }
+        // Merely constructing a delegate/disconnecting does not initialize audio.
+        Func<Task> explicitAction = () => AgentLocalAudioAction.RunAsync(() => { initializations++; return Task.CompletedTask; }, () => actions++);
+        Check(initializations == 2 && actions == 1);
+        await explicitAction(); Check(initializations == 3 && actions == 2);
+        var closing = false;
+        await AgentLocalAudioAction.RunAsync(async () => { await Task.Yield(); closing = true; }, () => { if (!closing) actions++; });
+        Check(actions == 2);
+    }
     private sealed class FakeControl(SdkShutdownObservation[] values,int owner,bool fail=false):ISdkShutdownControl {
         private int index; private bool off; public bool AfterOff;public int StopCount;
         public SdkShutdownObservation Observe(){Check(Environment.CurrentManagedThreadId==owner);var v=values[Math.Min(index++,values.Length-1)];off=v.State==ObservedSdkState.Off;return v;}
@@ -88,6 +121,14 @@ internal static class DesktopRecoveryTests
         Check(source.Contains("closing = false; contentHost.Enabled = true; UseWaitCursor = false;",StringComparison.Ordinal));
         Check(source.Contains("setup.PairAsync(address, code, name, CancellationToken.None)",StringComparison.Ordinal));
         Check(source.Contains("await RunOperationAsync(\"Association en cours",StringComparison.Ordinal));
+        Check(source.Contains("refresh.Click += async (_, _) => await RefreshDevicesAsync()", StringComparison.Ordinal));
+        Check(source.Contains("await ToggleMicrophoneTestAsync()", StringComparison.Ordinal));
+        Check(source.Contains("await PlayOutputTestAsync()", StringComparison.Ordinal));
+        Check(source.Split("AgentLocalAudioAction.RunAsync(runtime.EnsureAudioAsync", StringSplitOptions.None).Length == 4);
+        var disconnectSource = source.Substring(source.IndexOf("private async Task DisconnectAsync()", StringComparison.Ordinal));
+        disconnectSource = disconnectSource.Substring(0, disconnectSource.IndexOf("private Task ReassociateAsync", StringComparison.Ordinal));
+        Check(!disconnectSource.Contains("EnsureAudioAsync", StringComparison.Ordinal));
+        Check(!disconnectSource.Contains("StartAsync", StringComparison.Ordinal));
         // Real production summary updater with source-bound synthetic snapshots;
         // do not construct MainForm, a profile store, broker, SDK or audio source.
         var summaryOwner=RuntimeHelpers.GetUninitializedObject(type);
