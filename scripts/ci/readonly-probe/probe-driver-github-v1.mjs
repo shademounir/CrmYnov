@@ -4,13 +4,18 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const run=promisify(execFile),REPO='/repos/shademounir/CrmYnov/';
 export const OFFICIAL_GH='C:/Program Files/GitHub CLI/gh.exe';
+export function fixedToolEnvironment(environment) {
+  const env=Object.fromEntries(Object.entries(environment).filter(([key])=>key.toUpperCase()!=='PATH'));
+  env.PATH='C:/Program Files/Git/cmd;C:/Program Files/Git/mingw64/bin;C:/Windows/System32;C:/Windows';
+  return env;
+}
 export function createOfficialGithubReader({execute=run,environment=process.env}={}) {
   async function invoke(args) {
     try {
-      const env={...environment,GH_HOST:'github.com',GH_PROMPT_DISABLED:'1',GH_DEBUG:'',GITHUB_DEBUG:''};
+      const env={...fixedToolEnvironment(environment),GH_HOST:'github.com',GH_PROMPT_DISABLED:'1',GH_DEBUG:'',GITHUB_DEBUG:''};
       const reply=await execute(OFFICIAL_GH,['api','--hostname','github.com',...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:4194304,env});
       assert(Buffer.byteLength(reply.stdout)<=4194304);return JSON.parse(reply.stdout);
-    } catch { throw Error('OFFICIAL_GITHUB_READ_FAILED'); }
+    } catch { throw new Error('OFFICIAL_GITHUB_READ_FAILED'); }
   }
   async function get(route) {
     assert.equal(typeof route,'string');
@@ -22,11 +27,12 @@ export function createOfficialGithubReader({execute=run,environment=process.env}
     for(let page=1;page<=100;page++) {
       const value=await get(route+'?per_page=100&page='+page),items=key?value[key]:value;
       assert(Array.isArray(items)&&items.length<=100);
-      if(key==='check_runs'){assert(Number.isSafeInteger(value.total_count));total??=value.total_count;assert.equal(value.total_count,total);}
+      if(key==='check_runs'){assert(Number.isSafeInteger(value.total_count)&&value.total_count>=0);if(total===undefined){total=value.total_count;}assert.equal(value.total_count,total);}
       rows.push(...items);assert(rows.length<=10000);
-      if(items.length<100||(total!==undefined&&rows.length===total)){if(total!==undefined)assert.equal(rows.length,total);return rows;}
+      const reachedTotal=Number.isSafeInteger(total)&&rows.length>=Number(total);
+      if(items.length<100||reachedTotal){if(Number.isSafeInteger(total)){assert.equal(rows.length,total);}return rows;}
     }
-    throw Error('GITHUB_PAGINATION_BOUND');
+    throw new Error('GITHUB_PAGINATION_BOUND');
   }
   async function reviewThreads(number) {
     assert(Number.isSafeInteger(number)&&number>0);

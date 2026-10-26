@@ -9,6 +9,8 @@ import {promisify} from 'node:util';
 import {digest} from '../rc47-select-only-probe-core-v1.mjs';
 import {openCreationJournal,createJobOnce,observeJobCreation,createJobCreationTransport} from '../probe-job-creation-v1.mjs';
 import {dossierFixture} from './probe-driver-fixtures-v1.mjs';
+import {createAuthorityBoundFetch} from '../probe-driver-authority-v1.mjs';
+import {createProbeExecutor} from '../rc47-probe-executor-v1.mjs';
 const OP='projects/crmynov-prod-n7x4q2/locations/europe-west1/operations/synthetic-create';
 function fixture(mode='success') {
  const {dossier,job:sourceJob}=dossierFixture(),job=structuredClone(sourceJob);job.etag='SYNTHETIC_ETAG';
@@ -17,8 +19,9 @@ function fixture(mode='success') {
  let journal=openCreationJournal({...options,initialize:true}),posts=0,absences=0,authorities=0;
  const createdUid=job.uid;
  const transport={requireAbsent:async()=>{absences++;if(mode==='existing')throw Error('existing');},create:async()=>{posts++;if(mode==='unknown')throw Error('SYNTHETIC_LOSS');return{name:mode==='foreign'?'projects/other/operations/synthetic':OP};},operation:async()=>({name:OP,done:mode!=='pending',...(mode==='failed'?{error:{code:13}}:{response:{name:job.name,uid:createdUid}})}),job:async()=>job};
- const authorizeFresh=async()=>{authorities++;if(mode==='denied')throw Error('SYNTHETIC_DENIAL');};
- return{dossier,job,directory,options,transport,authorizeFresh,get journal(){return journal;},posts:()=>posts,absences:()=>absences,authorities:()=>authorities,reopen(){journal.close();journal=openCreationJournal(options);},close(){journal.close();}};
+ const now=Date.parse('2026-10-26T18:00:00Z'),authority={receipt:{verifiedAt:new Date(now).toISOString(),expiresAt:new Date(now+1000).toISOString()}};
+ const authorizeFresh=async()=>{authorities++;if(mode==='denied')throw new Error('SYNTHETIC_DENIAL');return authority;};
+ return{dossier,job,directory,options,transport,authorizeFresh,authority,clock:()=>now,get journal(){return journal;},posts:()=>posts,absences:()=>absences,authorities:()=>authorities,reopen(){journal.close();journal=openCreationJournal(options);},close(){journal.close();}};
 }
 test('creation consumes durable intent before exactly one POST and recovers only known native operation',async()=>{
  const f=fixture();try{const original=f.transport.create;f.transport.create=async(...args)=>{assert.equal(f.journal.inspect().state,'CREATE_INTENT_CONSUMED');return original(...args);};
@@ -34,7 +37,26 @@ for(const [name,change]of[
  ['actual executionCount',f=>f.job.executionCount=1],['latest execution object',f=>f.job.latestCreatedExecution={}],['wrong actualUID',f=>f.job.uid=''],['replaced native UID',f=>f.job.uid='synthetic-replaced-native-uid'],['wrong image',f=>f.job.template.template.containers[0].image+='bad'],['foreign operationresponse',f=>f.transport.operation=async()=>({name:OP,done:true,response:{name:'projects/other/jobs/other'}})]
 ])test('native creation reconciliation refuses '+name,async()=>{const f=fixture();try{await createJobOnce(f);change(f);await assert.rejects(observeJobCreation(f));assert.equal(f.journal.inspect().state,'CREATE_OPERATION_OBSERVED');}finally{f.close();}});
 test('omitted and explicit zero executionCount both accepted only with latestCreatedExecution absent',async()=>{for(const count of [undefined,0]){const f=fixture();try{if(count!==undefined)f.job.executionCount=count;await createJobOnce(f);assert.equal((await observeJobCreation(f)).state,'NATIVE_JOB_RECONCILED');}finally{f.close();}}});
-test('caller mutation during authority callback cannot retarget detached create intent/body',async()=>{const f=fixture();try{const expected=f.dossier.objective.jobName;f.authorizeFresh=async()=>{f.dossier.objective.jobName+='-changed';};f.transport.create=async(name)=>{assert.equal(name,expected);return{name:OP};};await createJobOnce(f);}finally{f.close();}});
+test('caller mutation during authority callback cannot retarget detached create intent/body',async()=>{const f=fixture();try{const expected=f.dossier.objective.jobName;f.authorizeFresh=async()=>{f.dossier.objective.jobName+='-changed';return f.authority;};f.transport.create=async(name)=>{assert.equal(name,expected);return{name:OP};};await createJobOnce(f);}finally{f.close();}});
+for(const offset of [1000,1001,-1])test('second absence latency or backwards clock refuses creation before journal and POST '+offset,async()=>{
+ const f=fixture();try{let now=f.clock(),reads=0;f.clock=()=>now;f.transport.requireAbsent=async()=>{if(++reads===2)now+=offset;};await assert.rejects(createJobOnce(f));assert.equal(f.journal.inspect(),null);assert.equal(f.posts(),0);}finally{f.close();}
+});
+test('expiry during create token await consumes intent but zero native POST and no retry',async()=>{
+ const f=fixture();try{let now=f.clock(),posts=0;const fetchImpl=createAuthorityBoundFetch({clock:()=>now,getAuthority:()=>f.authority,fetchImpl:async()=>{posts++;return json({name:OP});}});
+ const native=createJobCreationTransport({dossier:f.dossier,accessToken:async()=>{now+=1000;return 'SYNTHETIC_ONLY';},fetchImpl});f.transport.create=native.create;
+ assert.equal((await createJobOnce(f)).state,'CREATE_OUTCOME_UNKNOWN');assert.equal(posts,0);f.reopen();await assert.rejects(createJobOnce(f));assert.equal(posts,0);
+ }finally{f.close();}
+});
+for(const offset of [1000,-1])test('composed run POST rechecks authority after token; no native POST or replay '+offset,async()=>{
+ const f=fixture();let executor;try{let now=f.clock(),posts=0,tokens=0;
+ const fetchImpl=createAuthorityBoundFetch({clock:()=>now,getAuthority:()=>f.authority,fetchImpl:async(url,options)=>{
+  if(options.method==='POST'){posts++;return json({name:OP});}
+  return json(url.includes('/executions?')?{}:f.job);
+ }});
+ executor=createProbeExecutor({objective:f.dossier.objective,authorizeFresh:f.authorizeFresh,accessToken:async()=>{if(++tokens===4)now+=offset;return 'SYNTHETIC_ONLY';},journalDirectory:f.directory,initialize:true,fetchImpl});
+ assert.equal((await executor.dispatch()).state,'RUN_OUTCOME_UNKNOWN');assert.equal(posts,0);await assert.rejects(executor.dispatch());assert.equal(posts,0);
+ }finally{executor?.close();f.close();}
+});
 test('fresh journal cannot replace an existing or missing journal implicitly',()=>{const f=fixture();try{assert.throws(()=>openCreationJournal({...f.options,initialize:true}));assert.throws(()=>openCreationJournal({...f.options,directory:fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'probe-driver-missing-unit-')))}));}finally{f.close();}});
 test('two processes race for exactly one durable creation claim',async()=>{
  const f=fixture();f.close();const intent={at:'2026-10-26T18:00:00Z',job:f.options.jobName,dossierSha256:f.options.dossierSha256,bodySha256:digest(f.dossier.job)};

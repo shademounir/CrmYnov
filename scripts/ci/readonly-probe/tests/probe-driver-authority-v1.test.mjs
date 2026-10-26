@@ -1,11 +1,61 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {authorizeProbeDriver,CATALOG_PATH,validateOperatorJiraObservation} from '../probe-driver-authority-v1.mjs';
-import {createOfficialGithubReader,OFFICIAL_GH} from '../probe-driver-github-v1.mjs';
+import {authorizeProbeDriver,CATALOG_PATH,validateOperatorJiraObservation,assertAuthorityCurrent,createAuthorityBoundFetch} from '../probe-driver-authority-v1.mjs';
+import {createOfficialGithubReader,OFFICIAL_GH,fixedToolEnvironment} from '../probe-driver-github-v1.mjs';
 import {authorityFixture} from './probe-driver-fixtures-v1.mjs';
-const run=f=>authorizeProbeDriver({github:f.github,objectiveId:f.entry.id,dossier:f.dossier,jiraBytes:f.jiraBytes,localSource:f.localSource,action:'VERIFY',now:f.now});
+const run=f=>authorizeProbeDriver({github:f.github,objectiveId:f.entry.id,dossier:f.dossier,jiraBytes:f.jiraBytes,localSource:f.localSource,action:'VERIFY',clock:()=>f.now});
 test('synthetic full official-provenance graph constructs catalog without self-referential commit hash',async()=>{
   const f=authorityFixture();assert.deepEqual(f.entry.objectiveReview,{pr:302});const result=await run(f);assert.equal(result.receipt.objectiveId,f.entry.id);assert.equal(result.receipt.businessMutationAuthorized,false);assert.match(result.receipt.jiraEvidenceMeaning,/not a cryptographic/u);
+});
+for(const [name,prepare,advance]of[
+ ['operational expiry',f=>{f.authorization.expiresAt=new Date(f.now+1000).toISOString();f.refreshCatalog();},2000],
+ ['catalog expiry',f=>{f.entry.expiresAt=new Date(f.now+1000).toISOString();f.refreshCatalog();},2000],
+ ['Jira freshness',f=>{const j=JSON.parse(f.jiraBytes);j.observedAt=new Date(f.now-599000).toISOString();f.jiraBytes=Buffer.from(JSON.stringify(j));f.authorization.jiraObservationSha256=f.hash(f.jiraBytes);f.refreshCatalog();},2000],
+ ['comment freshness',f=>{f.responses.get(f.base+'issues/302/comments').find(c=>c.id===102).updated_at=new Date(f.now-599000).toISOString();},2000],
+ ['exact collection deadline',()=>{},60000],
+ ['backwards clock',()=>{},-1]
+])test('live final clock refuses '+name,async()=>{
+ const f=authorityFixture();prepare(f);const get=f.github.get;let count=0;
+ f.github.get=async route=>{const result=await get(route);if(route===f.base+'branches/develop'&&++count===2)f.now+=advance;return result;};
+ await assert.rejects(run(f));
+});
+test('returned expiry is the minimum Jira/comment/catalog/explicit bound and exact expiry refuses',async()=>{
+ const f=authorityFixture(),result=await run(f);assert.equal(Date.parse(result.receipt.expiresAt),Date.parse(f.authorization.expiresAt));
+ assertAuthorityCurrent(result,Date.parse(result.receipt.expiresAt)-1);assert.throws(()=>assertAuthorityCurrent(result,Date.parse(result.receipt.expiresAt)));assert.throws(()=>assertAuthorityCurrent(result,f.now-1));
+});
+test('authority-bound fetch checks after token boundary without changing GET metadata reads',async()=>{
+ const f=authorityFixture(),authority=await run(f);let calls=0,now=f.now;
+ const fetchImpl=createAuthorityBoundFetch({getAuthority:()=>authority,clock:()=>now,fetchImpl:()=>{calls++;return 'SYNTHETIC';}});
+ assert.equal(fetchImpl('synthetic',{method:'GET'}),'SYNTHETIC');now=Date.parse(authority.receipt.expiresAt);assert.throws(()=>fetchImpl('synthetic',{method:'POST'}));assert.equal(calls,1);
+});
+test('fixed subprocess PATH removes all caller case variants and keeps no user-writable directory',()=>{
+ const env=fixedToolEnvironment({Path:'C:/Users/test/bin',PATH:'bad',pAtH:'bad2',KEEP:'yes'});
+ assert.deepEqual(Object.keys(env).filter(k=>k.toUpperCase()==='PATH'),['PATH']);assert.equal(env.KEEP,'yes');assert.equal(env.PATH,'C:/Program Files/Git/cmd;C:/Program Files/Git/mingw64/bin;C:/Windows/System32;C:/Windows');
+});
+test('guard normalizes lowercase POST and forwards the captured canonical method',async()=>{
+ const f=authorityFixture(),authority=await run(f);let calls=0;
+ const transport=createAuthorityBoundFetch({getAuthority:()=>authority,clock:()=>f.now,fetchImpl:(url,init)=>{calls++;assert.equal(init.method,'POST');return 'SYNTHETIC';}});
+ assert.equal(transport('synthetic',{method:'pOsT',body:'{}'}),'SYNTHETIC');assert.equal(calls,1);
+ f.now=Date.parse(authority.receipt.expiresAt);assert.throws(()=>transport('synthetic',{method:'post'}));assert.equal(calls,1);
+});
+for(const init of [{method:'DELETE'},{method:'PATCH'},{method:'HEAD'},{method:''},{method:undefined},{method:1},{method:' POST'},{body:'bad'},{method:'GET',body:undefined},{method:'GET',unknown:true},[],null])test('malformed or forbidden init never reaches fetch '+JSON.stringify(init),async()=>{
+ const f=authorityFixture(),authority=await run(f);let calls=0;const transport=createAuthorityBoundFetch({getAuthority:()=>authority,clock:()=>f.now,fetchImpl:()=>{calls++;}});
+ assert.throws(()=>transport('synthetic',init));assert.equal(calls,0);
+});
+test('Request objects, nonplain init and getter method/init cannot bypass classification',async()=>{
+ const f=authorityFixture(),authority=await run(f);let calls=0,getters=0;const transport=createAuthorityBoundFetch({getAuthority:()=>authority,clock:()=>f.now,fetchImpl:()=>{calls++;}});
+ assert.throws(()=>transport(new Request('https://example.test',{method:'POST'}),{}));
+ assert.throws(()=>transport('synthetic',Object.create({method:'GET'})));
+ const init={get method(){getters++;return getters===1?'GET':'POST';}};assert.throws(()=>transport('synthetic',init));
+ const altered={method:'GET',get headers(){altered.method='POST';return {};}};assert.throws(()=>transport('synthetic',altered));
+ assert.equal(calls,0);assert.equal(getters,0);assert.equal(altered.method,'GET');
+});
+test('omitted method is detached and explicitly sent as GET',()=>{
+ let actual;const transport=createAuthorityBoundFetch({getAuthority:()=>undefined,clock:()=>1,fetchImpl:(url,init)=>{actual=init;}});transport('synthetic');assert.equal(actual.method,'GET');
+});
+test('official check pagination verifies total count across a full page',async()=>{
+ let calls=0;const reader=createOfficialGithubReader({execute:async()=>{calls++;return{stdout:JSON.stringify({total_count:100,check_runs:Array.from({length:100},(_,i)=>({id:i}))})};},environment:{}});
+ assert.equal((await reader.pages('/repos/shademounir/CrmYnov/commits/'+'1'.repeat(40)+'/check-runs','check_runs')).length,100);assert.equal(calls,1);
 });
 for(const[name,change]of[
   ['revoked grant',f=>{const p=f.base+'contents/docs/governance/codex-delegation.json?ref='+'6'.repeat(40);f.grant.status='revoked';f.responses.set(p,f.blob(f.grant));}],

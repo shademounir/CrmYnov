@@ -52,6 +52,18 @@ schema/source/actor/grant/ticket/ready/unblocked/time and literal limitation cla
 are checked. An arbitrary local `approved: true` is never accepted. Freshness is
 obtained after protected review, not baked into a catalog while CI is pending.
 
+The verifier uses a live clock again after official evidence collection and
+refuses backward time or a collection lasting sixty seconds. Its immutable
+receipt includes the minimum expiry of catalog validity, explicit operational
+authorization, comment freshness and Jira observation freshness. The CLI checks
+that bound again after local source rehashing, after the second creation-absence
+read, and immediately before either native POST, **after** token acquisition.
+Expiry during token acquisition causes zero native POST; a consumed durable
+intent nevertheless stays occupied/unknown and is never automatically retried.
+All subprocess PATH case variants are replaced by fixed installed-system
+directories. Local Git uses its absolute executable, refuses ambient GIT_*
+overrides, and disables fsmonitor/hooks per invocation without changing config.
+
 Job creation uses bounded metadata-only deleted-job inventory, official NOT_FOUND,
 a durable FULL-synchronous SQLite claim before one POST, no overrides and no retry.
 Unknown outcomes remain occupied across reopen. Recovery accepts only the operation

@@ -12,15 +12,15 @@ import {createProbeExecutor} from './rc47-probe-executor-v1.mjs';
 import {createHttpContract} from './rc47-probe-http-contract-v1.mjs';
 import {createBoundedExchange} from './rc47-probe-bounded-exchange-v1.mjs';
 import {createOfficialAccessToken} from './rc47-probe-official-auth-v1.mjs';
-import {createOfficialGithubReader} from './probe-driver-github-v1.mjs';
-import {authorizeProbeDriver} from './probe-driver-authority-v1.mjs';
+import {createOfficialGithubReader,fixedToolEnvironment} from './probe-driver-github-v1.mjs';
+import {authorizeProbeDriver,assertAuthorityCurrent,createAuthorityBoundFetch} from './probe-driver-authority-v1.mjs';
 import {validateLocalProbePayload} from './probe-driver-payload-v1.mjs';
 import {openCreationJournal,createJobCreationTransport,createJobOnce,observeJobCreation} from './probe-job-creation-v1.mjs';
 const ROOT=path.resolve(import.meta.dirname,'../../..'),LOCAL=import.meta.dirname;
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export const DRIVER_INPUTS=Object.freeze([
   'rc47-select-only-probe-core-v1.mjs','rc47-select-only-probe-adapter-v1.mjs','rc47-probe-controlled-entry-v2.mjs','rc47-probe-native-guards-v1.mjs','rc47-probe-bundle-v2.mjs','rc47-probe-executor-v1.mjs','rc47-probe-single-run-v1.mjs','rc47-probe-exclusive-journal-v1.mjs','rc47-probe-http-contract-v1.mjs','rc47-probe-bounded-exchange-v1.mjs','rc47-probe-official-auth-v1.mjs','probe-driver-github-v1.mjs','probe-driver-authority-v1.mjs','probe-job-creation-v1.mjs','probe-driver-payload-v1.mjs','probe-operational-driver-v1.mjs'
-].map(p=>'scripts/ci/readonly-probe/'+p).concat(['scripts/pr-policy/delegation.mjs','scripts/release-manifest/checks.mjs']).sort());
+].map(p=>'scripts/ci/readonly-probe/'+p).concat(['scripts/pr-policy/delegation.mjs','scripts/release-manifest/checks.mjs']).sort((a,b)=>a.localeCompare(b,'en')));
 export function readPrivateFile(file,max=1048576) {
   assert(path.isAbsolute(file));assert(!fs.lstatSync(file).isSymbolicLink());assert.equal(fs.realpathSync(file),path.resolve(file));
   const fd=fs.openSync(file,'r');try{const info=fs.fstatSync(fd);assert(info.isFile()&&info.size<=max);const bytes=fs.readFileSync(fd);assert(bytes.length<=max);return bytes;}finally{fs.closeSync(fd);}
@@ -33,7 +33,9 @@ export function parseDriverArguments(args) {
   return {mode,options};
 }
 function localSource() {
-  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-C',ROOT,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576}).trim();
+  assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)),'ambient Git overrides refused');
+  const env=fixedToolEnvironment(process.env);
+  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','core.untrackedCache=false','-C',ROOT,...args],{env,encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576}).trim();
   const clean=git('status','--porcelain','--untracked-files=all')==='';assert(clean,'protected clean driver checkout required');
   return {commit:git('rev-parse','HEAD'),tree:git('rev-parse','HEAD^{tree}'),clean,files:DRIVER_INPUTS.map(p=>{const file=path.join(ROOT,p);assert(!fs.lstatSync(file).isSymbolicLink());assert.equal(fs.realpathSync(file),path.resolve(file));return{path:p,sha256:hash(fs.readFileSync(file))};})};
 }
@@ -42,12 +44,13 @@ export async function runOperationalDriver(args) {
   const {mode,options}=parseDriverArguments(args),dossier=JSON.parse(readPrivateFile(options['--dossier'])),jiraBytes=readPrivateFile(options['--jira-evidence'],65536);
   validateLocalProbePayload(dossier,file=>fs.readFileSync(path.join(LOCAL,file)));
   const source=localSource();assert.deepEqual(source.files.map(f=>f.path),DRIVER_INPUTS);
-  const github=createOfficialGithubReader(),fetchImpl=fetch;
+  const github=createOfficialGithubReader();
   assert(path.isAbsolute(options['--journal-dir']));
   const directory=fs.realpathSync(options['--journal-dir']);assert.equal(directory,path.resolve(options['--journal-dir']));assert(!fs.lstatSync(directory).isSymbolicLink());assert(!directory.startsWith(ROOT+path.sep),'journal must be outside source checkout');
   const action={verify:'VERIFY','create-job':'CREATE_JOB','observe-create':'OBSERVE_CREATE',run:'DISPATCH','observe-run':'OBSERVE_RUN'}[mode];
   let authority;
-  async function authorizeFresh(){assert.deepEqual(localSource(),source,'local protected driver source drift');authority=await authorizeProbeDriver({github,objectiveId:options['--objective-id'],dossier,jiraBytes,localSource:source,action});assert.equal(authority.entry.journalDirectorySha256,hash(directory),'reviewed durable journal location required');assert.deepEqual(localSource(),source,'local driver changed during authority collection');return authority;}
+  const fetchImpl=createAuthorityBoundFetch({fetchImpl:fetch,getAuthority:()=>authority});
+  async function authorizeFresh(){assert.deepEqual(localSource(),source,'local protected driver source drift');authority=await authorizeProbeDriver({github,objectiveId:options['--objective-id'],dossier,jiraBytes,localSource:source,action});assert.equal(authority.entry.journalDirectorySha256,hash(directory),'reviewed durable journal location required');assert.deepEqual(localSource(),source,'local driver changed during authority collection');assertAuthorityCurrent(authority,Date.now());return authority;}
   await authorizeFresh();
   if(mode==='verify')return{state:'AUTHORITY_AND_LOCAL_PAYLOAD_VERIFIED',objectiveId:options['--objective-id'],dossierSha256:digest(dossier),nativeExecutionQualified:false,businessMutationAuthorized:false,canRetry:false};
   const accessToken=createOfficialAccessToken({account:authority.entry.googleAccount,gcloudPath:'C:/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/lib/gcloud.py',pythonPath:'C:/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/platform/bundledpython/python.exe'});

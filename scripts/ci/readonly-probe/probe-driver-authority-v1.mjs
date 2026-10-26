@@ -30,7 +30,7 @@ async function mergedPull(github,reference,grant,actor,targetBase) {
   assert.equal(pr.number,reference.pr);assert.equal(pr.head.sha,reference.head);assert.equal(pr.merge_commit_sha,reference.mergeCommit);assert.equal(pr.base.ref,targetBase);
   assert.equal(pr.base.repo.full_name,REPOSITORY);assert.equal(pr.head.repo.full_name,REPOSITORY);
   assert.equal(pr.merged,true);assert.equal(pr.draft,false);assert.equal(pr.auto_merge,null);assert(grant.authenticatedActors.includes(pr.user.login)&&grant.authenticatedActors.includes(pr.merged_by.login));
-  const labels=pr.labels.map(l=>l.name);assert(labels.includes('codex-delegated-approved'));assert(!labels.includes('po-approved')&&!labels.includes('policy-approved'));
+  const labels=new Set(pr.labels.map(l=>l.name));assert(labels.has('codex-delegated-approved'));assert(!labels.has('po-approved')&&!labels.has('policy-approved'));
   const files=(await github.pages(base+'pulls/'+reference.pr+'/files')).map(f=>f.filename);
   const checks=await github.pages(base+'commits/'+reference.head+'/check-runs','check_runs');
   validateRequiredChecks([...DELEGATED_CHECKS,'pr-policy'],checks,{expectedSha:reference.head});
@@ -54,8 +54,35 @@ export function validateOperatorJiraObservation(bytes,{expectedSha256,ticket,act
   const at=Date.parse(v.observedAt);assert(Number.isFinite(at)&&at<=now&&now-at<=600000,'fresh Jira UI operator attestation required');
   assert.equal(v.claim,'Operator-observed official Jira UI; not a cryptographic Jira connector or native signature');return v;
 }
-export async function authorizeProbeDriver({github,objectiveId,dossier,jiraBytes,localSource,action,now=Date.now()}) {
-  const start=Date.now();assert(['CREATE_JOB','OBSERVE_CREATE','DISPATCH','OBSERVE_RUN','VERIFY'].includes(action));assert(/^[a-z0-9][a-z0-9-]{1,80}$/u.test(objectiveId));
+export function assertAuthorityCurrent(authority,now) {
+  const verified=Date.parse(authority?.receipt?.verifiedAt),expires=Date.parse(authority?.receipt?.expiresAt);
+  assert(Number.isSafeInteger(now)&&Number.isFinite(verified)&&Number.isFinite(expires));
+  assert(now>=verified&&now<expires,'operational authority expired or clock moved backwards');
+}
+// Called by the existing bounded exchange AFTER its token await and immediately
+// before the native POST. GET remains a non-mutating metadata observation.
+export function createAuthorityBoundFetch({fetchImpl,getAuthority,clock=Date.now}) {
+  assert.equal(typeof fetchImpl,'function');assert.equal(typeof getAuthority,'function');assert.equal(typeof clock,'function');
+  let lastClock;
+  return (url,options={})=>{
+    assert.equal(typeof url,'string','Request objects are not accepted at the guarded transport boundary');
+    assert(options&&Object.getPrototypeOf(options)===Object.prototype,'plain request init required');
+    const descriptors=Object.getOwnPropertyDescriptors(options),allowed=new Set(['method','redirect','signal','headers','body']);
+    assert(Reflect.ownKeys(options).every(key=>typeof key==='string'&&allowed.has(key)),'unsupported request init');
+    assert(Object.values(descriptors).every(d=>Object.hasOwn(d,'value')),'request init accessors refused');
+    const init=Object.fromEntries(Object.entries(descriptors).map(([key,d])=>[key,d.value]));
+    const rawMethod=Object.hasOwn(init,'method')?init.method:'GET';assert.equal(typeof rawMethod,'string');
+    const method=rawMethod.toUpperCase();assert(['GET','POST'].includes(method),'only GET/POST permitted');
+    if(method==='GET'){assert(!Object.hasOwn(init,'body'),'GET body refused');}
+    const now=clock();assert(Number.isSafeInteger(now));assert(lastClock===undefined||now>=lastClock,'clock moved backwards');lastClock=now;
+    if(method==='POST'){
+      assertAuthorityCurrent(getAuthority(),now);
+    }
+    return fetchImpl(url,{...init,method});
+  };
+}
+export async function authorizeProbeDriver({github,objectiveId,dossier,jiraBytes,localSource,action,clock=Date.now}) {
+  assert.equal(typeof clock,'function');const start=clock(),now=start;assert(Number.isSafeInteger(start));assert(['CREATE_JOB','OBSERVE_CREATE','DISPATCH','OBSERVE_RUN','VERIFY'].includes(action));assert(/^[a-z0-9][a-z0-9-]{1,80}$/u.test(objectiveId));
   const user=await github.get('/user'),actor=user.login;assert.equal(user.type,'User');
   const branch=await github.get(base+'branches/develop'),revision=branch.commit.sha;assert(S.test(revision));assert.equal(branch.protected,true);
   const protection=await github.get(base+'branches/develop/protection');assert(protection.required_status_checks.contexts.includes('pr-policy'));
@@ -67,13 +94,15 @@ export async function authorizeProbeDriver({github,objectiveId,dossier,jiraBytes
   for(const key of ['settingsSha256','membershipSha256','permissionSha256','poolSha256']){const pin=entry.baselineLineage?.[key];assert(pin,'historical baseline pin lineage missing: '+key);assert.equal(pin.value,dossier.preservation[key]);assert(H.test(pin.value)&&pin.value!=='0'.repeat(64));assert(H.test(pin.evidenceSha256)&&pin.evidenceSha256!=='0'.repeat(64));assert.equal(pin.source,'OFFICIAL_IMMUTABLE_BASELINE_RECEIPT');assert(Number.isFinite(Date.parse(pin.observedAt))&&Date.parse(pin.observedAt)<=now);}
   assert.equal(entry.ticket,'CRMY-63');assert.equal(localSource.commit,entry.driver.mergeCommit);assert.equal(localSource.tree,entry.driver.tree);assert.equal(localSource.clean,true);
   assert.deepEqual(localSource.files,entry.driver.files);assert(entry.driver.files.length>=10);
-  for(const file of entry.driver.files){assert(H.test(file.sha256));assert.equal(byteHash(await githubFile(github,file.path,localSource.commit)),file.sha256,'driver source mismatch');}
+  // Bounded groups avoid serial network waits without unbounded provider fan-out.
+  const sourceGroups=Array.from({length:Math.ceil(entry.driver.files.length/4)},(_,i)=>entry.driver.files.slice(i*4,i*4+4));
+  await sourceGroups.reduce((previous,group)=>previous.then(()=>Promise.all(group.map(async file=>{assert(H.test(file.sha256));assert.equal(byteHash(await githubFile(github,file.path,localSource.commit)),file.sha256,'driver source mismatch');}))),Promise.resolve());
   // The catalog may name its own PR number (known from an earlier draft), but
   // never its own head/merge hash: that would require an impossible fixed point.
   assert.deepEqual(Object.keys(entry.objectiveReview),['pr']);
   const objectivePull=await github.get(base+'pulls/'+entry.objectiveReview.pr);
   const objectiveReference={pr:entry.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
-  for(const commit of [entry.driver.mergeCommit,objectiveReference.mergeCommit]){assert(S.test(commit));const comparison=await github.get(base+'compare/'+commit+'...'+revision);assert.equal(comparison.merge_base_commit.sha,commit);assert(['ahead','identical'].includes(comparison.status));}
+  await Promise.all([entry.driver.mergeCommit,objectiveReference.mergeCommit].map(async commit=>{assert(S.test(commit));const comparison=await github.get(base+'compare/'+commit+'...'+revision);assert.equal(comparison.merge_base_commit.sha,commit);assert(['ahead','identical'].includes(comparison.status));}));
   const driver=await mergedPull(github,entry.driver,grant,actor,'develop');
   const objective=await mergedPull(github,objectiveReference,grant,actor,'develop');assert(objective.files.includes(CATALOG_PATH));
   const approvedCatalog=JSON.parse(await githubFile(github,CATALOG_PATH,objectiveReference.mergeCommit));assert.equal(digest(approvedCatalog.entries.filter(e=>e.id===objectiveId)),digest([entry]),'catalog objective was not approved in referenced merge');
@@ -89,6 +118,12 @@ export async function authorizeProbeDriver({github,objectiveId,dossier,jiraBytes
   const issued=Date.parse(comment.updated_at??comment.created_at),expiry=Date.parse(authorization.expiresAt);assert(Number.isFinite(issued)&&issued<=now&&now-issued<=600000&&expiry>now&&expiry-issued<=600000,'fresh operational authority expired');
   const jira=validateOperatorJiraObservation(jiraBytes,{expectedSha256:authorization.jiraObservationSha256,ticket:entry.ticket,actor,grantSha256:grantDigest(grant),now});
   assert(H.test(authorization.humanAuthorityReceiptSha256));assert.equal(authorization.humanAuthorityReceiptSha256,entry.humanAuthorityReceiptSha256);
-  const finalBranch=await github.get(base+'branches/develop');assert.equal(finalBranch.commit.sha,revision,'protected authority changed');assert(Date.now()-start<60000,'authority collection deadline');
-  return Object.freeze({entry:structuredClone(entry),receipt:{schemaVersion:1,actor,executor:'Codex',authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,dossierSha256:entry.dossierSha256,catalogEntrySha256:digest(entry),driverCommit:localSource.commit,driverReviewId:driver.reviewId,objectiveReviewId:objective.reviewId,releaseReviewId:releaseApproval.reviewId,operationalCommentId:comment.id,jiraObservedAt:jira.observedAt,jiraEvidenceMeaning:jira.claim,verifiedAt:new Date(now).toISOString(),businessMutationAuthorized:false}});
+  const finalBranch=await github.get(base+'branches/develop');assert.equal(finalBranch.commit.sha,revision,'protected authority changed');
+  const finalNow=clock();assert(Number.isSafeInteger(finalNow)&&finalNow>=start,'clock moved backwards');assert(finalNow-start<60000,'authority collection deadline');
+  assert(finalNow>=Date.parse(entry.validFrom)&&finalNow<Date.parse(entry.expiresAt),'objective expired during collection');
+  assert(issued<=finalNow&&finalNow-issued<600000&&expiry>finalNow,'operational authority expired during collection');
+  validateOperatorJiraObservation(jiraBytes,{expectedSha256:authorization.jiraObservationSha256,ticket:entry.ticket,actor,grantSha256:grantDigest(grant),now:finalNow});
+  const expiresAt=Math.min(Date.parse(entry.expiresAt),expiry,issued+600000,Date.parse(jira.observedAt)+600000);
+  assert(finalNow<expiresAt,'authority freshness expired during collection');
+  return Object.freeze({entry:structuredClone(entry),receipt:Object.freeze({schemaVersion:1,actor,executor:'Codex',authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,dossierSha256:entry.dossierSha256,catalogEntrySha256:digest(entry),driverCommit:localSource.commit,driverReviewId:driver.reviewId,objectiveReviewId:objective.reviewId,releaseReviewId:releaseApproval.reviewId,operationalCommentId:comment.id,jiraObservedAt:jira.observedAt,jiraEvidenceMeaning:jira.claim,verifiedAt:new Date(finalNow).toISOString(),expiresAt:new Date(expiresAt).toISOString(),businessMutationAuthorized:false})});
 }
