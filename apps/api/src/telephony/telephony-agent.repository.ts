@@ -495,6 +495,37 @@ export class TelephonyAgentRepository {
     });
   }
 
+  /** Global switch readiness is distinct from the administrator's own calling identity.
+   * This is observation only; every actual caller still passes readiness/enqueue guards. */
+  async activationReadiness(principal: Principal): Promise<{ available: boolean; reason: string; identityLabel?: string }> {
+    if (!principal.roles.includes("SUPER_ADMIN") || !principal.scopes.some(scope => scope.kind === "GLOBAL")) {
+      throw new ForbiddenException({ code: "telephony_configuration_forbidden" });
+    }
+    const client = this.requiredClient();
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const candidates = await client.telephonyUserProfile.findMany({
+        where: {
+          enabled: true,
+          user: { active: true, firstLoginRequired: false, roles: { hasSome: ["ADMISSIONS", "MANAGER", "ADMIN", "SUPER_ADMIN"] } },
+          serverProfile: { enabled: true },
+          workstations: { some: { active: true, connectionState: "CONNECTED", lastSeenAt: { gte: new Date(Date.now() - 30_000) }, sdkLoaded: true, sipRegistered: true } },
+        },
+        select: { id: true, userId: true }, orderBy: { id: "asc" }, take: 100,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      for (const candidate of candidates) {
+        // Re-read all existing guards: campus/server compatibility, role validity,
+        // unique active workstation, fresh heartbeat, SDK and SIP registration.
+        const ready = await this.readiness(candidate.userId);
+        if (ready.available) return { available: true, reason: "READY", ...(ready.identityLabel ? { identityLabel: ready.identityLabel } : {}) };
+      }
+      if (candidates.length < 100) return { available: false, reason: "NO_READY_WORKSTATION" };
+      cursor = candidates.at(-1)!.id;
+    }
+    return { available: false, reason: "ACTIVATION_INVENTORY_LIMIT" };
+  }
+
   async readiness(userId: string): Promise<{ available: boolean; reason?: string; workstationId?: string; identityLabel?: string }> {
     const client = this.requiredClient();
     const profile = await client.telephonyUserProfile.findUnique({ where: { userId }, include: { user: true, serverProfile: true, workstations: { where: { active: true }, orderBy: { pairedAt: "desc" }, take: 2 } } });

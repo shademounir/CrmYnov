@@ -34,6 +34,7 @@ export interface CallRecord {
 }
 export interface AssociationCandidate { id: string; leadCode: string; displayName: string; campus: string }
 export interface TelephonyConfigurationView extends TelephonyConfiguration {
+  activationReadiness?: { scope: "GLOBAL"; available: boolean; reason: string; identityLabel?: string };
   outboundReadiness: { available: boolean; reason: BridgeReadinessReason | "MODE_DISABLED" | "USER_PROFILE_DISABLED" | "USER_DISABLED" | "SERVER_PROFILE_DISABLED" | "WORKSTATION_NOT_PAIRED" | "WORKSTATION_OFFLINE"; bridgeVersion?: string; sdkLoaded?: boolean; sipRegistered?: boolean; identityLabel?: string };
 }
 export interface TelephonyBridgeEvent {
@@ -77,15 +78,21 @@ export class TelephonyService implements OnModuleInit {
     await this.refreshPersistentState();
     if (this.agents?.enabled && principal) {
       const readiness = await this.agents.readiness(principal.userId);
-      return { ...this.configuration(), outboundReadiness: { available: readiness.available, reason: readiness.available ? "READY" : readiness.reason as TelephonyConfigurationView["outboundReadiness"]["reason"], ...(readiness.identityLabel ? { identityLabel: readiness.identityLabel } : {}), sdkLoaded: readiness.available, sipRegistered: readiness.available } };
+      const activationReadiness = principal.roles.includes("SUPER_ADMIN") && principal.scopes.some(scope => scope.kind === "GLOBAL")
+        ? { scope: "GLOBAL" as const, ...await this.agents.activationReadiness(principal) } : undefined;
+      return { ...this.configuration(), ...(activationReadiness ? { activationReadiness } : {}), outboundReadiness: { available: readiness.available, reason: readiness.available ? "READY" : readiness.reason as TelephonyConfigurationView["outboundReadiness"]["reason"], ...(readiness.identityLabel ? { identityLabel: readiness.identityLabel } : {}), sdkLoaded: readiness.available, sipRegistered: readiness.available } };
     }
-    if (this.config.mode !== "LINPHONE") return { ...this.configuration(), outboundReadiness: { available: false, reason: "MODE_DISABLED" } };
-    return { ...this.configuration(), outboundReadiness: await this.linphoneBridge.readiness() };
+    const bridgeReadiness = this.config.mode === "LINPHONE" || principal?.roles.includes("SUPER_ADMIN") && principal.scopes.some(scope => scope.kind === "GLOBAL")
+      ? await this.linphoneBridge.readiness() : undefined;
+    const activationReadiness = bridgeReadiness && principal?.roles.includes("SUPER_ADMIN") && principal.scopes.some(scope => scope.kind === "GLOBAL")
+      ? { scope: "GLOBAL" as const, ...bridgeReadiness } : undefined;
+    return { ...this.configuration(), ...(activationReadiness ? { activationReadiness } : {}), outboundReadiness: this.config.mode === "LINPHONE" && bridgeReadiness ? bridgeReadiness : { available: false, reason: "MODE_DISABLED" } };
   }
 
   async configureForApi(input: Parameters<TelephonyService["configure"]>[0], principal: Principal, correlationId: string): Promise<TelephonyConfiguration> {
+    if (!principal.roles.includes("SUPER_ADMIN") || !principal.scopes.some(scope => scope.kind === "GLOBAL")) throw new ForbiddenException({ code: "telephony_configuration_forbidden" });
     if (input.mode === "LINPHONE" && input.outboundEnabled) {
-      const readiness = this.agents?.enabled ? await this.agents.readiness(principal.userId) : await this.linphoneBridge.readiness();
+      const readiness = this.agents?.enabled ? await this.agents.activationReadiness(principal) : await this.linphoneBridge.readiness();
       if (!readiness.available) throw new ServiceUnavailableException({ code: "telephony_bridge_not_ready", reason: readiness.reason });
     }
     await this.refreshPersistentState(); const configuration = this.configure(input, principal, correlationId);
