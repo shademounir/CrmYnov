@@ -1,0 +1,1116 @@
+{
+  "main": "c5727e25c0ef8b90ff92fad3d07f99b2a0a68df3",
+  "imageDigest": "sha256:850b2e4fd0448759cd1bf51c368940e7efc5e3e35eabe146d553269b03e6353f",
+  "compiledInventory": [
+    {
+      "path": "/workspace/apps/api/dist/access-recovery/access-recovery-rate-limit.guard.js",
+      "sha256": "ae52770a65dafb564a7f370b6e57a5f577c9530b277b4eacc4373031a92e14c0"
+    },
+    {
+      "path": "/workspace/apps/api/dist/access-recovery/access-recovery.controller.js",
+      "sha256": "93a43bf86e5d34c50075a3bf92a4c730742893a501618c833d9251d4c388e3a9"
+    },
+    {
+      "path": "/workspace/apps/api/dist/access-recovery/access-recovery.service.js",
+      "sha256": "d9d03c066c94a31ed57ebbfb62d3ddc0304c57832ad943b222126d66bafb4d87"
+    },
+    {
+      "path": "/workspace/apps/api/dist/access-recovery/access-recovery.store.js",
+      "sha256": "aeb66a49e6d24f6a65777022334d52f279c8086088869dbc2f0d1b2bcad77824"
+    },
+    {
+      "path": "/workspace/apps/api/dist/admissions/admissions-outcome.js",
+      "sha256": "243ce36c9f01c56729e066bb15d62e57370fb3e2382734da9a633d9a3bc2c02e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/admissions/admissions.contract.js",
+      "sha256": "7074fcf099bf6a88dafdb821f5709fbc9ef295c2fd0a177f60aefee7f0c7d328"
+    },
+    {
+      "path": "/workspace/apps/api/dist/admissions/admissions.controller.js",
+      "sha256": "56a3c36de89a91f9714dd50f0b4e4bb1dcb12e31efb78d9123e5ae230af2136c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/admissions/admissions.openapi.js",
+      "sha256": "76ebd4f801568c481cd135f6333847513de0c86d84d49b4f1143d96787dc6809"
+    },
+    {
+      "path": "/workspace/apps/api/dist/admissions/admissions.service.js",
+      "sha256": "3a03a1b36667b90c2d06d932c9abb838cef9096f0547f1f8882600be7ec51dfc"
+    },
+    {
+      "path": "/workspace/apps/api/dist/app.module.js",
+      "sha256": "383d3af4a1d62f396665636f3b3c930dd35a4d7634abc210370aa0e2c261a830"
+    },
+    {
+      "path": "/workspace/apps/api/dist/application.js",
+      "sha256": "b194faaa9d82156905733e0bae26eb00badd557edf2602204814a363dddd393c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/appointments/appointment-creation-signature.js",
+      "sha256": "3fe60dcc3c2b3e475a1bf1580da3f1ff8440fcdd089662063f2ddf864d1f830a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/appointments/appointment-locks.js",
+      "sha256": "08d9ce29683ea20c688f913c27a5876be7b1a08401d2a4071e589677319a2869"
+    },
+    {
+      "path": "/workspace/apps/api/dist/appointments/appointment-persistence.repository.js",
+      "sha256": "53eb0926995dcb179ec24ef43ec467a3e537cce970bd187e23bb97475260f187"
+    },
+    {
+      "path": "/workspace/apps/api/dist/appointments/appointment.controller.js",
+      "sha256": "ef250256e22b37b13ffb2a5840c37814f1bab7ed650bdd576ad7c2bf0fbdf4c0"
+    },
+    {
+      "path": "/workspace/apps/api/dist/appointments/appointment.service.js",
+      "sha256": "f1359ef200f45bffe72995d87fdd069cc188472ad0596cefe5107982a9818473"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment-audit.js",
+      "sha256": "d43aa81f5bc89faa359e0f97c814ba25155591ff078fbb9bfd40f8c7c9683230"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment-dashboard.controller.js",
+      "sha256": "7f3b07647f4f086bf100cf2f0bc2b7830d75dbc30a45f698109b448810ba122e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment-dashboard.service.js",
+      "sha256": "56dd2af182cd68b3756522be63f9fa8f9ba4a65eaf6c604a79a4a09e4a84c617"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment-notifications.js",
+      "sha256": "275048e3b9908d6e12e434d065575cc282b473ed83ed5e424bc7f08a5b78921a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment-selection.js",
+      "sha256": "90bb12f8bb361c84ed0837d3a290f8057f7def1f5ddd94213586fa4790e2df40"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment.controller.js",
+      "sha256": "776a3dcc6ee22aaceebd87bd4a1a1c2da387dd6c764dd107d201e90e134da854"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/assignment.service.js",
+      "sha256": "00e64f5a8827cdaba004de8346173c00a0c397cbcdcce0ef262e4e5fc5ec3076"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/balanced-new-entrants.js",
+      "sha256": "56cabf524dcc2383828cfc7f772913ec372c9a6b0a9432285f74e48202d6b755"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/campus-assignment-policy.js",
+      "sha256": "484e62784a182a23c25676a5cd365fc14b2b14b903f7bb274b28d15c7b717d33"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/campus-assignment-resolver.js",
+      "sha256": "da78fb00c2f0a93f108007d66916bfe20a192e484df1c138f9e59b8594f8f493"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/campus-assignment.service.js",
+      "sha256": "26a8bf151e6b5cf844d4493fac3874f69a2ce30a933846af13852d0fc94729ef"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/campus-pool-administration.js",
+      "sha256": "cf65e55faa68e06adac5a453d6f30d260348d12fc18ab525f2b8a6e8b93c8a90"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/lead-assignment.controller.js",
+      "sha256": "e1d8c7c82e9f7ae4193fa39746e07e0ccc6033b8f7ff23dfdfbc8e303691426f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/lead-assignment.service.js",
+      "sha256": "8313423129bf44575ad82dcaf9cec51337a03733bd25ca6b66cf7cc250fe89a9"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/persistent-assignment.service.js",
+      "sha256": "a2ccddccea207dcae154eadaea89f8f448effc9cf14c1542a07053e76a7aa9be"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/reassignment-candidates.js",
+      "sha256": "4c2bc66cf0b7b983acf49e9414683257209eb996acc3d6dded570fee1e031c98"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/reassignment-persistence.js",
+      "sha256": "5a840e8c1fb648b4f0b06af6143e5f97b3dc8994dffe85ebb482424ba5af1749"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/reassignment.controller.js",
+      "sha256": "cfc954c077356ccc9cb05b8d3501267f43d9793c29175b5121733ca77d2093da"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/reassignment.service.js",
+      "sha256": "bca954ac5999b7a16c4d9827ab089f56f137eba4020ee7259fb0124307e2753b"
+    },
+    {
+      "path": "/workspace/apps/api/dist/assignment/recorded-assignment.js",
+      "sha256": "e3401d8b169d91781e22ecb4af4fce5375b6a61af8c3c500a5e33def8dee4d09"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit-identities.js",
+      "sha256": "da19bff2b82028337050aff938d9d0baef248b85918ee9fb06819619c4acca10"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit-query.js",
+      "sha256": "483e769f8ea242a787fc1dc296f3a8d5b480b634937c921f80114c1452ad51cb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit-reader.js",
+      "sha256": "a8d850ca62a1f3d44257949dd6fb83b54d399f0640c542100d6b22f904a87dac"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit-view.js",
+      "sha256": "99a39623970bbfda5b133a795bdecec6ad56e65f0c65d285db403e36dac4c070"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit.controller.js",
+      "sha256": "77fd6dacaaa34d543a4cb9380704d48e4d5e9414519842d6c4ad3c5b2f01504d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit.openapi.js",
+      "sha256": "07f70624df833320d5e88082d05b17b0fb141f4e830344a07d2ec24e2c794300"
+    },
+    {
+      "path": "/workspace/apps/api/dist/audit/audit.service.js",
+      "sha256": "743af9530d6ef146ec8ec2608eb38e445629031d0ab51d54ff62410bf414d8b6"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/auth.middleware.js",
+      "sha256": "70ca0597ae064f8494661ebd0a2968388a3140e5dff45a1b4a61a61df8375345"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/auth.types.js",
+      "sha256": "54c3f10a7dcef2447edb1c23f7e9c8537aa79716ec0b4feef3dac222a037b254"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/rate-limit.service.js",
+      "sha256": "0b97bd1112e1e740577e53e116a0e892b44753d80ae91ceb5ab9f5f945de8ed7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/rbac.guard.js",
+      "sha256": "067a273191026020199e72fa6036fb1dd2fed1bd5415deb951ddc97e4bb22b04"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/resource.controller.js",
+      "sha256": "a5a84836ba1112ebce42bf2c662f088de6df10c8fbd2c7474ecda6b5954cb5b8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/session.controller.js",
+      "sha256": "768c1e246c331b457fcd02776c47bbc87ed3a1262384f8620b809d1b68814ecc"
+    },
+    {
+      "path": "/workspace/apps/api/dist/auth/session.service.js",
+      "sha256": "c265967aba7c3b1a19e466607d6ae74f466971501473e1d96739c0eea475a090"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/baseline-unknown-fields.js",
+      "sha256": "bcc43e119070f0ea7da4900a767d8e6264451d0c2778962ee2cd00bce15a5748"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/block-package-read.js",
+      "sha256": "d2bdb66599c773eafb7706e078469ea1875e371263829fe7660c57fc7edabddd"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/block-read-memo.js",
+      "sha256": "5bb5a475ade32cac80e7076b322384c117327fbf6870fa58586a8d1ee0820ed8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/bootstrap-create-guards.js",
+      "sha256": "e2aeacb54501fba382922be306bc99a769044c95df2eae6960e64c8ae469f384"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/bootstrap-import.contract.js",
+      "sha256": "8807074c04a14c2633814cb532091bcaa3399bd5ea70175a618b21d825d4e21f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/bootstrap-import.controller.js",
+      "sha256": "b77bd1493fcd1cb18854323dc2bb97984a02601e1a878162a942d904b6449dcb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/bootstrap-import.openapi.js",
+      "sha256": "04481f183c696ea371e7561509cebe53503f30f2ea9744da835a54e470a0dcc7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/bootstrap-import.service.js",
+      "sha256": "4742b676a296d63ca4a4d67be043d26b3106ffccd978e315aa67f9f9875c08da"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/bounded-bootstrap.js",
+      "sha256": "22546da2648b0108dc8f2e68bb4ce6c319c93b798e6a1801f4e527b464e1ad8f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/historical-reconciliation.js",
+      "sha256": "2bddbf65543d3fe877f7ae66b1208a3d8fe7c59c6c446cbd73ec1f04b04c5496"
+    },
+    {
+      "path": "/workspace/apps/api/dist/bootstrap-import/historical-workbook.js",
+      "sha256": "4d802b8ec37931c4c9679362327b4742700909d33b9f6f0fa019578a57be3a63"
+    },
+    {
+      "path": "/workspace/apps/api/dist/broadcast/broadcast.controller.js",
+      "sha256": "566edef922aca0b2770fc0f545f1394310bb04b8ae671db9f9f35f274065d704"
+    },
+    {
+      "path": "/workspace/apps/api/dist/broadcast/broadcast.publisher.js",
+      "sha256": "b4d8db6fa97d0c4bfb633b9550f7a444a438721985a266ad0f4ec5012d2245d5"
+    },
+    {
+      "path": "/workspace/apps/api/dist/broadcast/broadcast.service.js",
+      "sha256": "197db55488d41998b2c09067f66ce6c133c18cdb0969171e4f30b0e41358fdec"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-evidence.js",
+      "sha256": "78e881c65456184e8955e9ccfd5d155f53488361f1542790134f572147429e76"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-facts.js",
+      "sha256": "70933b5b44937b5c4ab02e93181f656fb6e56bebfb0cbb8eea8ebbbc7aa3d948"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-journal.js",
+      "sha256": "2ab3e38cd05b9ebb4f8b19165d16601a06e6b29d88ffaa06054e5ce5c6285c10"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-operator.js",
+      "sha256": "1c0e7572c166875ad8bbdd3b90dd788c5a50aec524bdf2616f18179288437c4b"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-policy.js",
+      "sha256": "efa0b4ae588338d35bc49306074d0f936edae40a84d00d692f66e0eb596a7915"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-recipients.js",
+      "sha256": "9b02b8d34d6c3b898421e69975174e77bc585a1085aaaba114445a4a3d9b2953"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-runtime.js",
+      "sha256": "a2bffba9e49a3815c755274125baba43c73662519fd68b7170eb411cd18e8f8c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-settings.js",
+      "sha256": "0575aee469f8d62fc72668da523c0967e1155ae17706a5b4ec2946943f483623"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/business-mail-template.js",
+      "sha256": "ffc37795c5a565171c44f8d107a8a91d9e7ca7a3c62f944bf9cba1868c0382ac"
+    },
+    {
+      "path": "/workspace/apps/api/dist/business-mail/gmail-business-mail.sender.js",
+      "sha256": "022e28d443f4282924615244776a99a034ecfb27e9796ac80194612793d7c9b1"
+    },
+    {
+      "path": "/workspace/apps/api/dist/chat/chat.controller.js",
+      "sha256": "42ed730b8a931c0b1ccaac6a722b180834250dff8632b6eca6dca86f43502a76"
+    },
+    {
+      "path": "/workspace/apps/api/dist/chat/chat.service.js",
+      "sha256": "c32af048184743a8f09bdd6b449ca1a01f771f8169eeef548a353881785f545c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/closure/closure.controller.js",
+      "sha256": "440ef0f12e280f2f4875cdddf03e49556189ec2598737cadb7680632851f1311"
+    },
+    {
+      "path": "/workspace/apps/api/dist/closure/closure.service.js",
+      "sha256": "2c2a8556f6d5191f1feb7ee82075581a3ccaab0faf50e0a66107c35380a43881"
+    },
+    {
+      "path": "/workspace/apps/api/dist/collaboration/lead-collaboration.controller.js",
+      "sha256": "68d769d7cb00db92536a1cceb244d3eb2597aa70f4d45f8ff38cb067ba375510"
+    },
+    {
+      "path": "/workspace/apps/api/dist/collaboration/lead-collaboration.service.js",
+      "sha256": "11a9bb902846f73a243cb985e6e75c4bca543c257cf71609bb4d4313955e7479"
+    },
+    {
+      "path": "/workspace/apps/api/dist/correlation.middleware.js",
+      "sha256": "e10305c1262b2547c9c124df5eab900600d9887eeaaea7f9377dfcdace00d34a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-consumer.js",
+      "sha256": "a1ae9d9de2d72d970bf0dd4540f9447984e160cded7213b950f34790f09d0ead"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-exceptions.bounds.js",
+      "sha256": "0d75e78af2af1db3f637d7e9e24a3b49278f98b4958d9f3e0be8b081e001ff68"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-exceptions.contract.js",
+      "sha256": "337433858fe320bce75e0316edd9bc3ad97021d4d7250ddb15da5371895ec7e1"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-exceptions.js",
+      "sha256": "323a56b52da7d30466e3ef79ebb1f43f4fd34ea9d5820d6c3d3ac714c7235836"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-runtime-authority.js",
+      "sha256": "38b3d7ecab396a01a9ea6a3d6af6efcd8f1ec600caa16152ffed358ea2d18cfb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-runtime.service.js",
+      "sha256": "8d1fc4fa02783aa75611b59e9e97012c58080b190f1d303d548cfedc9cf07665"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover-runtime.store.js",
+      "sha256": "ad0d87a04bf2a2f6ec3264455b34d08fabc05679122ae765a9f39d373318b338"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover.contract.js",
+      "sha256": "c440100c51c5e4ba695e3dc26225033d6d2baa3af6c0e8e4a258a20b6a4bc4c4"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover.controller.js",
+      "sha256": "ea7a4d4cca4d7ddc20e8575456e8cb7a5c9b2e691ee0fa3baa07696963fa0d7c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover.effects.js",
+      "sha256": "1395cc531ad341ebab3eeca97e76f4cbeb4826b2e9f8ffa1653ca160c02866b7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover.openapi.js",
+      "sha256": "42f71fb333313db9e1abc73ce4298240124efce2c9456b6e3080d34ffa9f8b23"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover.service.js",
+      "sha256": "6575c14d9b300978fea7b528d1585853dd810a07dce6ed125bc3fae77909b2ba"
+    },
+    {
+      "path": "/workspace/apps/api/dist/cutover/cutover.store.js",
+      "sha256": "5f05911890f39e81545fe164b75854f474de5934c9e08564efcf0c7d36b15772"
+    },
+    {
+      "path": "/workspace/apps/api/dist/documents/candidate-document.controller.js",
+      "sha256": "df6cf0b7dbbbc688c982a1e40b1821e765b3ad3cfb452b0c09f2a8548b1a0b20"
+    },
+    {
+      "path": "/workspace/apps/api/dist/documents/candidate-document.service.js",
+      "sha256": "bbedbae545be3a3f0a693b9bf28fa4ff88cf92a7584d68b4237faf1337fbbd7d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/documents/document-storage.adapter.js",
+      "sha256": "75cbeb8569ceaa3caef93cc0a9638c5ae6f3e2890cef9092ad87a2f5a88df096"
+    },
+    {
+      "path": "/workspace/apps/api/dist/environment.js",
+      "sha256": "d5fcfda0474a47e6bb55fe361e39301b90616f920ec917de3cd846f64747661a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/first-login/first-login.controller.js",
+      "sha256": "d0988bd35f181afbe7378c678d75ea768002b3d4cb1cc6c83b27fb342c6d2c41"
+    },
+    {
+      "path": "/workspace/apps/api/dist/first-login/first-login.service.js",
+      "sha256": "d879460ff1d28042dc3ec7675a11536696fd67c8fc8fda1db26c0b451a5c6e86"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/cancel-follow-ups-for-closure.js",
+      "sha256": "6bbfaabfac8844b2b7eeb3371b3e48444b22604afe9be3ff5798abc118e92f45"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/follow-up-due.scheduler.js",
+      "sha256": "6e7df91ea1a986f64eb87cfffd6f7252b6a75c03ccb68e5da2b735bfb20757bb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/follow-up-persistence.repository.js",
+      "sha256": "11b45660da1b9dd0a0071563b2aee2f9db645e3cd2965baef31f33e16acff4d4"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/follow-up.controller.js",
+      "sha256": "181102eee995541ca98ea6ab7446817c2c720beef33126534190aae0518bf24e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/follow-up.service.js",
+      "sha256": "2be0a9a4fed9d8c6af74abfe452d2f7ec9415670981a760e2b58d0492bd67277"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/next-action.contract.js",
+      "sha256": "118b551adccced1dfe0cd8cb11446a90f86508ee0123e81eeecc12d65f4ad8d2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/next-action.openapi.js",
+      "sha256": "913fa88da813073aaba195cb44e4daa933bfddedf9cf552764e8b1c81743d4f8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/follow-up/schedule-next-action.js",
+      "sha256": "405f98a36d51efdd84a3c9bfb60152b2208eb0e4181982c394f5f17e035cbc48"
+    },
+    {
+      "path": "/workspace/apps/api/dist/forminator-webhook/forminator-webhook.controller.js",
+      "sha256": "d429c46ae7679a47892d9988b670ade1318a023941abd0da6dbcfc9106454d08"
+    },
+    {
+      "path": "/workspace/apps/api/dist/forminator-webhook/forminator-webhook.service.js",
+      "sha256": "ff044ab068a0277b6e5fbab425b274030fa1cf9d6bdd770c1fa2b4e374044c31"
+    },
+    {
+      "path": "/workspace/apps/api/dist/health.controller.js",
+      "sha256": "16d780c9ef0297bb81561f183fe0da6b02b43a7118dff7be3ea7ca8144c03340"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-mapping/import-mapping.controller.js",
+      "sha256": "2d8a40363e6f1fc32ebb32b09dc87d99a052d917f9eaf4c348d0838839da30eb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-mapping/import-mapping.service.js",
+      "sha256": "ce499d7c61b03a1887b6bbd160da03279b140c4e438468ff536bf4f3c6f2e98f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-profile/import-profile.controller.js",
+      "sha256": "0fae5dcdb07bad48e6f870e336d0bf867685646d95a33f579801893ea710acfb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-profile/import-profile.service.js",
+      "sha256": "bfcb28aeb5e8f78c8420dedede69c42c34bb826bb227dff099a5445264c64c02"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-report/import-report.controller.js",
+      "sha256": "dbf4fb17a7cb7194ea2d2bff1d89c6ecb5d705ecd2c218ccb3e797d41ffcfcc6"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-report/import-report.service.js",
+      "sha256": "d649b23c1c593bde19c1819c119a87576c0f441495f35fc7be3262045aeaee94"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-review/import-review.controller.js",
+      "sha256": "bf7d4deeecc329aabe9bf875efbe3cd60225cbdfb4bdc84655075956653c9119"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-review/import-review.service.js",
+      "sha256": "0abf30f16747bf2b860a76a338f44a1ae08398bef48510855ddfe73840fe15a3"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-wizard/import-wizard.controller.js",
+      "sha256": "c71719a3203d922e7ea94fa7e72e6cb0da7b345b38733359f0d41df7452973e0"
+    },
+    {
+      "path": "/workspace/apps/api/dist/import-wizard/import-wizard.service.js",
+      "sha256": "f37127c9a34172c854e448b1b054ccb60973f017f2061ac1239e13101334b4c6"
+    },
+    {
+      "path": "/workspace/apps/api/dist/ingestion/ingestion-sources.js",
+      "sha256": "7cf3dcb14ca1660acf32966d4ca22a79e9f1a764fca259804c57d0dda872316b"
+    },
+    {
+      "path": "/workspace/apps/api/dist/ingestion/ingestion.controller.js",
+      "sha256": "c443c38f2ed421efee65f745d1ceebd6942f8942539ae9f4552603eee70f3262"
+    },
+    {
+      "path": "/workspace/apps/api/dist/ingestion/ingestion.service.js",
+      "sha256": "65f4eca46fd29f7c0d8fd51e9349b96730a59bf57263213bdf17762d7f6ec2c3"
+    },
+    {
+      "path": "/workspace/apps/api/dist/ingestion/persistent-ingestion.service.js",
+      "sha256": "81a68f3a76725ba38f38c053872ca73fb76099bd0522f29abb20ed32ffa13a2f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/ingestion/submission-fingerprint.js",
+      "sha256": "359081b564ed19dd003d6fb44ce1d742965005c96c91eba996855bb2ad6b62d6"
+    },
+    {
+      "path": "/workspace/apps/api/dist/invitations/gmail-invitation.sender.js",
+      "sha256": "78fe4910de07e676b2543730a703327d40602bf742f60629ad038aa0701542e7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/invitations/invitation-policy.js",
+      "sha256": "1b59a81eb351c28d6eb73491043addcb230e57082f4155843cdb7b925ebea1d9"
+    },
+    {
+      "path": "/workspace/apps/api/dist/invitations/invitation.controller.js",
+      "sha256": "ce18faebd470e26cbf81a01dad061154f4f7651aed7c7353aa784d3a1ae9fb65"
+    },
+    {
+      "path": "/workspace/apps/api/dist/invitations/invitation.service.js",
+      "sha256": "bf551484fc7d23e625f4a5656c7613d61ba2baf8eb163557f651365937306f5b"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/bootstrap-initial-admin.js",
+      "sha256": "201b09770ef3627d6ca15fcd7cfb779824da22030dc4e89886cae2e4f0b1d3e0"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/business-mail.js",
+      "sha256": "ce1c28369c09ba69b3ffd4ad26a1ae2b970c8e6ba2b577c72c73def48d443632"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/follow-up-due.js",
+      "sha256": "2d3e8d176cea24149a0407ab3fd5a207c14c03f17aabb2ded677b48944f36fbb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/follow-up-due.module.js",
+      "sha256": "2195e49bce9ce0f208d92ef56a2bf998526aebfdbbf73ac45049c0f352a0e448"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/grant-runtime-database.js",
+      "sha256": "875ad51600b319f88836a44d6f10d702ba5cfacd71da26a6ddf6f101740ce61a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/initial-admin-contract.js",
+      "sha256": "eeeaf81da17efcee5c485c5680a3fc6b4039adb3b893c21b8df102e5af6219b8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/runtime-database-target.js",
+      "sha256": "de19ae17bce669cfd03126974a1d4fabc29904354a65ee97acb971e70ed4a2a2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/sheet-append.js",
+      "sha256": "4cfba908d27a5953de002cbd4ed82a8e7d9f14fe2d9769b55bfdf1fb2571bade"
+    },
+    {
+      "path": "/workspace/apps/api/dist/jobs/sheet-cutover.js",
+      "sha256": "385a06c80459caadbe4d8c3ae24ebcc51c0a41bf7712bca729934392ebba9cc5"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/commercial-progression.js",
+      "sha256": "afa92641e2675712227959efca50a975386ac5cc05e9fb1b20a522dd8f41dfab"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/first-treatment.js",
+      "sha256": "f8b4dc56e79669f81ef369bdb5b06020d151dede34733fbe62dbb3931d4d761f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/first-treatment.openapi.js",
+      "sha256": "bda7b0116214ad3ad1b034450aa3b978bdcdb90a5d89225a06bb3ca7d72f5171"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/lead-persistence.repository.js",
+      "sha256": "79274f3212e36aab6d6d4540e2236289c675a8ab3d7545ff068c83b8cc568fd2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/lead-treatment.js",
+      "sha256": "895208295b4e0340328df9700952526be2fac67d8309278bbfdb189a5dd2d8d7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/lead-workflow-persistence.repository.js",
+      "sha256": "b7b8394d9dd073126b70dea71c5067afa53f6a920bc307bd830e435a3d506dc1"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/lead.controller.js",
+      "sha256": "39f609e5c57484cd730fb930ef5e02cf906ff1b9caf303b78db94556ef39adf2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/lead.service.js",
+      "sha256": "d1700172f41054f2b35d67fc00245941343ad720f39fb5f1820c12415b9af7ce"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/saved-lead-view.controller.js",
+      "sha256": "a5ed8962e7fd11b75aa2375c45a9618d19a1ba385701c73bc2e3ce70dec1cd74"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/saved-lead-view.service.js",
+      "sha256": "ac375238bcd06afa735e4b7f8fa6802b93bac3b66d9cf722ec532e2a100f78f7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/saved-view-audit.js",
+      "sha256": "3035d402b792f20800a764a191452eff7bfd3e22369cacdc394c4c1aaf02f662"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/view-sharing-audiences.js",
+      "sha256": "36b90b277c0277f31816f76985e830dedf97f935e91e52e2cd76a1f9627b45c7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/view-sharing-campus.js",
+      "sha256": "46d3606d8dfd3737933e6754056c3aef171f29fee9bc7cc1905fa9628361e73e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/view-sharing.contract.js",
+      "sha256": "36c196f579ea05cf2beb0e5b77f2d013ab2c96597be22f1b03b0f0a31e6238b2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/view-sharing.controller.js",
+      "sha256": "16c414772ead6f19100970aa2fc4af180460c56dbd7ec217fb1252bb3aa31702"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/view-sharing.openapi.js",
+      "sha256": "665b989559bc3f07c92fe7c0d76d8b82aad90a0d99aef57faba6c082f952e783"
+    },
+    {
+      "path": "/workspace/apps/api/dist/leads/view-sharing.service.js",
+      "sha256": "e49db8946d0f838ce6edb78966d10d111eb66a4932e6c135d7b4418d149ee79b"
+    },
+    {
+      "path": "/workspace/apps/api/dist/main.js",
+      "sha256": "e0be0eb5b5a33fe2985d819d6f10fbadeb794f84ed65555755179966fd8f6388"
+    },
+    {
+      "path": "/workspace/apps/api/dist/notifications/notification-persistence.repository.js",
+      "sha256": "4f68afa1a7b008a81af720c18e5fcf976890976bd49bcaee5bd9ef7390d41e09"
+    },
+    {
+      "path": "/workspace/apps/api/dist/notifications/notification.controller.js",
+      "sha256": "e76960d63f1d9a1c74337cda0ffbdd00b5c1e90e4ad5757ffdb5bb06d74b63b3"
+    },
+    {
+      "path": "/workspace/apps/api/dist/notifications/notification.service.js",
+      "sha256": "dfaedfb3ce36c243a85142c459363592b3aaefbb7015a601291aa69d9980cc55"
+    },
+    {
+      "path": "/workspace/apps/api/dist/outbox/local-outbox.repository.js",
+      "sha256": "b33ced47bc94b21a566c10fd6a3d86417175e21f6178b3ee54e462f83045580d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/outbox/local-outbox.worker.js",
+      "sha256": "f56cc5b61ca47ffc915d2470cf0056f5935f044824c4241bd8787d664971f1f4"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/audit-access.js",
+      "sha256": "8cad24b03b35cd8905c05087a3881d1aeea342d283b9828ed14d4169d04e4ee7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-context.js",
+      "sha256": "e7c640c29d2f9bd79d8bb392d646a28fca996a47cab2d4a7ae1020322e2dd444"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-contract.js",
+      "sha256": "f5bd335b50bd1c5c6c3ec2e393fe542bff9de8d1731ea9e5244d21ae4a2e0961"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-controller.js",
+      "sha256": "d9b0ed087d9c83e2197bf956aa0f0b328c0a9888091cc6a57783e63037b5059f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-evaluator.js",
+      "sha256": "4a440f3efbd5e9b1865b3e41dbb3b8719f5ed89ce18db24fe062126424394c80"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-interceptor.js",
+      "sha256": "c25186e6a58deeec2b20da53a80f9d05fb3383070a232bd5af18ffd1c7f69d02"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-locator.js",
+      "sha256": "d1136809c80caa637b496fe86b352e6249e01e9a9d28fb37c4d24c39ff5628f1"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-openapi.js",
+      "sha256": "6399245e3a513574fae9a5273d111c081b6d8a3aa452abf38e13bee1047d9179"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-provider.js",
+      "sha256": "84a13975628cf8f82903472948a0232a5dddc302894feed91ecb06b9163c5d45"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-repository.js",
+      "sha256": "cb4ccef260a6630114b54989c13a41ae70691b61be25398f214cd18a078895c7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-resources.js",
+      "sha256": "3e02310a7d4008a2af0b33b5e666bd8214ee2cc110cbd510b5306871680489fd"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-responses.js",
+      "sha256": "d43aa81f5bc89faa359e0f97c814ba25155591ff078fbb9bfd40f8c7c9683230"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-routes.js",
+      "sha256": "ba208a135191c362bcdce16c415e2ffa1bb6835c4563833e03bc486293e649f8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-service.js",
+      "sha256": "aabc7c30a42201a63b4fc1502e7b47952c7c3ddc5a76f418a777ceec92bde88d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/dynamic-teams.js",
+      "sha256": "c09de5bf570f532dea84f941728512276eb559e909789d644744a088c60233f8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/lead-collection-contexts.js",
+      "sha256": "feefa98fbae10b884b6342dc5a7672284c17f8c1c80f35009684a87f0038aa67"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/permission-fence.js",
+      "sha256": "927905389cce59b61a72f4e1dac95147ec283fa9ff04ff5e74010cae4c33e7bd"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/permission-transaction-routes.js",
+      "sha256": "c61ba9e3e0cb0afe96b712cece5d413f22b1d7b93877189e2b530e3aeeb6e927"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/permission.service.js",
+      "sha256": "55173b61b04f0e2a12d26aacdb6bf4333bba654ff430732a3b100a3b45280515"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/safe-mail-diagnostic.js",
+      "sha256": "e9d9ff162751d637556a92d902a479d4f9f860f4aaaf4a3857af6f5167184598"
+    },
+    {
+      "path": "/workspace/apps/api/dist/permissions/view-grants.js",
+      "sha256": "fa7e423ae98d682509c1a4c6428b4ed12daef6a3b1369b7725005c990cc2ad4c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/persistence/prisma.service.js",
+      "sha256": "6630e65c99587fcce70670ffb9b14e3f419afe7ea86a47b1150f48e38b6a56d3"
+    },
+    {
+      "path": "/workspace/apps/api/dist/qualification/lead-qualification.controller.js",
+      "sha256": "322ab98a030ea6dd6779aebac1bae1c56779217715edd3feacb747cae60133dc"
+    },
+    {
+      "path": "/workspace/apps/api/dist/qualification/lead-qualification.openapi.js",
+      "sha256": "fdfd330c362fe218bcbdfaf5b5c490c3eebfa918f3befdfef3f1541d7be650eb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/qualification/lead-qualification.service.js",
+      "sha256": "385cf2070a820b976942e4f80656a3cd324f7a504047b6bf30bfef816b2225fc"
+    },
+    {
+      "path": "/workspace/apps/api/dist/quick-lead/quick-lead.controller.js",
+      "sha256": "9d283f4ee4a0b56fe6091fff025d2bdd105968d67d5f04ff5c30d514a8632d47"
+    },
+    {
+      "path": "/workspace/apps/api/dist/quick-lead/quick-lead.service.js",
+      "sha256": "6b34a85defd1965ff9522ddee40c903f3e49a75a27f1d08ff0e57c06fe0f6167"
+    },
+    {
+      "path": "/workspace/apps/api/dist/references/reference.contract.js",
+      "sha256": "50cc9839a16e5466e7ee9e9e063bf75312e60957eca5ffae1ff3526780db6a0e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/references/reference.controller.js",
+      "sha256": "a591e7c4348ec0ecdeb9ce58b4e308e1c406e6824a969465152606a761450e09"
+    },
+    {
+      "path": "/workspace/apps/api/dist/references/reference.openapi.js",
+      "sha256": "28c3a38aa44040ced45600ba8bb0ab8cdc9b0036a0271bb550c836cbe5d76fc0"
+    },
+    {
+      "path": "/workspace/apps/api/dist/references/reference.repository.js",
+      "sha256": "bba61df4f2d4c0de32881d6d428d77103f4152e27369ed08810131226fa9be29"
+    },
+    {
+      "path": "/workspace/apps/api/dist/references/reference.service.js",
+      "sha256": "19e1f71dcca2d4f12d28202a3c1b4fa4d40c49b54f38ec9566e48a20365300bd"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/acquisition-cohort.js",
+      "sha256": "eb9fb0cb5caf157882aa27dd3573fcce441653b32370b2c5e3ebbb2bd65cc53c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/admissions-supervision.js",
+      "sha256": "b8ec8efc89a21b96d716b613c5599a2518b512c2329a1add01781978178a784f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-funnel.controller.js",
+      "sha256": "50b1c2d6daa5c8e39a02bbca80b604ec80bc2d900d11ffb4f0b65ef187720974"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-funnel.service.js",
+      "sha256": "80266a311dcbf063a66e9f0fe54c0665708328404d834553fe1bdf0c57cf601d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-performance.controller.js",
+      "sha256": "62ae99410faedebb76c026bc009498f59743ab99eb4f9cf4aa632679a4269662"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-performance.service.js",
+      "sha256": "4932c7c584ec50e46b28786cbf23a752f5c3189f04103de9cd100feccf9f342e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-work-query.js",
+      "sha256": "903b3a129b6f98aa33b5c51972134b8ede6a733a32f5856f655858d59dc130ad"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-work.controller.js",
+      "sha256": "d2adb8d8e6379aa8465bc6a0a714316eec8c1827fe72f4d48cbcd9798fd12cca"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-work.js",
+      "sha256": "b0828ca899e2d5d5fe62119f110431b0caff42f39c5c5c7dbd0c3095f1c3810d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-work.openapi.js",
+      "sha256": "3a2a0736f77c38ffafe18cc605f287db80f6c07553d0d09d3afeb4dda2be1f94"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-work.response.js",
+      "sha256": "9d50b927a3b7e221f8dfe268d5d9eede233f6676f1d8ae25dcdd06d623a48071"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/commercial-work.service.js",
+      "sha256": "7b9cf8ce9c3506517a75e584251e8f3ef3d4df098b247358d56a4f8e9a0be694"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/dashboard-capabilities.openapi.js",
+      "sha256": "12be02e15f7e5c1da8ea4022d3bdb0eece7ad6c35dc12257c668571738d31245"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/manager-dashboard.controller.js",
+      "sha256": "1e67b934203731b4dcdf09c953b1be4536392fe22ad81a6712fdcd53e6df77cb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/manager-dashboard.service.js",
+      "sha256": "06e9a20286007d864bd8e81f7f53e20ab43d9c9468f9214323ecebebf5d5d66e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/operational-risk.controller.js",
+      "sha256": "530adb3f5ecfbfc2c281d904f7599c93ba375e07d697bc84fbf4075e268e548a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/operational-risk.openapi.js",
+      "sha256": "71072e65239ae4a0ba3738b4d1b835a3e316da035d16adc79c6b4578d7e06b7f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/operational-risk.service.js",
+      "sha256": "a101a9680d0184ec2546d5da0156cadf30037b59fb52b402176406353282c47d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/portfolio-reports.openapi.js",
+      "sha256": "1a7fd7e0c2896d9cf6dee1799f129f18c05c98886febf1ce2e80e56fc6813abf"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/reporting-authority.js",
+      "sha256": "b5cd671fdca6068971df943b8a75a7bd5e49d4fe6dff6d32d8106fb452ff9960"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/reporting-filter.js",
+      "sha256": "656ba0bf9530f4ee5bf6e0ff6208c5ef9d78d52a5035acd48f6193f3b55fe7c5"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/reporting-persistence.guard.js",
+      "sha256": "8156d7cfd4b159edf4166bd2356e157237d2fb1ea1012f8e61d1ec370df64753"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/reporting-persistence.service.js",
+      "sha256": "fae428ea5667370a9df25b9d8dbf212fe63eb92d82c325799ce0dc63165531c3"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/shared-contribution.controller.js",
+      "sha256": "2ddcbe9df28129da30129fb6bc85ddeda17602d140d95f530db41f6d666c876d"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/shared-contribution.service.js",
+      "sha256": "f38a7a5c16980110f58d9354431db669780056c2674994c32e8be85557ed809a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/source-effectiveness.controller.js",
+      "sha256": "820afb6290bf494582ba6da6e6f2bb8bbe823a4206f281773ba381ecacb4bb7f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/reporting/source-effectiveness.service.js",
+      "sha256": "8b2b2d60a12a28e8189067359712f1f04cfd86a2f73dc2ee05a68a254ad8ff54"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/google-sheet-source.js",
+      "sha256": "8bdbe2d4c10e015229e1793e8e4a60ce3fc52e009af00629d58bab5ac7617e8c"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/google-sheets-adapter.js",
+      "sha256": "3c0ab596aa8bd9b6282a4508ebb697f0da392a73aba74477091c49365a064750"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/google-sheets-auth.js",
+      "sha256": "8c44aeb1b02f96c6ab55981024ab909e9de1582151e3e17f5f2346c043f4e592"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-append-boundary-file.js",
+      "sha256": "b0adf8a959514787521d135273aca938479dbdeabb797e76d6c0cfc41905c0b9"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-append-contract.js",
+      "sha256": "dc89c8a8208abb81b13ac64b7ed71241b65274fd0b031db1c8e9fbbb02db6fcf"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-append-ledger.js",
+      "sha256": "22a13920622e8bd08e0b0056370bb43952d3b0b118bf017d806ed24cba82cc1f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-append-qualification.js",
+      "sha256": "ce4b4a02a73e7bbaffe187f1d6cf2fe858be3e44aacbe24604ee04f43311354a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-historical-contract.js",
+      "sha256": "feea9893263c8a7aa894cadff93f1dee04c9d2224ed5b53039658db5d482e3b4"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-historical-ledger.js",
+      "sha256": "8792a3be3a43beefa0bb07b643f0a58e2dfadd2bcb586ab46e44651f1f6f8acd"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-admin.service.js",
+      "sha256": "a47d933f0ec3e947db79e260a0671522b63161d533e4da39fdba8bded834dba2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-assignment.js",
+      "sha256": "81a85366df077777511ed79e4a2e470ef6ba5c9b7dfb0291efefe3d2f7480557"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-authority.js",
+      "sha256": "57de505bf118eab0f36bf620925dae15fda4fb017c031fbd9b2e9815b5e97511"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-configuration.js",
+      "sha256": "b65d19fe9c554fa8b58c8cc2ab8a21914abe33ecd07688d2d59b6dcee57f8603"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-coordinator.js",
+      "sha256": "214d6e570a6cb1187a02b7f74b0532204f33ed73619157062a79463379f0c54f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-executor.js",
+      "sha256": "4517d54c775f027fcec688c51b421db9e62de4d8feacad78132890120121c36b"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-policy.js",
+      "sha256": "76ff7b81aaf17902ff2e400616abdb7faea1cd5e757556c465ac0f0305bc09b3"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import-scheduler.js",
+      "sha256": "6478d0bc7962da6c83273c5a66d5cace15a2ba71959fe64ba12eb9b9c6cef84f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import.controller.js",
+      "sha256": "0703439a9050df14d4442f31cf9ef2e150bfe20dceb13e128f3eaec5a5b60634"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-import.openapi.js",
+      "sha256": "7a6f4a2dacf970e1e03f311ae64d96ab00ea6a41573e2d87e26c8436a6c681d1"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-local-ledger.js",
+      "sha256": "79b644963edb4d5c9bbcb22c152a7fa4ffaba6a0ee6dcb7b9f7140a4ab186df8"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-local-observation.js",
+      "sha256": "e503daa266fda0a536f3d06fd1e465a9c87acba5d3a8ad010e6bbeb038ba0668"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-local-simulation.js",
+      "sha256": "cc210b2aacbf0cb61c802f7be0b2584fef5a891d1604013feb48e1d17dfd5267"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-private-artifact.js",
+      "sha256": "d93f5512300a3d8fd389ae147a984848bc604577a279f7eb9cfb696bf2b77d47"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/sheet-serialization-retry.js",
+      "sha256": "3c113c75ee5af3f2f01574f3a3ce0815ad144a06b46ab69bcece1c716b240349"
+    },
+    {
+      "path": "/workspace/apps/api/dist/sheet-import/synthetic-sheet-source.js",
+      "sha256": "baf802986bc274ec9647d8a08af43c816fe6fb4a8a831bc732ba638618ff3bb4"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony-agent.repository.js",
+      "sha256": "74b24a21d8021fe394ee19ebcfb88f9da8f5919a22cf16d23ae892f433741853"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony-own.controller.js",
+      "sha256": "f705438dac18b27572344e47c5f4735a10b3cd93192c705acb2b9c0121319b95"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony-own.openapi.js",
+      "sha256": "e80afd3238c0a7afa85cb8dc8b1bb4031007ea0e6e0cc33330f8bb5deff3f2c2"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony-own.service.js",
+      "sha256": "11ddb8e31b401245ab9f46d830c29e2b29b319933c5bf0798598c6a4b53e3cc4"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony-persistence.repository.js",
+      "sha256": "003eb92955f183672587a7d12040efb840e592f44d8b29e56b86e7507a0a66a7"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony-withdrawal.contract.js",
+      "sha256": "a7ca69e73ef5d919138498b0320309410699cdf3fa0f727b2dc658b4bc2d644f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony.adapter.js",
+      "sha256": "d88e1b8ef7a76713f22b322c0bbdc09c34dda4c44c0c8ee8f53013479baead4a"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony.controller.js",
+      "sha256": "691d67c37363cf23612a910416d4a1746f65bb3aadfd22daaa6584e3bc5a3ddb"
+    },
+    {
+      "path": "/workspace/apps/api/dist/telephony/telephony.service.js",
+      "sha256": "04503499be7db7791b8e59c421035a565d244abbb3d87804bc04451a35b8813f"
+    },
+    {
+      "path": "/workspace/apps/api/dist/users/professional-display-name.js",
+      "sha256": "ecfd87dc50531f6c80469e4513e67984affbf7226c0bc3d542a8eef21097b25e"
+    },
+    {
+      "path": "/workspace/apps/api/dist/users/user.controller.js",
+      "sha256": "2536d298c6c9442bfe1b9693fbb1c13295ed4be39ccd8235234ab27c34efe092"
+    },
+    {
+      "path": "/workspace/apps/api/dist/users/user.openapi.js",
+      "sha256": "d20a4cae65677ca82ba51535ed398feaba7f34f8710c159818d5d5548776eca6"
+    },
+    {
+      "path": "/workspace/apps/api/dist/users/user.service.js",
+      "sha256": "307224351136adc945e32898aa7c80a8e68e746e4fde8d6d9f1e50e5cee6f617"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/client.d.ts",
+      "sha256": "d5eb5865d4cbaa9985cc3cfb920b230cdcf3363f1e70903a08dc4baab80b0ce1"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/client.js",
+      "sha256": "7fb2958626ff9bd585ec82af0935a4f71e852a183a0345145b828e2a9c1fd44a"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/default.d.ts",
+      "sha256": "d5eb5865d4cbaa9985cc3cfb920b230cdcf3363f1e70903a08dc4baab80b0ce1"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/default.js",
+      "sha256": "773f2836a698a5fe850cf320d1f849ca04e620e9b47f05816683260cba2b8b1c"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/edge.d.ts",
+      "sha256": "7378dd41401ba1acff435b9c317a5b919a3d38479ed3dbd4a25c8b4fd623a224"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/edge.js",
+      "sha256": "0ece80940f52ee04eef13e9fee1fa673ea38f8f5903829d02cae03a04a7f6d1e"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/index-browser.js",
+      "sha256": "5ab5736e86ac0b5476471f952c86b766ccaed674b883d22b48426c6d053d84a7"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/index.d.ts",
+      "sha256": "77193f698d0f4736d5aeefbd93793b8432b0a7138e3686376ba88fab4b169dc9"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/index.js",
+      "sha256": "8da2699ca58f7beaf5726e9c55fbe2ac2692da0776c4acbe5671fbf048680fc6"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node",
+      "sha256": "a2924eab1c78a0a7bb67edac5738939fa10589ef073af5542f53812a22e4a7d8"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/package.json",
+      "sha256": "ad6a8def3c421360950edc358b6f88f99bc3a16d0d13944eb1b6cd2b5b5458aa"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/query_engine_bg.js",
+      "sha256": "2b50b4328595b0fb99a73cfed34cf11fa8e56511dcc4fb808af4516952448514"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/query_engine_bg.wasm",
+      "sha256": "b199ed8bf8f3610c20a3f7398b3cbb875f99b7d6565f4887fc0af2b47dceb30f"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/schema.prisma",
+      "sha256": "569ac63e68b0f061ebd57a33ac59c21ec3cb086c8e13e66d25f57236d290edd2"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/wasm-edge-light-loader.mjs",
+      "sha256": "48311a316daab3b1c21dd227b7277d03436a7d10d78b19b3b625cd25ffa1674b"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/wasm-worker-loader.mjs",
+      "sha256": "48b4f73d61fe341ea5b59f09059f730dfb600249985a64f0456508dd4c81b01b"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/wasm.d.ts",
+      "sha256": "7378dd41401ba1acff435b9c317a5b919a3d38479ed3dbd4a25c8b4fd623a224"
+    },
+    {
+      "path": "/workspace/node_modules/.prisma/client/wasm.js",
+      "sha256": "b23d7bf7d5e033f706550023e9df8cf68b8abe33dcc84d4729a745daac80b24e"
+    }
+  ],
+  "compiledInventorySha256": "723cdbacb94a95b55094b663135ba5763fc56cde8754767491dc428938139dfc",
+  "purpose": "Minimal immutable binary inventory only; no business or private native receipt data"
+}
