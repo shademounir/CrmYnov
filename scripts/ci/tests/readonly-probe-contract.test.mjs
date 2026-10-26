@@ -9,3 +9,6 @@ import '../readonly-probe/tests/rc47-probe-bounded-exchange-v1.test.mjs';
 import '../readonly-probe/tests/rc47-probe-composed-v1.test.mjs';
 import '../readonly-probe/tests/rc47-probe-executor-v1.test.mjs';
 import '../readonly-probe/tests/rc47-probe-official-auth-v1.test.mjs';
+import '../readonly-probe/tests/probe-driver-authority-v1.test.mjs';
+import '../readonly-probe/tests/probe-driver-payload-v1.test.mjs';
+import '../readonly-probe/tests/probe-job-creation-v1.test.mjs';
