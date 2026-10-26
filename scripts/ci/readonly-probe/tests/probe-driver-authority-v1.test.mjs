@@ -57,6 +57,27 @@ test('official check pagination verifies total count across a full page',async()
  let calls=0;const reader=createOfficialGithubReader({execute:async()=>{calls++;return{stdout:JSON.stringify({total_count:100,check_runs:Array.from({length:100},(_,i)=>({id:i}))})};},environment:{}});
  assert.equal((await reader.pages('/repos/shademounir/CrmYnov/commits/'+'1'.repeat(40)+'/check-runs','check_runs')).length,100);assert.equal(calls,1);
 });
+test('official pagination supports raw arrays without a response key',async()=>{
+ const reader=createOfficialGithubReader({execute:async()=>({stdout:'[{"id":1}]'}),environment:{}});
+ assert.deepEqual(await reader.pages('/repos/shademounir/CrmYnov/issues/1/comments'),[{id:1}]);
+ assert.deepEqual(await reader.pages('/repos/shademounir/CrmYnov/issues/1/comments',null),[{id:1}]);
+});
+test('official check pagination preserves empty complete results',async()=>{
+ const reader=createOfficialGithubReader({execute:async()=>({stdout:'{"total_count":0,"check_runs":[]}'}),environment:{}});
+ assert.deepEqual(await reader.pages('/repos/shademounir/CrmYnov/commits/'+'1'.repeat(40)+'/check-runs','check_runs'),[]);
+});
+for(const total of [-1,'100',null,1.5])test('official check pagination refuses invalid total '+JSON.stringify(total),async()=>{
+ const reader=createOfficialGithubReader({execute:async()=>({stdout:JSON.stringify({total_count:total,check_runs:[]})}),environment:{}});
+ await assert.rejects(reader.pages('/repos/shademounir/CrmYnov/commits/'+'1'.repeat(40)+'/check-runs','check_runs'));
+});
+test('official check pagination refuses drift between complete-size pages',async()=>{
+ let calls=0;const reader=createOfficialGithubReader({execute:async()=>{calls++;return{stdout:JSON.stringify({total_count:calls===1?101:102,check_runs:Array.from({length:calls===1?100:1},(_,i)=>({id:i}))})};},environment:{}});
+ await assert.rejects(reader.pages('/repos/shademounir/CrmYnov/commits/'+'1'.repeat(40)+'/check-runs','check_runs'));assert.equal(calls,2);
+});
+test('official check pagination refuses short incomplete results',async()=>{
+ const reader=createOfficialGithubReader({execute:async()=>({stdout:'{"total_count":2,"check_runs":[{"id":1}]}'}),environment:{}});
+ await assert.rejects(reader.pages('/repos/shademounir/CrmYnov/commits/'+'1'.repeat(40)+'/check-runs','check_runs'));
+});
 for(const[name,change]of[
   ['revoked grant',f=>{const p=f.base+'contents/docs/governance/codex-delegation.json?ref='+'6'.repeat(40);f.grant.status='revoked';f.responses.set(p,f.blob(f.grant));}],
   ['wrong actor',f=>f.responses.set('/user',{login:'other',type:'User'})],

@@ -63,7 +63,7 @@ export function createJobCreationTransport({dossier,accessToken,fetchImpl=fetch}
       const response=await fetchImpl(ROOT+resource+query,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(serializedBody?{'content-type':'application/json'}:{})},...(serializedBody?{body:serializedBody}:{})});
       assert.equal(response.redirected,false);assert([200,...(method==='GET'&&resource.startsWith('/jobs/')?[404]:[])].includes(response.status));assert(/^application\/json(?:;|$)/iu.test(response.headers.get('content-type')??''));assert(response.body);
       const reader=response.body.getReader(),chunks=[];let size=0;
-      try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;assert(size<=1048576);chunks.push(part.value);}}finally{await reader.cancel();reader.releaseLock();}
+      try{for(;;){const part=await reader.read();if(part.done){break;}size+=part.value.byteLength;assert(size<=1048576);chunks.push(part.value);}}finally{await reader.cancel();reader.releaseLock();}
       const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));assert(value&&typeof value==='object'&&!Array.isArray(value));return{status:response.status,value};
     })(),new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('deadline'));},15000);})]);}
     catch{throw new Error('NATIVE_CREATE_EXCHANGE_UNKNOWN_NO_RETRY');}finally{clearTimeout(timer);}

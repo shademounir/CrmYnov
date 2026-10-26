@@ -35,7 +35,12 @@ export function parseDriverArguments(args) {
 function localSource() {
   assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)),'ambient Git overrides refused');
   const env=fixedToolEnvironment(process.env);
-  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','core.untrackedCache=false','-C',ROOT,...args],{env,encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576}).trim();
+  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','core.untrackedCache=false','-C',ROOT,...args],{
+    // Keep the executable and its subprocess search path literal at this boundary.
+    // All caller PATH case variants were removed by fixedToolEnvironment above.
+    env:{...env,PATH:'C:/Program Files/Git/cmd;C:/Program Files/Git/mingw64/bin;C:/Windows/System32;C:/Windows'},
+    encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576
+  }).trim();
   const clean=git('status','--porcelain','--untracked-files=all')==='';assert(clean,'protected clean driver checkout required');
   return {commit:git('rev-parse','HEAD'),tree:git('rev-parse','HEAD^{tree}'),clean,files:DRIVER_INPUTS.map(p=>{const file=path.join(ROOT,p);assert(!fs.lstatSync(file).isSymbolicLink());assert.equal(fs.realpathSync(file),path.resolve(file));return{path:p,sha256:hash(fs.readFileSync(file))};})};
 }

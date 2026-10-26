@@ -4,6 +4,11 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const run=promisify(execFile),REPO='/repos/shademounir/CrmYnov/';
 export const OFFICIAL_GH='C:/Program Files/GitHub CLI/gh.exe';
+function checkedPageTotal(value, previous) {
+  assert(Number.isSafeInteger(value.total_count)&&value.total_count>=0);
+  if(previous!==undefined){assert.equal(value.total_count,previous);}
+  return value.total_count;
+}
 export function fixedToolEnvironment(environment) {
   const env=Object.fromEntries(Object.entries(environment).filter(([key])=>key.toUpperCase()!=='PATH'));
   env.PATH='C:/Program Files/Git/cmd;C:/Program Files/Git/mingw64/bin;C:/Windows/System32;C:/Windows';
@@ -22,12 +27,12 @@ export function createOfficialGithubReader({execute=run,environment=process.env}
     assert(route==='/user'||(route.startsWith(REPO)&&/^\/[A-Za-z0-9_./?=&-]+$/u.test(route)));
     assert(!route.includes('..'));return invoke(['--method','GET',route]);
   }
-  async function pages(route,key=null) {
+  async function pages(route,key) {
     assert(!route.includes('?'));const rows=[];let total;
     for(let page=1;page<=100;page++) {
       const value=await get(route+'?per_page=100&page='+page),items=key?value[key]:value;
       assert(Array.isArray(items)&&items.length<=100);
-      if(key==='check_runs'){assert(Number.isSafeInteger(value.total_count)&&value.total_count>=0);if(total===undefined){total=value.total_count;}assert.equal(value.total_count,total);}
+      if(key==='check_runs'){total=checkedPageTotal(value,total);}
       rows.push(...items);assert(rows.length<=10000);
       const reachedTotal=Number.isSafeInteger(total)&&rows.length>=Number(total);
       if(items.length<100||reachedTotal){if(Number.isSafeInteger(total)){assert.equal(rows.length,total);}return rows;}
