@@ -154,7 +154,7 @@ et reste exclu de la compilation du paquet Windows. Les projets voisins
 `WithdrawalFlow.Managed.csproj` (orchestration simulée) qualifient les gardes et la
 reprise sans SDK ni réseau réel. Ces preuves ne qualifient ni l'interface native,
 ni un cycle SDK/SIP réel, ni l'installateur ou un retrait de profil réel.
-La version source `0.4.13-pilot` n'est pas une preuve de distribution : l'API et
+La version candidate source `0.4.14-pilot` n'est pas une preuve de distribution : l'API et
 la passerelle compatibles avec `associationId` et les reçus doivent être déployées
 avant toute diffusion du nouvel agent. Un ancien API reste utilisable pour les
 parcours antérieurs ; l'absence de génération interdit alors le retrait.
@@ -202,3 +202,21 @@ utiliser l’entrée Windows de désinstallation. La suppression
 du dossier DPAPI est une action distincte et irréversible qui exige une décision
 explicite. Le paquet pilote n’est pas signé ; un certificat approuvé reste un
 prérequis de production.
+
+Le candidat d’installeur conserve avant activation une récupération privée
+`.recovery/<transaction>` dans son dossier produit : valeurs de registre typées,
+raccourci et anciens fichiers d’activation. Une panne restaure et compare ces
+éléments avant de nettoyer la nouvelle version. Une restauration incertaine
+bloque les opérations suivantes ; les preuves et le candidat restent présents.
+Les dossiers terminés `COMMITTED`/`RESTORED` ne bloquent pas une autre opération.
+Un bail fichier exclusif d’installeur empêche deux transactions simultanées ;
+il ne remplace ni ne modifie le bail de l’agent. Le fichier de bail, le script et
+module de maintenance, et les preuves de récupération restent volontairement
+conservés après désinstallation pour permettre une reprise explicite.
+La désinstallation vérifie la disparition de l’activation avant de retirer les
+versions dont l’inventaire borné et les empreintes correspondent intégralement
+au manifeste (aucun fichier ou dossier supplémentaire), puis l’entrée de
+désinstallation ; les versions inconnues sont refusées, les erreurs ne sont pas
+masquées. Profil, journal et récupération restent conservés. Ces coordinations
+sont testées avec effets en mémoire seulement : aucune installation Windows,
+mise à jour native, désinstallation, signature ou distribution n’est qualifiée.

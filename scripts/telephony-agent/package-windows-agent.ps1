@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $project = Join-Path $repositoryRoot 'apps\telephony-agent-windows\CrmYnov.TelephonyAgent.csproj'
 $installerScript = Join-Path $repositoryRoot 'scripts\telephony-agent\install-windows-agent.ps1'
+$transactionModule = Join-Path $repositoryRoot 'scripts\telephony-agent\installer-transactions.psm1'
 $sdkRootResolved = (Resolve-Path -LiteralPath $SdkRoot).Path
 $dotnetResolved = (Resolve-Path -LiteralPath $DotnetPath).Path
 $packageName = "crm-ynov-telephony-agent-$Version-win-x64"
@@ -19,8 +20,9 @@ $sourceZipPath = Join-Path $OutputRoot "$packageName-source.zip"
 
 # Source distribution contains tracked source only, never ignored profiles,
 # generated harness obj-storage or private files beside a working checkout.
-$sourcePaths = @(& git -C $repositoryRoot ls-files -- apps/telephony-agent-windows apps/telephony-agent-installer-windows docs/runbooks/linphone-windows-bridge.md scripts/telephony-agent/package-windows-agent.ps1 scripts/telephony-agent/install-windows-agent.ps1 scripts/telephony-agent/build-windows-installer.ps1)
+$sourcePaths = @(& git -C $repositoryRoot ls-files -- apps/telephony-agent-windows apps/telephony-agent-installer-windows docs/runbooks/linphone-windows-bridge.md scripts/telephony-agent/package-windows-agent.ps1 scripts/telephony-agent/install-windows-agent.ps1 scripts/telephony-agent/build-windows-installer.ps1 scripts/telephony-agent/installer-transactions.psm1 scripts/telephony-agent/test-installer-transactions.ps1)
 if ($LASTEXITCODE -ne 0 -or $sourcePaths.Count -eq 0) { throw 'PACKAGE_TRACKED_SOURCE_REQUIRED' }
+if ('scripts/telephony-agent/installer-transactions.psm1' -notin $sourcePaths) { throw 'PACKAGE_TRANSACTION_MODULE_TRACKED_SOURCE_REQUIRED' }
 $sourceChanges = @(& git -C $repositoryRoot status --porcelain --untracked-files=no -- $sourcePaths)
 if ($LASTEXITCODE -ne 0 -or $sourceChanges.Count -ne 0) { throw 'PACKAGE_COMMITTED_SOURCE_REQUIRED' }
 if ($sourcePaths | Where-Object { $_ -match '(^|/)(bin|obj[^/]*|profiles?|secrets?)(/|$)' }) { throw 'PACKAGE_GENERATED_SOURCE_REFUSED' }
@@ -34,6 +36,8 @@ if ($syntaxErrors.Count -gt 0) {
     $first = $syntaxErrors[0]
     throw "INSTALLER_SCRIPT_SYNTAX_INVALID: line=$($first.Extent.StartLineNumber) message=$($first.Message)"
 }
+[System.Management.Automation.Language.Parser]::ParseFile($transactionModule, [ref]$syntaxTokens, [ref]$syntaxErrors) | Out-Null
+if ($syntaxErrors.Count -gt 0) { throw 'INSTALLER_TRANSACTION_MODULE_SYNTAX_INVALID' }
 
 if (Test-Path -LiteralPath $packageDirectory) { throw "PACKAGE_DIRECTORY_ALREADY_EXISTS: $packageDirectory" }
 if (Test-Path -LiteralPath $zipPath) { throw "PACKAGE_ARCHIVE_ALREADY_EXISTS: $zipPath" }
@@ -70,6 +74,7 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows\
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'apps\telephony-agent-windows\THIRD-PARTY-NOTICES.md') -Destination $notices
 Copy-Item -LiteralPath (Join-Path $repositoryRoot 'docs\runbooks\linphone-windows-bridge.md') -Destination $documentation
 Copy-Item -LiteralPath $installerScript -Destination $packageDirectory
+Copy-Item -LiteralPath $transactionModule -Destination $packageDirectory
 $noticeSources = @(
     'share\doc\linphone-sdk\LICENSE.md',
     'share\doc\mediastreamer2-5.5.0\html\mediastreamer2_license.html',
