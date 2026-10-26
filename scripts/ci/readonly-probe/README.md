@@ -6,7 +6,11 @@ The core exposes 13 closed, bounded SELECT queries and minimized validation. The
 
 Before a real job: require exact-source review and fresh Jira/delegation, a separate reviewed objective, pinned image and helper/bundle hashes, versioned DATABASE_URL secret reference, actual native job GET matching the objective, single task/attempt with no retry and bounded resources. Reconcile completed native execution separately; never retry an unknown outcome.
 
-The future external transaction executor must use the latest native job etag in its single run request, with no task overrides, and refuse any pre-existing or unknown execution. This repository module only validates metadata; it does not implement that transaction or authorize its execution.
+The external transaction components use the latest native job etag in a single run request, with no task overrides, and refuse any pre-existing or unknown execution. The durable create-exclusive SQLite journal is consumed before POST; an unknown outcome is never replayable, including after reopening. Known-operation recovery reads the durable journal rather than accepting a caller-supplied operation.
+
+`createProbeExecutor` composes the fixed native validators, bounded HTTP transport and journal. It detaches the objective from mutable caller input. It requires an explicit fresh-authority verifier and authentication callback; there is no CLI, job creation, default authorization or production activation. The official gcloud token adapter uses an explicit account, fixed Windows executable paths, a finite deadline and redacted errors; no token is logged or written to a receipt. Its unit tests inject a fake subprocess, never real authentication.
+
+These components alone do not qualify a real executor invocation. Before use, the driver and fresh authority verification must themselves be protected, reviewed and source-qualified, with the separate objective and qualified native job/execution receipts. Offline fixtures use synthetic authority, tokens and HTTP responses and must never be labelled native PROD acceptance. Tests write disposable SQLite journals in the OS temporary directory, not in source checkouts.
 
 PRE/POST output contains states, counts and hashes, not contacts, database credentials, raw settings or provider IDs. PRE is not deployment/transport/human acceptance. New journal rows and increasing prospective counters are preserved; existing immutable journal evidence and protected records must not diverge.
 
