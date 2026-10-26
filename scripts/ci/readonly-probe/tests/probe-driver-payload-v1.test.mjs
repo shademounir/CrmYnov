@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import {validateLocalProbePayload} from '../probe-driver-payload-v1.mjs';
 import {validateCreationDossier} from '../probe-job-creation-v1.mjs';
-import {parseDriverArguments} from '../probe-operational-driver-v1.mjs';
+import {parseDriverArguments,OFFICIAL_GIT} from '../probe-operational-driver-v1.mjs';
 import {dossierFixture} from './probe-driver-fixtures-v1.mjs';
 const read=file=>fs.readFileSync(new URL('../'+file,import.meta.url));
+test('Git executable remains fully qualified under Windows canonical path semantics',()=>{
+ assert(path.win32.isAbsolute(OFFICIAL_GIT));
+ assert.equal(path.win32.parse(OFFICIAL_GIT).root,'C:\\');
+ assert.equal(OFFICIAL_GIT,path.win32.normalize('C:/Program Files/Git/cmd/git.exe'));
+ assert.equal(path.win32.basename(OFFICIAL_GIT),'git.exe');
+ assert(!OFFICIAL_GIT.includes('/'));assert(!OFFICIAL_GIT.includes('..'));
+});
 test('actual protected payload rebuilt offline; never qualifies compiled image/native runtime',()=>{const{dossier}=dossierFixture({realPayload:true});assert.equal(validateLocalProbePayload(dossier,read).nativeExecutionQualified,false);});
 for(const[name,change]of[
  ['RC48 sampler retarget',d=>d.objective.main='8253024ea35cee6be5636cc6b10a88ae7e177377'],

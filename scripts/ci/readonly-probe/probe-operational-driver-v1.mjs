@@ -17,6 +17,7 @@ import {authorizeProbeDriver,assertAuthorityCurrent,createAuthorityBoundFetch} f
 import {validateLocalProbePayload} from './probe-driver-payload-v1.mjs';
 import {openCreationJournal,createJobCreationTransport,createJobOnce,observeJobCreation} from './probe-job-creation-v1.mjs';
 const ROOT=path.resolve(import.meta.dirname,'../../..'),LOCAL=import.meta.dirname;
+export const OFFICIAL_GIT='C:\\Program Files\\Git\\cmd\\git.exe';
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export const DRIVER_INPUTS=Object.freeze([
   'rc47-select-only-probe-core-v1.mjs','rc47-select-only-probe-adapter-v1.mjs','rc47-probe-controlled-entry-v2.mjs','rc47-probe-native-guards-v1.mjs','rc47-probe-bundle-v2.mjs','rc47-probe-executor-v1.mjs','rc47-probe-single-run-v1.mjs','rc47-probe-exclusive-journal-v1.mjs','rc47-probe-http-contract-v1.mjs','rc47-probe-bounded-exchange-v1.mjs','rc47-probe-official-auth-v1.mjs','probe-driver-github-v1.mjs','probe-driver-authority-v1.mjs','probe-job-creation-v1.mjs','probe-driver-payload-v1.mjs','probe-operational-driver-v1.mjs'
@@ -35,7 +36,7 @@ export function parseDriverArguments(args) {
 function localSource() {
   assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)),'ambient Git overrides refused');
   const env=fixedToolEnvironment(process.env);
-  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','core.untrackedCache=false','-C',ROOT,...args],{
+  const git=(...args)=>execFileSync(OFFICIAL_GIT,['-c','core.fsmonitor=false','-c','core.hooksPath=NUL','-c','core.untrackedCache=false','-C',ROOT,...args],{
     // Keep the executable and its subprocess search path literal at this boundary.
     // All caller PATH case variants were removed by fixedToolEnvironment above.
     env:{...env,PATH:'C:/Program Files/Git/cmd;C:/Program Files/Git/mingw64/bin;C:/Windows/System32;C:/Windows'},
