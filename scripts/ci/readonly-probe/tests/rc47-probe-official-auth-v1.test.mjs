@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createOfficialAccessToken} from '../rc47-probe-official-auth-v1.mjs';
+import {createOfficialAccessToken,TOKEN_ENDPOINT} from '../rc47-probe-official-auth-v1.mjs';
 const options={account:'fixture@example.invalid',gcloudPath:'C:/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/lib/gcloud.py',pythonPath:'C:/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/platform/bundledpython/python.exe',environment:{}};
-const safe=JSON.stringify({auth:{impersonate_service_account:null,access_token_file:null,disable_credentials:false}});
+const safe=JSON.stringify({auth:{impersonate_service_account:null,access_token_file:null,disable_credentials:false,token_host:TOKEN_ENDPOINT}});
 const signal=()=>new AbortController().signal;
 const isConfig=args=>args[2]==='config';
 test('fixed executables, explicit account and protected subprocess auth environment',async()=>{
@@ -13,8 +13,8 @@ test('fixed executables, explicit account and protected subprocess auth environm
     if(isConfig(args)){assert.deepEqual(args.slice(2),['config','list','--all','--format=json(auth)','--quiet']);assert.equal(opts.timeout,3000);return{stdout:safe};}
     assert.deepEqual(args.slice(2),['auth','print-access-token','--account',options.account,'--quiet']);assert.equal(opts.timeout,6000);
     assert.equal(opts.env.CLOUDSDK_CORE_ACCOUNT,options.account);
-    for(const key of ['IMPERSONATE_SERVICE_ACCOUNT','ACCESS_TOKEN','ACCESS_TOKEN_FILE','CREDENTIAL_FILE_OVERRIDE','LOGIN_CONFIG_FILE','TOKEN_HOST'])assert.equal(opts.env['CLOUDSDK_AUTH_'+key],'');
-    assert.equal(opts.env.CLOUDSDK_AUTH_DISABLE_CREDENTIALS,'false');return{stdout:'SYNTHETIC_ONLY\r\n'};
+    for(const key of ['IMPERSONATE_SERVICE_ACCOUNT','ACCESS_TOKEN','ACCESS_TOKEN_FILE','CREDENTIAL_FILE_OVERRIDE','LOGIN_CONFIG_FILE'])assert.equal(opts.env['CLOUDSDK_AUTH_'+key],'');
+    assert.equal(opts.env.CLOUDSDK_AUTH_TOKEN_HOST,TOKEN_ENDPOINT);assert.equal(opts.env.CLOUDSDK_AUTH_DISABLE_SSL_VALIDATION,'false');assert.equal(opts.env.CLOUDSDK_AUTH_DISABLE_CREDENTIALS,'false');return{stdout:'SYNTHETIC_ONLY\r\n'};
   }});
   assert.equal(await get({signal:controller.signal}),'SYNTHETIC_ONLY');assert.equal(seen.length,3);
 });
@@ -30,6 +30,12 @@ for(const key of ['impersonate_service_account','access_token_file','credential_
 test('configuration drift or ignored empty overrides fail closed before token command',async()=>{
   let calls=0;const get=createOfficialAccessToken({...options,execute:async()=>({stdout:++calls===1?safe:JSON.stringify({auth:{impersonate_service_account:'synthetic-foreign@example.invalid'}})})});
   await assert.rejects(get({signal:signal()}));assert.equal(calls,2);
+});
+test('effective canonical endpoint is accepted while empty/foreign endpoint drift is refused',async()=>{
+  for(const endpoint of [TOKEN_ENDPOINT,'','https://unrequested.invalid/token']){
+    let calls=0;const get=createOfficialAccessToken({...options,execute:async(_file,args)=>{calls++;if(isConfig(args))return{stdout:JSON.stringify({auth:{token_host:calls===1?null:endpoint}})};return{stdout:'SYNTHETIC_ONLY'};}});
+    if(endpoint===TOKEN_ENDPOINT){assert.equal(await get({signal:signal()}),'SYNTHETIC_ONLY');assert.equal(calls,3);}else{await assert.rejects(get({signal:signal()}));assert.equal(calls,2);}
+  }
 });
 test('environment is rechecked at invocation rather than trusted at construction',async()=>{
   const environment={};let calls=0;const get=createOfficialAccessToken({...options,environment,execute:async()=>{calls++;}});environment.CLOUDSDK_AUTH_ACCESS_TOKEN='SYNTHETIC_PRIVATE';await assert.rejects(get({signal:signal()}));assert.equal(calls,0);

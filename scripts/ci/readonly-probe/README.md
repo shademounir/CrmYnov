@@ -12,6 +12,8 @@ The external transaction components use the latest native job etag in a single r
 
 These components alone do not qualify a real executor invocation. Before use, the driver and fresh authority verification must themselves be protected, reviewed and source-qualified, with the separate objective and qualified native job/execution receipts. Offline fixtures use synthetic authority, tokens and HTTP responses and must never be labelled native PROD acceptance. Tests write disposable SQLite journals in the OS temporary directory, not in source checkouts.
 
+The token endpoint is explicitly pinned to `https://oauth2.googleapis.com/token`, not emptied: an explicitly empty SDK endpoint breaks refresh. Effective configuration must confirm that canonical endpoint. Identity/token-file overrides remain cleared and TLS validation remains enabled. Additional local qualification reconstructs fabricated credentials with the installed SDK and executes its refresh logic against a fully simulated HTTP transport; it never reads personal credentials, contacts an OAuth server or obtains a real token.
+
 PRE/POST output contains states, counts and hashes, not contacts, database credentials, raw settings or provider IDs. PRE is not deployment/transport/human acceptance. New journal rows and increasing prospective counters are preserved; existing immutable journal evidence and protected records must not diverge.
 
 The checked-in inventory contains only 277 file paths and SHA256 values bound to existing immutable RC47 API bytes. The synthetic image harness must run only in a network-isolated local fixture with a generated client from that image, never against PROD. No Prisma generation is performed while PostgreSQL is alive.

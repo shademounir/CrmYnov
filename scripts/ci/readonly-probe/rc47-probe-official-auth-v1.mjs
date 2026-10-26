@@ -4,7 +4,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const run = promisify(execFile);
-const EMPTY_AUTH = ['ACCESS_TOKEN', 'ACCESS_TOKEN_FILE', 'CREDENTIAL_FILE_OVERRIDE', 'IMPERSONATE_SERVICE_ACCOUNT', 'LOGIN_CONFIG_FILE', 'TOKEN_HOST'];
+export const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
+const EMPTY_AUTH = ['ACCESS_TOKEN', 'ACCESS_TOKEN_FILE', 'CREDENTIAL_FILE_OVERRIDE', 'IMPERSONATE_SERVICE_ACCOUNT', 'LOGIN_CONFIG_FILE'];
 const absent = value => value === null || value === undefined || value === '';
 function rejectAmbient(environment) {
     for (const [key, value] of Object.entries(environment)) {
@@ -13,16 +14,18 @@ function rejectAmbient(environment) {
         }
     }
 }
-function checkAuthConfiguration(stdout) {
+function checkAuthConfiguration(stdout, pinned=false) {
     assert.equal(typeof stdout, 'string');
     assert(Buffer.byteLength(stdout) <= 16384);
     const value = JSON.parse(stdout);
     assert(value && typeof value === 'object' && !Array.isArray(value));
     const auth = value.auth ?? {};
     assert(auth && typeof auth === 'object' && !Array.isArray(auth));
+    if(pinned){assert.equal(auth.token_host,TOKEN_ENDPOINT,'effective token endpoint must be canonical');}
     for (const [key, setting] of Object.entries(auth)) {
-        const disabledFlag = key === 'disable_credentials' && (setting === false || setting === 'false' || setting === 'False');
-        assert(absent(setting) || disabledFlag, 'ambient authentication configuration refused');
+        const disabledFlag = ['disable_credentials','disable_ssl_validation'].includes(key) && (setting === false || setting === 'false' || setting === 'False');
+        const canonicalEndpoint = key === 'token_host' && setting === TOKEN_ENDPOINT;
+        assert(absent(setting) || disabledFlag || canonicalEndpoint, 'ambient authentication configuration refused');
     }
 }
 export function createOfficialAccessToken({ account, gcloudPath, pythonPath, execute = run, environment = process.env }) {
@@ -56,7 +59,9 @@ export function createOfficialAccessToken({ account, gcloudPath, pythonPath, exe
                 pinnedEnv['CLOUDSDK_AUTH_' + name] = '';
             }
             pinnedEnv.CLOUDSDK_AUTH_DISABLE_CREDENTIALS = 'false';
-            checkAuthConfiguration((await invoke(configArgs, pinnedEnv, 3000)).stdout);
+            pinnedEnv.CLOUDSDK_AUTH_DISABLE_SSL_VALIDATION = 'false';
+            pinnedEnv.CLOUDSDK_AUTH_TOKEN_HOST = TOKEN_ENDPOINT;
+            checkAuthConfiguration((await invoke(configArgs, pinnedEnv, 3000)).stdout,true);
             const result = await invoke(['auth', 'print-access-token', '--account', account, '--quiet'], pinnedEnv, 6000);
             assert.equal(signal.aborted, false);
             const token = result.stdout.trim();

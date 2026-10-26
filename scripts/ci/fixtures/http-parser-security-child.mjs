@@ -12,22 +12,24 @@ try {
     const parser=require('body-parser').json();let server;
     try {
       server=http.createServer((req,res)=>{
-        if(req.url==='/health'){res.end('alive');return;}
+        res.setHeader('Content-Type','application/json; charset=utf-8');
+        res.setHeader('X-Content-Type-Options','nosniff');
+        if(req.url==='/health'){res.end(JSON.stringify({alive:true}));return;}
         let ended=false,parsed=false,error;
-        const finish=()=>{if(ended&&parsed){res.statusCode=error?400:200;res.end(error?'rejected':JSON.stringify(req.body));}};
+        const finish=()=>{if(ended&&parsed){res.statusCode=error?400:200;res.end(JSON.stringify(error?{error:'rejected'}:req.body));}};
         req.once('end',()=>{ended=true;finish();});
         parser(req,res,err=>{error=err;parsed=true;finish();});
       });
       await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
       const port=server.address().port,first=Buffer.concat([deflateSync(Buffer.from('{"synthetic":true}')),Buffer.from([0])]),tail=Buffer.alloc(1024,255);
       const send=(method,url,headers={},write)=>new Promise((resolve,reject)=>{
-        const req=http.request({host:'127.0.0.1',port,path:url,method,agent:false,headers},res=>{let text='';res.setEncoding('utf8');res.on('data',part=>text+=part);res.once('end',()=>resolve({status:res.statusCode,text}));});
+        const req=http.request({host:'127.0.0.1',port,path:url,method,agent:false,headers},res=>{let text='';assert.equal(res.headers['content-type'],'application/json; charset=utf-8');assert.equal(res.headers['x-content-type-options'],'nosniff');res.setEncoding('utf8');res.on('data',part=>text+=part);res.once('end',()=>resolve({status:res.statusCode,text}));});
         req.once('error',reject);req.setTimeout(4000,()=>req.destroy(Error('fixture_request_timeout')));
         if(write)write(req);else req.end();
       });
       const result=await send('POST','/',{'content-type':'application/json','content-encoding':'deflate','content-length':first.length+tail.length},req=>{req.write(first);setTimeout(()=>req.end(tail),50);});
       assert([200,400].includes(result.status));if(result.status===200)assert.deepEqual(JSON.parse(result.text),{synthetic:true});
-      assert.deepEqual(await send('GET','/health'),{status:200,text:'alive'});
+      assert.deepEqual(await send('GET','/health'),{status:200,text:'{"alive":true}'});
     }finally{if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}}
   }else {
     // Exercise a delayed filter resuming after teardown without a process-level error handler.
