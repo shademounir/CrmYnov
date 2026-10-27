@@ -1,11 +1,11 @@
-// Source-catalogue tests only. No provider/client/credential/job construction.
+// Historical protected catalogue250 remains exact; current catalogue is tested separately in v3.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
 const root=new URL('../../../../',import.meta.url);
-const catalogue=JSON.parse(fs.readFileSync(new URL('docs/governance/readonly-probe-objectives-v1.json',root),'utf8'));
+const catalogue=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-250-20261027.json',root),'utf8'));
 const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 const expected=['POOL_RECONCILIATION_READ_ONLY_V1','GENERAL_PRESERVATION_READ_ONLY_V1','SCHEMA_LEDGER_READ_ONLY_V1'];
 test('three explicit PRE objectives, no empty/default or business mutation',()=>{
