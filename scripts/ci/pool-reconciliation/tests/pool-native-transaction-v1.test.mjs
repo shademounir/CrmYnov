@@ -32,7 +32,18 @@ test('failed second absence or expired authority sends zero POST',async t=>{
   transport.requireAbsent=async()=>{};await assert.rejects(dispatchPoolOnce({dossier:d,stage:'CREATE',authorizeFresh:async()=>authority(),transport,journal,clock:()=>now+600001}));assert.equal(posts,0);assert.equal(journal.inspect('CREATE'),null);
 });
 test('unreviewed create body refused before native read',async t=>{const {d,journal}=journalFixture(t);d.job.template.taskCount=2;let calls=0;await assert.rejects(dispatchPoolOnce({dossier:d,stage:'CREATE',authorizeFresh:async()=>{calls++;return authority();},transport:{},journal,clock:()=>now}),/REVIEWED_CREATE_BODY/u);assert.equal(calls,0);});
-async function createReconciled(d,journal){const f=fixture(),job={...f.job,labels:structuredClone(d.job.labels),template:structuredClone(d.job.template),etag:'synthetic-etag'};const transport={requireAbsent:async()=>{},create:async()=>({name:op}),operation:async()=>({name:op,done:true,response:{name:d.objective.jobName,uid:job.uid}}),getJob:async()=>job};await dispatchPoolOnce({dossier:d,stage:'CREATE',authorizeFresh:async()=>authority(),transport,journal,clock:()=>now});await observePoolOperation({objective:d.objective,stage:'CREATE',transport,journal});return {job,transport};}
+async function createReconciled(d,journal){const f=fixture(),job={...f.job,executionCount:0,labels:structuredClone(d.job.labels),template:structuredClone(d.job.template),etag:'synthetic-etag'};delete job.latestCreatedExecution;const transport={requireAbsent:async()=>{},create:async()=>({name:op}),operation:async()=>({name:op,done:true,response:{name:d.objective.jobName,uid:job.uid}}),getJob:async()=>job};await dispatchPoolOnce({dossier:d,stage:'CREATE',authorizeFresh:async()=>authority(),transport,journal,clock:()=>now});await observePoolOperation({objective:d.objective,stage:'CREATE',transport,journal});return {job,transport};}
+
+for(const extra of [false,true])test('run reconciliation validates native single execution; extra='+extra,async t=>{
+  const {d,journal}=journalFixture(t),{job,transport}=await createReconciled(d,journal),f=fixture();
+  transport.listExecutions=async()=>{};transport.run=async()=>({name:op+'-run'});
+  await dispatchPoolOnce({dossier:d,stage:'RUN',authorizeFresh:async()=>authority(),transport,journal,clock:()=>now});
+  const execution={...f.execution,template:structuredClone(d.objective.taskTemplate)};
+  job.executionCount=extra?2:1;job.latestCreatedExecution={name:execution.name};
+  transport.operation=async()=>({name:op+'-run',done:true,response:{name:execution.name}});transport.execution=async()=>execution;
+  if(extra){await assert.rejects(observePoolOperation({objective:d.objective,stage:'RUN',transport,journal}),/ONE_NATIVE_EXECUTION_REQUIRED/u);assert.equal(journal.inspect('RUN').state,'OPERATION');}
+  else{assert.equal((await observePoolOperation({objective:d.objective,stage:'RUN',transport,journal})).state,'RECONCILED');assert.equal(journal.inspect('RUN').execution,execution.name);}
+});
 test('run uses reconciled UID/latest etag and consumes before one POST',async t=>{
   const {d,journal}=journalFixture(t),{job,transport}=await createReconciled(d,journal);let posts=0;
   transport.listExecutions=async()=>{};transport.run=async(name,etag)=>{posts++;assert.equal(name,d.objective.jobName);assert.equal(etag,job.etag);assert.equal(journal.inspect('RUN').state,'INTENT');return {name:op+'-run'};};

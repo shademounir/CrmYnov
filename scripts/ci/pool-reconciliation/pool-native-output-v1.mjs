@@ -45,6 +45,9 @@ export function validatePoolNativeJob(job,objective){
 export function validatePoolNativeExecution(job,execution,objective){
   validatePoolNativeJob(job,objective);const prefix=objective.jobName+'/executions/';
   assert(execution.name.startsWith(prefix));assert(/^[a-z0-9-]+$/u.test(execution.name.slice(prefix.length)));
+  assert.equal(job.executionCount,1,'ONE_NATIVE_EXECUTION_REQUIRED');
+  assert.equal(job.latestCreatedExecution?.name,execution.name,'LATEST_EXECUTION_MUST_MATCH');
+  assert.equal(job.latestCreatedExecution.deleteTime,undefined,'LATEST_EXECUTION_NOT_DELETED');
   assert([objective.jobName,objective.jobName.slice(ROOT.length)].includes(execution.job));
   assert.equal(execution.taskCount,1);assert.equal(execution.parallelism,1);assert.equal(execution.succeededCount,1);
   for(const field of ['failedCount','cancelledCount','runningCount','retriedCount'])assert.equal(execution[field]??0,0);
