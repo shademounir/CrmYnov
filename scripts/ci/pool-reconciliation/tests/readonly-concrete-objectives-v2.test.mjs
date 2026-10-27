@@ -30,9 +30,15 @@ for(const purpose of expected){
     assert.equal(entry.googleAccount,'casablancaynovcampus@gmail.com');
     assert.deepEqual(entry.objectiveReview,{pr:250});assert.equal(entry.driver.pr,251);
     assert.match(entry.driver.head,/^[a-f0-9]{40}$/u);assert.match(entry.driver.mergeCommit,/^[a-f0-9]{40}$/u);assert.match(entry.driver.tree,/^[a-f0-9]{40}$/u);
-    assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
+    // This protected catalogue still targets historical driver251. A future catalogue
+    // must explicitly bind the corrected protected driver; never retarget it implicitly.
+    assert.equal(entry.driver.head,'8d1e3b56dc67e153fa82e4749344fbcbff0ae17d');
+    assert.equal(entry.driver.mergeCommit,'89c5ee785d56b6824f448073a1bac4032d223253');
+    assert.equal(entry.driver.tree,'601642df902f71f065479c80c59ac123038935d2');
+    assert.equal(sha256(JSON.stringify(entry.driver.files)),'08b684988183b4e767323c1719bf8510f55ba1a8c0b20b0b8c6d71ffb714a528');
+    assert(entry.driver.files.every(f=>POOL_DRIVER_INPUTS.includes(f.path)));
     assert.equal(entry.driver.files.length,37);
-    for(const file of entry.driver.files){assert.equal(sha256(fs.readFileSync(new URL(file.path,root))),file.sha256);}
+    for(const file of entry.driver.files){assert.match(file.sha256,/^[a-f0-9]{64}$/u);}
     for(const name of ['dossierSha256','originalIntentSha256','independentInputsSha256','humanAuthorityReceiptSha256','journalDirectorySha256']){assert.match(entry[name],/^[a-f0-9]{64}$/u);assert.notEqual(entry[name],'0'.repeat(64));}
     assert.equal(entry.originalIntentSha256,'5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7');
     assert.equal(entry.independentInputsSha256,'7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca');

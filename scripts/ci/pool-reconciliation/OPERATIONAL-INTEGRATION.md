@@ -50,6 +50,23 @@ The bounded JSON reader is shared with native transaction metadata reads. Output
 GET/GET/log-list remain sequential, with durable per-request intent/result and no
 automatic retry; source-file reads retain a maximum concurrency of four.
 
+## Bounded GitHub commit comparisons
+
+The first real source-authority verification refused before any GCP access:
+the immutable historical reader rejects `..`, including the legitimate GitHub
+`SHA...SHA` comparison separator. The dedicated `pool-driver-github-v1.mjs`
+adapter permits only the exact repository comparison path with two lowercase
+40-character commit SHAs, through the same official read-only `gh` invocation,
+fixed environment and response bounds. Branch names, encoded separators, query
+overrides, traversal and foreign repositories remain refused. Other reads and
+pagination/GraphQL continue through the unchanged historical reader.
+
+The corrected driver declares the adapter in its source closure. Historical
+RC47 bytes and the already protected driver251 catalogue bindings remain intact;
+the new driver cannot borrow that old authority. A later protected catalogue must
+explicitly name its real merge/tree/file hashes before any native operation.
+No job, SQL, GCP access token or private key was used by the refused verification.
+
 The reviewed original intent, independent actor mapping and proposed historical
 window remain mandatory. The historical raw hash is not reconstructed. A valid
 fresh PRE is constrained preservation evidence, not a new historical baseline.
