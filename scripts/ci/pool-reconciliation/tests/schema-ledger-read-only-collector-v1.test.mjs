@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {PURPOSE,QUERIES,QUERY_CONTRACT_SHA256,validateSchemaLedgerRequest,collectSchemaLedgerObservation,runSchemaLedgerReadOnlyCollection} from '../schema-ledger-read-only-collector-v1.mjs';
 const request=()=>({schemaVersion:1,purpose:PURPOSE,phase:'PRE',queryContractSha256:QUERY_CONTRACT_SHA256});
+test('fixed catalog SQL evaluates without any backslash and quotes the C collation',()=>{
+  for(const name of ['columns','indexes','constraints']) {
+    assert.equal(QUERIES[name].includes(String.fromCharCode(92)),false);
+    assert(QUERIES[name].includes('COLLATE "C"'));
+    assert(QUERIES[name].startsWith('SELECT '));assert.equal(QUERIES[name].includes(';'),false);
+  }
+});
 function fixture() {
   const identity={database:'crmynov_prod',role:'crm_migrator',read_only:'on',isolation:'repeatable read',transaction_started_at:'2026-10-27T10:00:00.000000Z',observed_at:'2026-10-27T10:00:00.000001Z'};
   const snapshot={migrations:[{migration_name:'20260101000000_synthetic',checksum:'a'.repeat(64),finished:true,rolled_back:false}],

@@ -9,9 +9,9 @@ const sha256 = value => createHash('sha256').update(value).digest('hex');
 export const QUERIES = Object.freeze({
   identity: POOL_QUERIES.identity,
   migrations: 'SELECT migration_name, checksum, finished_at IS NOT NULL AS finished, rolled_back_at IS NOT NULL AS rolled_back FROM public._prisma_migrations ORDER BY migration_name COLLATE "C" LIMIT 101',
-  columns: "SELECT c.relname AS table_name, a.attname AS column_name, a.attnum::integer AS position, pg_catalog.format_type(a.atttypid,a.atttypmod) AS data_type, a.attnotnull AS not_null, a.attidentity::text AS identity_kind, a.attgenerated::text AS generated_kind, c.relrowsecurity AS row_security, c.relforcerowsecurity AS force_row_security, pg_catalog.pg_get_expr(d.adbin,d.adrelid) AS default_expression FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE n.nspname='public' AND c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname COLLATE \"C\",a.attnum LIMIT 3001",
-  indexes: "SELECT t.relname AS table_name, c.relname AS index_name, i.indisvalid AS valid, i.indisready AS ready, pg_catalog.pg_get_indexdef(i.indexrelid) AS definition FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_class t ON t.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' ORDER BY t.relname COLLATE \"C\",c.relname COLLATE \"C\" LIMIT 1001",
-  constraints: "SELECT c.relname AS table_name, k.conname AS constraint_name, k.contype::text AS kind, k.convalidated AS validated, pg_catalog.pg_get_constraintdef(k.oid) AS definition FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid=k.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' ORDER BY c.relname COLLATE \"C\",k.conname COLLATE \"C\" LIMIT 1001",
+  columns: `SELECT c.relname AS table_name, a.attname AS column_name, a.attnum::integer AS position, pg_catalog.format_type(a.atttypid,a.atttypmod) AS data_type, a.attnotnull AS not_null, a.attidentity::text AS identity_kind, a.attgenerated::text AS generated_kind, c.relrowsecurity AS row_security, c.relforcerowsecurity AS force_row_security, pg_catalog.pg_get_expr(d.adbin,d.adrelid) AS default_expression FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE n.nspname='public' AND c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped ORDER BY c.relname COLLATE "C",a.attnum LIMIT 3001`,
+  indexes: `SELECT t.relname AS table_name, c.relname AS index_name, i.indisvalid AS valid, i.indisready AS ready, pg_catalog.pg_get_indexdef(i.indexrelid) AS definition FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indexrelid JOIN pg_catalog.pg_class t ON t.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname='public' ORDER BY t.relname COLLATE "C",c.relname COLLATE "C" LIMIT 1001`,
+  constraints: `SELECT c.relname AS table_name, k.conname AS constraint_name, k.contype::text AS kind, k.convalidated AS validated, pg_catalog.pg_get_constraintdef(k.oid) AS definition FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid=k.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' ORDER BY c.relname COLLATE "C",k.conname COLLATE "C" LIMIT 1001`,
 });
 const LIMITS = Object.freeze({migrations:100, columns:3000, indexes:1000, constraints:1000});
 const FIELDS = Object.freeze({
@@ -23,7 +23,7 @@ const FIELDS = Object.freeze({
 export const QUERY_CONTRACT_SHA256 = sha256(JSON.stringify({purpose:PURPOSE,role:'crm_migrator',queries:QUERIES,settings:SESSION_SETTINGS,limits:LIMITS,fields:FIELDS}));
 function exactKeys(value, expected) {
   assert(value && Object.getPrototypeOf(value) === Object.prototype, 'OBJECT_REQUIRED');
-  assert.deepEqual(Object.keys(value).sort(), [...expected].sort(), 'EXACT_FIELDS');
+  assert.deepEqual(Object.keys(value).sort((a,b)=>a.localeCompare(b,'en')), [...expected].sort((a,b)=>a.localeCompare(b,'en')), 'EXACT_FIELDS');
 }
 export function validateSchemaLedgerRequest(request) {
   exactKeys(request, ['schemaVersion','purpose','phase','queryContractSha256']);
@@ -62,7 +62,7 @@ function validateLedger(rows) {
   assert(rows.length>0,'LEDGER_REQUIRED');
   assert.equal(new Set(rows.map(r=>r.migration_name)).size,rows.length,'UNIQUE_LEDGER');
   for(const row of rows) {
-    assert(/^[a-zA-Z0-9_]+$/u.test(row.migration_name));
+    assert(/^\w+$/u.test(row.migration_name));
     assert(/^[a-f0-9]{64}$/u.test(row.checksum));
     assert.equal(row.finished,true,'FINISHED_LEDGER_REQUIRED');
     assert.equal(row.rolled_back,false,'NO_ROLLED_BACK_LEDGER');
@@ -72,7 +72,13 @@ export async function collectSchemaLedgerObservation(select,request) {
   validateSchemaLedgerRequest(request);assert.equal(typeof select,'function');
   const initial=identity(await select('identity',QUERIES.identity,[]));
   const snapshot={};
-  for(const name of Object.keys(LIMITS))snapshot[name]=checkedRows(name,await select(name,QUERIES[name],[]));
+  const names=Object.keys(LIMITS);
+  async function readTable(index) {
+    if(index===names.length){return;}
+    const name=names[index];snapshot[name]=checkedRows(name,await select(name,QUERIES[name],[]));
+    return readTable(index+1);
+  }
+  await readTable(0);
   validateLedger(snapshot.migrations);
   assert(snapshot.columns.length>0 && snapshot.indexes.length>0 && snapshot.constraints.length>0,'SCHEMA_SURFACE_REQUIRED');
   assert(Buffer.byteLength(JSON.stringify(snapshot))<=524288,'SNAPSHOT_BYTE_BOUND');
@@ -90,7 +96,12 @@ export async function runSchemaLedgerReadOnlyCollection(client,request) {
   validateSchemaLedgerRequest(request);assert.equal(typeof client?.$transaction,'function');
   return client.$transaction(async tx=>{
     assert.equal(typeof tx?.$executeRawUnsafe,'function');assert.equal(typeof tx?.$queryRawUnsafe,'function');
-    for(const setting of SESSION_SETTINGS)await tx.$executeRawUnsafe(setting);
+    async function applySetting(index) {
+      if(index===SESSION_SETTINGS.length){return;}
+      await tx.$executeRawUnsafe(SESSION_SETTINGS[index]);
+      return applySetting(index+1);
+    }
+    await applySetting(0);
     return collectSchemaLedgerObservation((_name,sql,parameters)=>tx.$queryRawUnsafe(sql,...parameters),request);
   },{isolationLevel:'RepeatableRead',maxWait:5000,timeout:25000});
 }
