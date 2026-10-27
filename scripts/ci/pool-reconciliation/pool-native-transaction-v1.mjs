@@ -1,18 +1,18 @@
-// Pool-only specialization. Reuses the protected official token/authority guards;
+// Fixed-purpose readonly specialization. Reuses the protected official token/authority guards;
 // immutable RC47 executor and its job namespace remain untouched.
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {digest} from './controlled-pool-contract-v1.mjs';
-import {validatePoolNativeJob,validatePoolNativeExecution,validatePoolObjective} from './pool-native-output-v1.mjs';
+import {validateReadOnlyNativeJob,validateReadOnlyNativeExecution,validateReadOnlyObjective,readOnlyPurposeConfiguration} from './pool-native-output-v1.mjs';
 import {assertAuthorityCurrent,createAuthorityBoundFetch} from '../readonly-probe/probe-driver-authority-v1.mjs';
 const PARENT='projects/crmynov-prod-n7x4q2/locations/europe-west1';
 const API='https://run.googleapis.com/v2/'+PARENT;
 const OP=new RegExp('^'+PARENT+'/operations/[A-Za-z0-9_-]+$','u');
-const JOB=new RegExp('^'+PARENT+'/jobs/crm-prod-pool-reconcile-[a-z0-9-]+$','u');
-export function openPoolTransactionJournal({directory,objective,initialize=false}){
-  validatePoolObjective(objective);assert(path.isAbsolute(directory));assert.equal(fs.realpathSync(directory),path.resolve(directory));assert(fs.statSync(directory).isDirectory());assert(!fs.lstatSync(directory).isSymbolicLink());
+
+export function openReadOnlyTransactionJournal({directory,objective,initialize=false}){
+  validateReadOnlyObjective(objective);assert(path.isAbsolute(directory));assert.equal(fs.realpathSync(directory),path.resolve(directory));assert(fs.statSync(directory).isDirectory());assert(!fs.lstatSync(directory).isSymbolicLink());
   const file=path.join(directory,'pool-native-transactions.sqlite');
   if(initialize){const fd=fs.openSync(file,'wx');fs.closeSync(fd);}else assert(fs.existsSync(file),'EXISTING_JOURNAL_REQUIRED');
   assert(!fs.lstatSync(file).isSymbolicLink());const db=new DatabaseSync(file);let closed=false;
@@ -47,10 +47,11 @@ export async function boundedJson(response){
   finally{await reader.cancel();reader.releaseLock();}
   const value=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(Buffer.concat(chunks)));assert(value&&Object.getPrototypeOf(value)===Object.prototype);return {status:response.status,value};
 }
-export function createPoolNativeTransport({accessToken,getAuthority,fetchImpl=fetch}){
-  assert.equal(typeof accessToken,'function');const guarded=createAuthorityBoundFetch({fetchImpl,getAuthority});
+export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,fetchImpl=fetch}){
+  assert.equal(typeof accessToken,'function');const p=readOnlyPurposeConfiguration(purpose),JOB=new RegExp('^'+PARENT+'/jobs/'+p.prefix+'[a-z0-9-]+$','u'),resourcePattern=new RegExp('^/jobs/'+p.prefix+'[a-z0-9-]+(?::run|/executions(?:/[a-z0-9-]+)?)?$','u');
+  const scopedAuthority=()=>{const authority=getAuthority();assert.equal(authority?.entry?.scope,purpose,'AUTHORITY_PURPOSE');return authority;};const guarded=createAuthorityBoundFetch({fetchImpl,getAuthority:scopedAuthority});
   async function request(resource,{method='GET',body,query=''}={}){
-    assert(resource==='/jobs'||/^\/jobs\/crm-prod-pool-reconcile-[a-z0-9-]+(?::run|\/executions(?:\/[a-z0-9-]+)?)?$/u.test(resource)||/^\/operations\/[A-Za-z0-9_-]+$/u.test(resource));
+    scopedAuthority();assert(resource==='/jobs'||resourcePattern.test(resource)||/^\/operations\/[A-Za-z0-9_-]+$/u.test(resource));
     assert(['GET','POST'].includes(method));if(method==='POST'){assert(resource==='/jobs'||resource.endsWith(':run'));}else{assert.equal(body,undefined);assert(!resource.endsWith(':run'));}
     const controller=new AbortController();let timer;
     try{
@@ -79,25 +80,31 @@ export function createPoolNativeTransport({accessToken,getAuthority,fetchImpl=fe
   });
 }
 function record(objective,state,extra={}){return {job:objective.jobName,objectiveSha256:objective.objectiveSha256,state,canRetry:false,...extra};}
-export async function dispatchPoolOnce({dossier,stage,authorizeFresh,transport,journal,clock=Date.now}){
-  const target=structuredClone(dossier),e=target.objective;validatePoolObjective(e);assert(['CREATE','RUN'].includes(stage));assert.equal(typeof authorizeFresh,'function');assert.equal(journal.inspect(stage),null,'CONSUMED_INTENT');
+export async function dispatchReadOnlyOnce({dossier,stage,authorizeFresh,transport,journal,clock=Date.now}){
+  const target=structuredClone(dossier),e=target.objective;validateReadOnlyObjective(e);assert(['CREATE','RUN'].includes(stage));assert.equal(typeof authorizeFresh,'function');assert.equal(journal.inspect(stage),null,'CONSUMED_INTENT');
   assert.deepEqual(target.job,{labels:{'crmynov-probe-objective':e.objectiveSha256.slice(0,63)},template:{taskCount:1,parallelism:1,template:e.taskTemplate}},'REVIEWED_CREATE_BODY');
   await authorizeFresh();let job;
-  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validatePoolNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);await transport.listExecutions(e.jobName);}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);await transport.listExecutions(e.jobName);}
   const authority=await authorizeFresh();
-  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{const latest=await transport.getJob(e.jobName);validatePoolNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);assert.equal(latest.executionCount??0,0);assert.equal(latest.latestCreatedExecution,undefined);job=latest;}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);assert.equal(latest.executionCount??0,0);assert.equal(latest.latestCreatedExecution,undefined);job=latest;}
   if(job){assert.equal(typeof job.etag,'string');assert(job.etag.length>0&&job.etag.length<=256);}
   const now=clock();assertAuthorityCurrent(authority,now);const intent=record(e,'INTENT',{at:new Date(now).toISOString(),...(job?{uid:job.uid,etag:job.etag}:{bodySha256:digest(target.job)})});journal.append(stage,intent);
   let operation;try{operation=stage==='CREATE'?await transport.create(e.jobName,target.job):await transport.run(e.jobName,job.etag);}catch{const unknown=record(e,'UNKNOWN');journal.append(stage,unknown);return unknown;}
   if(!OP.test(operation?.name??'')){const unknown=record(e,'UNKNOWN');journal.append(stage,unknown);return unknown;}
   const result=record(e,'OPERATION',{operation:operation.name,responseSha256:digest(operation),...(job?{uid:job.uid,etag:job.etag}:{})});journal.append(stage,result);return result;
 }
-export async function observePoolOperation({objective,stage,transport,journal}){
-  const e=structuredClone(objective);validatePoolObjective(e);const saved=journal.inspect(stage);assert.equal(saved?.state,'OPERATION','ONLY_DURABLY_KNOWN_OPERATION');
+export async function observeReadOnlyOperation({objective,stage,transport,journal}){
+  const e=structuredClone(objective);validateReadOnlyObjective(e);const saved=journal.inspect(stage);assert.equal(saved?.state,'OPERATION','ONLY_DURABLY_KNOWN_OPERATION');
   const operation=await transport.operation(saved.operation);if(operation.done!==true)return record(e,'PENDING');
   if(operation.error){const result=record(e,'FAILED',{operation:saved.operation});journal.append(stage,result);return result;}
-  const job=await transport.getJob(e.jobName);validatePoolNativeJob(job,e);let execution;
+  const job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);let execution;
   if(stage==='CREATE'){assert.equal(operation.response?.name,e.jobName);assert.equal(operation.response.uid,job.uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);}
-  else{assert.equal(job.uid,saved.uid);execution=await transport.execution(operation.response.name,e.jobName);validatePoolNativeExecution(job,execution,e);}
+  else{assert.equal(job.uid,saved.uid);execution=await transport.execution(operation.response.name,e.jobName);validateReadOnlyNativeExecution(job,execution,e);}
   const result=record(e,'RECONCILED',{operation:saved.operation,uid:job.uid,etag:job.etag,...(execution?{execution:execution.name,metadataSha256:digest({job,execution})}:{})});journal.append(stage,result);return result;
 }
+
+
+export function openPoolTransactionJournal(input){assert.equal(input.objective?.purpose,'POOL_RECONCILIATION_READ_ONLY_V1');return openReadOnlyTransactionJournal(input);}
+export function createPoolNativeTransport(options){return createReadOnlyNativeTransport({...options,purpose:'POOL_RECONCILIATION_READ_ONLY_V1'});}
+export async function dispatchPoolOnce(input){assert.equal(input.dossier?.objective?.purpose,'POOL_RECONCILIATION_READ_ONLY_V1');return dispatchReadOnlyOnce(input);}
+export async function observePoolOperation(input){assert.equal(input.objective?.purpose,'POOL_RECONCILIATION_READ_ONLY_V1');return observeReadOnlyOperation(input);}

@@ -24,12 +24,20 @@ The dossier explicitly binds the existing PROD VPC/subnet and
 modifies that network. The runtime URL is the existing versioned secret reference;
 no Cloud SQL socket mount or credential rewrite is introduced for private TCP.
 
-Every mode verifies a separately reviewed objective catalog entry from protected
-develop, exact local driver/source bytes, actual merged driver/objective reviews,
+Every mode verifies a separately approved objective catalog entry from protected
+develop, exact local driver/source bytes, actual protected driver/objective merges,
 delegated decisions and required checks, the RC48 release, a fresh Jira operator
 attestation and a fresh explicit operational authorization. This candidate ships
 no catalog entry, no credentials and no default objective. The catalog is a later
 operational approval, not an equivalent new collector or replacement sampler.
+
+The owner's versioned GitHub code-review policy is loaded from the actual
+protected develop revision, never from local overrides. Missing, Running or stale
+Codex bot summaries are informational, not required approval. Actual unresolved
+conversations/change requests, all technical checks and delegated decisions remain
+mandatory. No bot result is rewritten or falsely reported as clean; see
+`docs/governance/github-code-review-policy.md`. The immutable RC47 executor and
+its own historical authority module are not changed or run by this extension.
 
 `read-output` accepts only the execution recovered from the durable RUN journal.
 It reads the actual job/execution and a bounded Cloud Logging `entries:list` query
@@ -62,3 +70,32 @@ or native acceptance is granted by this candidate, its tests, or a source merge.
 
 The isolated PostgreSQL fixture is entirely synthetic. A local container test is
 not a Cloud Run, official authentication, PROD SQL or business reconciliation test.
+# Explicit readonly purpose extension (source qualification still required)
+
+The same operational driver and single-use transaction journal support only
+`POOL_RECONCILIATION_READ_ONLY_V1`, `GENERAL_PRESERVATION_READ_ONLY_V1` and
+`SCHEMA_LEDGER_READ_ONLY_V1`. Non-pool execution requires an explicit matching
+`--purpose`; there is no default objective. The historical pool APIs remain
+pool-only. The immutable RC47 sampler, its namespace and its image pins are not
+retargeted.
+
+General preservation uses the existing runtime identity. The ledger uses the
+separate existing migrator identity in a READ ONLY transaction; this does not
+grant runtime access to the ledger. Each profile has a fixed job prefix, service
+account and versioned secret reference. Scope is rechecked after token acquisition
+before POST. A missing, mismatched, expired or unmerged authority fails closed.
+
+The non-pool `read-output` mode accepts a private key and output directory, not
+pool reconciliation inputs or a prior pool proof. Its minimized receipt contains
+digests, source/role/job/execution bindings and transaction times, never the raw
+snapshot or private key. Ciphertext and native metadata receipts remain durable.
+`nativeAcceptance`, `fullProductionPreflight`, `schemaCompatibilityProved` and
+`activationAuthorized` remain false. Separate purpose transactions are never
+represented as a common snapshot.
+
+The source/tooling lot must be merged under normal protections before the
+concrete catalogue can name its real driver merge SHA/tree/files. The catalogue
+may refer to its own PR number, but embedding its own driver merge SHA would be
+circular. Local anticipatory integration of a pending candidate is not a
+protected merge. No job, SQL, backup, deployment or activation is authorized by
+this documentation or by local qualification.

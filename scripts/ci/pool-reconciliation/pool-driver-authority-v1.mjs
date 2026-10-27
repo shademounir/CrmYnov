@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {DELEGATED_CHECKS,GRANT_PATH,grantDigest,validateGrant,selectDelegatedDecision,validateDelegatedDecision} from '../../pr-policy/delegation.mjs';
+import {GITHUB_CODE_REVIEW_POLICY_PATH,validateProtectedCodeReviewPolicy,observeOptionalCodexReview} from '../../pr-policy/github-code-review.mjs';
 import {validateRequiredChecks} from '../../release-manifest/checks.mjs';
 import {githubFile,validateOperatorJiraObservation,assertAuthorityCurrent} from '../readonly-probe/probe-driver-authority-v1.mjs';
 import {digest,TRUSTED_INTENT_SHA256} from './controlled-pool-contract-v1.mjs';
@@ -10,11 +11,6 @@ export const POOL_CATALOG='docs/governance/readonly-probe-objectives-v1.json';
 const REPO='shademounir/CrmYnov',BASE='/repos/'+REPO+'/',MAIN='8253024ea35cee6be5636cc6b10a88ae7e177377';
 const HASH=/^[a-f0-9]{64}$/u,SHA=/^[a-f0-9]{40}$/u;
 const byteHash=b=>createHash('sha256').update(b).digest('hex');
-function cleanReview(comments,head){
-  const rows=comments.filter(c=>c.user?.login==='chatgpt-codex-connector[bot]'&&c.user.type==='Bot'&&c.performed_via_github_app?.slug==='chatgpt-codex-connector'&&c.body.includes('<!-- codex-review-state:v1 ')).sort((a,b)=>b.id-a.id);
-  assert(rows.length>0);const state=JSON.parse(rows[0].body.match(/<!-- codex-review-state:v1 (.*?) -->/u)[1]).code_review;
-  assert.equal(state.commit_sha,head);assert.equal(state.status,'completed');assert.equal(state.has_any_findings,false);assert.equal(state.has_unresolved_findings,false);return rows[0].id;
-}
 async function approvedMerge(github,reference,{grant,actor,base}){
   assert(Number.isSafeInteger(reference.pr)&&reference.pr>0);assert(SHA.test(reference.head)&&SHA.test(reference.mergeCommit));
   const pull=await github.get(BASE+'pulls/'+reference.pr);assert.equal(pull.head.sha,reference.head);assert.equal(pull.merge_commit_sha,reference.mergeCommit);assert.equal(pull.base.ref,base);assert.equal(pull.head.repo.full_name,REPO);assert.equal(pull.base.repo.full_name,REPO);assert.equal(pull.merged,true);assert.equal(pull.draft,false);assert.equal(pull.auto_merge,null);assert(grant.authenticatedActors.includes(pull.merged_by.login));
@@ -24,7 +20,8 @@ async function approvedMerge(github,reference,{grant,actor,base}){
   const headGrant=JSON.parse(await githubFile(github,GRANT_PATH,reference.head));assert.equal(grantDigest(headGrant),grantDigest(grant));
   const decision=selectDelegatedDecision(comments,grant.authenticatedActors);
   validateDelegatedDecision({decision,grant,repository:REPO,actor,base,changedFiles:files.map(f=>f.filename),reasons:['production','audited-repository-tooling'],headSha:reference.head,pullRequestNumber:reference.pr,requiredChecks:DELEGATED_CHECKS,checkRuns:checks,mergedAt:pull.merged_at,headGrantDigest:grantDigest(headGrant)});
-  return {pull,files,comments,reviewId:cleanReview(comments,reference.head)};
+  const codeReview=observeOptionalCodexReview(comments,reference.head);
+  return {pull,files,comments,reviewId:codeReview.commentId,codeReview};
 }
 function operationalMarker(comments,actors){
   const prefix='<!-- codex-readonly-probe-objective-authorization:v1';
@@ -43,13 +40,16 @@ function validateFreshMarker(marker,{entry,objectiveId,localSource,jiraBytes,gra
   const jira=validateOperatorJiraObservation(jiraBytes,{expectedSha256:value.jiraObservationSha256,ticket:'CRMY-63',actor,grantSha256:grantDigest(grant),now});
   return {jira,expiresAt:Math.min(expires,issued+600000,Date.parse(jira.observedAt)+600000,Date.parse(entry.expiresAt))};
 }
-export async function authorizePoolDriver({github,objectiveId,dossier,jiraBytes,localSource,action,clock=Date.now}){
+export async function authorizeReadOnlyDriver({github,objectiveId,dossier,jiraBytes,localSource,action,clock=Date.now}){
+  const purpose=dossier?.objective?.purpose;assert(['POOL_RECONCILIATION_READ_ONLY_V1','GENERAL_PRESERVATION_READ_ONLY_V1','SCHEMA_LEDGER_READ_ONLY_V1'].includes(purpose),'EXPLICIT_READONLY_PURPOSE');
   const started=clock();assert(Number.isSafeInteger(started));assert(['VERIFY','CREATE','OBSERVE_CREATE','RUN','OBSERVE_RUN','READ_OUTPUT'].includes(action));assert(/^[a-z0-9][a-z0-9-]{1,80}$/u.test(objectiveId));
   const user=await github.get('/user');assert.equal(user.type,'User');const actor=user.login;
   const branch=await github.get(BASE+'branches/develop'),revision=branch.commit.sha;assert.equal(branch.protected,true);const protection=await github.get(BASE+'branches/develop/protection');assert.equal(protection.enforce_admins.enabled,true);assert.equal(protection.required_status_checks.strict,true);assert(protection.required_status_checks.contexts.includes('pr-policy'));
   const grant=JSON.parse(await githubFile(github,GRANT_PATH,revision));validateGrant(grant,{repository:REPO,actor,base:'develop',reasons:['production','audited-repository-tooling']});assert.equal(grant.id,'crm-ynov-po-delegation-20261001');
+  const reviewPolicyBytes=await githubFile(github,GITHUB_CODE_REVIEW_POLICY_PATH,revision);
+  validateProtectedCodeReviewPolicy(JSON.parse(reviewPolicyBytes),REPO);
   const catalog=JSON.parse(await githubFile(github,POOL_CATALOG,revision));assert.equal(catalog.schemaVersion,1);assert(Array.isArray(catalog.entries)&&catalog.entries.length<=100);const matches=catalog.entries.filter(e=>e.id===objectiveId);assert.equal(matches.length,1,'REVIEWED_POOL_OBJECTIVE_ABSENT');const entry=matches[0];
-  assert.equal(entry.schemaVersion,1);assert.equal(entry.status,'approved');assert.equal(entry.scope,'POOL_RECONCILIATION_READ_ONLY_V1');assert.equal(entry.businessMutation,false);assert.equal(entry.ticket,'CRMY-63');assert(entry.actions.includes(action));assert(started>=Date.parse(entry.validFrom)&&started<Date.parse(entry.expiresAt));assert.equal(entry.dossierSha256,digest(dossier));
+  assert.equal(entry.schemaVersion,1);assert.equal(entry.status,'approved');assert.equal(entry.scope,purpose,'CATALOGUE_PURPOSE');assert.equal(entry.businessMutation,false);assert.equal(entry.ticket,'CRMY-63');assert(entry.actions.includes(action));assert(started>=Date.parse(entry.validFrom)&&started<Date.parse(entry.expiresAt));assert.equal(entry.dossierSha256,digest(dossier));
   assert.equal(entry.originalIntentSha256,TRUSTED_INTENT_SHA256);for(const name of ['independentInputsSha256','humanAuthorityReceiptSha256','journalDirectorySha256'])assert(HASH.test(entry[name]??''));
   await verifySource(github,localSource,entry);
   assert.deepEqual(Object.keys(entry.objectiveReview),['pr']);const objectivePull=await github.get(BASE+'pulls/'+entry.objectiveReview.pr);const objectiveRef={pr:entry.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
@@ -61,5 +61,8 @@ export async function authorizePoolDriver({github,objectiveId,dossier,jiraBytes,
   const release=await github.get(BASE+'releases/tags/v0.1.0-rc.48');assert.equal(release.id,entry.release.releaseId);assert.equal(release.draft,false);assert.equal(release.prerelease,true);const tag=await github.get(BASE+'git/ref/tags/v0.1.0-rc.48');assert.equal(tag.object.type,'commit');assert.equal(tag.object.sha,MAIN);const post=await github.get(BASE+'actions/runs/'+entry.release.postPublishRun);assert.equal(post.head_sha,MAIN);assert.equal(post.status,'completed');assert.equal(post.conclusion,'success');assert.equal(post.event,'release');assert.equal(post.path,'.github/workflows/release-publish.yml');
   const marker=operationalMarker(objective.comments,grant.authenticatedActors),initial=validateFreshMarker(marker,{entry,objectiveId,localSource,jiraBytes,grant,actor,now:started,action});
   assert.equal((await github.get(BASE+'branches/develop')).commit.sha,revision);const now=clock();assert(Number.isSafeInteger(now)&&now>=started&&now-started<60000);const final=validateFreshMarker(marker,{entry,objectiveId,localSource,jiraBytes,grant,actor,now,action});assert(now>=Date.parse(entry.validFrom)&&now<final.expiresAt);assert.equal(final.expiresAt,initial.expiresAt);
-  const result={entry:structuredClone(entry),receipt:{schemaVersion:1,executor:'Codex',actor,authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,dossierSha256:entry.dossierSha256,catalogEntrySha256:digest(entry),driverCommit:localSource.commit,driverReviewId:driver.reviewId,objectiveReviewId:objective.reviewId,operationalCommentId:marker.comment.id,jiraObservedAt:final.jira.observedAt,verifiedAt:new Date(now).toISOString(),expiresAt:new Date(final.expiresAt).toISOString(),businessMutationAuthorized:false}};assertAuthorityCurrent(result,now);return Object.freeze(result);
+  const result={entry:structuredClone(entry),receipt:{schemaVersion:1,executor:'Codex',actor,authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,dossierSha256:entry.dossierSha256,catalogEntrySha256:digest(entry),driverCommit:localSource.commit,driverReviewId:driver.reviewId,objectiveReviewId:objective.reviewId,gitHubCodeReviewRequired:false,codeReviewPolicySha256:byteHash(reviewPolicyBytes),driverCodeReviewObservation:driver.codeReview,objectiveCodeReviewObservation:objective.codeReview,operationalCommentId:marker.comment.id,jiraObservedAt:final.jira.observedAt,verifiedAt:new Date(now).toISOString(),expiresAt:new Date(final.expiresAt).toISOString(),businessMutationAuthorized:false}};assertAuthorityCurrent(result,now);return Object.freeze(result);
 }
+
+
+export async function authorizePoolDriver(input){assert.equal(input.dossier?.objective?.purpose,'POOL_RECONCILIATION_READ_ONLY_V1');return authorizeReadOnlyDriver(input);}
