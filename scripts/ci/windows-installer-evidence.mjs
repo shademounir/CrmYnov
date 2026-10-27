@@ -7,7 +7,7 @@ export const probeSource = 'scripts/telephony-agent/tests/child-exit-semantics.p
 export const guardSource = 'scripts/telephony-agent/tests/windows-fixture-guards.psm1';
 const testSource = 'scripts/telephony-agent/test-installer-transactions.ps1';
 const sourcePaths = [...productionSources, testSource];
-const requiredFiles = [...fixtureRootFiles, ...fixtureCases.flatMap(id => [`${id}.INTENT.json`, `${id}.RESULT.json`])].sort();
+const requiredFiles = [...fixtureRootFiles, ...fixtureCases.flatMap(id => [`${id}.INTENT.json`, `${id}.RESULT.json`])].sort((a,b)=>a.localeCompare(b,'en'));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const demand = (condition, code) => { if (!condition) throw new Error(`WINDOWS_FIXTURE_${code}`); };
 const hashValue = value => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
@@ -20,7 +20,7 @@ function jsonFile(files, name) {
 
 function expectedBinding(expected) {
   demand(/^[a-f0-9]{40}$/u.test(expected.head ?? '') && /^[a-f0-9]{40}$/u.test(expected.tree ?? ''), 'REVISION_INVALID');
-  for (const key of ['runId', 'runAttempt', 'artifactId']) demand(typeof expected[key] === 'string' && /^[1-9][0-9]*$/u.test(expected[key]), 'RUN_OR_ARTIFACT_ID_INVALID');
+  for (const key of ['runId', 'runAttempt', 'artifactId']) demand(typeof expected[key] === 'string' && /^[1-9]\d*$/u.test(expected[key]), 'RUN_OR_ARTIFACT_ID_INVALID');
   for (const key of ['artifactDigest', 'manifestSha256', 'reportSha256']) demand(hashValue(expected[key]), 'EXPECTED_DIGEST_INVALID');
 }
 
@@ -28,9 +28,9 @@ function manifestBinding(manifest, expected, files) {
   demand(manifest.schemaVersion === 1 && manifest.kind === 'WINDOWS_INSTALLER_FIXTURE_EVIDENCE', 'MANIFEST_KIND_INVALID');
   for (const key of ['head', 'tree', 'runId', 'runAttempt']) demand(manifest[key] === expected[key], 'MANIFEST_CONTEXT_MISMATCH');
   demand(Array.isArray(manifest.files) && manifest.files.length === requiredFiles.length, 'MANIFEST_FILES_INVALID');
-  const paths = manifest.files.map(file => file.path).sort();
+  const paths = manifest.files.map(file => file.path).sort((a,b)=>a.localeCompare(b,'en'));
   demand(JSON.stringify(paths) === JSON.stringify(requiredFiles), 'MANIFEST_FILE_SET');
-  demand(JSON.stringify([...files.keys()].sort()) === JSON.stringify([...requiredFiles, 'artifact-manifest.json'].sort()), 'UNLISTED_FILE');
+  demand(JSON.stringify([...files.keys()].sort((a,b)=>a.localeCompare(b,'en'))) === JSON.stringify([...requiredFiles, 'artifact-manifest.json'].sort((a,b)=>a.localeCompare(b,'en'))), 'UNLISTED_FILE');
   let total = 0;
   for (const item of manifest.files) {
     const bytes = files.get(item.path);
@@ -88,7 +88,7 @@ function probeBinding(probe, report, refs) {
   const record = probe.record;
   demand(record?.schemaVersion === 1 && record.status === 'PASS' && record.parentContinued === true && record.childExitCode === 0, 'PROBE_NOT_PASS');
   demand(Number.isSafeInteger(record.childBreakpointHits) && record.childBreakpointHits > 0 && record.installerExecuted === false && record.registryOrSdkUsed === false, 'PROBE_SCOPE');
-  demand(typeof record.powerShellVersion === 'string' && /^5\.1\./u.test(record.powerShellVersion) && record.powerShellVersion === report.interpreterVersionObserved, 'INTERPRETER_VERSION');
+  demand(typeof record.powerShellVersion === 'string' && record.powerShellVersion.startsWith('5.1.') && record.powerShellVersion === report.interpreterVersionObserved, 'INTERPRETER_VERSION');
   for (const role of ['EXIT_PROBE_SOURCE', 'POWERSHELL_INTERPRETER']) {
     const reference = refs.get(role);
     const key = reference.path.replaceAll('/', '\\').toLowerCase();

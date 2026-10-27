@@ -33,15 +33,15 @@ function Assert-HostedContext {
     Require ($env:GITHUB_RUN_ID -cmatch '^[1-9][0-9]{0,19}$' -and $env:GITHUB_RUN_ATTEMPT -cmatch '^[1-9][0-9]{0,5}$') 'RUN_IDENTITY_INVALID'
     Require ($PSVersionTable.PSVersion.Major -eq 5 -and $PSVersionTable.PSVersion.Minor -eq 1) 'WINDOWS_POWERSHELL51_REQUIRED'
     Require ($ExpectedHead -cmatch '^[a-f0-9]{40}$' -and $ExpectedTree -cmatch '^[a-f0-9]{40}$') 'EXPECTED_SOURCE_INVALID'
-    $event=Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json
+    $githubEvent=Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw|ConvertFrom-Json
     if($env:GITHUB_EVENT_NAME -ceq 'pull_request'){
-        Require (-not $event.pull_request.head.repo.fork) 'FORK_REFUSED'
-        Require ($event.pull_request.head.repo.full_name -ceq $env:GITHUB_REPOSITORY -and $event.pull_request.base.repo.full_name -ceq $env:GITHUB_REPOSITORY) 'PR_REPOSITORY_MISMATCH'
-        Require ($event.pull_request.head.sha -ceq $ExpectedHead -and $event.pull_request.base.ref -cin @('develop','main')) 'PR_SOURCE_MISMATCH'
+        Require (-not $githubEvent.pull_request.head.repo.fork) 'FORK_REFUSED'
+        Require ($githubEvent.pull_request.head.repo.full_name -ceq $env:GITHUB_REPOSITORY -and $githubEvent.pull_request.base.repo.full_name -ceq $env:GITHUB_REPOSITORY) 'PR_REPOSITORY_MISMATCH'
+        Require ($githubEvent.pull_request.head.sha -ceq $ExpectedHead -and $githubEvent.pull_request.base.ref -cin @('develop','main')) 'PR_SOURCE_MISMATCH'
     }else{
-        Require ($env:GITHUB_REF -ceq 'refs/heads/main' -and $event.ref -ceq 'refs/heads/main') 'PUSH_REF_REFUSED'
-        Require ($event.after -ceq $ExpectedHead -and $env:GITHUB_SHA -ceq $ExpectedHead -and $ExpectedHead -cne ('0'*40) -and -not $event.deleted) 'PUSH_SOURCE_MISMATCH'
-        Require ($event.repository.full_name -ceq $env:GITHUB_REPOSITORY -and $event.repository.owner.login -ceq 'shademounir') 'PUSH_REPOSITORY_MISMATCH'
+        Require ($env:GITHUB_REF -ceq 'refs/heads/main' -and $githubEvent.ref -ceq 'refs/heads/main') 'PUSH_REF_REFUSED'
+        Require ($githubEvent.after -ceq $ExpectedHead -and $env:GITHUB_SHA -ceq $ExpectedHead -and $ExpectedHead -cne ('0'*40) -and -not $githubEvent.deleted) 'PUSH_SOURCE_MISMATCH'
+        Require ($githubEvent.repository.full_name -ceq $env:GITHUB_REPOSITORY -and $githubEvent.repository.owner.login -ceq 'shademounir') 'PUSH_REPOSITORY_MISMATCH'
     }
 }
 function Assert-NoReparse([string]$Path){
@@ -88,9 +88,9 @@ $probeWrapper=Get-Content -LiteralPath $ExitProbeEvidence -Raw|ConvertFrom-Json
 Require ($probeWrapper.sourceAndInterpreterBeforeAfterVerified -eq $true) 'BOUND_PROBE_EVIDENCE_REQUIRED'
 foreach($role in @('EXIT_PROBE_SOURCE','POWERSHELL_INTERPRETER')){
     $expected=@($inputReferences|Where-Object{$_.role -ceq $role})[0]
-    $matches=@($probeWrapper.references|Where-Object{[IO.Path]::GetFullPath($_.path) -ieq $expected.path})
-    Require ($matches.Count -gt 0) 'PROBE_REFERENCE_MISSING'
-    foreach($match in $matches){Require ($match.sha256 -ceq $expected.sha256Before) 'PROBE_REFERENCE_HASH_MISMATCH'}
+    $boundProbeReferences=@($probeWrapper.references|Where-Object{[IO.Path]::GetFullPath($_.path) -ieq $expected.path})
+    Require ($boundProbeReferences.Count -gt 0) 'PROBE_REFERENCE_MISSING'
+    foreach($match in $boundProbeReferences){Require ($match.sha256 -ceq $expected.sha256Before) 'PROBE_REFERENCE_HASH_MISMATCH'}
 }
 $probe=$probeWrapper.record
 Require ($probe.schemaVersion -eq 1 -and $probe.status -ceq 'PASS' -and $probe.parentContinued -and $probe.childBreakpointHits -gt 0 -and $probe.childExitCode -eq 0 -and $probe.powerShellVersion -ceq $PSVersionTable.PSVersion.ToString()) 'EXIT_PROBE_REQUIRED'

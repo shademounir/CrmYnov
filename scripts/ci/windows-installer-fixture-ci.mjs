@@ -13,13 +13,13 @@ export const fixtureCaseIds=Object.freeze(['fresh-off','upgrade-off','rollback-o
 export const probeSourcePath='scripts/telephony-agent/tests/child-exit-semantics.ps1';
 const harnessPath='scripts/telephony-agent/tests/windows-installer.integration.ps1';
 const guardPath='scripts/telephony-agent/tests/windows-fixture-guards.psm1';
-const interpreter='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const modulePath='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
-const frameworkRoot='C:\\Program Files\\WindowsPowerShell\\Modules\\Pester\\3.4.0';
+const interpreter=String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
+const modulePath=String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\Modules`;
+const frameworkRoot=String.raw`C:\Program Files\WindowsPowerShell\Modules\Pester\3.4.0`;
 const w=path.win32,digest=b=>createHash('sha256').update(b).digest('hex');
 const requireValue=(ok,code)=>{if(!ok)throw new Error('WINDOWS_FIXTURE_'+code);};
 const sha40=v=>typeof v==='string'&&/^[a-f0-9]{40}$/u.test(v)&&v!=='0'.repeat(40);
-const identity=v=>typeof v==='string'&&/^[1-9][0-9]{0,19}$/u.test(v);
+const identity=v=>typeof v==='string'&&/^[1-9]\d{0,19}$/u.test(v);
 
 /** Validates recorded facts only; NOT authentication of a GitHub runner. */
 export function selectFixtureContext(facts){
@@ -53,7 +53,9 @@ function hashFile(io,file){return digest(io.read(file));}
 function nativeStep(io,plan,id,script,args,timeoutMs){
   io.writeNew(w.join(plan.work,id+'.INTENT.json'),jsonBytes({id,status:'INTENT_ONLY_OUTCOME_UNKNOWN_UNTIL_RESULT',script,timeoutMs,retry:0}));
   let result;try{result=io.invokePowerShell(script,args,timeoutMs);}catch{throw new Error('WINDOWS_FIXTURE_CHILD_UNKNOWN_NO_RETRY');}
-  const status=result?.errorCode||result?.signal?'UNKNOWN':result?.exitCode===0?'PASS':'FAILED';
+  let status='FAILED';
+  if(result?.errorCode||result?.signal){status='UNKNOWN';}
+  else if(result?.exitCode===0){status='PASS';}
   io.writeNew(w.join(plan.work,id+'.RESULT.json'),jsonBytes({id,status,exitCode:result?.exitCode??null,signalPresent:Boolean(result?.signal),childMayStillBeRunning:status==='UNKNOWN',cleanupAttempted:false,retry:0}));
   requireValue(status==='PASS',status==='UNKNOWN'?'CHILD_UNKNOWN_NO_RETRY':'CHILD_FAILED_NO_RETRY');
 }
@@ -82,6 +84,26 @@ function originsFor(plan){
   const origins={'coverage-evidence.json':w.join(plan.harness,'coverage-evidence.json'),'source-manifest.json':w.join(plan.work,'source-manifest.json'),'probe-evidence.json':w.join(plan.work,'probe-evidence.json'),'framework-provenance.json':w.join(plan.harness,'framework-provenance.json'),'FIXTURE-INTENT.json':w.join(plan.harness,'FIXTURE-INTENT.json')};
   for(const id of fixtureCaseIds)for(const suffix of ['INTENT','RESULT'])origins[id+'.'+suffix+'.json']=w.join(plan.harness,id+'.'+suffix+'.json');
   return origins;
+}
+function retainFailureMetadata(io,plan){
+  const retained=[];let metadataExportRefusals=0;
+  for(const [name,from] of Object.entries(originsFor(plan))){
+    if(io.exists(from)&&!io.exists(w.join(plan.staging,name))){
+      try{copyJson(io,from,w.join(plan.staging,name));retained.push(name);}
+      catch{metadataExportRefusals++;}
+    }else if(io.exists(w.join(plan.staging,name))){retained.push(name);}
+  }
+  return{retained,metadataExportRefusals};
+}
+function completedArtifact(io,plan,context){
+  const origins=originsFor(plan);
+  requireValue(Object.keys(origins).length===rootFiles.length+fixtureCaseIds.length*2,'ARTIFACT_INVENTORY');
+  for(const id of fixtureCaseIds){
+    const intent=requiredJson(io,origins[id+'.INTENT.json']),result=requiredJson(io,origins[id+'.RESULT.json']);
+    requireValue(intent.id===id&&intent.head===context.head&&intent.status==='INTENT_ONLY_OUTCOME_UNKNOWN_UNTIL_RESULT'&&result.id===id&&result.status==='PASS'&&result.installerLeaseReleased===true,'CASE_ARTIFACT');
+  }
+  for(const [name,from] of Object.entries(origins))copyJson(io,from,w.join(plan.staging,name));
+  return{manifestSha:artifactManifest(context,io,plan.staging,Object.keys(origins)),reportSha:hashFile(io,w.join(plan.staging,'coverage-evidence.json'))};
 }
 
 /** IO is injected for pure unit tests. Actual CLI supplies only closed native IO. */
@@ -115,15 +137,7 @@ export function produceFixtureEvidence(context,io,nonce){
     requireValue(canonicalFramework(frameworkBefore)===canonicalFramework(io.frameworkSnapshot())&&canonicalFramework(framework.files)===canonicalFramework(frameworkBefore),'FRAMEWORK_CHANGED');
     requireValue(boundPaths.every((file,index)=>hashFile(io,file)===sourceHashes[index]),'SOURCE_BYTES_CHANGED');
     io.assertCheckout(context);
-    const origins=originsFor(plan);
-    requireValue(Object.keys(origins).length===rootFiles.length+fixtureCaseIds.length*2,'ARTIFACT_INVENTORY');
-    for(const id of fixtureCaseIds){
-      const intent=requiredJson(io,origins[id+'.INTENT.json']),result=requiredJson(io,origins[id+'.RESULT.json']);
-      requireValue(intent.id===id&&intent.head===context.head&&intent.status==='INTENT_ONLY_OUTCOME_UNKNOWN_UNTIL_RESULT'&&result.id===id&&result.status==='PASS'&&result.installerLeaseReleased===true,'CASE_ARTIFACT');
-    }
-    for(const [name,from] of Object.entries(origins))copyJson(io,from,w.join(plan.staging,name));
-    const manifestSha=artifactManifest(context,io,plan.staging,Object.keys(origins));
-    const reportSha=hashFile(io,w.join(plan.staging,'coverage-evidence.json'));
+    const {manifestSha,reportSha}=completedArtifact(io,plan,context);
     io.outputs({'report-sha256':reportSha,'manifest-sha256':manifestSha});
     io.writeNew(w.join(plan.work,'PRODUCER-RESULT.json'),jsonBytes({status:'PASS',head:context.head,tree:context.tree,runId:context.runId,runAttempt:context.runAttempt,reportSha256:reportSha,manifestSha256:manifestSha,nativeOrGithubIdentityAuthenticatedByProducer:false}));
     return{staging:plan.staging,head:context.head,tree:context.tree,reportSha256:reportSha,manifestSha256:manifestSha};
@@ -132,11 +146,7 @@ export function produceFixtureEvidence(context,io,nonce){
     // RESULT remains UNKNOWN. Even if timeouts signal an owned child, its stop
     // and installed state are not thereby proven; the VM must be reconciled.
     const code=error instanceof Error&&/^WINDOWS_FIXTURE_[A-Z0-9_]+$/u.test(error.message)?error.message:'WINDOWS_FIXTURE_IO_FAILURE_NO_RETRY';
-    const retained=[];let metadataExportRefusals=0;
-    for(const [name,from] of Object.entries(originsFor(plan))){
-      if(io.exists(from)&&!io.exists(w.join(plan.staging,name))){try{copyJson(io,from,w.join(plan.staging,name));retained.push(name);}catch{metadataExportRefusals++;}}
-      else if(io.exists(w.join(plan.staging,name))){retained.push(name);}
-    }
+    const {retained,metadataExportRefusals}=retainFailureMetadata(io,plan);
     const diagnostic={status:code.includes('UNKNOWN')?'UNKNOWN':'FAILED',phase,code,head:context.head,tree:context.tree,runId:context.runId,runAttempt:context.runAttempt,cleanupAttempted:false,retry:0,metadataExportRefusals};
     io.writeNew(w.join(plan.staging,'producer-diagnostic.json'),jsonBytes(diagnostic));
     if(!io.exists(w.join(plan.staging,'artifact-manifest.json')))artifactManifest(context,io,plan.staging,[...retained,'producer-diagnostic.json']);
@@ -145,11 +155,25 @@ export function produceFixtureEvidence(context,io,nonce){
 }
 
 function safeFile(file){const stat=fs.lstatSync(file);requireValue(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=16777216,'FILE_BOUND');return fs.readFileSync(file);}
-function ensureAncestors(file){let current=w.resolve(file);while(current){if(fs.existsSync(current))requireValue(!fs.lstatSync(current).isSymbolicLink(),'REPARSE_REFUSED');const parent=w.dirname(current);if(parent===current)break;current=parent;}}
+function ensureAncestors(file){
+  let current=w.resolve(file);
+  while(current){
+    if(fs.existsSync(current)){requireValue(!fs.lstatSync(current).isSymbolicLink(),'REPARSE_REFUSED');}
+    const parent=w.dirname(current);
+    if(parent===current){break;}
+    current=parent;
+  }
+}
 function writeExclusive(file,bytes){ensureAncestors(file);const fd=fs.openSync(file,'wx');try{fs.writeFileSync(fd,bytes);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}
+export function fixedFixtureEnvironment(environment){
+  const env=Object.fromEntries(Object.entries(environment).filter(([key])=>key.toUpperCase()!=='PATH'));
+  env.PATH=String.raw`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows`;
+  return env;
+}
 function nativeIO(context,environment){
   const git='C:/Program Files/Git/cmd/git.exe';
-  function readGit(args){const r=spawnSync(git,['-C',context.workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:environment});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();}
+  const toolEnvironment=fixedFixtureEnvironment(environment);
+  function readGit(args){const r=spawnSync(git,['-C',context.workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:toolEnvironment});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();}
   return{
     frameworkSnapshot:()=>{
       const rows=[];let entries=0;ensureAncestors(frameworkRoot);
@@ -166,7 +190,7 @@ function nativeIO(context,environment){
     assertCheckout:ctx=>{requireValue(readGit(['rev-parse','HEAD'])===ctx.head&&readGit(['rev-parse','HEAD^{tree}'])===ctx.tree&&readGit(['status','--porcelain','--untracked-files=all'])==='','CHECKOUT_CHANGED');},
     outputs:values=>{const output=environment.GITHUB_OUTPUT;requireValue(typeof output==='string'&&w.isAbsolute(output),'GITHUB_OUTPUT_PATH');const relative=w.relative(context.runnerTemp,output);requireValue(relative!==''&&!w.isAbsolute(relative)&&relative.split(w.sep)[0]!=='..','GITHUB_OUTPUT_PATH');ensureAncestors(output);for(const [key,value] of Object.entries(values)){requireValue(['artifact-path','head','tree','report-sha256','manifest-sha256'].includes(key)&&typeof value==='string'&&!/[\r\n\0]/u.test(value),'OUTPUT_VALUE');fs.appendFileSync(output,key+'='+value+'\n');}},
     invokePowerShell:(script,args,timeoutMs)=>{
-      const childEnv={...environment,PSModulePath:modulePath};
+      const childEnv={...toolEnvironment,PSModulePath:modulePath};
       const r=spawnSync(interpreter,['-NoProfile','-File',script,...args],{windowsHide:true,timeout:timeoutMs,maxBuffer:1048576,encoding:'utf8',env:childEnv});
       return{exitCode:r.status,signal:r.signal,errorCode:r.error?.code??null};
     },
@@ -179,7 +203,7 @@ function cli(){
   requireValue(!Object.keys(env).some(k=>/^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG.*)$/iu.test(k)),'GIT_ENV_OVERRIDE');
   const event=JSON.parse(safeFile(env.GITHUB_EVENT_PATH).toString('utf8'));
   const workspace=env.GITHUB_WORKSPACE;requireValue(typeof workspace==='string'&&w.isAbsolute(workspace),'WORKSPACE');
-  const git=args=>{const r=spawnSync('C:/Program Files/Git/cmd/git.exe',['-C',workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();};
+  const git=args=>{const r=spawnSync('C:/Program Files/Git/cmd/git.exe',['-C',workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:fixedFixtureEnvironment(env)});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();};
   const context=selectFixtureContext({platform:process.platform,actions:env.GITHUB_ACTIONS,runnerEnvironment:env.RUNNER_ENVIRONMENT,runnerOs:env.RUNNER_OS,runnerArch:env.RUNNER_ARCH,repository:env.GITHUB_REPOSITORY,owner:env.GITHUB_REPOSITORY_OWNER,actor:env.GITHUB_ACTOR,eventName:env.GITHUB_EVENT_NAME,event,ref:env.GITHUB_REF,workflowSha:env.GITHUB_SHA,runId:env.GITHUB_RUN_ID,runAttempt:env.GITHUB_RUN_ATTEMPT,workspace,runnerTemp:env.RUNNER_TEMP,checkoutHead:git(['rev-parse','HEAD']),tree:git(['rev-parse','HEAD^{tree}'])});
   produceFixtureEvidence(context,nativeIO(context,env),randomUUID().replaceAll('-',''));
 }

@@ -1,15 +1,17 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-const read=p=>readFileSync(new URL('../../../'+p,import.meta.url),'utf8');
+const read=p=>readFileSync(new URL('../../../'+p,import.meta.url),'utf8').replaceAll('\r\n','\n');
 test('draft fixture refuses local/self-hosted/forks before any native fixture mutation',()=>{
  const source=read('scripts/telephony-agent/tests/windows-installer.integration.ps1');
  for(const marker of ['HOSTED_ACTIONS_REQUIRED','SELF_HOSTED_OR_LOCAL_REFUSED','WINDOWS_X64_REQUIRED','ACTOR_OR_EVENT_REFUSED','FORK_REFUSED','SOURCE_HASH_MISMATCH','EXIT_PROBE_REQUIRED','PREEXISTING_PRODUCT_REFUSED','PREEXISTING_SHORTCUT_REFUSED','PREEXISTING_PROTOCOL_REFUSED','PREEXISTING_REGISTRATION_REFUSED','PREEXISTING_STARTUP_REFUSED'])assert(source.includes(marker));
- assert(source.indexOf('Assert-HostedContext\n')<source.indexOf('[IO.Directory]::CreateDirectory($out)'));
+ const guardOffset=source.indexOf('Assert-HostedContext\n'),effectOffset=source.indexOf('[IO.Directory]::CreateDirectory($out)');
+ assert(guardOffset>=0&&effectOffset>guardOffset);
  assert.doesNotMatch(source,/-ExecutionPolicy\s+Bypass|Set-ExecutionPolicy|Unblock-File|Start-Process|Invoke-Expression|Remove-Item|Kill\(/iu);
  assert.match(source,/Version=\$Version;NoLaunch=\$true/u);assert.match(source,/SYNTHETIC-INERT-NEVER-EXECUTE/u);
 });
 test('trusted PR and strict main-push contexts retain recorded run identity',()=>{
  const source=read('scripts/telephony-agent/tests/windows-installer.integration.ps1');
- for(const marker of ["@('develop','main')","refs/heads/main",'$event.after','$env:GITHUB_SHA','$env:GITHUB_RUN_ID','$env:GITHUB_RUN_ATTEMPT'])assert(source.includes(marker),marker);
+ for(const marker of ["@('develop','main')","refs/heads/main",'$githubEvent.after','$env:GITHUB_SHA','$env:GITHUB_RUN_ID','$env:GITHUB_RUN_ATTEMPT'])assert(source.includes(marker),marker);
+ assert.doesNotMatch(source,/\$(?:event|matches)\s*=/iu);
  assert.doesNotMatch(source,/fix\/CRMY-183-desktop-ui-recovery/u);
 });
 test('startup absence is decided by actual pure name inventory guard, not nullable data',()=>{

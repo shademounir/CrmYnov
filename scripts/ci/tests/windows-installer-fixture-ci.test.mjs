@@ -2,10 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {fixtureSourcePaths,fixtureCaseIds,probeSourcePath,selectFixtureContext,fixturePaths,produceFixtureEvidence} from '../windows-installer-fixture-ci.mjs';
+import {fixtureSourcePaths,fixtureCaseIds,probeSourcePath,selectFixtureContext,fixturePaths,produceFixtureEvidence,fixedFixtureEnvironment} from '../windows-installer-fixture-ci.mjs';
 import {verifyWindowsFixtureArtifact} from '../windows-installer-evidence.mjs';
 const w=path.win32,h=b=>createHash('sha256').update(b).digest('hex'),bytes=v=>Buffer.from(JSON.stringify(v,null,2)+'\n');
 const head='a'.repeat(40),tree='b'.repeat(40),nonce='1'.repeat(32);
+test('native fixture tools use only fixed system PATH directories without mutating the caller',()=>{
+  const original={Path:'C:/synthetic-user-writable',PATH:'C:/synthetic-other',GITHUB_OUTPUT:'C:/synthetic-temp/output',SYNTHETIC_KEEP:'kept'};
+  const before={...original},actual=fixedFixtureEnvironment(original);
+  assert.deepEqual(original,before);
+  assert.deepEqual(Object.keys(actual).filter(k=>k.toUpperCase()==='PATH'),['PATH']);
+  assert.equal(actual.PATH,String.raw`C:\Program Files\Git\cmd;C:\Windows\System32;C:\Windows`);
+  assert.equal(actual.GITHUB_OUTPUT,original.GITHUB_OUTPUT);assert.equal(actual.SYNTHETIC_KEEP,'kept');
+});
 function facts(){return{platform:'win32',actions:'true',runnerEnvironment:'github-hosted',runnerOs:'Windows',runnerArch:'X64',repository:'shademounir/CrmYnov',owner:'shademounir',actor:'shademounir',eventName:'pull_request',event:{pull_request:{head:{sha:head,repo:{fork:false,full_name:'shademounir/CrmYnov'}},base:{ref:'develop',repo:{full_name:'shademounir/CrmYnov'}}}},ref:'refs/pull/244/merge',workflowSha:'c'.repeat(40),runId:'123',runAttempt:'2',workspace:'C:\\synthetic\\repo',runnerTemp:'C:\\synthetic\\temp',checkoutHead:head,tree};}
 function fakeIO(context,mode={}){
   // Pure in-memory protocol model. Never spawn a process, fake process.env,

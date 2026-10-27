@@ -127,7 +127,11 @@ export function convertPowerShellCoverage(report, readSource) {
   const aliases = new Map();
   for (const observation of report.observations) addObservation(observation, inventories, aliases);
   const files = productionSources.map(source => productionFile(inventories.get(source)));
-  const xmlFiles = files.map(file => `  <file path="${file.path}">\n${file.lines.map(line => `    <lineToCover lineNumber="${line.line}" covered="${line.covered}"/>`).join('\n')}\n  </file>`);
+  const lineXml = line => `    <lineToCover lineNumber="${line.line}" covered="${line.covered}"/>`;
+  const xmlFiles = files.map(file => {
+    const lines = file.lines.map(lineXml).join('\n');
+    return `  <file path="${file.path}">\n${lines}\n  </file>`;
+  });
   return {
     xml: `<coverage version="1">\n${xmlFiles.join('\n')}\n</coverage>\n`,
     head: report.head,
