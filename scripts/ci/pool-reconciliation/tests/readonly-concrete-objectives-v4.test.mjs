@@ -1,11 +1,11 @@
-// Current catalogue source contract only; protected driver is real, native execution is not inferred.
+// Historical protected255 catalogue targets driver254; raw catalogue and source proofs remain strict.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
 const root=new URL('../../../../',import.meta.url);
-const current=JSON.parse(fs.readFileSync(new URL('docs/governance/readonly-probe-objectives-v1.json',root)));
+const current=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-255-20261027.json',root)));
 const historical=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-253-20261027.json',root)));
 const sha256=b=>createHash('sha256').update(b).digest('hex');
 const expectedDriver={"pr":254,"head":"e99bdaac953c3be3df6ea0c0dc8768e6d9ed56b4","mergeCommit":"c417a947a2e1d183ad645a745b211c2a620b8add","tree":"ee6b0ad3e9ea0a01d0030fec0642d44f27ba452a"};
