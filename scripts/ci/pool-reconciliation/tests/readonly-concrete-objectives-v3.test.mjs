@@ -1,4 +1,4 @@
-// Historical protected253 catalogue targets driver252, not this unprotected corrected candidate.
+// Historical protected253 catalogue targets driver252; exact fixture retained separately from current catalogue.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
 import {classifyApprovalMode} from '../../../pr-policy/policy.mjs';
 const root=new URL('../../../../',import.meta.url);
-const current=JSON.parse(fs.readFileSync(new URL('docs/governance/readonly-probe-objectives-v1.json',root)));
+const current=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-253-20261027.json',root)));
 const historical=JSON.parse(fs.readFileSync(new URL("scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-250-20261027.json",root)));
 const sha256=b=>createHash('sha256').update(b).digest('hex');
 const expectedDriver={"pr":252,"head":"1c53113eb7b29bd13a5bbfeb5f92ff25bb399dc2","mergeCommit":"3ea1484fe77f6a3d5078af947dc5bd15986f846a","tree":"437b33a97a63c780b73bfafbbc645e2f16990215"},expectedFilesSha256="b98133897bef715f2ee94fde6bf5f98f2ff1627ccd482ef0914e546a4583c056";
