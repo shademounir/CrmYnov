@@ -94,6 +94,26 @@ foreach($terminal in @('COMMITTED','RESTORED')){Assert-AgentRecoveryTerminal ('a
 foreach($unknown in @('PENDING','RESTORING','FAILED','','committed')){Refuses {Assert-AgentRecoveryTerminal ('a'*32) $unknown} 'INSTALLER_RECOVERY_PENDING'}
 Refuses {Assert-AgentRecoveryTerminal 'ambiguous' 'COMMITTED'} 'INSTALLER_RECOVERY_PENDING'
 function Copy-MemoryObject($Value) { return ($Value | ConvertTo-Json -Depth 12 -Compress | ConvertFrom-Json) }
+function Remove-MemoryDeletionFile($State, $Entry) {
+    $State.Events.Add('file:'+ $Entry.path)
+    $State.Boundary++
+    if($State.At -eq $State.Boundary -and -not $State.After){throw 'SYNTHETIC_INTERRUPT'}
+    $current=@($State.Files|Where-Object{$_.path -ceq $Entry.path})
+    if($current.Count -gt 0){
+        $State.FileHashes++
+        if($current[0].sha256 -cne $Entry.sha256 -or $current[0].bytes -ne $Entry.bytes){throw 'INSTALLER_UNINSTALL_REMAINING_DRIFT'}
+    }
+    $State.Files=@($State.Files|Where-Object{$_.path -cne $Entry.path})
+    if($State.At -eq $State.Boundary -and $State.After){throw 'SYNTHETIC_INTERRUPT'}
+}
+function Remove-MemoryDeletionDirectory($State, $Path) {
+    $State.Events.Add('dir:'+ $Path)
+    $State.Boundary++
+    if($State.At -eq $State.Boundary -and -not $State.After){throw 'SYNTHETIC_INTERRUPT'}
+    if(@($State.Files|Where-Object{$_.path.StartsWith($Path+'/')}).Count -gt 0 -or @($State.Dirs|Where-Object{$_.StartsWith($Path+'/')}).Count -gt 0){throw 'SYNTHETIC_NOT_EMPTY'}
+    $State.Dirs=@($State.Dirs|Where-Object{$_ -cne $Path})
+    if($State.At -eq $State.Boundary -and $State.After){throw 'SYNTHETIC_INTERRUPT'}
+}
 function MemoryDeletion {
     $r='C:\synthetic\product'
     $files=@(
@@ -112,8 +132,8 @@ function MemoryDeletion {
         PersistPlan={param($p) $s.Events.Add('persist');if($s.Fail -eq 'Persist'){throw 'SYNTHETIC_PERSIST'};$s.Plan=Copy-MemoryObject $p;if($s.Fail -eq 'ReadBack'){$s.Plan.files[0].bytes=999} }.GetNewClosure()
         Observe={ $s.Events.Add('observe');$s.GlobalHashes+=$s.Files.Count;if($s.Reparse){throw 'INSTALLER_REPARSE_REFUSED'};return [pscustomobject]@{root=$s.Root;files=@($s.Files);directories=@($s.Dirs)} }.GetNewClosure()
         InspectStructure={ $s.Events.Add('inspect');$s.InspectCalls++;if($s.Reparse){throw 'INSTALLER_REPARSE_REFUSED'};return [pscustomobject]@{root=$s.Root;files=@($s.Files|ForEach-Object{[pscustomobject]@{path=$_.path;bytes=$_.bytes}});directories=@($s.Dirs)} }.GetNewClosure()
-        DeleteFile={param($entry) $s.Events.Add('file:'+ $entry.path);$s.Boundary++;if($s.At -eq $s.Boundary -and -not $s.After){throw 'SYNTHETIC_INTERRUPT'};$current=@($s.Files|Where-Object{$_.path -ceq $entry.path});if($current.Count -gt 0){$s.FileHashes++;if($current[0].sha256 -cne $entry.sha256 -or $current[0].bytes -ne $entry.bytes){throw 'INSTALLER_UNINSTALL_REMAINING_DRIFT'}};$s.Files=@($s.Files|Where-Object{$_.path -cne $entry.path});if($s.At -eq $s.Boundary -and $s.After){throw 'SYNTHETIC_INTERRUPT'} }.GetNewClosure()
-        DeleteDirectory={param($path) $s.Events.Add('dir:'+ $path);$s.Boundary++;if($s.At -eq $s.Boundary -and -not $s.After){throw 'SYNTHETIC_INTERRUPT'};if(@($s.Files|Where-Object{$_.path.StartsWith($path+'/')}).Count -gt 0 -or @($s.Dirs|Where-Object{$_.StartsWith($path+'/')}).Count -gt 0){throw 'SYNTHETIC_NOT_EMPTY'};$s.Dirs=@($s.Dirs|Where-Object{$_ -cne $path});if($s.At -eq $s.Boundary -and $s.After){throw 'SYNTHETIC_INTERRUPT'} }.GetNewClosure()
+        DeleteFile={param($entry) Remove-MemoryDeletionFile $s $entry }.GetNewClosure()
+        DeleteDirectory={param($path) Remove-MemoryDeletionDirectory $s $path }.GetNewClosure()
     }
     return @{State=$s;Effects=$effects}
 }
