@@ -11,7 +11,8 @@ export const POOL_IMAGE='europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-yno
 const ROOT='projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/';
 const H=/^[a-f0-9]{64}$/u;
 function time(value){const n=Date.parse(value);assert(Number.isFinite(n),'NATIVE_TIME');return n;}
-function normalizedTask(task){const value=structuredClone(task);value.maxRetries??=0;value.containers[0].resources.limits.cpu='1000m';return value;}
+function normalizedTask(task){const value=structuredClone(task);assert(['1','1000m'].includes(value.containers?.[0]?.resources?.limits?.cpu),'REVIEWED_NATIVE_CPU_REQUIRED');value.maxRetries??=0;value.containers[0].resources.limits.cpu='1000m';return value;}
+export function poolPrivateNetwork(){return {egress:'PRIVATE_RANGES_ONLY',networkInterfaces:[{network:'projects/crmynov-prod-n7x4q2/global/networks/crm-ynov-prod',subnetwork:'projects/crmynov-prod-n7x4q2/regions/europe-west1/subnetworks/crm-ynov-prod-run-ew1'}]};}
 export function validatePoolObjective(objective){
   assert.equal(objective.schemaVersion,1);assert.equal(objective.purpose,'POOL_RECONCILIATION_READ_ONLY_V1');
   assert.equal(objective.main,'8253024ea35cee6be5636cc6b10a88ae7e177377');assert.equal(objective.image,POOL_IMAGE);
@@ -23,14 +24,16 @@ export function validatePoolObjective(objective){
   assert.equal(task.serviceAccount,objective.serviceAccount);assert.equal(task.maxRetries,0);assert.equal(task.timeout,'120s');assert.equal(task.executionEnvironment,'EXECUTION_ENVIRONMENT_GEN2');assert.equal(task.containers.length,1);
   assert(Object.keys(task).every(k=>['containers','volumes','vpcAccess','maxRetries','timeout','serviceAccount','executionEnvironment'].includes(k)));
   assert(Object.keys(c).every(k=>['image','command','args','env','resources','volumeMounts'].includes(k)));
+  assert.deepEqual(task.vpcAccess,poolPrivateNetwork(),'EXISTING_PRIVATE_NETWORK_REQUIRED');
+  assert.equal(task.volumes,undefined);assert.equal(c.volumeMounts,undefined);
   assert.equal(c.image,POOL_IMAGE);assert.deepEqual(c.command,['/nodejs/bin/node']);assert.equal(c.args.length,3);assert.deepEqual(c.args.slice(0,2),['--input-type=module','--eval']);assert.equal(c.args[2],POOL_BOOTSTRAP);assert.equal(hashBytes(c.args[2]),objective.bootstrapSha256);
   assert.equal(c.resources.limits.memory,'512Mi');assert(['1','1000m'].includes(c.resources.limits.cpu));
-  assert.deepEqual(Object.keys(c.resources),['limits']);assert.deepEqual(Object.keys(c.resources.limits).sort(),['cpu','memory']);
+  assert.deepEqual(Object.keys(c.resources),['limits']);assert.deepEqual(Object.keys(c.resources.limits).sort((a,b)=>a.localeCompare(b,'en')),['cpu','memory']);
   const env=Object.fromEntries(c.env.map(e=>[e.name,e]));assert.equal(c.env.length,4);assert.equal(Object.keys(env).length,4);
-  assert.deepEqual(Object.keys(env).sort(),['CRM_POOL_BUNDLE_BASE64','CRM_POOL_BUNDLE_SHA256','DATABASE_URL','GOOGLE_CLOUD_PROJECT']);
+  assert.deepEqual(Object.keys(env).sort((a,b)=>a.localeCompare(b,'en')),['CRM_POOL_BUNDLE_BASE64','CRM_POOL_BUNDLE_SHA256','DATABASE_URL','GOOGLE_CLOUD_PROJECT']);
   assert.deepEqual(env.GOOGLE_CLOUD_PROJECT,{name:'GOOGLE_CLOUD_PROJECT',value:'crmynov-prod-n7x4q2'});
   assert.deepEqual(env.DATABASE_URL,{name:'DATABASE_URL',valueSource:{secretKeyRef:objective.databaseSecretRef}});
-  assert.equal(objective.databaseSecretRef.secret,'crm-prod-runtime-database-url');assert(/^[1-9][0-9]*$/u.test(objective.databaseSecretRef.version));
+  assert.equal(objective.databaseSecretRef.secret,'crm-prod-runtime-database-url');assert(/^[1-9]\d*$/u.test(objective.databaseSecretRef.version));
   assert.deepEqual(env.CRM_POOL_BUNDLE_SHA256,{name:'CRM_POOL_BUNDLE_SHA256',value:objective.bundleSha256});
   const encoded=env.CRM_POOL_BUNDLE_BASE64.value;assert.equal(typeof encoded,'string');assert(encoded.length<=32768);const bytes=Buffer.from(encoded,'base64');assert.equal(bytes.toString('base64'),encoded);assert.equal(hashBytes(bytes),objective.bundleSha256);
   assert.equal(digest(normalizedTask(task)),objective.taskTemplateSha256);time(objective.intentAt);return objective;

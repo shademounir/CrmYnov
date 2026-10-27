@@ -8,7 +8,7 @@ import {QUERY_CONTRACT_SHA256} from '../pool-read-only-collector-v1.mjs';
 import {sealPoolOutput,openSealedPoolOutput,publicKeyFingerprint,hashBytes} from '../pool-sealed-output-v1.mjs';
 import {executePoolWithClient,poolDatabaseBinding,validatePoolRuntimeBundle} from '../pool-runtime-entry-v1.mjs';
 import {buildPoolRuntimeBundle} from '../pool-runtime-bundle-v1.mjs';
-import {POOL_IMAGE,validatePoolObjective,validatePoolNativeJob,verifyPoolOutputClaims,poolOutputReadRequests} from '../pool-native-output-v1.mjs';
+import {POOL_IMAGE,validatePoolObjective,validatePoolNativeJob,verifyPoolOutputClaims,poolOutputReadRequests,poolPrivateNetwork} from '../pool-native-output-v1.mjs';
 const keys=generateKeyPairSync('rsa',{modulusLength:3072,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
 const clone=structuredClone;
 const request={schemaVersion:1,purpose:'POOL_RECONCILIATION_READ_ONLY_V1',phase:'PRE',campusId:'00000000-0000-0000-0000-000000000001',campaignId:'00000000-0000-0000-0000-000000000002',queryContractSha256:QUERY_CONTRACT_SHA256};
@@ -20,6 +20,7 @@ const context={purpose:request.purpose,phase:'PRE',job:'projects/crmynov-prod-n7
 export {sources,request,jobName,env,transport,keys,context};
 function fixture(){
   const task={serviceAccount:'crm-prod-api@crmynov-prod-n7x4q2.iam.gserviceaccount.com',maxRetries:0,timeout:'120s',executionEnvironment:'EXECUTION_ENVIRONMENT_GEN2',containers:[{image:POOL_IMAGE,command:['/nodejs/bin/node'],args:['--input-type=module','--eval',transport.bootstrap],resources:{limits:{cpu:'1',memory:'512Mi'}},env:[{name:'GOOGLE_CLOUD_PROJECT',value:'crmynov-prod-n7x4q2'},{name:'DATABASE_URL',valueSource:{secretKeyRef:{secret:'crm-prod-runtime-database-url',version:'1'}}},{name:'CRM_POOL_BUNDLE_SHA256',value:transport.bundleSha256},{name:'CRM_POOL_BUNDLE_BASE64',value:transport.base64}]}]};
+  task.vpcAccess=poolPrivateNetwork();
   const normalized=clone(task);normalized.containers[0].resources.limits.cpu='1000m';
   const objective={schemaVersion:1,purpose:request.purpose,main:'8253024ea35cee6be5636cc6b10a88ae7e177377',image:POOL_IMAGE,jobName:context.job,serviceAccount:task.serviceAccount,objectiveSha256:'a'.repeat(64),sourceSha256:transport.sourceSha256,bundleSha256:transport.bundleSha256,bootstrapSha256:transport.bootstrapSha256,databaseBindingSha256:transport.bundle.databaseBindingSha256,publicKeySha256:transport.publicKeySha256,taskTemplateSha256:digest(normalized),taskTemplate:task,databaseSecretRef:{secret:'crm-prod-runtime-database-url',version:'1'},intentAt:'2026-10-27T09:00:00.000Z'};
   const job={name:context.job,uid:'synthetic-job-uid',labels:{'crmynov-probe-objective':objective.objectiveSha256.slice(0,63)},template:{taskCount:1,parallelism:1,template:clone(task)}};
@@ -66,4 +67,13 @@ for(const [name,change] of [
   ['attempt',v=>v.env.CLOUD_RUN_TASK_ATTEMPT='1'],['role',v=>v.env.DATABASE_URL=v.env.DATABASE_URL.replace('crm_runtime','crm_migrator')],['db host',v=>v.env.DATABASE_URL=v.env.DATABASE_URL.replace('localhost','other')],['SDK credential override',v=>v.env.GOOGLE_APPLICATION_CREDENTIALS='x'],['ambient node injection',v=>v.env.NODE_OPTIONS='--require=x'],['root',v=>v.uid=0],['node version',v=>v.version='20.0.0']
 ])test('runtime refuses '+name+' before SELECT',async()=>{let txs=0;const value={env:clone(env),version:'22.23.3',uid:65532,gid:65532,client:{$transaction:()=>{txs++;}}};change(value);await assert.rejects(executePoolWithClient(transport.bundle,value));assert.equal(txs,0);});
 test('CPU representation normalizes only the actual equivalent',()=>{const f=fixture();f.job.template.template.containers[0].resources.limits.cpu='1000m';validatePoolNativeJob(f.job,f.objective);f.job.template.template.timeout='121s';assert.throws(()=>validatePoolNativeJob(f.job,f.objective));});
+for(const cpu of ['8','100m','0','',undefined,null])test('native CPU refuses unreviewed allocation '+String(cpu),()=>{
+  const f=fixture();f.job.template.template.containers[0].resources.limits.cpu=cpu;assert.throws(()=>validatePoolNativeJob(f.job,f.objective),/REVIEWED_NATIVE_CPU_REQUIRED/u);
+  const e=fixture();e.execution.template.containers[0].resources.limits.cpu=cpu;assert.throws(()=>verifyPoolOutputClaims(e),/REVIEWED_NATIVE_CPU_REQUIRED/u);
+});
+test('actual job and execution must retain the exact existing private network',()=>{
+  const f=fixture();f.job.template.template.vpcAccess.egress='ALL_TRAFFIC';assert.throws(()=>validatePoolNativeJob(f.job,f.objective));
+  const e=fixture();e.execution.template.vpcAccess.networkInterfaces[0].subnetwork+='-other';assert.throws(()=>verifyPoolOutputClaims(e));
+  const o=fixture();delete o.objective.taskTemplate.vpcAccess;assert.throws(()=>validatePoolObjective(o.objective),/EXISTING_PRIVATE_NETWORK_REQUIRED/u);
+});
 test('objective requires versioned runtime reference and immutable RC48 bytes',()=>{const f=fixture();validatePoolObjective(f.objective);f.objective.databaseSecretRef.version='latest';assert.throws(()=>validatePoolObjective(f.objective));});

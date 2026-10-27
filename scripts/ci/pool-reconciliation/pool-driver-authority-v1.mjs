@@ -34,7 +34,8 @@ function operationalMarker(comments,actors){
 }
 async function verifySource(github,source,entry){
   assert.equal(source.commit,entry.driver.mergeCommit);assert.equal(source.tree,entry.driver.tree);assert.equal(source.clean,true);assert.deepEqual(source.files,entry.driver.files);
-  for(let n=0;n<source.files.length;n+=4){await Promise.all(source.files.slice(n,n+4).map(async f=>{assert(HASH.test(f.sha256));assert.equal(byteHash(await githubFile(github,f.path,source.commit)),f.sha256,'PROTECTED_DRIVER_BYTES');}));}
+  async function verifyBatch(offset){if(offset>=source.files.length){return;}await Promise.all(source.files.slice(offset,offset+4).map(async f=>{assert(HASH.test(f.sha256));assert.equal(byteHash(await githubFile(github,f.path,source.commit)),f.sha256,'PROTECTED_DRIVER_BYTES');}));return verifyBatch(offset+4);}
+  await verifyBatch(0);
 }
 function validateFreshMarker(marker,{entry,objectiveId,localSource,jiraBytes,grant,actor,now,action}){
   const {value,comment}=marker;assert.equal(value.schemaVersion,1);assert.equal(value.executor,'Codex');assert.equal(value.objectiveId,objectiveId);assert.equal(value.catalogEntrySha256,digest(entry));assert.equal(value.dossierSha256,entry.dossierSha256);assert.equal(value.driverCommit,localSource.commit);assert.equal(value.grantDigest,grantDigest(grant));assert.equal(value.productionBusinessMutation,false);assert(value.actions.includes(action));assert.equal(value.humanAuthorityReceiptSha256,entry.humanAuthorityReceiptSha256);
@@ -54,7 +55,7 @@ export async function authorizePoolDriver({github,objectiveId,dossier,jiraBytes,
   assert.deepEqual(Object.keys(entry.objectiveReview),['pr']);const objectivePull=await github.get(BASE+'pulls/'+entry.objectiveReview.pr);const objectiveRef={pr:entry.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
   const [driver,objective]=await Promise.all([approvedMerge(github,entry.driver,{grant,actor,base:'develop'}),approvedMerge(github,objectiveRef,{grant,actor,base:'develop'})]);assert(objective.files.some(f=>f.filename===POOL_CATALOG));
   const approved=JSON.parse(await githubFile(github,POOL_CATALOG,objectiveRef.mergeCommit));assert.equal(digest(approved.entries.filter(e=>e.id===objectiveId)),digest([entry]));
-  for(const commit of [entry.driver.mergeCommit,objectiveRef.mergeCommit]){const comparison=await github.get(BASE+'compare/'+commit+'...'+revision);assert.equal(comparison.merge_base_commit.sha,commit);assert(['ahead','identical'].includes(comparison.status));}
+  await Promise.all([entry.driver.mergeCommit,objectiveRef.mergeCommit].map(async commit=>{const comparison=await github.get(BASE+'compare/'+commit+'...'+revision);assert.equal(comparison.merge_base_commit.sha,commit);assert(['ahead','identical'].includes(comparison.status));}));
   assert.equal(entry.release.pr,243);assert.equal(entry.release.mergeCommit,MAIN);assert.equal(entry.release.tag,'v0.1.0-rc.48');
   const main=await github.get(BASE+'branches/main');assert.equal(main.commit.sha,MAIN);assert.equal(main.protected,true);await approvedMerge(github,entry.release,{grant,actor,base:'main'});
   const release=await github.get(BASE+'releases/tags/v0.1.0-rc.48');assert.equal(release.id,entry.release.releaseId);assert.equal(release.draft,false);assert.equal(release.prerelease,true);const tag=await github.get(BASE+'git/ref/tags/v0.1.0-rc.48');assert.equal(tag.object.type,'commit');assert.equal(tag.object.sha,MAIN);const post=await github.get(BASE+'actions/runs/'+entry.release.postPublishRun);assert.equal(post.head_sha,MAIN);assert.equal(post.status,'completed');assert.equal(post.conclusion,'success');assert.equal(post.event,'release');assert.equal(post.path,'.github/workflows/release-publish.yml');

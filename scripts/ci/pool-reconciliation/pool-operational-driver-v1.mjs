@@ -34,7 +34,7 @@ export function parsePoolDriverArguments(args){
 function localSource(){
   assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)),'AMBIENT_GIT_OVERRIDE');
   const env=fixedToolEnvironment(process.env);
-  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-C',ROOT,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env:{...env,PATH:'C:/Program Files/Git/cmd;C:/Program Files/Git/mingw64/bin;C:/Windows/System32;C:/Windows'}}).trim();
+  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-C',ROOT,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env}).trim();
   assert.equal(git('status','--porcelain','--untracked-files=all'),'');
   return {commit:git('rev-parse','HEAD'),tree:git('rev-parse','HEAD^{tree}'),clean:true,files:POOL_DRIVER_INPUTS.map(p=>({path:p,sha256:byteHash(readPoolPrivateFile(path.join(ROOT,p)))}))};
 }

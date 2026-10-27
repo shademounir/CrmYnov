@@ -39,10 +39,11 @@ export function openPoolTransactionJournal({directory,objective,initialize=false
   }
   return Object.freeze({inspect,append,close(){if(!closed){db.close();closed=true;}}});
 }
-async function boundedJson(response){
+export async function boundedJson(response){
   assert([200,404].includes(response.status));assert.equal(response.redirected,false);assert(/^application\/json(?:;|$)/iu.test(response.headers.get('content-type')??''));assert(response.body);
   const reader=response.body.getReader(),chunks=[];let size=0;
-  try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;assert(size<=1048576,'NATIVE_RESPONSE_BOUND');chunks.push(part.value);}}
+  async function readPart(){const part=await reader.read();if(part.done){return;}size+=part.value.byteLength;assert(size<=1048576,'NATIVE_RESPONSE_BOUND');assert(chunks.length<4096,'NATIVE_CHUNK_BOUND');chunks.push(part.value);return readPart();}
+  try{await readPart();}
   finally{await reader.cancel();reader.releaseLock();}
   const value=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(Buffer.concat(chunks)));assert(value&&Object.getPrototypeOf(value)===Object.prototype);return {status:response.status,value};
 }
@@ -50,12 +51,12 @@ export function createPoolNativeTransport({accessToken,getAuthority,fetchImpl=fe
   assert.equal(typeof accessToken,'function');const guarded=createAuthorityBoundFetch({fetchImpl,getAuthority});
   async function request(resource,{method='GET',body,query=''}={}){
     assert(resource==='/jobs'||/^\/jobs\/crm-prod-pool-reconcile-[a-z0-9-]+(?::run|\/executions(?:\/[a-z0-9-]+)?)?$/u.test(resource)||/^\/operations\/[A-Za-z0-9_-]+$/u.test(resource));
-    assert(['GET','POST'].includes(method));if(method==='POST')assert(resource==='/jobs'||resource.endsWith(':run'));else{assert.equal(body,undefined);assert(!resource.endsWith(':run'));}
+    assert(['GET','POST'].includes(method));if(method==='POST'){assert(resource==='/jobs'||resource.endsWith(':run'));}else{assert.equal(body,undefined);assert(!resource.endsWith(':run'));}
     const controller=new AbortController();let timer;
     try{
       return await Promise.race([(async()=>{const token=await accessToken({signal:controller.signal});assert(!controller.signal.aborted);assert(typeof token==='string'&&token.length>0&&!/\s/u.test(token));
-      const response=await guarded(API+resource+query,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return boundedJson(response);})(),new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('POOL_NATIVE_DEADLINE'));},15000);})]);
-    }catch{throw Error('POOL_NATIVE_EXCHANGE_UNKNOWN_NO_RETRY');}finally{clearTimeout(timer);}
+      const response=await guarded(API+resource+query,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return boundedJson(response);})(),new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('POOL_NATIVE_DEADLINE'));},15000);})]);
+    }catch{throw new Error('POOL_NATIVE_EXCHANGE_UNKNOWN_NO_RETRY');}finally{clearTimeout(timer);}
   }
   const local=name=>{assert(JOB.test(name));return name.slice(PARENT.length);};
   async function absent(name){
@@ -65,12 +66,12 @@ export function createPoolNativeTransport({accessToken,getAuthority,fetchImpl=fe
       assert(!seen.has(token));seen.add(token);const query=new URLSearchParams({pageSize:'100',showDeleted:'true',fields:'jobs(name,uid,deleteTime),nextPageToken',...(token?{pageToken:token}:{})});
       const result=await request('/jobs',{query:'?'+query});assert.equal(result.status,200);const rows=result.value.jobs??[];assert(Array.isArray(rows)&&rows.length<=100);assert(rows.every(r=>r.name!==name));
       token=result.value.nextPageToken??'';assert.equal(typeof token,'string');assert(token.length<=8192);if(!token)return;
-    }throw Error('JOB_INVENTORY_BOUND');
+    }throw new Error('JOB_INVENTORY_BOUND');
   }
   return Object.freeze({
     requireAbsent:absent,
     async getJob(name){const r=await request(local(name));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;},
-    async listExecutions(name){let token='';const seen=new Set();for(let n=0;n<100;n++){assert(!seen.has(token));seen.add(token);const q=new URLSearchParams({pageSize:'100',showDeleted:'true',...(token?{pageToken:token}:{})});const r=await request(local(name)+'/executions',{query:'?'+q});assert.equal(r.status,200);const rows=r.value.executions??[];assert(Array.isArray(rows));assert.equal(rows.length,0,'PREEXISTING_EXECUTION');token=r.value.nextPageToken??'';assert.equal(typeof token,'string');assert(token.length<=8192);if(!token)return;}throw Error('EXECUTION_INVENTORY_BOUND');},
+    async listExecutions(name){let token='';const seen=new Set();for(let n=0;n<100;n++){assert(!seen.has(token));seen.add(token);const q=new URLSearchParams({pageSize:'100',showDeleted:'true',...(token?{pageToken:token}:{})});const r=await request(local(name)+'/executions',{query:'?'+q});assert.equal(r.status,200);const rows=r.value.executions??[];assert(Array.isArray(rows));assert.equal(rows.length,0,'PREEXISTING_EXECUTION');token=r.value.nextPageToken??'';assert.equal(typeof token,'string');assert(token.length<=8192);if(!token)return;}throw new Error('EXECUTION_INVENTORY_BOUND');},
     async create(name,body){assert(JOB.test(name));const r=await request('/jobs',{method:'POST',body,query:'?'+new URLSearchParams({jobId:name.slice((PARENT+'/jobs/').length)})});assert.equal(r.status,200);return r.value;},
     async run(name,etag){assert.equal(typeof etag,'string');assert(etag.length>0&&etag.length<=256);const r=await request(local(name)+':run',{method:'POST',body:{etag}});assert.equal(r.status,200);return r.value;},
     async operation(name){assert(OP.test(name));const r=await request(name.slice(PARENT.length));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;},

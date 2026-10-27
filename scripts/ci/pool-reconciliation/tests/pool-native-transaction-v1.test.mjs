@@ -6,8 +6,9 @@ import path from 'node:path';
 import {fixture,sources,request,jobName,env,keys} from './pool-operational-transport-v1.test.mjs';
 import {buildPoolJobDossier,validateLocalPoolDossier} from '../pool-job-dossier-v1.mjs';
 import {poolDatabaseBinding} from '../pool-runtime-entry-v1.mjs';
-import {openPoolTransactionJournal,dispatchPoolOnce,observePoolOperation,createPoolNativeTransport} from '../pool-native-transaction-v1.mjs';
-const dossier=()=>buildPoolJobDossier({sources,request,jobName,nonce:'c'.repeat(64),databaseBindingSha256:poolDatabaseBinding(env.DATABASE_URL),publicKeyPem:keys.publicKey,cloudSqlConnectionName:'crmynov-prod-n7x4q2:europe-west1:synthetic-instance',databaseSecretVersion:'1',intentAt:'2026-10-27T09:00:00.000Z'});
+import {openPoolTransactionJournal,dispatchPoolOnce,observePoolOperation,createPoolNativeTransport,boundedJson} from '../pool-native-transaction-v1.mjs';
+import {poolPrivateNetwork} from '../pool-native-output-v1.mjs';
+const dossier=()=>buildPoolJobDossier({sources,request,jobName,nonce:'c'.repeat(64),databaseBindingSha256:poolDatabaseBinding(env.DATABASE_URL),publicKeyPem:keys.publicKey,networkBinding:poolPrivateNetwork(),databaseSecretVersion:'1',intentAt:'2026-10-27T09:00:00.000Z'});
 const now=Date.parse('2026-10-27T09:00:00.100Z');
 const authority=()=>({receipt:{verifiedAt:new Date(now-100).toISOString(),expiresAt:new Date(now+600000).toISOString()}});
 const op='projects/crmynov-prod-n7x4q2/locations/europe-west1/operations/synthetic-op';
@@ -59,3 +60,13 @@ test('native HTTP run allows etag only, fixed scope, and fresh guard after token
   live.receipt.expiresAt=new Date(Date.now()-1).toISOString();await assert.rejects(transport.run(d.objective.jobName,'etag'));assert.equal(requests.length,1);await assert.rejects(transport.run('projects/other/locations/x/jobs/no','etag'));assert.equal(requests.length,1);
 });
 test('native absence requires official 404 plus deleted-resource inventory',async()=>{const d=dossier();let n=0;const transport=createPoolNativeTransport({accessToken:async()=> 'synthetic-token',getAuthority:()=>authority(),fetchImpl:async()=>{n++;return n===1?new Response(JSON.stringify({error:{code:404,status:'NOT_FOUND'}}),{status:404,headers:{'content-type':'application/json'}}):new Response(JSON.stringify({jobs:[{name:d.objective.jobName,deleteTime:'synthetic'}]}),{status:200,headers:{'content-type':'application/json'}});}});await assert.rejects(transport.requireAbsent(d.objective.jobName));assert.equal(n,2);});
+test('native response stream is bounded and preserves multiple chunks',async()=>{
+  const make=chunks=>new Response(new ReadableStream({start(controller){for(const chunk of chunks)controller.enqueue(new TextEncoder().encode(chunk));controller.close();}}),{status:200,headers:{'content-type':'application/json'}});
+  assert.deepEqual((await boundedJson(make(['{"ok":','true}']))).value,{ok:true});
+  await assert.rejects(boundedJson(make(['x'.repeat(1048577)])),/NATIVE_RESPONSE_BOUND/u);
+  await assert.rejects(boundedJson(make(Array(4097).fill(' '))),/NATIVE_CHUNK_BOUND/u);
+});
+test('native pre-RUN refuses CPU drift before consuming a RUN intent',async t=>{
+  const {d,journal}=journalFixture(t),{job,transport}=await createReconciled(d,journal);job.template.template.containers[0].resources.limits.cpu='8';let posts=0;transport.run=async()=>{posts++;};
+  await assert.rejects(dispatchPoolOnce({dossier:d,stage:'RUN',authorizeFresh:async()=>authority(),transport,journal,clock:()=>now}),/REVIEWED_NATIVE_CPU_REQUIRED/u);assert.equal(posts,0);assert.equal(journal.inspect('RUN'),null);
+});

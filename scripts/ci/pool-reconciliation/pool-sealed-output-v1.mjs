@@ -8,7 +8,7 @@ export const OUTPUT_LIMIT=65536;
 export const hashBytes=bytes=>createHash('sha256').update(bytes).digest('hex');
 function exact(value,names){
   assert(value&&Object.getPrototypeOf(value)===Object.prototype,'PLAIN_FIELDS');
-  assert.deepEqual(Object.keys(value).sort(),[...names].sort(),'OUTPUT_FIELDS');
+  assert.deepEqual(Object.keys(value).sort((a,b)=>a.localeCompare(b,'en')),[...names].sort((a,b)=>a.localeCompare(b,'en')),'OUTPUT_FIELDS');
 }
 export function validateOutputContext(value){
   exact(value,['purpose','phase','job','execution','sourceSha256','nonce']);
@@ -26,7 +26,7 @@ export function publicKeyFingerprint(pem){
   assert([3072,4096].includes(key.asymmetricKeyDetails.modulusLength),'RSA_SIZE');
   return hashBytes(key.export({type:'spki',format:'der'}));
 }
-function contextBytes(context){return Buffer.from(JSON.stringify(validateOutputContext(context),Object.keys(context).sort()));}
+function contextBytes(context){return Buffer.from(JSON.stringify(validateOutputContext(context),Object.keys(context).sort((a,b)=>a.localeCompare(b,'en'))));}
 function decode(text,max){
   assert.equal(typeof text,'string');assert(text.length>0&&text.length<=max,'ENCODED_BOUND');
   const bytes=Buffer.from(text,'base64');assert.equal(bytes.toString('base64'),text,'CANONICAL_BASE64');return bytes;
