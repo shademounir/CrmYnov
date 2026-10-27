@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "repository": "shademounir/CrmYnov",
+  "status": "active",
+  "codexGitHubReviewRequired": false,
+  "automaticCodeReviewRequests": false,
+  "manualCodeReviewRequests": false,
+  "otherTechnicalChecksMandatory": true,
+  "knownFindingsMustBeResolved": true,
+  "authority": {
+    "kind": "EXPLICIT_OWNER_DECISION",
+    "reference": "Instruction explicite du propriétaire, conversation CRM Ynov, 27 octobre 2026",
+    "documentSha256": "d988f8d0fdb92237e45e3fae2a8c39b24c33e2b85d5f0f7bd791de7681a6053d"
+  }
+}
