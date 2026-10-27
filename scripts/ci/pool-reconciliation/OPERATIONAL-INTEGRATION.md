@@ -116,3 +116,7 @@ may refer to its own PR number, but embedding its own driver merge SHA would be
 circular. Local anticipatory integration of a pending candidate is not a
 protected merge. No job, SQL, backup, deployment or activation is authorized by
 this documentation or by local qualification.
+
+# GitHub timeline read boundary
+
+The pool adapter projects every official timeline row to its `event` field with a fixed `gh api --jq` expression. Authority only consumes these fields to refuse any auto-merge enable/disable event. No rows are filtered, including events after the first page. The existing 100-row/100-page/10,000-row bounds, 15-second timeout and 4-MiB process-output limit remain enforced; a malformed or failed page refuses without retry. This avoids large embedded commit/file payloads in historical release timelines without changing the immutable RC47 reader, credentials, permissions or native execution guards.
