@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import {authorityFixture} from '../../readonly-probe/tests/probe-driver-fixtures-v1.mjs';
 import {TRUSTED_INTENT_SHA256} from '../controlled-pool-contract-v1.mjs';
 import {authorizePoolDriver} from '../pool-driver-authority-v1.mjs';
 import {fixture} from './pool-operational-transport-v1.test.mjs';
-import {parsePoolDriverArguments,POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
+import {parsePoolDriverArguments,POOL_DRIVER_INPUTS,POOL_OFFICIAL_GIT} from '../pool-operational-driver-v1.mjs';
 import {createPoolOutputReader} from '../pool-output-reader-v1.mjs';
 function poolAuthorityFixture(){
   const f=authorityFixture();Object.assign(f.entry,{scope:'POOL_RECONCILIATION_READ_ONLY_V1',actions:['VERIFY','CREATE','OBSERVE_CREATE','RUN','OBSERVE_RUN','READ_OUTPUT'],originalIntentSha256:TRUSTED_INTENT_SHA256,independentInputsSha256:'d'.repeat(64)});f.authorization.actions=f.entry.actions;
@@ -12,6 +13,7 @@ function poolAuthorityFixture(){
   f.responses.set(f.base+'branches/develop/protection',{enforce_admins:{enabled:true},required_status_checks:{strict:true,contexts:['pr-policy']}});f.refreshCatalog();return f;
 }
 const run=f=>authorizePoolDriver({github:f.github,objectiveId:f.entry.id,dossier:f.dossier,jiraBytes:f.jiraBytes,localSource:f.localSource,action:'VERIFY',clock:()=>f.now});
+test('operator Git is a canonical native Windows absolute path, never PATH search',()=>{assert.equal(path.win32.isAbsolute(POOL_OFFICIAL_GIT),true);assert.equal(POOL_OFFICIAL_GIT,path.win32.normalize('C:/Program Files/Git/cmd/git.exe'));assert.equal(POOL_OFFICIAL_GIT.startsWith('C:'+String.fromCharCode(92)),true);});
 test('existing delegation/Jira/provenance fixture composes pool authority without historical raw pool pin',async()=>{const f=poolAuthorityFixture();delete f.entry.baselineLineage;f.refreshCatalog();const r=await run(f);assert.equal(r.receipt.businessMutationAuthorized,false);assert.equal(r.entry.scope,'POOL_RECONCILIATION_READ_ONLY_V1');assert.equal(r.entry.originalIntentSha256,TRUSTED_INTENT_SHA256);});
 for(const [name,change] of [
  ['catalog absent',f=>f.responses.delete(f.base+'contents/docs/governance/readonly-probe-objectives-v1.json?ref='+'6'.repeat(40))],['wrong scope',f=>f.entry.scope='READONLY_PRESERVATION_PROBE_ONLY'],['unreviewed dossier',f=>f.entry.dossierSha256='a'.repeat(64)],['wrong original intent',f=>f.entry.originalIntentSha256='a'.repeat(64)],['actor inputs missing',f=>delete f.entry.independentInputsSha256],['human authority missing',f=>delete f.entry.humanAuthorityReceiptSha256],['expired catalog',f=>f.entry.expiresAt=new Date(f.now-1).toISOString()],['driver unmerged',f=>f.responses.get(f.base+'pulls/301').merged=false],['catalog unmerged',f=>f.responses.get(f.base+'pulls/302').merged=false],['driver source changed',f=>f.localSource.files[0].sha256='a'.repeat(64)],['pending technical check',f=>f.responses.get(f.base+'commits/'+'1'.repeat(40)+'/check-runs')[0].status='in_progress'],['finding',f=>{const c=f.responses.get(f.base+'issues/301/comments')[1];c.body=c.body.replace('"has_any_findings":false','"has_any_findings":true');}],['review stale',f=>{const c=f.responses.get(f.base+'issues/301/comments')[1];c.body=c.body.replace('1'.repeat(40),'a'.repeat(40));}],['main drift',f=>f.responses.get(f.base+'branches/main').commit.sha='a'.repeat(40)],['release unpublished',f=>f.responses.get(f.base+'releases/tags/v0.1.0-rc.48').draft=true],['postpublication pending',f=>f.responses.get(f.base+'actions/runs/9999').status='in_progress'],['protection weakened',f=>f.responses.get(f.base+'branches/develop/protection').enforce_admins.enabled=false],['fresh auth expired',f=>f.authorization.expiresAt=new Date(f.now-1).toISOString()],['Jira bytes drift',f=>f.jiraBytes=Buffer.from('{}')]

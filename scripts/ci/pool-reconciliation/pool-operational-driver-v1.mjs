@@ -15,6 +15,7 @@ import {createOfficialAccessToken} from '../readonly-probe/rc47-probe-official-a
 import {DRIVER_INPUTS as PRIOR_DRIVER_INPUTS} from '../readonly-probe/probe-operational-driver-v1.mjs';
 import {assertAuthorityCurrent} from '../readonly-probe/probe-driver-authority-v1.mjs';
 const ROOT=path.resolve(import.meta.dirname,'../../..');
+export const POOL_OFFICIAL_GIT=String.raw`C:\Program Files\Git\cmd\git.exe`;
 const own=['controlled-pool-contract-v1.mjs','pool-read-only-collector-v1.mjs','pool-sealed-output-v1.mjs','pool-runtime-entry-v1.mjs','pool-runtime-bundle-v1.mjs','pool-native-output-v1.mjs','pool-job-dossier-v1.mjs','pool-native-transaction-v1.mjs','pool-driver-authority-v1.mjs','pool-output-reader-v1.mjs','pool-observation-reconciliation-v1.mjs','pool-operational-driver-v1.mjs'];
 export const POOL_DRIVER_INPUTS=Object.freeze([...new Set([...PRIOR_DRIVER_INPUTS,...own.map(n=>'scripts/ci/pool-reconciliation/'+n)])].sort((a,b)=>a.localeCompare(b,'en')));
 export function readPoolPrivateFile(file,max=1048576){
@@ -32,9 +33,13 @@ export function parsePoolDriverArguments(args){
   return {mode,options};
 }
 function localSource(){
+  assert.equal(process.platform,'win32','WINDOWS_OPERATOR_REQUIRED');
+  assert(path.win32.isAbsolute(POOL_OFFICIAL_GIT));
+  assert.equal(fs.realpathSync(POOL_OFFICIAL_GIT),path.win32.normalize(POOL_OFFICIAL_GIT),'CANONICAL_OFFICIAL_GIT_REQUIRED');
+  assert(fs.statSync(POOL_OFFICIAL_GIT).isFile()&&!fs.lstatSync(POOL_OFFICIAL_GIT).isSymbolicLink());
   assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)),'AMBIENT_GIT_OVERRIDE');
   const env=fixedToolEnvironment(process.env);
-  const git=(...args)=>execFileSync('C:/Program Files/Git/cmd/git.exe',['-C',ROOT,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env}).trim();
+  const git=(...args)=>execFileSync(POOL_OFFICIAL_GIT,['-C',ROOT,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env}).trim();
   assert.equal(git('status','--porcelain','--untracked-files=all'),'');
   return {commit:git('rev-parse','HEAD'),tree:git('rev-parse','HEAD^{tree}'),clean:true,files:POOL_DRIVER_INPUTS.map(p=>({path:p,sha256:byteHash(readPoolPrivateFile(path.join(ROOT,p)))}))};
 }
