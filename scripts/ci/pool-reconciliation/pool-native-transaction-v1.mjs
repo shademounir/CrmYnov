@@ -80,13 +80,18 @@ export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,
   });
 }
 function record(objective,state,extra={}){return {job:objective.jobName,objectiveSha256:objective.objectiveSha256,state,canRetry:false,...extra};}
+function requireNoCreatedExecution(job){
+  assert.equal(job.executionCount??0,0,'NO_NATIVE_EXECUTION_REQUIRED');
+  const latest=job.latestCreatedExecution;
+  assert(latest===undefined||(latest!==null&&Object.getPrototypeOf(latest)===Object.prototype&&Reflect.ownKeys(latest).length===0),'NO_LATEST_EXECUTION_FIELDS_ALLOWED');
+}
 export async function dispatchReadOnlyOnce({dossier,stage,authorizeFresh,transport,journal,clock=Date.now}){
   const target=structuredClone(dossier),e=target.objective;validateReadOnlyObjective(e);assert(['CREATE','RUN'].includes(stage));assert.equal(typeof authorizeFresh,'function');assert.equal(journal.inspect(stage),null,'CONSUMED_INTENT');
   assert.deepEqual(target.job,{labels:{'crmynov-probe-objective':e.objectiveSha256.slice(0,63)},template:{taskCount:1,parallelism:1,template:e.taskTemplate}},'REVIEWED_CREATE_BODY');
   await authorizeFresh();let job;
-  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);await transport.listExecutions(e.jobName);}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);requireNoCreatedExecution(job);await transport.listExecutions(e.jobName);}
   const authority=await authorizeFresh();
-  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);assert.equal(latest.executionCount??0,0);assert.equal(latest.latestCreatedExecution,undefined);job=latest;}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);requireNoCreatedExecution(latest);await transport.listExecutions(e.jobName);job=latest;}
   if(job){assert.equal(typeof job.etag,'string');assert(job.etag.length>0&&job.etag.length<=256);}
   const now=clock();assertAuthorityCurrent(authority,now);const intent=record(e,'INTENT',{at:new Date(now).toISOString(),...(job?{uid:job.uid,etag:job.etag}:{bodySha256:digest(target.job)})});journal.append(stage,intent);
   let operation;try{operation=stage==='CREATE'?await transport.create(e.jobName,target.job):await transport.run(e.jobName,job.etag);}catch{const unknown=record(e,'UNKNOWN');journal.append(stage,unknown);return unknown;}
@@ -98,7 +103,7 @@ export async function observeReadOnlyOperation({objective,stage,transport,journa
   const operation=await transport.operation(saved.operation);if(operation.done!==true)return record(e,'PENDING');
   if(operation.error){const result=record(e,'FAILED',{operation:saved.operation});journal.append(stage,result);return result;}
   const job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);let execution;
-  if(stage==='CREATE'){assert.equal(operation.response?.name,e.jobName);assert.equal(operation.response.uid,job.uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);}
+  if(stage==='CREATE'){assert.equal(operation.response?.name,e.jobName);assert.equal(operation.response.uid,job.uid);requireNoCreatedExecution(job);await transport.listExecutions(e.jobName);}
   else{assert.equal(job.uid,saved.uid);execution=await transport.execution(operation.response.name,e.jobName);validateReadOnlyNativeExecution(job,execution,e);}
   const result=record(e,'RECONCILED',{operation:saved.operation,uid:job.uid,etag:job.etag,...(execution?{execution:execution.name,metadataSha256:digest({job,execution})}:{})});journal.append(stage,result);return result;
 }

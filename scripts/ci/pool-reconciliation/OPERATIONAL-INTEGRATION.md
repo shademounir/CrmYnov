@@ -120,3 +120,7 @@ this documentation or by local qualification.
 # GitHub timeline read boundary
 
 The pool adapter projects every official timeline row to its `event` field with a fixed `gh api --jq` expression. Authority only consumes these fields to refuse any auto-merge enable/disable event. No rows are filtered, including events after the first page. The existing 100-row/100-page/10,000-row bounds, 15-second timeout and 4-MiB process-output limit remain enforced; a malformed or failed page refuses without retry. This avoids large embedded commit/file payloads in historical release timelines without changing the immutable RC47 reader, credentials, permissions or native execution guards.
+
+# Empty native execution reference
+
+The observed Cloud Run CREATE response exposed an exact empty `latestCreatedExecution` object on a job with no execution. Only the omitted field or an exact plain empty object is accepted with zero execution count. Null, arrays and any reference fields still refuse. CREATE reconciliation additionally requires the native paginated execution inventory to be empty, including deleted resources. RUN repeats this inventory after each of its two UID/etag-bound job reads. No execution count, UID, etag, authority freshness, durable single-use intent or UNKNOWN guard is relaxed. A known CREATE operation is observed, never recreated; the existing journal is preserved. This source change is not native reconciliation or permission to run an unqualified driver.

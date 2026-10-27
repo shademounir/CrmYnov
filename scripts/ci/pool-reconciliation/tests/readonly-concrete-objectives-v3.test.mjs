@@ -33,7 +33,8 @@ for(const scope of scopes)test(scope+' binds actual corrected driver and real co
   assert.equal(sha256(JSON.stringify(entry.driver.files)),expectedFilesSha256);
   for(const file of entry.driver.files){
     const historicalAdapter=file.path==='scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs';
-    const proofPath=historicalAdapter?'scripts/ci/pool-reconciliation/tests/fixtures/pool-driver-github-protected252-20261027.md':file.path;
+    const historicalTransaction=file.path==='scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs';
+    const proofPath=historicalAdapter?'scripts/ci/pool-reconciliation/tests/fixtures/pool-driver-github-protected252-20261027.md':historicalTransaction?'scripts/ci/pool-reconciliation/tests/fixtures/pool-native-transaction-protected254-20261027.md':file.path;
     assert.equal(sha256(fs.readFileSync(new URL(proofPath,root))),file.sha256);
   }
   assert.equal(entry.businessMutation,false);
