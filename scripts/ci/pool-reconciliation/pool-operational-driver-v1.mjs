@@ -10,14 +10,15 @@ import {validateLocalReadOnlyDossier} from './pool-job-dossier-v1.mjs';
 import {createReadOnlyNativeTransport,openReadOnlyTransactionJournal,dispatchReadOnlyOnce,observeReadOnlyOperation} from './pool-native-transaction-v1.mjs';
 import {createReadOnlyOutputReader} from './pool-output-reader-v1.mjs';
 import {reconcileVerifiedPoolOutput} from './pool-observation-reconciliation-v1.mjs';
-import {createOfficialGithubReader,fixedToolEnvironment} from '../readonly-probe/probe-driver-github-v1.mjs';
+import {fixedToolEnvironment} from '../readonly-probe/probe-driver-github-v1.mjs';
+import {createReadOnlyGithubReader} from './pool-driver-github-v1.mjs';
 import {createOfficialAccessToken} from '../readonly-probe/rc47-probe-official-auth-v1.mjs';
 import {DRIVER_INPUTS as PRIOR_DRIVER_INPUTS} from '../readonly-probe/probe-operational-driver-v1.mjs';
 import {assertAuthorityCurrent} from '../readonly-probe/probe-driver-authority-v1.mjs';
 const ROOT=path.resolve(import.meta.dirname,'../../..');
 export const POOL_OFFICIAL_GIT=String.raw`C:\Program Files\Git\cmd\git.exe`;
 const own=['general-preservation-read-only-collector-v1.mjs','schema-ledger-read-only-collector-v1.mjs','readonly-output-codec-v1.mjs','readonly-runtime-entry-v1.mjs','readonly-runtime-bundle-v1.mjs','controlled-pool-contract-v1.mjs','pool-read-only-collector-v1.mjs','pool-sealed-output-v1.mjs','pool-runtime-entry-v1.mjs','pool-runtime-bundle-v1.mjs','pool-native-output-v1.mjs','pool-job-dossier-v1.mjs','pool-native-transaction-v1.mjs','pool-driver-authority-v1.mjs','pool-output-reader-v1.mjs','pool-observation-reconciliation-v1.mjs','pool-operational-driver-v1.mjs'];
-export const POOL_DRIVER_INPUTS=Object.freeze([...new Set([...PRIOR_DRIVER_INPUTS,...own.map(n=>'scripts/ci/pool-reconciliation/'+n),'scripts/pr-policy/github-code-review.mjs','docs/governance/github-code-review-policy.json'])].sort((a,b)=>a.localeCompare(b,'en')));
+export const POOL_DRIVER_INPUTS=Object.freeze([...new Set([...PRIOR_DRIVER_INPUTS,...own.map(n=>'scripts/ci/pool-reconciliation/'+n),'scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs','scripts/pr-policy/github-code-review.mjs','docs/governance/github-code-review-policy.json'])].sort((a,b)=>a.localeCompare(b,'en')));
 export function readPoolPrivateFile(file,max=1048576){
   assert(path.isAbsolute(file));assert(!fs.lstatSync(file).isSymbolicLink());assert.equal(fs.realpathSync(file),path.resolve(file));
   const fd=fs.openSync(file,'r');try{const st=fs.fstatSync(fd);assert(st.isFile()&&st.size<=max);const bytes=fs.readFileSync(fd);assert(bytes.length<=max);return bytes;}finally{fs.closeSync(fd);}
@@ -60,7 +61,7 @@ export async function runReadOnlyOperationalDriver(args,{requiredPurpose}={}){
   if(purpose!=='POOL_RECONCILIATION_READ_ONLY_V1')assert.equal(options['--purpose'],purpose,'EXPLICIT_PURPOSE_REQUIRED');
   if(options['--purpose']){assert.equal(options['--purpose'],purpose,'PURPOSE_ARGUMENT_BINDING');}
   validateLocalReadOnlyDossier(dossier,p=>fs.readFileSync(path.join(import.meta.dirname,p)));
-  const source=localSource(),directory=canonicalDirectory(options['--journal-dir']),github=createOfficialGithubReader();let authority;
+  const source=localSource(),directory=canonicalDirectory(options['--journal-dir']),github=createReadOnlyGithubReader();let authority;
   const action={verify:'VERIFY','create-job':'CREATE','observe-create':'OBSERVE_CREATE',run:'RUN','observe-run':'OBSERVE_RUN','read-output':'READ_OUTPUT'}[mode];
   async function authorizeFresh(){assert.deepEqual(localSource(),source,'LOCAL_SOURCE_DRIFT');authority=await authorizeReadOnlyDriver({github,objectiveId:options['--objective-id'],dossier,jiraBytes,localSource:source,action});assert.equal(authority.entry.journalDirectorySha256,byteHash(directory));assert.deepEqual(localSource(),source);assertAuthorityCurrent(authority,Date.now());return authority;}
   await authorizeFresh();if(mode==='verify')return {state:purpose==='POOL_RECONCILIATION_READ_ONLY_V1'?'POOL_AUTHORITY_AND_LOCAL_PAYLOAD_VERIFIED':'READONLY_AUTHORITY_AND_LOCAL_PAYLOAD_VERIFIED',canRetry:false,nativeAcceptance:false,activationAuthorized:false};
