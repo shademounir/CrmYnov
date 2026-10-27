@@ -9,14 +9,15 @@ const PROFILES=Object.freeze({
   GENERAL_PRESERVATION_READ_ONLY_V1:Object.freeze({prefix:'crm-prod-preservation-',role:'crm_runtime',validate:validateGeneralPreservationRequest,run:runGeneralPreservationReadOnlyCollection}),
   SCHEMA_LEDGER_READ_ONLY_V1:Object.freeze({prefix:'crm-prod-schema-ledger-',role:'crm_migrator',validate:validateSchemaLedgerRequest,run:runSchemaLedgerReadOnlyCollection}),
 });
-function exact(value,names){assert(value&&Object.getPrototypeOf(value)===Object.prototype,'PLAIN_FIELDS');assert.deepEqual(Object.keys(value).sort(),[...names].sort(),'EXACT_FIELDS');assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(d=>Object.hasOwn(d,'value')),'DATA_FIELDS_ONLY');}
+function exact(value,names){assert(value&&Object.getPrototypeOf(value)===Object.prototype,'PLAIN_FIELDS');assert.deepEqual(Object.keys(value).sort((a,b)=>a.localeCompare(b,'en')),[...names].sort((a,b)=>a.localeCompare(b,'en')),'EXACT_FIELDS');assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(d=>Object.hasOwn(d,'value')),'DATA_FIELDS_ONLY');}
 function profile(request){assert(request&&Object.getPrototypeOf(request)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(request)).every(d=>Object.hasOwn(d,'value')),'DATA_FIELDS_ONLY');assert.equal(typeof request.purpose,'string');assert(Object.hasOwn(PROFILES,request.purpose),'PURPOSE');const p=PROFILES[request.purpose];p.validate(request);return p;}
 export function validateReadOnlyRuntimeBundle(bundle){
   exact(bundle,['schemaVersion','request','jobName','nonce','databaseBindingSha256','publicKeyPem','modules']);assert.equal(bundle.schemaVersion,1);const p=profile(bundle.request);
   assert.equal(typeof bundle.jobName,'string');assert(bundle.jobName.startsWith(p.prefix));assert(/^[a-z0-9-]+$/u.test(bundle.jobName.slice(p.prefix.length)));assert(bundle.jobName.length<=63);
-  for(const k of ['nonce','databaseBindingSha256'])assert(typeof bundle[k]==='string'&&/^[a-f0-9]{64}$/u.test(bundle[k]));publicKeyFingerprint(bundle.publicKeyPem);
+  for(const k of ['nonce','databaseBindingSha256']){assert(typeof bundle[k]==='string'&&/^[a-f0-9]{64}$/u.test(bundle[k]));}
+  publicKeyFingerprint(bundle.publicKeyPem);
   exact(bundle.modules,['core','pool','general','ledger','crypto','codec','entry']);for(const value of Object.values(bundle.modules)){exact(value,['source','sha256']);assert.equal(typeof value.source,'string');assert(Buffer.byteLength(value.source)<=100000);assert.equal(hashBytes(value.source),value.sha256,'SOURCE_BYTES');}
-  const manifest=Object.keys(bundle.modules).sort().map(name=>({name,sha256:bundle.modules[name].sha256}));return{sourceSha256:hashBytes(JSON.stringify(manifest)),publicKeySha256:publicKeyFingerprint(bundle.publicKeyPem)};
+  const manifest=Object.keys(bundle.modules).sort((a,b)=>a.localeCompare(b,'en')).map(name=>({name,sha256:bundle.modules[name].sha256}));return{sourceSha256:hashBytes(JSON.stringify(manifest)),publicKeySha256:publicKeyFingerprint(bundle.publicKeyPem)};
 }
 export function readOnlyDatabaseBinding(urlText,purpose){
   assert.equal(typeof purpose,'string');assert(Object.hasOwn(PROFILES,purpose));assert.equal(typeof urlText,'string');const url=new URL(urlText),p=PROFILES[purpose];assert.equal(url.protocol,'postgresql:');assert.equal(decodeURIComponent(url.username),p.role);assert.equal(url.pathname,'/crmynov_prod');const hosts=url.searchParams.getAll('host');assert(hosts.length<=1);const host=hosts[0]??url.hostname;assert(host&&host.length<=256);return hashBytes(JSON.stringify({role:p.role,database:'crmynov_prod',host,port:url.port||'5432'}));
@@ -29,7 +30,7 @@ export function validateReadOnlyRuntimeEnvironment(env,bundle){
 }
 export async function executeReadOnlyWithClient(input,{client,env,version,uid,gid}){
   // Pin JSON data before asynchronous work; reject accessor-backed bundle fields.
-  validateReadOnlyRuntimeBundle(input);const bundle=JSON.parse(JSON.stringify(input)),bytes=validateReadOnlyRuntimeBundle(bundle),runtime=validateReadOnlyRuntimeEnvironment(env,bundle);assert.equal(version,'22.23.3');assert.equal(uid,65532);assert.equal(gid,65532);
+  validateReadOnlyRuntimeBundle(input);const bundle=structuredClone(input),bytes=validateReadOnlyRuntimeBundle(bundle),runtime=validateReadOnlyRuntimeEnvironment(env,bundle);assert.equal(version,'22.23.3');assert.equal(uid,65532);assert.equal(gid,65532);
   const observation=await profile(bundle.request).run(client,bundle.request),context={purpose:bundle.request.purpose,phase:bundle.request.phase,...runtime,sourceSha256:bytes.sourceSha256,nonce:bundle.nonce};
   return sealReadOnlyOutput({schemaVersion:1,observation,databaseBindingSha256:bundle.databaseBindingSha256,sourceSha256:bytes.sourceSha256,runtime:{...runtime,taskIndex:0,attempt:0}}, {publicKeyPem:bundle.publicKeyPem,context});
 }

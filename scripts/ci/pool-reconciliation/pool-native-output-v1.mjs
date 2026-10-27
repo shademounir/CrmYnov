@@ -93,13 +93,16 @@ export function verifyReadOnlyOutputClaims({job,execution,logs,bundle,objective,
   assert.equal(o.schemaVersion,1);assert.equal(o.purpose,bundle.request.purpose);assert.equal(o.phase,bundle.request.phase);assert.equal(o.queryContractSha256,p.queryHash);
   assert.deepEqual(o.identity,{database:'crmynov_prod',role:p.role,readOnly:'on',isolation:'repeatable read'});
   assert.equal(o.sourceClaimsOnly,true);for(const field of ['nativeEvidenceAuthenticated','activationAuthorized'])assert.equal(o[field],false);
-  const falseFields=isPool?['historicalRawHashRecovered','fullProductionPreflight','migrationLedgerObserved']:objective.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1'?['historicalRawPoolHashRecovered','fullPreservationValidated','migrationLedgerObserved','sameSnapshotAsLedger','sameSnapshotAsPool']:['sameSnapshotAsPool','schemaCompatibilityProved','fullProductionPreflight'];
-  for(const field of falseFields)assert.equal(o[field],false);if(objective.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1')assert.equal(o.separateLedgerRequired,true);
+  let falseFields=['sameSnapshotAsPool','schemaCompatibilityProved','fullProductionPreflight'];
+  if(isPool){falseFields=['historicalRawHashRecovered','fullProductionPreflight','migrationLedgerObserved'];}
+  else if(objective.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1'){falseFields=['historicalRawPoolHashRecovered','fullPreservationValidated','migrationLedgerObserved','sameSnapshotAsLedger','sameSnapshotAsPool'];}
+  for(const field of falseFields){assert.equal(o[field],false);}
+  if(objective.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1'){assert.equal(o.separateLedgerRequired,true);}
   if(objective.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1'){
     assert(!Object.hasOwn(o.snapshot,'migrations'),'SEPARATE_LEDGER_REQUIRED');assert.equal(o.snapshotSha256,generalSnapshotDigest(o.snapshot),'GENERAL_SNAPSHOT_BYTES');
   }
   if(objective.purpose==='SCHEMA_LEDGER_READ_ONLY_V1'){
-    assert.deepEqual(Object.keys(o.snapshot).sort(),['columns','constraints','indexes','migrations']);assert(Array.isArray(o.snapshot.migrations)&&o.snapshot.migrations.length>0&&o.snapshot.migrations.length<=100);assert.equal(new Set(o.snapshot.migrations.map(r=>r.migration_name)).size,o.snapshot.migrations.length);
+    assert.deepEqual(Object.keys(o.snapshot).sort((a,b)=>a.localeCompare(b,'en')),['columns','constraints','indexes','migrations']);assert(Array.isArray(o.snapshot.migrations)&&o.snapshot.migrations.length>0&&o.snapshot.migrations.length<=100);assert.equal(new Set(o.snapshot.migrations.map(r=>r.migration_name)).size,o.snapshot.migrations.length);
     for(const row of o.snapshot.migrations){assert.equal(typeof row.migration_name,'string');assert(/^\w+$/u.test(row.migration_name));assert(typeof row.checksum==='string'&&H.test(row.checksum));assert.equal(row.finished,true);assert.equal(row.rolled_back,false);}
     assert.equal(o.ledgerSha256,hashBytes(JSON.stringify(o.snapshot.migrations)),'LEDGER_BYTES');assert.equal(o.schemaSurfaceSha256,hashBytes(JSON.stringify({columns:o.snapshot.columns,indexes:o.snapshot.indexes,constraints:o.snapshot.constraints})),'SCHEMA_SURFACE_BYTES');
   }

@@ -25,7 +25,7 @@ export function readPoolPrivateFile(file,max=1048576){
 export function parseReadOnlyDriverArguments(args){
   const mode=args[0];assert(['verify','create-job','observe-create','run','observe-run','read-output'].includes(mode));
   const options={};for(let i=1;i<args.length;i+=2){const key=args[i];assert(['--purpose','--objective-id','--dossier','--jira-evidence','--journal-dir','--initialize','--private-key','--independent-inputs','--intent','--prior-proof','--output-dir'].includes(key));assert(!Object.hasOwn(options,key));assert.equal(typeof args[i+1],'string');options[key]=args[i+1];}
-  for(const key of ['--objective-id','--dossier','--jira-evidence','--journal-dir'])assert(options[key]);
+  for(const key of ['--objective-id','--dossier','--jira-evidence','--journal-dir']){assert(options[key]);}
   if(Object.hasOwn(options,'--initialize')){assert.equal(mode,'create-job');assert.equal(options['--initialize'],'yes');}
   if(Object.hasOwn(options,'--purpose'))assert(['POOL_RECONCILIATION_READ_ONLY_V1','GENERAL_PRESERVATION_READ_ONLY_V1','SCHEMA_LEDGER_READ_ONLY_V1'].includes(options['--purpose']),'EXPLICIT_READONLY_PURPOSE');
   const outputKeys=['--private-key','--independent-inputs','--intent','--prior-proof','--output-dir'];
@@ -58,7 +58,7 @@ export async function runReadOnlyOperationalDriver(args,{requiredPurpose}={}){
   const purpose=dossier.objective?.purpose;
   if(requiredPurpose)assert.equal(purpose,requiredPurpose);
   if(purpose!=='POOL_RECONCILIATION_READ_ONLY_V1')assert.equal(options['--purpose'],purpose,'EXPLICIT_PURPOSE_REQUIRED');
-  if(options['--purpose'])assert.equal(options['--purpose'],purpose,'PURPOSE_ARGUMENT_BINDING');
+  if(options['--purpose']){assert.equal(options['--purpose'],purpose,'PURPOSE_ARGUMENT_BINDING');}
   validateLocalReadOnlyDossier(dossier,p=>fs.readFileSync(path.join(import.meta.dirname,p)));
   const source=localSource(),directory=canonicalDirectory(options['--journal-dir']),github=createOfficialGithubReader();let authority;
   const action={verify:'VERIFY','create-job':'CREATE','observe-create':'OBSERVE_CREATE',run:'RUN','observe-run':'OBSERVE_RUN','read-output':'READ_OUTPUT'}[mode];

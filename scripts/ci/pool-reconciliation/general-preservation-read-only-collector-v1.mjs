@@ -36,7 +36,7 @@ function checkedIdentity(rows){
   assert.equal(row.database,'crmynov_prod');assert.equal(row.role,'crm_runtime','RUNTIME_ROLE_ONLY');assert.equal(row.read_only,'on');assert.equal(row.isolation,'repeatable read');
   const elapsed=time(row.observed_at)-time(row.transaction_started_at);assert(row.observed_at>=row.transaction_started_at&&elapsed<=25000,'TRANSACTION_BOUND');return {...row};
 }
-function checkedRows(name,rows){assert(Array.isArray(rows)&&rows.length<=LIMITS[name],'ROW_BOUND_'+name);for(const row of rows)exactKeys(row,FIELDS[name]);const bytes=JSON.stringify(rows);assert(Buffer.byteLength(bytes)<=524288,'TABLE_BYTE_BOUND');const value=JSON.parse(bytes);for(const row of value)exactKeys(row,FIELDS[name]);return value;}
+function checkedRows(name,rows){assert(Array.isArray(rows)&&rows.length<=LIMITS[name],'ROW_BOUND_'+name);for(const row of rows){exactKeys(row,FIELDS[name]);}const bytes=JSON.stringify(rows);assert(Buffer.byteLength(bytes)<=524288,'TABLE_BYTE_BOUND');const value=JSON.parse(bytes);for(const row of value){exactKeys(row,FIELDS[name]);}return value;}
 export async function collectGeneralPreservationObservation(select,request){
   const target=Object.freeze({...validateGeneralPreservationRequest(request)});assert.equal(typeof select,'function');const initial=checkedIdentity(await select('identity',QUERIES.identity,[])),snapshot={};
   async function readAt(index){if(index===NAMES.length){return;}const name=NAMES[index],parameters=['scopes','pool','counters'].includes(name)?[target.campusId]:[];snapshot[name]=checkedRows(name,await select(name,QUERIES[name],parameters));return readAt(index+1);}
