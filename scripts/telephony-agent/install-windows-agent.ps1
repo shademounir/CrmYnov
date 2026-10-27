@@ -19,6 +19,9 @@ $transactionModule = Join-Path $PSScriptRoot 'installer-transactions.psm1'
 Import-Module -Name $transactionModule -Force
 $recoveryRoot = Join-Path $installRoot '.recovery'
 $activeRecovery = $null
+$uninstallRecoveryRoot = Join-Path $installRoot '.uninstall-recovery'
+$activeUninstallRecovery = $null
+$uninstallPlan = $null
 
 function Assert-ManagedPath([string]$Path) {
     $resolvedParent = [System.IO.Path]::GetFullPath((Split-Path -Parent $Path))
@@ -44,9 +47,10 @@ function Assert-NoReparseTree([string]$Path) {
 function Assert-NoReparseAncestors([string]$Path) {
     $current = [System.IO.Path]::GetFullPath($Path)
     while (-not [string]::IsNullOrEmpty($current)) {
-        try { if (([System.IO.File]::GetAttributes($current) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'INSTALLER_REPARSE_REFUSED' } }
-        catch [System.IO.FileNotFoundException] { }
-        catch [System.IO.DirectoryNotFoundException] { }
+        try { $attributes = [System.IO.File]::GetAttributes($current) }
+        catch [System.IO.FileNotFoundException] { $attributes = $null }
+        catch [System.IO.DirectoryNotFoundException] { $attributes = $null }
+        if ($null -ne $attributes -and ($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'INSTALLER_REPARSE_REFUSED' }
         $current = [System.IO.Path]::GetDirectoryName($current)
     }
 }
@@ -251,7 +255,7 @@ function Set-Activation([string]$Executable, [string]$ActiveVersion) {
     catch { throw 'INSTALLER_UNINSTALL_REGISTRATION_FAILED' }
 }
 
-function Test-Activation([string]$Executable, [string]$ActiveVersion, $Before) {
+function Test-ActivationRegistry([string]$Executable, [string]$ActiveVersion) {
     $protocol = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\Classes\$scheme")
     $command = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Software\Classes\$scheme\shell\open\command")
     $registration = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Uninstall\CRM Ynov Telephony Agent')
@@ -260,15 +264,22 @@ function Test-Activation([string]$Executable, [string]$ActiveVersion, $Before) {
         if ($protocol.GetValue('') -cne "URL:$productName" -or 'URL Protocol' -notin $protocol.GetValueNames() -or $command.GetValue('') -cne ('"{0}" "%1"' -f $Executable)) { return $false }
         if ($registration.GetValue('DisplayVersion') -cne $ActiveVersion -or $registration.GetValue('InstallLocation') -cne (Split-Path -Parent $Executable)) { return $false }
     } finally { foreach ($key in @($protocol,$command,$registration)) { if ($null -ne $key) { $key.Dispose() } } }
+    return $true
+}
+function Test-ActivationStartup([string]$Executable, $Before) {
+    $startup = Get-StartupSnapshot
+    if ($Before.Startup.Exists -and -not [string]::IsNullOrWhiteSpace([string]$Before.Startup.Data)) {
+        return ($startup.Exists -and $startup.Data -ceq ('"{0}"' -f $Executable))
+    }
+    return (($startup | ConvertTo-Json -Compress) -ceq ($Before.Startup | ConvertTo-Json -Compress))
+}
+function Test-Activation([string]$Executable, [string]$ActiveVersion, $Before) {
+    if (-not (Test-ActivationRegistry $Executable $ActiveVersion)) { return $false }
     if (-not [System.IO.File]::Exists($startMenu)) { return $false }
     $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($startMenu)
     if (-not $shortcut.TargetPath.Equals($Executable, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
     if ([System.IO.File]::ReadAllText((Join-Path $installRoot 'active-version.txt')).Trim() -cne $ActiveVersion) { return $false }
-    $startup = Get-StartupSnapshot
-    if ($Before.Startup.Exists -and -not [string]::IsNullOrWhiteSpace([string]$Before.Startup.Data)) {
-        if (-not $startup.Exists -or $startup.Data -cne ('"{0}"' -f $Executable)) { return $false }
-    } elseif (($startup | ConvertTo-Json -Compress) -cne ($Before.Startup | ConvertTo-Json -Compress)) { return $false }
-    return $true
+    return (Test-ActivationStartup $Executable $Before)
 }
 function Invoke-ActivationUpdate([string]$Executable, [string]$ActiveVersion, [scriptblock]$Stage, [scriptblock]$Cleanup, [scriptblock]$Cleaned) {
     $script:desiredExecutable = $Executable; $script:desiredVersion = $ActiveVersion
@@ -285,36 +296,138 @@ function Invoke-ActivationUpdate([string]$Executable, [string]$ActiveVersion, [s
     }
 }
 
-function Remove-OwnedVersions {
+function Get-OwnedFileEntry([string]$Root, [string]$Path) {
+    $absolute = Resolve-AgentManifestPath $Root $Path
+    return [pscustomobject]@{ path=$Path; bytes=(Get-Item -LiteralPath $absolute).Length; sha256=(Get-Sha256 $absolute) }
+}
+function Get-VersionDeletionEntries([string]$VersionPath) {
+    Assert-VersionPath $VersionPath
+    $manifestFile = Join-Path $VersionPath 'manifest.json'
+    if (-not [System.IO.File]::Exists($manifestFile) -or (Get-Item -LiteralPath $manifestFile).Length -gt 1048576) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
+    $manifest = [System.IO.File]::ReadAllText($manifestFile) | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.product -cne $productName -or $manifest.version -cne [System.IO.Path]::GetFileName($VersionPath)) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
+    $actualFiles = @([System.IO.Directory]::EnumerateFiles($VersionPath, '*', [System.IO.SearchOption]::AllDirectories) | ForEach-Object { $_.Substring($VersionPath.Length + 1).Replace('\','/') })
+    $actualDirs = @([System.IO.Directory]::EnumerateDirectories($VersionPath, '*', [System.IO.SearchOption]::AllDirectories) | ForEach-Object { $_.Substring($VersionPath.Length + 1).Replace('\','/') })
+    Assert-AgentOwnedInventory $VersionPath $manifest.files $actualFiles $actualDirs
+    $prefix = 'versions/' + [System.IO.Path]::GetFileName($VersionPath) + '/'
+    # The manifest is itself owned and recorded before it can be removed first.
+    Get-OwnedFileEntry $installRoot ($prefix + 'manifest.json')
+    foreach ($file in $manifest.files) {
+        $observed = Get-OwnedFileEntry $VersionPath $file.path
+        if ($observed.bytes -ne $file.bytes -or $observed.sha256 -cne $file.sha256) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
+        [pscustomobject]@{ path=($prefix + $file.path); bytes=$observed.bytes; sha256=$observed.sha256 }
+    }
+}
+function Get-DeletionFileMetadata([string]$Relative, [bool]$WithHash) {
+    if ($WithHash) { return (Get-OwnedFileEntry $installRoot $Relative) }
+    $path=Resolve-AgentManifestPath $installRoot $Relative
+    return [pscustomobject]@{ path=$Relative; bytes=(Get-Item -LiteralPath $path).Length }
+}
+function Get-DeletionObservation([bool]$WithHash = $true) {
     Assert-ProductRoot
     if ([System.IO.File]::Exists($versionsRoot)) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
+    $files = @(); $dirs = @()
+    if ([System.IO.Directory]::Exists($versionsRoot)) {
+        $files = @([System.IO.Directory]::EnumerateFiles($versionsRoot, '*', [System.IO.SearchOption]::AllDirectories) | ForEach-Object { Get-DeletionFileMetadata ($_.Substring($installRoot.Length + 1).Replace('\','/')) $WithHash })
+        $dirs = @('versions') + @([System.IO.Directory]::EnumerateDirectories($versionsRoot, '*', [System.IO.SearchOption]::AllDirectories) | ForEach-Object { $_.Substring($installRoot.Length + 1).Replace('\','/') })
+    }
+    $activeFile = Join-Path $installRoot 'active-version.txt'
+    if ([System.IO.Directory]::Exists($activeFile)) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
+    if ([System.IO.File]::Exists($activeFile)) { $files += Get-DeletionFileMetadata 'active-version.txt' $WithHash }
+    return [pscustomobject]@{ root=$installRoot; files=@($files); directories=@($dirs) }
+}
+function New-UninstallPlan {
+    $observation = Get-DeletionObservation
+    $files = @()
     if ([System.IO.Directory]::Exists($versionsRoot)) {
         $versions = @([System.IO.Directory]::EnumerateDirectories($versionsRoot))
         if ($versions.Count -gt 100 -or @([System.IO.Directory]::EnumerateFiles($versionsRoot)).Count -ne 0) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
-        # Validate the complete inventory before deleting any version.
-        foreach ($versionPath in $versions) {
-            Assert-VersionPath $versionPath
-            $manifestFile = Join-Path $versionPath 'manifest.json'
-            if (-not [System.IO.File]::Exists($manifestFile)) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
-            if ((Get-Item -LiteralPath $manifestFile).Length -gt 1048576) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
-            $installedManifest = [System.IO.File]::ReadAllText($manifestFile) | ConvertFrom-Json
-            if ($installedManifest.schemaVersion -ne 1 -or $installedManifest.product -cne $productName -or $installedManifest.version -cne [System.IO.Path]::GetFileName($versionPath)) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
-            $actualFiles = @([System.IO.Directory]::EnumerateFiles($versionPath, '*', [System.IO.SearchOption]::AllDirectories) | ForEach-Object { $_.Substring($versionPath.Length + 1).Replace('\','/') })
-            $actualDirs = @([System.IO.Directory]::EnumerateDirectories($versionPath, '*', [System.IO.SearchOption]::AllDirectories) | ForEach-Object { $_.Substring($versionPath.Length + 1).Replace('\','/') })
-            Assert-AgentOwnedInventory $versionPath $installedManifest.files $actualFiles $actualDirs
-            foreach ($file in $installedManifest.files) {
-                $ownedFile = Resolve-AgentManifestPath $versionPath $file.path
-                if ((Get-Item -LiteralPath $ownedFile).Length -ne $file.bytes -or (Get-Sha256 $ownedFile) -cne $file.sha256) { throw 'INSTALLER_VERSION_INVENTORY_UNKNOWN' }
-            }
-        }
-        foreach ($versionPath in $versions) { Assert-VersionPath $versionPath; Remove-Item -LiteralPath $versionPath -Recurse -Force -ErrorAction Stop }
-        [System.IO.Directory]::Delete($versionsRoot, $false)
+        foreach ($versionPath in $versions) { $files += @(Get-VersionDeletionEntries $versionPath) }
     }
-    foreach ($name in @('active-version.txt')) {
-        $file = Join-Path $installRoot $name; if ([System.IO.File]::Exists($file)) { [System.IO.File]::Delete($file) }
+    if ([System.IO.File]::Exists((Join-Path $installRoot 'active-version.txt'))) { $files += Get-OwnedFileEntry $installRoot 'active-version.txt' }
+    return [pscustomobject]@{ schemaVersion=1; root=$installRoot; files=@($files); directories=@($observation.directories) }
+}
+function Write-DurableNewFile([string]$Path, [byte[]]$Bytes) {
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew)
+    try { $stream.Write($Bytes, 0, $Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+}
+function Get-PlanDigest([byte[]]$Bytes) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+}
+function Read-UninstallRecord([string]$Directory) {
+    $names = @([System.IO.Directory]::EnumerateFiles($Directory) | ForEach-Object { [System.IO.Path]::GetFileName($_) } | Sort-Object)
+    if (@([System.IO.Directory]::EnumerateDirectories($Directory)).Count -ne 0) { throw 'INSTALLER_UNINSTALL_PLAN_INVALID' }
+    $path = Join-Path $Directory 'plan.json'
+    foreach ($file in $names) { if ((Get-Item -LiteralPath (Join-Path $Directory $file)).Length -gt 1048576) { throw 'INSTALLER_UNINSTALL_PLAN_INVALID' } }
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $digest = [System.IO.File]::ReadAllText((Join-Path $Directory 'sha256.txt'))
+    $completeText=$null; $pendingLength=0
+    if ('complete.txt' -cin $names) { $completeText=[System.IO.File]::ReadAllText((Join-Path $Directory 'complete.txt')) }
+    if ('complete.pending' -cin $names) { $pendingLength=(Get-Item -LiteralPath (Join-Path $Directory 'complete.pending')).Length }
+    $record=Read-AgentDeletionRecord $installRoot ([System.IO.Path]::GetFileName($Directory)) $names $bytes $digest $completeText $pendingLength
+    return [pscustomobject]@{ Plan=$record.Plan; Complete=$record.Complete; Digest=$record.Digest; Directory=$Directory }
+}
+function Read-PendingUninstallPlan {
+    Assert-ProductRoot
+    $script:activeUninstallRecovery = $null
+    if ([System.IO.File]::Exists($uninstallRecoveryRoot)) { throw 'INSTALLER_UNINSTALL_PLAN_INVALID' }
+    if (-not [System.IO.Directory]::Exists($uninstallRecoveryRoot)) { return $null }
+    if (@([System.IO.Directory]::EnumerateFiles($uninstallRecoveryRoot)).Count -ne 0) { throw 'INSTALLER_UNINSTALL_PLAN_INVALID' }
+    $directories = @([System.IO.Directory]::EnumerateDirectories($uninstallRecoveryRoot))
+    if ($directories.Count -gt 1000) { throw 'INSTALLER_UNINSTALL_PLAN_BOUND' }
+    $pending = @()
+    foreach ($directory in $directories) {
+        $record = Read-UninstallRecord $directory
+        if (-not $record.Complete) { $pending += $record }
     }
-    # Terminal recovery evidence is intentionally retained. No DPAPI/journal path
-    # is an input to deletion, copying, snapshot capture or restoration.
+    if ($pending.Count -gt 1) { throw 'INSTALLER_UNINSTALL_PLAN_AMBIGUOUS' }
+    if ($pending.Count -eq 0) { return $null }
+    $script:activeUninstallRecovery = $pending[0].Directory
+    return $pending[0].Plan
+}
+function Save-UninstallPlan($Plan) {
+    Assert-AgentDeletionPlan $installRoot $Plan
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($Plan | ConvertTo-Json -Depth 12 -Compress))
+    if ($bytes.Length -gt 1048576) { throw 'INSTALLER_UNINSTALL_PLAN_BOUND' }
+    $directory = Join-Path $uninstallRecoveryRoot ([Guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    Write-DurableNewFile (Join-Path $directory 'plan.json') $bytes
+    Write-DurableNewFile (Join-Path $directory 'sha256.txt') ([System.Text.Encoding]::UTF8.GetBytes((Get-PlanDigest $bytes)))
+    # An incomplete write remains a blocking record, never regenerated/removed.
+}
+function Remove-PlannedFile($Entry) {
+    Assert-ProductRoot
+    $path = Resolve-AgentManifestPath $installRoot $Entry.path
+    if ([System.IO.Directory]::Exists($path)) { throw 'INSTALLER_UNINSTALL_REMAINING_DRIFT' }
+    if (-not [System.IO.File]::Exists($path)) { return }
+    if ((Get-Item -LiteralPath $path).Length -ne $Entry.bytes -or (Get-Sha256 $path) -cne $Entry.sha256) { throw 'INSTALLER_UNINSTALL_REMAINING_DRIFT' }
+    [System.IO.File]::Delete($path)
+}
+function Remove-PlannedDirectory([string]$Relative) {
+    Assert-ProductRoot
+    $path = Resolve-AgentManifestPath $installRoot $Relative
+    if ([System.IO.File]::Exists($path)) { throw 'INSTALLER_UNINSTALL_REMAINING_DRIFT' }
+    if ([System.IO.Directory]::Exists($path)) { [System.IO.Directory]::Delete($path, $false) }
+}
+function Get-UninstallEffects {
+    return @{ ReadPlan={ Read-PendingUninstallPlan }; CapturePlan={ New-UninstallPlan }; PersistPlan={ param($plan) Save-UninstallPlan $plan }; Observe={ Get-DeletionObservation }; InspectStructure={ Get-DeletionObservation $false }; DeleteFile={ param($entry) Remove-PlannedFile $entry }; DeleteDirectory={ param($relative) Remove-PlannedDirectory $relative } }
+}
+function Remove-OwnedVersions {
+    Invoke-AgentPlannedDeletion $installRoot $script:uninstallPlan (Get-UninstallEffects)
+}
+function Complete-UninstallPlan {
+    Assert-ProductRoot
+    $record = Read-UninstallRecord $script:activeUninstallRecovery
+    if ($record.Complete) { throw 'INSTALLER_UNINSTALL_PLAN_INVALID' }
+    if (($record.Plan | ConvertTo-Json -Depth 12 -Compress) -cne ($script:uninstallPlan | ConvertTo-Json -Depth 12 -Compress)) { throw 'INSTALLER_UNINSTALL_PLAN_DRIFT' }
+    # A torn final-marker write is explicitly nonterminal; after all absence
+    # proofs are rechecked on an explicit retry it can be replaced, not trusted.
+    $pending = Join-Path $script:activeUninstallRecovery 'complete.pending'
+    $stream = [System.IO.File]::Open($pending, [System.IO.FileMode]::Create)
+    try { $bytes=[System.Text.Encoding]::UTF8.GetBytes($record.Digest); $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+    [System.IO.File]::Move($pending, (Join-Path $script:activeUninstallRecovery 'complete.txt'))
+    if (-not (Read-UninstallRecord $script:activeUninstallRecovery).Complete) { throw 'INSTALLER_UNINSTALL_FINALIZE_UNPROVEN' }
 }
 function Test-OwnedFilesAbsent {
     if ([System.IO.Directory]::Exists($versionsRoot) -or [System.IO.File]::Exists($versionsRoot)) { return $false }
@@ -330,9 +443,12 @@ Assert-ProductRoot
 $installerLease = [System.IO.File]::Open((Join-Path $installRoot '.installer.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
 try {
 Assert-NoPendingRecovery
+$pendingUninstall = Read-PendingUninstallPlan
+Assert-AgentUninstallMode $PSCmdlet.ParameterSetName $pendingUninstall
 
 if ($PSCmdlet.ParameterSetName -eq 'Uninstall') {
     Invoke-AgentUninstallTransaction @{
+        PrepareFiles = { $script:uninstallPlan = Get-AgentPreparedDeletionPlan $installRoot (Get-UninstallEffects) }
         RemoveProtocol = { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree("Software\Classes\$scheme", $false) }
         ProtocolAbsent = { -not (Get-RegistrySnapshot "Software\Classes\$scheme").Exists }
         RemoveShortcut = { if ([System.IO.File]::Exists($startMenu)) { [System.IO.File]::Delete($startMenu) } }
@@ -343,6 +459,7 @@ if ($PSCmdlet.ParameterSetName -eq 'Uninstall') {
         FilesAbsent = { Test-OwnedFilesAbsent }
         RemoveRegistration = { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\Microsoft\Windows\CurrentVersion\Uninstall\CRM Ynov Telephony Agent', $false) }
         RegistrationAbsent = { -not (Get-RegistrySnapshot 'Software\Microsoft\Windows\CurrentVersion\Uninstall\CRM Ynov Telephony Agent').Exists }
+        Finalize = { Complete-UninstallPlan }
     }
     Write-Output 'Agent désinstallé : activation et fichiers applicatifs vérifiés absents. Profil, journal, moteur de maintenance et récupération conservés.'
     exit 0

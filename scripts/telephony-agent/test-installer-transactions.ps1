@@ -59,9 +59,11 @@ function MemoryUninstall([string]$Fail='', [bool]$FalseCheck=$false) {
         $effects['Remove'+$name]={ $state.Events.Add('remove-'+$name);if($Fail -ceq $name -and -not $FalseCheck){throw 'SYNTHETIC_REMOVE'};if($Fail -cne $name){$state[$name]=$false} }.GetNewClosure()
         $effects[$name+'Absent']={ $state.Events.Add('absent-'+$name);return (-not $state[$name]) }.GetNewClosure()
     }
+    $effects.PrepareFiles={ $state.Events.Add('prepare-files') }.GetNewClosure()
+    $effects.Finalize={ $state.Events.Add('finalize');$state.Recovery='COMPLETE' }.GetNewClosure()
     return @{State=$state;Effects=$effects}
 }
-$u=MemoryUninstall;Invoke-AgentUninstallTransaction $u.Effects;Check(-not $u.State.Files -and -not $u.State.Registration -and $u.State.Engine);Check(($u.State.Events -join ',') -ceq 'remove-Protocol,absent-Protocol,remove-Shortcut,absent-Shortcut,remove-Startup,absent-Startup,remove-Files,absent-Files,remove-Registration,absent-Registration')
+$u=MemoryUninstall;Invoke-AgentUninstallTransaction $u.Effects;Check(-not $u.State.Files -and -not $u.State.Registration -and $u.State.Engine);Check(($u.State.Events -join ',') -ceq 'prepare-files,remove-Protocol,absent-Protocol,remove-Shortcut,absent-Shortcut,remove-Startup,absent-Startup,remove-Files,absent-Files,remove-Registration,absent-Registration,absent-Protocol,absent-Shortcut,absent-Startup,absent-Files,absent-Registration,finalize')
 foreach($failure in @('Protocol','Shortcut','Startup','Files','Registration')) {
     foreach($falseCheck in @($false,$true)) {
         $u=MemoryUninstall $failure $falseCheck
@@ -91,4 +93,141 @@ Refuses {Assert-AgentOwnedInventory $root @([pscustomobject]@{path='agent.exe';b
 foreach($terminal in @('COMMITTED','RESTORED')){Assert-AgentRecoveryTerminal ('a'*32) $terminal;Check($true)}
 foreach($unknown in @('PENDING','RESTORING','FAILED','','committed')){Refuses {Assert-AgentRecoveryTerminal ('a'*32) $unknown} 'INSTALLER_RECOVERY_PENDING'}
 Refuses {Assert-AgentRecoveryTerminal 'ambiguous' 'COMMITTED'} 'INSTALLER_RECOVERY_PENDING'
+function Copy-MemoryObject($Value) { return ($Value | ConvertTo-Json -Depth 12 -Compress | ConvertFrom-Json) }
+function MemoryDeletion {
+    $r='C:\synthetic\product'
+    $files=@(
+        [pscustomobject]@{path='versions/0.4.13-pilot/manifest.json';bytes=100;sha256=('a'*64)},
+        [pscustomobject]@{path='versions/0.4.13-pilot/agent.exe';bytes=300;sha256=('b'*64)},
+        [pscustomobject]@{path='versions/0.4.14-pilot/manifest.json';bytes=101;sha256=('c'*64)},
+        [pscustomobject]@{path='versions/0.4.14-pilot/lib/agent.dll';bytes=301;sha256=('d'*64)},
+        [pscustomobject]@{path='active-version.txt';bytes=12;sha256=('e'*64)}
+    )
+    $dirs=@('versions','versions/0.4.13-pilot','versions/0.4.14-pilot','versions/0.4.14-pilot/lib')
+    $plan=[pscustomobject]@{schemaVersion=1;root=$r;files=$files;directories=$dirs}
+    $s=@{Root=$r;Plan=$null;Template=$plan;Files=@($files);Dirs=@($dirs);Events=[System.Collections.Generic.List[string]]::new();Fail='';Boundary=0;At=-1;After=$false;Reparse=$false;Complete=$false;GlobalHashes=0;FileHashes=0;InspectCalls=0}
+    $effects=@{
+        ReadPlan={ $s.Events.Add('read');if($s.Fail -eq 'Read'){throw 'SYNTHETIC_READ'};if($s.Fail -eq 'CorruptRead'){return [pscustomobject]@{unknown='bad'}};return $s.Plan }.GetNewClosure()
+        CapturePlan={ $s.Events.Add('capture');if($s.Fail -eq 'Capture'){throw 'SYNTHETIC_CAPTURE'};return (Copy-MemoryObject $s.Template) }.GetNewClosure()
+        PersistPlan={param($p) $s.Events.Add('persist');if($s.Fail -eq 'Persist'){throw 'SYNTHETIC_PERSIST'};$s.Plan=Copy-MemoryObject $p;if($s.Fail -eq 'ReadBack'){$s.Plan.files[0].bytes=999} }.GetNewClosure()
+        Observe={ $s.Events.Add('observe');$s.GlobalHashes+=$s.Files.Count;if($s.Reparse){throw 'INSTALLER_REPARSE_REFUSED'};return [pscustomobject]@{root=$s.Root;files=@($s.Files);directories=@($s.Dirs)} }.GetNewClosure()
+        InspectStructure={ $s.Events.Add('inspect');$s.InspectCalls++;if($s.Reparse){throw 'INSTALLER_REPARSE_REFUSED'};return [pscustomobject]@{root=$s.Root;files=@($s.Files|ForEach-Object{[pscustomobject]@{path=$_.path;bytes=$_.bytes}});directories=@($s.Dirs)} }.GetNewClosure()
+        DeleteFile={param($entry) $s.Events.Add('file:'+ $entry.path);$s.Boundary++;if($s.At -eq $s.Boundary -and -not $s.After){throw 'SYNTHETIC_INTERRUPT'};$current=@($s.Files|Where-Object{$_.path -ceq $entry.path});if($current.Count -gt 0){$s.FileHashes++;if($current[0].sha256 -cne $entry.sha256 -or $current[0].bytes -ne $entry.bytes){throw 'INSTALLER_UNINSTALL_REMAINING_DRIFT'}};$s.Files=@($s.Files|Where-Object{$_.path -cne $entry.path});if($s.At -eq $s.Boundary -and $s.After){throw 'SYNTHETIC_INTERRUPT'} }.GetNewClosure()
+        DeleteDirectory={param($path) $s.Events.Add('dir:'+ $path);$s.Boundary++;if($s.At -eq $s.Boundary -and -not $s.After){throw 'SYNTHETIC_INTERRUPT'};if(@($s.Files|Where-Object{$_.path.StartsWith($path+'/')}).Count -gt 0 -or @($s.Dirs|Where-Object{$_.StartsWith($path+'/')}).Count -gt 0){throw 'SYNTHETIC_NOT_EMPTY'};$s.Dirs=@($s.Dirs|Where-Object{$_ -cne $path});if($s.At -eq $s.Boundary -and $s.After){throw 'SYNTHETIC_INTERRUPT'} }.GetNewClosure()
+    }
+    return @{State=$s;Effects=$effects}
+}
+$m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+Check($m.State.Events.IndexOf('persist') -lt $m.State.Events.LastIndexOf('read'))
+Check(@($m.State.Events|Where-Object{$_ -match '^(file|dir):'}).Count -eq 0)
+$m.State.GlobalHashes=0;$m.State.Events.Clear()
+Invoke-AgentPlannedDeletion $m.State.Root $p $m.Effects
+Check($m.State.Files.Count -eq 0 -and $m.State.Dirs.Count -eq 0)
+Check($m.State.GlobalHashes -eq 5 -and $m.State.FileHashes -eq 5 -and $m.State.InspectCalls -eq 9)
+Check(@($m.State.Events|Where-Object{$_ -ceq 'observe'}).Count -eq 2)
+Check(($m.State.Events|Where-Object{$_ -match '^file:'}|Select-Object -First 1) -ceq 'file:versions/0.4.13-pilot/manifest.json')
+foreach($during in @('extra','size','hash','reparse')) {
+    $m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+    $s=$m.State;$inspect=$m.Effects.InspectStructure
+    $m.Effects.InspectStructure={
+        if($s.Boundary -eq 1){
+            switch($during){
+                'extra' {$s.Dirs+='versions/0.4.14-pilot/unknown'}
+                'size' {$s.Files=Copy-MemoryObject $s.Files;$s.Files[0].bytes=999}
+                'hash' {$s.Files=Copy-MemoryObject $s.Files;$s.Files[0].sha256='f'*64}
+                'reparse' {$s.Reparse=$true}
+            }
+        }
+        return (& $inspect)
+    }.GetNewClosure()
+    try{Invoke-AgentPlannedDeletion $s.Root $p $m.Effects;throw 'MISSING_FAILURE'}catch{Check($_.Exception.Message -cne 'MISSING_FAILURE')}
+    Check($s.Files.Count -eq 4 -and -not $s.Complete)
+    Check($s.Files[0].path -ceq 'versions/0.4.13-pilot/agent.exe')
+}
+# Interrupt before AND after every individual file/directory effect. Retry uses
+# the same persisted plan, including when its original manifest is already gone.
+foreach($after in @($false,$true)) {
+    foreach($boundary in 1..9) {
+        $m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+        $m.State.At=$boundary;$m.State.After=$after
+        Refuses {Invoke-AgentPlannedDeletion $m.State.Root $p $m.Effects} 'SYNTHETIC_INTERRUPT'
+        Check($null -ne $m.State.Plan -and -not $m.State.Complete)
+        $m.State.At=-1;$m.State.Events.Clear()
+        $resumed=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+        Check('capture' -notin $m.State.Events -and 'persist' -notin $m.State.Events)
+        Invoke-AgentPlannedDeletion $m.State.Root $resumed $m.Effects
+        Check($m.State.Files.Count -eq 0 -and $m.State.Dirs.Count -eq 0)
+    }
+}
+foreach($failure in @('Read','Capture','Persist','ReadBack','CorruptRead')) {
+    $m=MemoryDeletion;$m.State.Fail=$failure
+    try {Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects|Out-Null;throw 'MISSING_FAILURE'}catch{Check($_.Exception.Message -cne 'MISSING_FAILURE')}
+    Check(@($m.State.Events|Where-Object{$_ -match '^(file|dir):'}).Count -eq 0 -and $m.State.Files.Count -eq 5)
+}
+foreach($drift in @('extra-file','extra-directory','hash','size','root','reparse','missing-plan','corrupt-plan')) {
+    $m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+    switch($drift) {
+        'extra-file' {$m.State.Files+= [pscustomobject]@{path='versions/0.4.14-pilot/user.txt';bytes=1;sha256=('f'*64)}}
+        'extra-directory' {$m.State.Dirs+='versions/0.4.14-pilot/private'}
+        'hash' {$m.State.Files=Copy-MemoryObject $m.State.Files;$m.State.Files[1].sha256='f'*64}
+        'size' {$m.State.Files=Copy-MemoryObject $m.State.Files;$m.State.Files[1].bytes=999}
+        'root' {$m.State.Root='C:\synthetic\other'}
+        'reparse' {$m.State.Reparse=$true}
+        'missing-plan' {$m.State.Plan=$null;$m.State.Fail='Capture';$m.State.Files=@($m.State.Files|Where-Object{$_.path -notmatch 'manifest.json$'})}
+        'corrupt-plan' {$m.State.Plan=[pscustomobject]@{schemaVersion=1}}
+    }
+    $m.State.Events.Clear()
+    try {$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects;Invoke-AgentPlannedDeletion $m.State.Root $p $m.Effects;throw 'MISSING_FAILURE'}catch{Check($_.Exception.Message -cne 'MISSING_FAILURE')}
+    Check(@($m.State.Events|Where-Object{$_ -match '^(file|dir):'}).Count -eq 0)
+}
+# Mode gating is the production pure predicate: no new install/rollback while
+# any nonterminal record remains; completed records are not returned as pending.
+$m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+foreach($mode in @('Install','Rollback')){Refuses {Assert-AgentUninstallMode $mode $p} 'INSTALLER_UNINSTALL_PENDING';Assert-AgentUninstallMode $mode $null;Check($true)}
+Assert-AgentUninstallMode 'Uninstall' $p;Check($true)
+# Persist failure precedes ALL activation mutations, not just file deletion.
+$u=MemoryUninstall;$u.Effects.PrepareFiles={throw 'SYNTHETIC_PERSIST'}
+Refuses {Invoke-AgentUninstallTransaction $u.Effects} 'SYNTHETIC_PERSIST';Check($u.State.Events.Count -eq 0)
+# Registration failure after complete file removal retains plan/engine. Explicit
+# retry reaches registration again; no repeated capture or autonomous retries.
+$m=MemoryDeletion;$u=MemoryUninstall 'Registration';$s=$m.State;$e=$m.Effects
+$u.Effects.PrepareFiles={ $s.Prepared=Get-AgentPreparedDeletionPlan $s.Root $e }.GetNewClosure()
+$u.Effects.RemoveFiles={ Invoke-AgentPlannedDeletion $s.Root $s.Prepared $e }.GetNewClosure()
+$u.Effects.FilesAbsent={ return ($s.Files.Count -eq 0 -and $s.Dirs.Count -eq 0) }.GetNewClosure()
+$u.Effects.Finalize={ $s.Complete=$true }.GetNewClosure()
+Refuses {Invoke-AgentUninstallTransaction $u.Effects} 'INSTALLER_UNINSTALL_REGISTRATION_INCOMPLETE'
+Check(-not $m.State.Complete -and $m.State.Files.Count -eq 0 -and $u.State.Engine)
+$us=$u.State;$u.Effects.RemoveRegistration={ $us.Registration=$false }.GetNewClosure()
+$u.Effects.Finalize={throw 'SYNTHETIC_FINALIZE'}
+Refuses {Invoke-AgentUninstallTransaction $u.Effects} 'SYNTHETIC_FINALIZE';Check(-not $m.State.Complete -and -not $u.State.Registration)
+$u.Effects.Finalize={ $s.Complete=$true }.GetNewClosure();Invoke-AgentUninstallTransaction $u.Effects;Check($m.State.Complete)
+# A new lifecycle gets a NEW plan rather than reusing a completed one.
+$next=MemoryDeletion;$nextPlan=Get-AgentPreparedDeletionPlan $next.State.Root $next.Effects
+Check($next.State.Events.Contains('capture') -and $next.State.Files.Count -eq 5 -and -not $next.State.Complete)
+# Actual production record decoder, with bytes and names supplied from memory.
+# The digest detects corruption; it is not an authentication/signature claim.
+$planBytes=[System.Text.Encoding]::UTF8.GetBytes(($nextPlan|ConvertTo-Json -Depth 12 -Compress))
+$sha=[System.Security.Cryptography.SHA256]::Create()
+try{$digest=([BitConverter]::ToString($sha.ComputeHash($planBytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+$id='a'*32;$names=@('plan.json','sha256.txt');$r=$next.State.Root
+$record=Read-AgentDeletionRecord $r $id $names $planBytes $digest $null 0
+Check(-not $record.Complete)
+$record=Read-AgentDeletionRecord $r $id @('plan.json','sha256.txt','complete.pending') $planBytes $digest $null 0
+Check(-not $record.Complete)
+$record=Read-AgentDeletionRecord $r $id @('plan.json','sha256.txt','complete.pending') $planBytes $digest $null 31
+Check(-not $record.Complete)
+$record=Read-AgentDeletionRecord $r $id @('plan.json','sha256.txt','complete.txt') $planBytes $digest $digest 0
+Check($record.Complete)
+foreach($badNames in @(@('sha256.txt'),@('plan.json'),@('plan.json','sha256.txt','unknown'),@('PLAN.JSON','sha256.txt'),@('plan.json','sha256.txt','complete.txt','complete.pending'))) {
+    Refuses {Read-AgentDeletionRecord $r $id $badNames $planBytes $digest $null 0} 'INSTALLER_UNINSTALL_PLAN_INVALID'
+}
+Refuses {Read-AgentDeletionRecord $r 'not-an-id' $names $planBytes $digest $null 0} 'INSTALLER_UNINSTALL_PLAN_INVALID'
+Refuses {Read-AgentDeletionRecord $r $id $names $planBytes ('f'*64) $null 0} 'INSTALLER_UNINSTALL_PLAN_INVALID'
+Refuses {Read-AgentDeletionRecord $r $id @('plan.json','sha256.txt','complete.txt') $planBytes $digest '' 0} 'INSTALLER_UNINSTALL_PLAN_INVALID'
+Refuses {Read-AgentDeletionRecord $r $id @('plan.json','sha256.txt','complete.pending') $planBytes $digest $null 65} 'INSTALLER_UNINSTALL_PLAN_INVALID'
+Refuses {Read-AgentDeletionRecord 'C:\synthetic\other' $id $names $planBytes $digest $null 0} 'INSTALLER_UNINSTALL_PLAN_INVALID'
+foreach($badPath in @('install-windows-agent.ps1','.recovery/data','versions/user/data','versions/0.4.14-pilot/../user','versions/0.4.14-pilot/private:stream')) {
+    $bad=Copy-MemoryObject $nextPlan;$bad.files[0].path=$badPath
+    try{Assert-AgentDeletionPlan $r $bad;throw 'MISSING_FAILURE'}catch{Check($_.Exception.Message -cne 'MISSING_FAILURE')}
+}
 [pscustomobject]@{passed=$true;checks=$checks;effects='synthetic-memory-only';installerScriptExecuted=$false;registryTouched=$false;profileTouched=$false;agentOrSdkStarted=$false;networkUsed=$false;nativeAcceptance=$false}|ConvertTo-Json -Compress

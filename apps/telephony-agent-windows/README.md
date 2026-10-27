@@ -213,10 +213,27 @@ Un bail fichier exclusif d’installeur empêche deux transactions simultanées 
 il ne remplace ni ne modifie le bail de l’agent. Le fichier de bail, le script et
 module de maintenance, et les preuves de récupération restent volontairement
 conservés après désinstallation pour permettre une reprise explicite.
-La désinstallation vérifie la disparition de l’activation avant de retirer les
-versions dont l’inventaire borné et les empreintes correspondent intégralement
-au manifeste (aucun fichier ou dossier supplémentaire), puis l’entrée de
-désinstallation ; les versions inconnues sont refusées, les erreurs ne sont pas
-masquées. Profil, journal et récupération restent conservés. Ces coordinations
+Avant toute suppression de désinstallation (y compris activation), tous les
+manifestes, fichiers et dossiers des versions sont inventoriés et vérifiés. Un
+plan borné de possession est écrit, flushé et relu dans
+`.uninstall-recovery/<transaction>` ; son digest détecte une corruption mais
+n’est pas une signature ni une preuve d’authenticité. Les fichiers possédés sont
+supprimés individuellement, puis seulement leurs dossiers vides, sans effacement
+récursif des versions. L’inventaire complet et ses contenus sont contrôlés au
+début et à la preuve finale ; avant chaque suppression, un contrôle sans lecture
+des contenus vérifie chemins, tailles, absence d’extras et liens de réanalyse.
+Chaque fichier est de plus rehaché et sa taille vérifiée immédiatement avant sa
+suppression : les contenus SDK ne sont pas relus globalement à chaque fichier.
+Une reprise **explicite** accepte uniquement le
+sous-ensemble restant conforme au plan, même si un manifeste a déjà disparu.
+Un ajout, une dérive de taille/empreinte, un lien de réanalyse ou un plan absent,
+incomplet ou corrompu provoque un refus conservateur ; aucun plan inconnu n’est
+régénéré ou supprimé automatiquement. Un plan non terminé bloque installation
+et rollback, mais permet cette reprise de désinstallation. Le plan ne devient
+terminé qu’après absence revérifiée de l’activation, des fichiers et de l’entrée
+de désinstallation ; une écriture interrompue du marqueur final reste non
+terminale. Les plans terminés sont conservés sans bloquer un nouveau cycle,
+qui crée son propre plan. Les erreurs ne sont pas masquées.
+Profil, journal et récupération restent conservés. Ces coordinations
 sont testées avec effets en mémoire seulement : aucune installation Windows,
 mise à jour native, désinstallation, signature ou distribution n’est qualifiée.
