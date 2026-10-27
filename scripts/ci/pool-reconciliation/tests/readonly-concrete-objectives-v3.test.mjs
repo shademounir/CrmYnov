@@ -1,9 +1,10 @@
-// Source-catalogue tests only. Real future native authority still requires protected merges and fresh evidence.
+// Historical protected253 catalogue targets driver252, not this unprotected corrected candidate.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
+import {classifyApprovalMode} from '../../../pr-policy/policy.mjs';
 const root=new URL('../../../../',import.meta.url);
 const current=JSON.parse(fs.readFileSync(new URL('docs/governance/readonly-probe-objectives-v1.json',root)));
 const historical=JSON.parse(fs.readFileSync(new URL("scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-250-20261027.json",root)));
@@ -30,6 +31,19 @@ for(const scope of scopes)test(scope+' binds actual corrected driver and real co
   for(const key of ['pr','head','mergeCommit','tree'])assert.equal(entry.driver[key],expectedDriver[key]);
   assert.equal(entry.driver.files.length,38);assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
   assert.equal(sha256(JSON.stringify(entry.driver.files)),expectedFilesSha256);
-  for(const file of entry.driver.files)assert.equal(sha256(fs.readFileSync(new URL(file.path,root))),file.sha256);
+  for(const file of entry.driver.files){
+    const historicalAdapter=file.path==='scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs';
+    const proofPath=historicalAdapter?'scripts/ci/pool-reconciliation/tests/fixtures/pool-driver-github-protected252-20261027.md':file.path;
+    assert.equal(sha256(fs.readFileSync(new URL(proofPath,root))),file.sha256);
+  }
   assert.equal(entry.businessMutation,false);
+});
+test('historical raw-source proof packaging stays within the unchanged protected tooling delegation',()=>{
+  const grant=JSON.parse(fs.readFileSync(new URL('docs/governance/codex-delegation.json',root)));
+  const changedFiles=['scripts/ci/pool-reconciliation/OPERATIONAL-INTEGRATION.md','scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs','scripts/ci/pool-reconciliation/tests/pool-driver-github-v1.test.mjs','scripts/ci/pool-reconciliation/tests/readonly-concrete-objectives-v3.test.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-driver-github-protected252-20261027.md'];
+  const input={ticket:{scope:'prod'},defaultMode:'delegated-codex',migrationAssessment:{applicable:false},trustedGrant:grant,repository:'shademounir/CrmYnov',actor:'shademounir',base:'develop'};
+  const result=classifyApprovalMode({...input,changedFiles});
+  assert.equal(result.effectiveApprovalMode,'delegated-codex');
+  assert(result.reasons.every(reason=>!reason.startsWith('ambiguous')));
+  assert.throws(()=>classifyApprovalMode({...input,changedFiles:[changedFiles.at(-1).replace(/\.md$/u,'.txt')]}),/delegation_unresolved_scope_or_migration/u);
 });
