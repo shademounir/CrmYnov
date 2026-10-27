@@ -24,11 +24,11 @@ test('protected pool authority composes through the REAL official reader route g
   f.responses.set(f.base+'branches/develop/protection',{enforce_admins:{enabled:true},required_status_checks:{strict:true,contexts:['pr-policy']}});
   const optionalPolicy=JSON.parse(fs.readFileSync(new URL('../../../../docs/governance/github-code-review-policy.json',import.meta.url)));f.responses.set(f.base+'contents/'+GITHUB_CODE_REVIEW_POLICY_PATH+'?ref='+'6'.repeat(40),f.blob(optionalPolicy));f.refreshCatalog();const calls=[];
   const github=createReadOnlyGithubReader({environment:{PATH:'SYNTHETIC'},execute:async(file,args)=>{
-    assert.equal(file,OFFICIAL_GH);const tail=args.slice(3);if(tail[0]==='graphql'){calls.push('SYNTHETIC_GRAPHQL');return {stdout:JSON.stringify({data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[]},reviews:{nodes:[]}}}}})};}
+    assert.equal(file,OFFICIAL_GH);assert.deepEqual(args.slice(0,3),['api','--hostname','github.com']);const tail=args.slice(3);if(tail[0]==='graphql'){calls.push('SYNTHETIC_GRAPHQL');return {stdout:JSON.stringify({data:{repository:{pullRequest:{reviewThreads:{pageInfo:{hasNextPage:false},nodes:[]},reviews:{nodes:[]}}}}})};}
     assert.deepEqual(tail.slice(0,2),['--method','GET']);const target=tail.at(-1);calls.push(target);const url=new URL(target,'https://api.github.com');let value;
     if(url.searchParams.has('per_page')){assert.equal(url.searchParams.get('page'),'1');const rows=f.responses.get(url.pathname);assert(Array.isArray(rows));value=url.pathname.endsWith('/check-runs')?{total_count:rows.length,check_runs:rows}:rows;}
     else{assert(f.responses.has(target),'SYNTHETIC_ROUTE_REQUIRED');value=f.responses.get(target);}
     return {stdout:JSON.stringify(value)};
   }});
-  const result=await authorizePoolDriver({github,objectiveId:f.entry.id,dossier:f.dossier,jiraBytes:f.jiraBytes,localSource:f.localSource,action:'VERIFY',clock:()=>f.now});assert.equal(result.receipt.businessMutationAuthorized,false);assert.equal(result.receipt.gitHubCodeReviewRequired,false);assert(calls.filter(p=>p.startsWith(PREFIX)).length>=2);assert(calls.every(p=>!p.includes('run.googleapis.com')));
+  const result=await authorizePoolDriver({github,objectiveId:f.entry.id,dossier:f.dossier,jiraBytes:f.jiraBytes,localSource:f.localSource,action:'VERIFY',clock:()=>f.now});assert.equal(result.receipt.businessMutationAuthorized,false);assert.equal(result.receipt.gitHubCodeReviewRequired,false);assert(calls.filter(p=>p.startsWith(PREFIX)).length>=2);
 });
