@@ -126,14 +126,17 @@ function MemoryDeletion {
     $dirs=@('versions','versions/0.4.13-pilot','versions/0.4.14-pilot','versions/0.4.14-pilot/lib')
     $plan=[pscustomobject]@{schemaVersion=1;root=$r;files=$files;directories=$dirs}
     $s=@{Root=$r;Plan=$null;Template=$plan;Files=@($files);Dirs=@($dirs);Events=[System.Collections.Generic.List[string]]::new();Fail='';Boundary=0;At=-1;After=$false;Reparse=$false;Complete=$false;GlobalHashes=0;FileHashes=0;InspectCalls=0}
+    $copyMemoryObject=${function:Copy-MemoryObject}
+    $removeMemoryFile=${function:Remove-MemoryDeletionFile}
+    $removeMemoryDirectory=${function:Remove-MemoryDeletionDirectory}
     $effects=@{
         ReadPlan={ $s.Events.Add('read');if($s.Fail -eq 'Read'){throw 'SYNTHETIC_READ'};if($s.Fail -eq 'CorruptRead'){return [pscustomobject]@{unknown='bad'}};return $s.Plan }.GetNewClosure()
-        CapturePlan={ $s.Events.Add('capture');if($s.Fail -eq 'Capture'){throw 'SYNTHETIC_CAPTURE'};return (Copy-MemoryObject $s.Template) }.GetNewClosure()
-        PersistPlan={param($p) $s.Events.Add('persist');if($s.Fail -eq 'Persist'){throw 'SYNTHETIC_PERSIST'};$s.Plan=Copy-MemoryObject $p;if($s.Fail -eq 'ReadBack'){$s.Plan.files[0].bytes=999} }.GetNewClosure()
+        CapturePlan={ $s.Events.Add('capture');if($s.Fail -eq 'Capture'){throw 'SYNTHETIC_CAPTURE'};return (& $copyMemoryObject $s.Template) }.GetNewClosure()
+        PersistPlan={param($p) $s.Events.Add('persist');if($s.Fail -eq 'Persist'){throw 'SYNTHETIC_PERSIST'};$s.Plan=& $copyMemoryObject $p;if($s.Fail -eq 'ReadBack'){$s.Plan.files[0].bytes=999} }.GetNewClosure()
         Observe={ $s.Events.Add('observe');$s.GlobalHashes+=$s.Files.Count;if($s.Reparse){throw 'INSTALLER_REPARSE_REFUSED'};return [pscustomobject]@{root=$s.Root;files=@($s.Files);directories=@($s.Dirs)} }.GetNewClosure()
         InspectStructure={ $s.Events.Add('inspect');$s.InspectCalls++;if($s.Reparse){throw 'INSTALLER_REPARSE_REFUSED'};return [pscustomobject]@{root=$s.Root;files=@($s.Files|ForEach-Object{[pscustomobject]@{path=$_.path;bytes=$_.bytes}});directories=@($s.Dirs)} }.GetNewClosure()
-        DeleteFile={param($entry) Remove-MemoryDeletionFile $s $entry }.GetNewClosure()
-        DeleteDirectory={param($path) Remove-MemoryDeletionDirectory $s $path }.GetNewClosure()
+        DeleteFile={param($entry) & $removeMemoryFile $s $entry }.GetNewClosure()
+        DeleteDirectory={param($path) & $removeMemoryDirectory $s $path }.GetNewClosure()
     }
     return @{State=$s;Effects=$effects}
 }
@@ -149,12 +152,13 @@ Check(($m.State.Events|Where-Object{$_ -match '^file:'}|Select-Object -First 1) 
 foreach($during in @('extra','size','hash','reparse')) {
     $m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
     $s=$m.State;$inspect=$m.Effects.InspectStructure
+    $copyForInspection=${function:Copy-MemoryObject}
     $m.Effects.InspectStructure={
         if($s.Boundary -eq 1){
             switch($during){
                 'extra' {$s.Dirs+='versions/0.4.14-pilot/unknown'}
-                'size' {$s.Files=Copy-MemoryObject $s.Files;$s.Files[0].bytes=999}
-                'hash' {$s.Files=Copy-MemoryObject $s.Files;$s.Files[0].sha256='f'*64}
+                'size' {$s.Files=& $copyForInspection $s.Files;$s.Files[0].bytes=999}
+                'hash' {$s.Files=& $copyForInspection $s.Files;$s.Files[0].sha256='f'*64}
                 'reparse' {$s.Reparse=$true}
             }
         }
@@ -250,4 +254,85 @@ foreach($badPath in @('install-windows-agent.ps1','.recovery/data','versions/use
     $bad=Copy-MemoryObject $nextPlan;$bad.files[0].path=$badPath
     try{Assert-AgentDeletionPlan $r $bad;throw 'MISSING_FAILURE'}catch{Check($_.Exception.Message -cne 'MISSING_FAILURE')}
 }
+function Refuses-BeforeNext([scriptblock]$Guard,[string]$Code){
+    $following=@{Reached=$false};$guardBlock=$Guard
+    Refuses { & $guardBlock; $following.Reached=$true }.GetNewClosure() $Code
+    Check(-not $following.Reached)
+}
+function Check-NoMemoryDeletion($Memory){
+    Check(@($Memory.State.Events|Where-Object{$_ -match '^(file|dir):'}).Count -eq 0)
+    Check(-not $Memory.State.Complete -and $Memory.State.Files.Count -eq 5)
+}
+# Additional reachable fail-closed guards. Original 266 assertions and all
+# scenarios above are retained. No module mocks, AST rewriting or native I/O.
+$guardRoot='C:\synthetic\product'
+$ownedRoot=$guardRoot+'\versions\0.4.14-pilot'
+$goodEntry=[pscustomobject]@{path='agent.exe';bytes=1;sha256=('a'*64)}
+foreach($badEntry in @(
+    [pscustomobject]@{path='agent.exe';bytes=1;sha256=('a'*64);unexpected=$true},
+    [pscustomobject]@{path='agent.exe';bytes=1},
+    [pscustomobject]@{path='agent.exe';bytes=1;sha256='not-a-hash'},
+    [pscustomobject]@{path='agent.exe';bytes=1;sha256=123}
+)){
+    Refuses-BeforeNext {Assert-AgentOwnedInventory $ownedRoot @($badEntry) @('agent.exe','manifest.json') @()} 'INSTALLER_VERSION_INVENTORY_UNKNOWN'
+}
+foreach($inventory in @(@{Entries=@()},@{Entries=(@($goodEntry)*5001)})){
+    Refuses-BeforeNext {Assert-AgentOwnedInventory $ownedRoot $inventory.Entries @('agent.exe','manifest.json') @()} 'INSTALLER_VERSION_INVENTORY_UNKNOWN'
+}
+Refuses-BeforeNext {Assert-AgentOwnedInventory $ownedRoot $goodEntry @('agent.exe','manifest.json') @()} 'INSTALLER_VERSION_INVENTORY_UNKNOWN'
+$baseGuard=(MemoryDeletion).State.Template
+$planCases=@(
+    @{Mutate={param($p) $p.directories=@()};Code='INSTALLER_VERSION_INVENTORY_UNKNOWN'},
+    @{Mutate={param($p) $p.directories=@('versions','versions/0.4.13-pilot','versions/0.4.13-pilot','versions/0.4.14-pilot/lib')};Code='INSTALLER_VERSION_INVENTORY_UNKNOWN'},
+    @{Mutate={param($p) $p.files=$p.files[0]};Code='INSTALLER_UNINSTALL_PLAN_INVALID'},
+    @{Mutate={param($p) $p.directories='versions'};Code='INSTALLER_UNINSTALL_PLAN_INVALID'},
+    @{Mutate={param($p) $p.files=@($p.files[0])*5001};Code='INSTALLER_UNINSTALL_PLAN_INVALID'},
+    @{Mutate={param($p) $p.directories=@('versions')*20001};Code='INSTALLER_UNINSTALL_PLAN_INVALID'},
+    @{Mutate={param($p) $p.files+=Copy-MemoryObject $p.files[0]};Code='INSTALLER_UNINSTALL_PLAN_INVALID'}
+)
+foreach($case in $planCases){
+    $badPlan=Copy-MemoryObject $baseGuard
+    & $case.Mutate $badPlan
+    Refuses-BeforeNext {Assert-AgentDeletionPlan $guardRoot $badPlan} $case.Code
+}
+$malformed=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $malformed.State.Root $malformed.Effects
+$malformed.Effects.Observe={return $null};$malformed.State.Events.Clear()
+Refuses {Invoke-AgentPlannedDeletion $malformed.State.Root $p $malformed.Effects} 'INSTALLER_UNINSTALL_REMAINING_UNKNOWN'
+Check-NoMemoryDeletion $malformed
+$initialCases=@(
+    {param($s) $s.Files[0].path='versions/0.4.13-pilot/unknown.bin'},
+    {param($s) $s.Dirs[3]='versions/0.4.14-pilot/unknown'}
+)
+foreach($change in $initialCases){
+    $m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+    $m.State.Files=Copy-MemoryObject $m.State.Files
+    & $change $m.State
+    $m.State.Events.Clear()
+    Refuses {Invoke-AgentPlannedDeletion $m.State.Root $p $m.Effects} 'INSTALLER_UNINSTALL_REMAINING_UNKNOWN'
+    Check-NoMemoryDeletion $m
+}
+$structureCases=@(
+    {param($s) [pscustomobject]@{root=$s.Root;files=@($s.Files);directories=@($s.Dirs)}},
+    {param($s) [pscustomobject]@{root=$s.Root;files=@($s.Files|ForEach-Object{[pscustomobject]@{path='versions/0.4.13-pilot/unknown.bin';bytes=$_.bytes}});directories=@($s.Dirs)}},
+    {param($s) [pscustomobject]@{root=$s.Root;files=@($s.Files|ForEach-Object{[pscustomobject]@{path=$_.path;bytes=$_.bytes}});directories=@('versions','versions/0.4.13-pilot','versions/0.4.14-pilot','versions/0.4.14-pilot/unknown')}}
+)
+foreach($observation in $structureCases){
+    $m=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $m.State.Root $m.Effects
+    $s=$m.State;$observeStructure=$observation
+    $m.Effects.InspectStructure={return (& $observeStructure $s)}.GetNewClosure()
+    $m.State.Events.Clear()
+    Refuses {Invoke-AgentPlannedDeletion $m.State.Root $p $m.Effects} 'INSTALLER_UNINSTALL_REMAINING_UNKNOWN'
+    Check-NoMemoryDeletion $m
+}
+$noOp=MemoryDeletion;$p=Get-AgentPreparedDeletionPlan $noOp.State.Root $noOp.Effects
+$noOp.Effects.DeleteFile={};$noOp.Effects.DeleteDirectory={}
+Refuses {Invoke-AgentPlannedDeletion $noOp.State.Root $p $noOp.Effects} 'INSTALLER_UNINSTALL_FILES_INCOMPLETE'
+Check($noOp.State.Files.Count -eq 5 -and $noOp.State.Dirs.Count -eq 4 -and -not $noOp.State.Complete)
+Refuses-BeforeNext {Assert-AgentUninstallMode 'Repair' $null} 'INSTALLER_MODE_UNKNOWN'
+$noSnapshot=MemoryInstall;$noSnapshot.Effects.Capture={return $null}
+Refuses {Invoke-AgentInstallTransaction $noSnapshot.Effects} 'INSTALLER_SNAPSHOT_REQUIRED'
+Check($noSnapshot.State.Events.Count -eq 0 -and -not $noSnapshot.State.Candidate -and $noSnapshot.State.Protocol -ceq 'old-protocol')
+# Resolve-AgentManifestPath's defensive GetFullPath catch/containment guards
+# (lines21/29/30 of unchanged module) and final set-count invariant (line50)
+# are deliberately not forced by fabricated Path behavior or mutable sets.
 [pscustomobject]@{passed=$true;checks=$checks;effects='synthetic-memory-only';installerScriptExecuted=$false;registryTouched=$false;profileTouched=$false;agentOrSdkStarted=$false;networkUsed=$false;nativeAcceptance=$false}|ConvertTo-Json -Compress

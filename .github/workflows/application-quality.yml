@@ -344,6 +344,47 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
 
+  windows_installer_fixture:
+    name: windows-installer-fixture
+    needs: trusted-source
+    runs-on: windows-2025
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.evidence.outputs.artifact-id }}
+      artifact-digest: ${{ steps.evidence.outputs.artifact-digest }}
+      report-sha256: ${{ steps.fixture.outputs.report-sha256 }}
+      manifest-sha256: ${{ steps.fixture.outputs.manifest-sha256 }}
+      head: ${{ steps.fixture.outputs.head }}
+      tree: ${{ steps.fixture.outputs.tree }}
+    steps:
+      - name: Check out exact fixture source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up qualified Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.23.3"
+      - name: Measure isolated Windows fixture without agent or SDK
+        id: fixture
+        shell: cmd
+        env:
+          WINDOWS_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node scripts/ci/windows-installer-fixture-ci.mjs produce
+          if errorlevel 1 exit /b %errorlevel%
+      - name: Preserve minimized fixture evidence and incomplete diagnostics
+        id: evidence
+        if: always() && steps.fixture.outputs.artifact-path != ''
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name: windows-installer-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ steps.fixture.outputs.artifact-path }}
+          if-no-files-found: error
+          retention-days: 3
+
   codeql:
     name: CodeQL
     needs: trusted-source
@@ -368,7 +409,9 @@ jobs:
 
   sonarcloud:
     name: SonarQube Quality Gate
-    needs: trusted-source
+    needs:
+      - trusted-source
+      - windows_installer_fixture
     runs-on: ubuntu-latest
     # Coverage includes real isolated PostgreSQL rehearsals. Keep a finite
     # budget for both LCOV generation and the server-side quality-gate wait.
@@ -391,6 +434,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Set up Node.js 22
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -407,6 +451,25 @@ jobs:
           test -s coverage/lcov.info
           grep -q '^SF:.*scripts/ci/container-readiness\.mjs$' coverage/lcov.info
           grep -q '^SF:.*apps/api/src/environment\.ts$' coverage/lcov.info
+      - name: Download exact same-run Windows fixture artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.windows_installer_fixture.outputs.artifact-id }}
+          path: ${{ runner.temp }}/windows-installer-evidence
+          merge-multiple: true
+      - name: Verify source and artifact bindings before generic coverage import
+        shell: bash
+        env:
+          WINDOWS_FIXTURE_HEAD: ${{ needs.windows_installer_fixture.outputs.head }}
+          WINDOWS_FIXTURE_TREE: ${{ needs.windows_installer_fixture.outputs.tree }}
+          WINDOWS_FIXTURE_REPORT_SHA256: ${{ needs.windows_installer_fixture.outputs.report-sha256 }}
+          WINDOWS_FIXTURE_MANIFEST_SHA256: ${{ needs.windows_installer_fixture.outputs.manifest-sha256 }}
+          WINDOWS_FIXTURE_ARTIFACT_ID: ${{ needs.windows_installer_fixture.outputs.artifact-id }}
+          WINDOWS_FIXTURE_ARTIFACT_DIGEST: ${{ needs.windows_installer_fixture.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/import-windows-installer-coverage.mjs --artifact-dir "$RUNNER_TEMP/windows-installer-evidence"
+          test -s coverage/powershell.xml
       - name: Run SonarCloud analysis and wait for the quality gate
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6.0.0
         env:
@@ -434,6 +497,7 @@ jobs:
       - container-scan
       - trivy-iac
       - codeql
+      - windows_installer_fixture
       - sonarcloud
     runs-on: ubuntu-latest
     timeout-minutes: 5
