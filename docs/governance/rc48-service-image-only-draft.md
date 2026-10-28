@@ -1,10 +1,12 @@
 # RC48 service-image-only extension — unqualified draft
 
-This candidate is not an operational authority or executable delivery. It has no
-published PR, protected concrete runtime objective, qualified native preparation,
-operational rollback/recoverability receipt, or completed source/native qualification.
+This source extension is published as draft PR264. It is not an operational
+authority or a production delivery. Local tests pass, but the exact final SHA
+still requires successful remote technical checks and governed approval. There
+is no protected concrete runtime objective, qualified native preparation, or
+operational rollback/recoverability receipt for a deployment.
 Protected PR263 source is integrated at 0fa91b2524badb34cd5cd64d438a3f71ca6b9155.
-This does not qualify or publish the new image-only extension.
+The source publication does not qualify or authorize a runtime change.
 
 Implemented local components:
 
