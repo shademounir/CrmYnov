@@ -76,10 +76,30 @@ historical pool-hash recovery, new baseline/cohort, retroactive assignment or ma
 SEND/PREFLIGHT/configuration is authorized. Existing RC48 images must be reused;
 old RC45 plan factories and Terraform shared-image fallbacks remain inadmissible.
 
-A compatible image-only rollback remains a separate fresh qualified objective,
-must preserve intervening writes and cannot be inferred to authorize rollback
-after Sheets activation. Never restore the entire production database as an
-image rollback.
+A rollback uses the same executor with the distinct protected scope
+`RC48_SERVICE_IMAGE_ROLLBACK_V1` and direction `RESTORE_CAPTURED_RC44`. Its
+fresh objective binds the original protected forward objective, exact source,
+forward context hash, current native metadata and preparation. Forward or
+READ ONLY authority cannot authorize this direction. `plan-rollback` requires
+an explicit `--rollback-context`; there is no default objective or implicit apply.
+
+The context descriptor pins the original plan/dossier/baseline bytes and points
+to the existing forward journal and native FIN receipts. The reader verifies
+that journal chain and exact receipt bytes without editing them. Unknown or
+running stages refuse. A known failed deployment can be repaired only under the
+closed failed-service shape: its operation is FIN, the old revision still has
+all traffic, and no non-image configuration has changed. Actual recorded
+provider operations are re-read and hash-matched before any rollback intent.
+
+Rollback has a different journal and a fresh successful backup. Planned Web
+rollback precedes API; a clean API-only interruption does not patch untouched
+Web. Every rollback PATCH uses its fresh UID/etag and only changes the image to
+the exact original RC44 digest. New Ready revisions and both digests are checked.
+Preparation requires eight distinct evidence purposes, including forward
+execution. These source and synthetic tests do not provide the real protected
+objective or native preparation. No operational rollback has been performed.
+Preserve intervening writes; after Sheets activation a separate compatible
+decision is required. Never restore the whole database as an image rollback.
 
 Official API references inspected during development:
 

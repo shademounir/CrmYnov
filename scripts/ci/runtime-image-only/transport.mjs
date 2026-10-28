@@ -5,6 +5,7 @@ import {boundedJson} from '../pool-reconciliation/pool-native-transaction-v1.mjs
 import {assertAuthorityCurrent} from '../readonly-probe/probe-driver-authority-v1.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
 import {PROJECT,LOCATION} from './plan.mjs';
+import {imagePlanScope,isImageRollback} from './plan-mode.mjs';
 
 const runOrigin='https://run.googleapis.com/v2/',sqlOrigin='https://sqladmin.googleapis.com/sql/v1beta4/',schedulerOrigin='https://cloudscheduler.googleapis.com/v1/';
 const instance='crm-ynov-prod-pg17',sqlInstance='projects/'+PROJECT+'/instances/'+instance;
@@ -12,9 +13,9 @@ function opaque(value){assert.equal(typeof value,'string');assert.match(value,/^
 function page(value){assert.equal(typeof value,'string');assert(value.length<=8192);return value;}
 export function createImageOnlyTransport({plan,accessToken,getAuthority,fetchImpl=fetch,clock=Date.now}){
   plan=structuredClone(plan);
-  assert.equal(typeof accessToken,'function');assert.equal(typeof getAuthority,'function');assert.equal(typeof fetchImpl,'function');assert.equal(plan.patches.length,2);
+  assert.equal(typeof accessToken,'function');assert.equal(typeof getAuthority,'function');assert.equal(typeof fetchImpl,'function');if(isImageRollback(plan)){assert(plan.patches.length>=1&&plan.patches.length<=2);}else{assert.equal(plan.patches.length,2);}
   const planSha256=digest(plan);let lastClock;
-  function authority(action){const now=clock();assert(Number.isSafeInteger(now));assert(lastClock===undefined||now>=lastClock,'CLOCK_MOVED_BACKWARDS');lastClock=now;const current=getAuthority();assert.equal(current?.entry?.scope,'RC48_SERVICE_IMAGE_ONLY_V1','READONLY_AUTHORITY_IS_NOT_IMAGE_AUTHORITY');assert.equal(current.entry.planSha256,planSha256);assert.equal(current.entry.googleAccount,'casablancaynovcampus@gmail.com');assert(current.entry.actions.includes(action));assertAuthorityCurrent(current,now);return current;}
+  function authority(action){const now=clock();assert(Number.isSafeInteger(now));assert(lastClock===undefined||now>=lastClock,'CLOCK_MOVED_BACKWARDS');lastClock=now;const current=getAuthority();assert.equal(current?.entry?.scope,imagePlanScope(plan),'READONLY_AUTHORITY_IS_NOT_IMAGE_AUTHORITY');assert.equal(current.entry.planSha256,planSha256);assert.equal(current.entry.googleAccount,'casablancaynovcampus@gmail.com');assert(current.entry.actions.includes(action));assertAuthorityCurrent(current,now);return current;}
   async function exchange(url,action,body,method='GET'){
     authority(action);assert(['GET','POST','PATCH'].includes(method));if(method==='GET'){assert.equal(body,undefined);}const controller=new AbortController();let timer;
     try{return await Promise.race([(async()=>{const token=await accessToken({signal:controller.signal});assert.equal(controller.signal.aborted,false);assert.equal(typeof token,'string');assert(token.length>0&&token.length<=8192&&!/\s/u.test(token));authority(action);const response=await fetchImpl(url,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});const result=await boundedJson(response);assert.equal(result.status,200);return result.value;})(),new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('IMAGE_NATIVE_DEADLINE'));},15000);})]);}

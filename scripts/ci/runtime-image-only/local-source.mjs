@@ -3,7 +3,7 @@ import fs from 'node:fs';import path from 'node:path';import assert from 'node:a
 import{POOL_DRIVER_INPUTS,POOL_OFFICIAL_GIT,readPoolPrivateFile}from'../pool-reconciliation/pool-operational-driver-v1.mjs';
 import{fixedToolEnvironment}from'../readonly-probe/probe-driver-github-v1.mjs';
 const root=path.resolve(import.meta.dirname,'../../..');
-export const IMAGE_DRIVER_INPUTS=Object.freeze(['authority','cli','executor','preparation','journal','plan','served-state','transport','protected-gates','local-source'].map(n=>'scripts/ci/runtime-image-only/'+n+'.mjs').concat('scripts/ci/operational-driver-v2.mjs'));
+export const IMAGE_DRIVER_INPUTS=Object.freeze(['authority','cli','executor','preparation','journal','plan','served-state','transport','protected-gates','local-source','plan-mode','rollback-plan','rollback-context'].map(n=>'scripts/ci/runtime-image-only/'+n+'.mjs').concat('scripts/ci/operational-driver-v2.mjs'));
 export function readImageLocalSource(){
  assert.equal(process.platform,'win32');assert.equal(fs.realpathSync(POOL_OFFICIAL_GIT),path.win32.normalize(POOL_OFFICIAL_GIT));assert(!fs.lstatSync(POOL_OFFICIAL_GIT).isSymbolicLink());assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)));
  const env=fixedToolEnvironment(process.env),git=(...args)=>execFileSync(POOL_OFFICIAL_GIT,['-C',root,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env}).trim();

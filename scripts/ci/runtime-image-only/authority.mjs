@@ -7,7 +7,8 @@ import {githubFile,validateOperatorJiraObservation,assertAuthorityCurrent} from 
 import {GRANT_PATH,grantDigest,validateGrant} from '../../pr-policy/delegation.mjs';
 import {GITHUB_CODE_REVIEW_POLICY_PATH,validateProtectedCodeReviewPolicy} from '../../pr-policy/github-code-review.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
-import {validateRc48ServiceImagePlanDraft,PROJECT} from './plan.mjs';
+import {PROJECT} from './plan.mjs';
+import {validateImagePlan,imagePlanScope,isImageRollback} from './plan-mode.mjs';
 
 export const IMAGE_CATALOG='docs/governance/runtime-image-only-objectives-v1.json';
 export const IMAGE_SCOPE='RC48_SERVICE_IMAGE_ONLY_V1';
@@ -16,18 +17,25 @@ const hash=/^[a-f0-9]{64}$/u,sha=/^[a-f0-9]{40}$/u;
 const actions=new Set(['READ_METADATA','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION']);
 const byteHash=b=>createHash('sha256').update(b).digest('hex');
 
-export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline,source,action,now}){
+export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline,rollbackContext,source,action,now}){
   assert.equal(entry?.schemaVersion,1);assert.equal(entry.id,id);assert.match(id,/^rc48-image-only-[a-z0-9-]{8,80}$/u);
-  assert.equal(entry.status,'approved');assert.equal(entry.scope,IMAGE_SCOPE);assert.equal(entry.ticket,'CRMY-63');
+  assert.equal(entry.status,'approved');assert.equal(entry.scope,imagePlanScope(plan));assert.equal(entry.ticket,'CRMY-63');
   assert.equal(entry.project,PROJECT);assert.equal(entry.googleAccount,'casablancaynovcampus@gmail.com');
   assert.equal(entry.businessMutation,false);assert.equal(entry.runtimeImageMutation,true);
   assert.deepEqual([...entry.actions].sort((a,b)=>a.localeCompare(b,'en')),[...actions].sort((a,b)=>a.localeCompare(b,'en')));assert(actions.has(action));
-  assert.equal(dossier.schemaVersion,1);assert.equal(dossier.id,id);assert.equal(dossier.scope,IMAGE_SCOPE);
+  assert.equal(dossier.schemaVersion,1);assert.equal(dossier.id,id);assert.equal(dossier.scope,entry.scope);
   assert.equal(entry.dossierSha256,digest(dossier));assert(hash.test(entry.humanAuthorityReceiptSha256));
   assert.equal(entry.humanAuthorityReceiptSha256,dossier.humanAuthorityReceiptSha256);
   assert(hash.test(entry.preparationReceiptSha256??''));assert.equal(entry.preparationReceiptSha256,dossier.preparationReceiptSha256);
   assert.deepEqual(dossier.candidate,candidate);
-  validateRc48ServiceImagePlanDraft(plan,candidate,baseline,Date.parse(plan.baselineObservedAt));
+  validateImagePlan(plan,candidate,baseline,rollbackContext);
+  assert(Date.parse(plan.baselineObservedAt)<=now,'FUTURE_NATIVE_BASELINE_REFUSED');
+  if(isImageRollback(plan)){
+    assert.equal(entry.direction,'RESTORE_CAPTURED_RC44');assert.equal(dossier.direction,entry.direction);
+    assert.equal(entry.forwardContextSha256,digest(rollbackContext));assert.equal(dossier.forwardContextSha256,entry.forwardContextSha256);
+    assert.equal(entry.forwardObjectiveId,rollbackContext.forwardObjectiveId);assert.notEqual(entry.id,entry.forwardObjectiveId);
+    assert(hash.test(entry.forwardCatalogEntrySha256));assert.equal(dossier.forwardCatalogEntrySha256,entry.forwardCatalogEntrySha256);
+  }else{assert.equal(entry.direction??'PROMOTE_RC48','PROMOTE_RC48');assert.equal(entry.forwardContextSha256,undefined);}
   assert.deepEqual(plan.preservedJobs,dossier.preservedJobs,'OBJECTIVE_JOB_CONFIGURATION_PINS');
   assert.deepEqual(plan.preservedSchedulers,dossier.preservedSchedulers,'OBJECTIVE_SCHEDULER_PINS');
   assert.equal(dossier.noDatabaseRestore,true);assert.equal(dossier.noMigration,true);assert.equal(dossier.noFlagActivation,true);
@@ -54,6 +62,7 @@ export function validateImageOperationalMarker(comments,{actors,entry,dossier,pl
   assert.equal(value.planSha256,digest(plan));assert.equal(value.driverCommit,source.commit);assert.equal(value.grantDigest,grantDigest(grant));
   assert.equal(value.humanAuthorityReceiptSha256,entry.humanAuthorityReceiptSha256);
   assert.equal(value.productionRuntimeMutation,true);assert.equal(value.productionBusinessMutation,false);
+  if(isImageRollback(plan)){assert.equal(value.scope,entry.scope);assert.equal(value.forwardContextSha256,entry.forwardContextSha256);}
   assert(Array.isArray(value.actions)&&value.actions.includes(action)&&value.actions.every(a=>actions.has(a)));
   // A separate protected, source-bound preparation receipt is required. It is
   // not replaced with a local true flag, an old SQL timestamp or an empty catalog.
@@ -64,8 +73,22 @@ export function validateImageOperationalMarker(comments,{actors,entry,dossier,pl
   return {commentId:comment.id,jira,expiresAt:Math.min(expires,issued+600000,Date.parse(jira.observedAt)+600000,Date.parse(entry.expiresAt)),planSha256:value.planSha256};
 }
 
+async function verifyRollbackOrigin(github,catalog,entry,context,authorization){
+  const rows=catalog.entries.filter(e=>e.id===context.forwardObjectiveId);assert.equal(rows.length,1,'PROTECTED_FORWARD_OBJECTIVE_REQUIRED');
+  const forward=rows[0];assert.equal(forward.status,'approved');assert.equal(forward.scope,IMAGE_SCOPE);
+  assert.equal(digest(forward),entry.forwardCatalogEntrySha256);assert.equal(forward.dossierSha256,context.forwardDossierSha256);
+  assert.equal(forward.driver.mergeCommit,context.forwardEvidence.sourceHead);
+  assert.equal(forward.journalDirectorySha256,byteHash(context.originalJournalDirectory));
+  const originalSource={commit:forward.driver.mergeCommit,tree:forward.driver.tree,clean:true,files:forward.driver.files};
+  await verifySource(github,originalSource,forward);
+  const objectivePull=await github.get(base+'pulls/'+forward.objectiveReview.pr);
+  const objectiveRef={pr:forward.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
+  await Promise.all([approvedMerge(github,forward.driver,{...authorization,base:'develop'}),approvedMerge(github,objectiveRef,{...authorization,base:'develop'})]);
+  const protectedCatalog=JSON.parse(await githubFile(github,IMAGE_CATALOG,objectiveRef.mergeCommit));
+  assert.equal(digest(protectedCatalog.entries.filter(e=>e.id===forward.id)),digest([forward]));
+}
 export async function authorizeImageOnlyDriver(input){
-  const {github,objectiveId,dossier,plan,candidate,baseline,localSource:source,action,clock=Date.now}=input;
+  const {github,objectiveId,dossier,plan,candidate,baseline,rollbackContext,localSource:source,action,clock=Date.now}=input;
   const started=clock();assert(Number.isSafeInteger(started));assert(actions.has(action));
   const user=await github.get('/user');assert.equal(user.type,'User');const actor=user.login;
   const branch=await github.get(base+'branches/develop'),revision=branch.commit.sha;assert(sha.test(revision)&&branch.protected);
@@ -75,7 +98,8 @@ export async function authorizeImageOnlyDriver(input){
   assert.equal(grant.id,'crm-ynov-po-delegation-20261001');const policyBytes=await githubFile(github,GITHUB_CODE_REVIEW_POLICY_PATH,revision);validateProtectedCodeReviewPolicy(JSON.parse(policyBytes),repo);
   const catalog=JSON.parse(await githubFile(github,IMAGE_CATALOG,revision));assert.equal(catalog.schemaVersion,1);assert(Array.isArray(catalog.entries)&&catalog.entries.length>0&&catalog.entries.length<=100);
   const entries=catalog.entries.filter(e=>e.id===objectiveId);assert.equal(entries.length,1,'PROTECTED_CONCRETE_IMAGE_OBJECTIVE_REQUIRED');const entry=entries[0];
-  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,source,action,now:started});await verifySource(github,source,entry);
+  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,rollbackContext,source,action,now:started});await verifySource(github,source,entry);
+  if(isImageRollback(plan)){await verifyRollbackOrigin(github,catalog,entry,rollbackContext,{grant,actor});}
   const objectivePull=await github.get(base+'pulls/'+entry.objectiveReview.pr);const objectiveRef={pr:entry.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
   const [driver,objective]=await Promise.all([approvedMerge(github,entry.driver,{grant,actor,base:'develop'}),approvedMerge(github,objectiveRef,{grant,actor,base:'develop'})]);
   assert(objective.files.some(f=>f.filename===IMAGE_CATALOG));const approved=JSON.parse(await githubFile(github,IMAGE_CATALOG,objectiveRef.mergeCommit));assert.equal(digest(approved.entries.filter(e=>e.id===objectiveId)),digest([entry]));
@@ -88,7 +112,7 @@ export async function authorizeImageOnlyDriver(input){
   const args={actors:grant.authenticatedActors,entry,dossier,plan,source,jiraBytes:input.jiraBytes,grant,actor,action};
   validateImageOperationalMarker(objective.comments,{...args,now:started});assert.equal((await github.get(base+'branches/develop')).commit.sha,revision);
   const now=clock();assert(Number.isSafeInteger(now)&&now>=started&&now-started<60000);
-  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,source,action,now});const marker=validateImageOperationalMarker(objective.comments,{...args,now});
-  const authority={entry:{...structuredClone(entry),planSha256:marker.planSha256},receipt:{schemaVersion:1,executor:'Codex',actor,authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,catalogEntrySha256:digest(entry),dossierSha256:digest(dossier),planSha256:marker.planSha256,driverCommit:source.commit,driverPr:driver.pull.number,objectivePr:objectiveRef.pr,operationalCommentId:marker.commentId,codeReviewRequired:false,codeReviewPolicySha256:byteHash(policyBytes),verifiedAt:new Date(now).toISOString(),expiresAt:new Date(marker.expiresAt).toISOString(),businessMutationAuthorized:false,runtimeImageMutationAuthorized:true}};
+  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,rollbackContext,source,action,now});const marker=validateImageOperationalMarker(objective.comments,{...args,now});
+  const authority={entry:{...structuredClone(entry),objectiveId,planSha256:marker.planSha256},receipt:{schemaVersion:1,executor:'Codex',actor,authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,catalogEntrySha256:digest(entry),dossierSha256:digest(dossier),planSha256:marker.planSha256,driverCommit:source.commit,driverPr:driver.pull.number,objectivePr:objectiveRef.pr,operationalCommentId:marker.commentId,codeReviewRequired:false,codeReviewPolicySha256:byteHash(policyBytes),verifiedAt:new Date(now).toISOString(),expiresAt:new Date(marker.expiresAt).toISOString(),businessMutationAuthorized:false,runtimeImageMutationAuthorized:true}};
   assertAuthorityCurrent(authority,now);return Object.freeze(authority);
 }

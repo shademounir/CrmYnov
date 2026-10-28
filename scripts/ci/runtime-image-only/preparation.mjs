@@ -16,8 +16,12 @@ export function validateImagePreparation({bytes,entry,dossier,readEvidence,now})
   assert.equal(p.rollback.kind,'IMAGE_ONLY');assert.equal(p.rollback.compatible,true);assert.equal(p.rollback.databaseRestore,false);assert.equal(p.rollback.preserveInterveningWrites,true);assert.equal(p.rollback.afterSheetsActivationAuthorized,false);
   assert.equal(p.backupRecoverabilityQualified,true);assert.equal(p.backupCreated,false,'BACKUP_NOT_PREMATURE');
   assert.deepEqual(p.jobs,dossier.preservedJobs);assert.deepEqual(p.schedulers,dossier.preservedSchedulers);
-  assert(Array.isArray(p.evidence)&&p.evidence.length===kinds.length);assert.deepEqual(p.evidence,dossier.preparationEvidence);
-  assert.deepEqual(p.evidence.map(e=>e.kind).sort((a,b)=>a.localeCompare(b,'en')),[...kinds].sort((a,b)=>a.localeCompare(b,'en')));
+  const requiredKinds=[...kinds];
+  if(entry.scope==='RC48_SERVICE_IMAGE_ROLLBACK_V1'){
+    requiredKinds.push('FORWARD_EXECUTION');assert.equal(p.forwardContextSha256,entry.forwardContextSha256);
+  }
+  assert(Array.isArray(p.evidence)&&p.evidence.length===requiredKinds.length);assert.deepEqual(p.evidence,dossier.preparationEvidence);
+  assert.deepEqual(p.evidence.map(e=>e.kind).sort((a,b)=>a.localeCompare(b,'en')),requiredKinds.sort((a,b)=>a.localeCompare(b,'en')));
   for(const e of p.evidence){assert(hash.test(e.sha256));assert.equal(typeof e.path,'string');assert(e.path.endsWith('.json')&&!/private-key|\.private\.json/iu.test(e.path));const value=readEvidence(e.path);assert(Buffer.isBuffer(value)&&value.length<=1048576);assert.equal(sha(value),e.sha256,'PROTECTED_PREPARATION_EVIDENCE_CHANGED');}
   return Object.freeze({qualifiedAt:p.qualifiedAt,expiresAt:p.expiresAt,preparationReceiptSha256:sha(bytes),prospectivePermissionDecisionSha256:p.prospectivePermissionDecisionSha256,rollback:p.rollback});
 }
