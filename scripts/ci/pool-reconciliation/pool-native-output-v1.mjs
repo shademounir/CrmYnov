@@ -61,7 +61,12 @@ export function validateReadOnlyNativeExecution(job,execution,objective){
   validateReadOnlyNativeJob(job,objective);const prefix=objective.jobName+'/executions/';
   assert(execution.name.startsWith(prefix));assert(/^[a-z0-9-]+$/u.test(execution.name.slice(prefix.length)));
   assert.equal(job.executionCount,1,'ONE_NATIVE_EXECUTION_REQUIRED');
-  assert.equal(job.latestCreatedExecution?.name,execution.name,'LATEST_EXECUTION_MUST_MATCH');
+  // Cloud Run may return a job-local name here; bind it to the independently
+  // fetched full execution URI, never a suffix-only or foreign-job reference.
+  const executionLeaf=execution.name.slice(prefix.length),jobPrefix=objective.jobName.slice(ROOT.length)+'-';
+  const canonicalShort=executionLeaf.startsWith(jobPrefix)&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(executionLeaf.slice(jobPrefix.length));
+  const latestName=job.latestCreatedExecution?.name;
+  assert(latestName===execution.name||(canonicalShort&&latestName===executionLeaf),'LATEST_EXECUTION_MUST_MATCH');
   assert.equal(job.latestCreatedExecution.deleteTime,undefined,'LATEST_EXECUTION_NOT_DELETED');
   assert([objective.jobName,objective.jobName.slice(ROOT.length)].includes(execution.job));
   assert.equal(execution.taskCount,1);assert.equal(execution.parallelism,1);assert.equal(execution.succeededCount,1);

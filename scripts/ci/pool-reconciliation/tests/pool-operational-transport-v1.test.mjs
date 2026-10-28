@@ -46,12 +46,17 @@ test('plaintext and compressed bounds refuse instead of truncation',()=>{
 });
 test('bundle is bounded and exact helper mutation fails',()=>{assert(transport.base64.length<32768);assert.equal(validatePoolRuntimeBundle(transport.bundle).sourceSha256,transport.sourceSha256);const b=clone(transport.bundle);b.modules.entry.source+=' ';assert.throws(()=>validatePoolRuntimeBundle(b),/HELPER_BYTES/u);});
 test('native output fixture validates claims but never claims native acceptance',()=>{const r=verifyPoolOutputClaims(fixture());assert.equal(r.sourceBoundClaimsChecked,true);assert.equal(r.officialOriginAuthenticatedByThisPureFunction,false);assert.equal(r.nativeAcceptance,false);assert.equal(r.activationAuthorized,false);});
+test('pool canonical job-local reference matches the full fetched execution and retains freshness refusal',()=>{
+  const f=fixture();f.job.latestCreatedExecution.name=f.execution.name.split('/').at(-1);
+  const before=clone(f.job);assert.equal(verifyPoolOutputClaims(f).sourceBoundClaimsChecked,true);assert.deepEqual(f.job,before);
+  f.now+=400000;assert.throws(()=>verifyPoolOutputClaims(f),/FRESH_NATIVE_OUTPUT_REQUIRED/u);
+});
 for(const [name,change] of [
   ['missing execution count',f=>delete f.job.executionCount],
   ['additional execution',f=>f.job.executionCount=2],
   ['no latest reference',f=>delete f.job.latestCreatedExecution],
   ['foreign latest execution',f=>f.job.latestCreatedExecution.name+='-unexpected'],
-  ['ambiguous short reference',f=>f.job.latestCreatedExecution.name=f.execution.name.split('/').at(-1)],
+  ['ambiguous suffix-only reference',f=>f.job.latestCreatedExecution.name='abc123'],
   ['deleted latest execution',f=>f.job.latestCreatedExecution.deleteTime='2026-10-27T09:00:03.000Z']
 ])test('single-use output refuses '+name,()=>{const f=fixture();change(f);assert.throws(()=>verifyPoolOutputClaims(f));});
 for(const [name,change] of [

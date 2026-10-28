@@ -30,6 +30,10 @@ for(const scope of scopes)test(scope+' binds actual protected254 driver and real
   for(const key of ['pr','head','mergeCommit','tree'])assert.equal(entry.driver[key],expectedDriver[key]);
   assert.equal(entry.driver.files.length,38);assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
   assert.deepEqual(entry.driver.files,expectedFiles);
-  for(const file of entry.driver.files){const source=file.path==='scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs'?'scripts/ci/pool-reconciliation/tests/fixtures/pool-native-transaction-protected254-20261027.md':file.path;assert.equal(sha256(fs.readFileSync(new URL(source,root))),file.sha256);}
+  const proofs=new Map([
+    ['scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-transaction-protected254-20261027.md'],
+    ['scripts/ci/pool-reconciliation/pool-native-output-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-output-protected256-20261028.md'],
+  ]);
+  for(const file of entry.driver.files)assert.equal(sha256(fs.readFileSync(new URL(proofs.get(file.path)??file.path,root))),file.sha256);
   assert.equal(entry.businessMutation,false);
 });
