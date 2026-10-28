@@ -13,6 +13,7 @@ export const fixtureCaseIds=Object.freeze(['fresh-off','upgrade-off','rollback-o
 export const probeSourcePath='scripts/telephony-agent/tests/child-exit-semantics.ps1';
 const harnessPath='scripts/telephony-agent/tests/windows-installer.integration.ps1';
 const guardPath='scripts/telephony-agent/tests/windows-fixture-guards.psm1';
+export const fixtureGitExecutable='C:\\Program Files\\Git\\cmd\\git.exe';
 const interpreter=String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
 const modulePath=String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\Modules`;
 const frameworkRoot=String.raw`C:\Program Files\WindowsPowerShell\Modules\Pester\3.4.0`;
@@ -171,9 +172,8 @@ export function fixedFixtureEnvironment(environment){
   return env;
 }
 function nativeIO(context,environment){
-  const git='C:/Program Files/Git/cmd/git.exe';
   const toolEnvironment=fixedFixtureEnvironment(environment);
-  function readGit(args){const r=spawnSync(git,['-C',context.workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:toolEnvironment});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();}
+  function readGit(args){const r=spawnSync(fixtureGitExecutable,['-C',context.workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:toolEnvironment});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();}
   return{
     frameworkSnapshot:()=>{
       const rows=[];let entries=0;ensureAncestors(frameworkRoot);
@@ -203,7 +203,7 @@ function cli(){
   requireValue(!Object.keys(env).some(k=>/^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG.*)$/iu.test(k)),'GIT_ENV_OVERRIDE');
   const event=JSON.parse(safeFile(env.GITHUB_EVENT_PATH).toString('utf8'));
   const workspace=env.GITHUB_WORKSPACE;requireValue(typeof workspace==='string'&&w.isAbsolute(workspace),'WORKSPACE');
-  const git=args=>{const r=spawnSync('C:/Program Files/Git/cmd/git.exe',['-C',workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:fixedFixtureEnvironment(env)});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();};
+  const git=args=>{const r=spawnSync(fixtureGitExecutable,['-C',workspace,...args],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:1048576,env:fixedFixtureEnvironment(env)});requireValue(!r.error&&r.status===0,'GIT_READ_FAILED');return r.stdout.trim();};
   const context=selectFixtureContext({platform:process.platform,actions:env.GITHUB_ACTIONS,runnerEnvironment:env.RUNNER_ENVIRONMENT,runnerOs:env.RUNNER_OS,runnerArch:env.RUNNER_ARCH,repository:env.GITHUB_REPOSITORY,owner:env.GITHUB_REPOSITORY_OWNER,actor:env.GITHUB_ACTOR,eventName:env.GITHUB_EVENT_NAME,event,ref:env.GITHUB_REF,workflowSha:env.GITHUB_SHA,runId:env.GITHUB_RUN_ID,runAttempt:env.GITHUB_RUN_ATTEMPT,workspace,runnerTemp:env.RUNNER_TEMP,checkoutHead:git(['rev-parse','HEAD']),tree:git(['rev-parse','HEAD^{tree}'])});
   produceFixtureEvidence(context,nativeIO(context,env),randomUUID().replaceAll('-',''));
 }

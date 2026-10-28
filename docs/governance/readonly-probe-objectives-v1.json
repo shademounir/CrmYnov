@@ -16,7 +16,7 @@
         "OBSERVE_RUN",
         "READ_OUTPUT"
       ],
-      "validFrom": "2026-10-28T01:11:00.730Z",
+      "validFrom": "2026-10-28T02:52:26.252Z",
       "expiresAt": "2026-10-28T08:00:00.000Z",
       "dossierSha256": "a956c052cec71ca53cdf43df539aa04f6c660df9e4b2ce36e07cb8e441ca3c92",
       "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
@@ -25,10 +25,10 @@
       "journalDirectorySha256": "60d67daa318f0f7d8297a55570659c4703980993587db3188cb03011e4b254fa",
       "googleAccount": "casablancaynovcampus@gmail.com",
       "driver": {
-        "pr": 258,
-        "head": "fb07879fb533cdc2b9fad199c4f90c189afdef85",
-        "mergeCommit": "0841e3dd4d4879956b5ff03181a2f6e1eda438bb",
-        "tree": "3436ee727d0fc45838685629c4770864eaf1de0f",
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -56,11 +56,11 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
-            "sha256": "0750d153365706a425d7763c5092b5f98d021d5580b9171c3f9577698402cbef"
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
-            "sha256": "a2f81b463fbbdd212cc03b126a2207d814513a1cc576bf1196d4f72e57b7f2b1"
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
@@ -72,7 +72,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
-            "sha256": "00fba634844266f5404678448bd2b5c1a82ede57a4b2842813bbd171f8e57aa5"
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
@@ -185,7 +185,7 @@
         ]
       },
       "objectiveReview": {
-        "pr": 259
+        "pr": 261
       },
       "release": {
         "pr": 243,
@@ -211,7 +211,7 @@
         "OBSERVE_RUN",
         "READ_OUTPUT"
       ],
-      "validFrom": "2026-10-28T01:11:00.730Z",
+      "validFrom": "2026-10-28T02:52:26.252Z",
       "expiresAt": "2026-10-28T08:00:00.000Z",
       "dossierSha256": "747c115a341982869732a3cdc50ade252920415e6494abda9aaa93976ab71eeb",
       "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
@@ -220,10 +220,10 @@
       "journalDirectorySha256": "18b6edc388ab3b64029432ef6ea8f537aacde6534ab295948efd34cc200793ed",
       "googleAccount": "casablancaynovcampus@gmail.com",
       "driver": {
-        "pr": 258,
-        "head": "fb07879fb533cdc2b9fad199c4f90c189afdef85",
-        "mergeCommit": "0841e3dd4d4879956b5ff03181a2f6e1eda438bb",
-        "tree": "3436ee727d0fc45838685629c4770864eaf1de0f",
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -251,11 +251,11 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
-            "sha256": "0750d153365706a425d7763c5092b5f98d021d5580b9171c3f9577698402cbef"
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
-            "sha256": "a2f81b463fbbdd212cc03b126a2207d814513a1cc576bf1196d4f72e57b7f2b1"
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
@@ -267,7 +267,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
-            "sha256": "00fba634844266f5404678448bd2b5c1a82ede57a4b2842813bbd171f8e57aa5"
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
@@ -380,7 +380,7 @@
         ]
       },
       "objectiveReview": {
-        "pr": 259
+        "pr": 261
       },
       "release": {
         "pr": 243,
@@ -406,7 +406,7 @@
         "OBSERVE_RUN",
         "READ_OUTPUT"
       ],
-      "validFrom": "2026-10-28T01:11:00.730Z",
+      "validFrom": "2026-10-28T02:52:26.252Z",
       "expiresAt": "2026-10-28T08:00:00.000Z",
       "dossierSha256": "aed35f1a75817f9339a4d65dae8abe13e6c304226bcff905e5733b5498376527",
       "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
@@ -415,10 +415,10 @@
       "journalDirectorySha256": "05fc86607cc65faeddbb96b838aa89c34165a9db50fa208d5d074fdeac1c662b",
       "googleAccount": "casablancaynovcampus@gmail.com",
       "driver": {
-        "pr": 258,
-        "head": "fb07879fb533cdc2b9fad199c4f90c189afdef85",
-        "mergeCommit": "0841e3dd4d4879956b5ff03181a2f6e1eda438bb",
-        "tree": "3436ee727d0fc45838685629c4770864eaf1de0f",
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -446,11 +446,11 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
-            "sha256": "0750d153365706a425d7763c5092b5f98d021d5580b9171c3f9577698402cbef"
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
-            "sha256": "a2f81b463fbbdd212cc03b126a2207d814513a1cc576bf1196d4f72e57b7f2b1"
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
@@ -462,7 +462,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
-            "sha256": "00fba634844266f5404678448bd2b5c1a82ede57a4b2842813bbd171f8e57aa5"
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
@@ -575,7 +575,7 @@
         ]
       },
       "objectiveReview": {
-        "pr": 259
+        "pr": 261
       },
       "release": {
         "pr": 243,

@@ -2,10 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
-import {fixtureSourcePaths,fixtureCaseIds,probeSourcePath,selectFixtureContext,fixturePaths,produceFixtureEvidence,fixedFixtureEnvironment} from '../windows-installer-fixture-ci.mjs';
+import {fixtureSourcePaths,fixtureCaseIds,probeSourcePath,selectFixtureContext,fixturePaths,produceFixtureEvidence,fixedFixtureEnvironment,fixtureGitExecutable} from '../windows-installer-fixture-ci.mjs';
 import {verifyWindowsFixtureArtifact} from '../windows-installer-evidence.mjs';
 const w=path.win32,h=b=>createHash('sha256').update(b).digest('hex'),bytes=v=>Buffer.from(JSON.stringify(v,null,2)+'\n');
 const head='a'.repeat(40),tree='b'.repeat(40),nonce='1'.repeat(32);
+test('fixture Git uses a canonical fixed absolute Windows executable without PATH resolution',()=>{
+  assert.equal(fixtureGitExecutable,String.raw`C:\Program Files\Git\cmd\git.exe`);
+  assert.equal(w.isAbsolute(fixtureGitExecutable),true);
+  assert.equal(w.normalize(fixtureGitExecutable),fixtureGitExecutable);
+  assert.equal(fixtureGitExecutable.includes('/'),false);
+  assert.equal(w.normalize('C:/Program Files/Git/cmd/git.exe'),fixtureGitExecutable);
+});
 test('native fixture tools use only fixed system PATH directories without mutating the caller',()=>{
   const original={Path:'C:/synthetic-user-writable',PATH:'C:/synthetic-other',GITHUB_OUTPUT:'C:/synthetic-temp/output',SYNTHETIC_KEEP:'kept'};
   const before={...original},actual=fixedFixtureEnvironment(original);
