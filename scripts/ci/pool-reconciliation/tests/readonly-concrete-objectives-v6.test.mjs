@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
 const root=new URL('../../../../',import.meta.url);
-const current=JSON.parse(fs.readFileSync(new URL('docs/governance/readonly-probe-objectives-v1.json',root)));
+const current=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-259-20261028.json',root)));
 const historical=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-257-20261028.json',root)));
 const sha256=b=>createHash('sha256').update(b).digest('hex');
 const expectedDriver={"pr":258,"head":"fb07879fb533cdc2b9fad199c4f90c189afdef85","mergeCommit":"0841e3dd4d4879956b5ff03181a2f6e1eda438bb","tree":"3436ee727d0fc45838685629c4770864eaf1de0f"};
