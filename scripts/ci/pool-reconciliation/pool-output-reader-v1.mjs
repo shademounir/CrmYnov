@@ -1,7 +1,7 @@
 // Official fixed endpoints only. POST entries:list reads logs, never dispatches a job.
 import assert from 'node:assert/strict';
 import {createAuthorityBoundFetch} from '../readonly-probe/probe-driver-authority-v1.mjs';
-import {readOnlyOutputReadRequests,verifyReadOnlyOutputClaims} from './pool-native-output-v1.mjs';
+import {readOnlyOutputReadRequests,verifyReadOnlyOutputClaims,readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';
 import {boundedJson} from './pool-native-transaction-v1.mjs';
 async function readJson(response){const result=await boundedJson(response);assert.equal(result.status,200);return result.value;}
 export function createReadOnlyOutputReader({accessToken,getAuthority,fetchImpl=fetch}){
@@ -21,7 +21,8 @@ export function createReadOnlyOutputReader({accessToken,getAuthority,fetchImpl=f
     }
     async function readAt(index){if(index===requests.length){return;}results.push(await readOne(index,requests[index]));return readAt(index+1);}
     await readAt(0);
-    const checked=verifyReadOnlyOutputClaims({job:results[0],execution:results[1],logs:results[2],bundle:dossier.bundle,objective:dossier.objective,privateKeyPem,now:clock()});
+    const taskNetwork=results[1].template.vpcAccess===undefined?await readOne(3,readOnlyTaskNetworkRequest(dossier.objective,execution)):undefined;
+    const checked=verifyReadOnlyOutputClaims({job:results[0],execution:results[1],logs:results[2],bundle:dossier.bundle,objective:dossier.objective,privateKeyPem,now:clock(),taskNetwork});
     return {...checked,job:results[0],execution:results[1],officialReadPathExecuted:true,provenanceMeaning:'Official authenticated API read path; fixture injection is synthetic, no cryptographic provider signature is asserted'};
   };
 }

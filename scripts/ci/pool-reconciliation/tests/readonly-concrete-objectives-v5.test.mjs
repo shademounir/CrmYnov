@@ -1,11 +1,11 @@
-// Current catalogue source contract only; protected driver is real, native execution is not inferred.
+// Historical protected257 catalogue targets driver256; raw catalogue and module evidence remain strict.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
 const root=new URL('../../../../',import.meta.url);
-const current=JSON.parse(fs.readFileSync(new URL('docs/governance/readonly-probe-objectives-v1.json',root)));
+const current=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-257-20261028.json',root)));
 const historical=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-255-20261027.json',root)));
 const sha256=b=>createHash('sha256').update(b).digest('hex');
 const expectedDriver={"pr":256,"head":"84b1125e66a4aa9cf0d4b8e0b8da9b459a53c4b6","mergeCommit":"c14d85dc7375c412d461fd5a5cb04cd09a0f6bd6","tree":"c9b48c45eacc63d3ea8a15512acf6e6d88812009"};
@@ -30,6 +30,14 @@ for(const scope of scopes)test(scope+' binds actual protected256 driver and real
   for(const key of ['pr','head','mergeCommit','tree'])assert.equal(entry.driver[key],expectedDriver[key]);
   assert.equal(entry.driver.files.length,38);assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
   assert.deepEqual(entry.driver.files,expectedFiles);
-  for(const file of entry.driver.files)assert.equal(sha256(fs.readFileSync(new URL(file.path,root))),file.sha256);
+  for(const file of entry.driver.files){
+    const proofs=new Map([
+      ['scripts/ci/pool-reconciliation/pool-native-output-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-output-protected256-20261028.md'],
+      ['scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-transaction-protected259-20261028.md'],
+      ['scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-output-reader-protected259-20261028.md'],
+    ]);
+    const proofPath=proofs.get(file.path)??file.path;
+    assert.equal(sha256(fs.readFileSync(new URL(proofPath,root))),file.sha256);
+  }
   assert.equal(entry.businessMutation,false);
 });

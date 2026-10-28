@@ -124,3 +124,46 @@ The pool adapter projects every official timeline row to its `event` field with 
 # Empty native execution reference
 
 The observed Cloud Run CREATE response exposed an exact empty `latestCreatedExecution` object on a job with no execution. Only the omitted field or an exact plain empty object is accepted with zero execution count. Null, arrays and any reference fields still refuse. CREATE reconciliation additionally requires the native paginated execution inventory to be empty, including deleted resources. RUN repeats this inventory after each of its two UID/etag-bound job reads. No execution count, UID, etag, authority freshness, durable single-use intent or UNKNOWN guard is relaxed. A known CREATE operation is observed, never recreated; the existing journal is preserved. This source change is not native reconciliation or permission to run an unqualified driver.
+
+# Canonical native execution references (28 October)
+
+Cloud Run's `latestCreatedExecution.name` may be the canonical job-prefixed
+short name. Accept that shape only when it exactly matches the leaf of the
+independently fetched execution URI under the objective job, with a nonempty
+canonical suffix. Full URI equality remains supported. No metadata is rewritten;
+foreign jobs, suffix-only names, deleted references and multiple executions remain
+refused. All source, task, role, nonce and five-minute freshness guards remain.
+
+The protected 256 native-output source is retained byte-for-byte as a historical
+`.md` proof fixture for the 253/255/257 catalogue tests. Their pins are unchanged;
+this correction does not retarget any existing objective. A new protected driver
+binding is required before operational use. A consumed execution is never rerun
+by this correction, and late archived output does not become fresh evidence.
+# Native task-network evidence when Execution omits VPC
+
+The actual known pool Execution GET omitted `template.vpcAccess` although the
+parent Job still bound the exact reviewed private network. The validator must
+not copy the Job's VPC into an Execution or drop the network requirement.
+For this representation only, the existing official transport performs one
+bounded GET of that exact execution's tasks (`pageSize=2`, `showDeleted=true`,
+network/image/resource/identity metadata only). Exactly one non-deleted,
+completed, non-retried canonical task0 must bind the execution and the same
+image, CPU, memory, service account, timeout, VPC and subnet. No env payload is
+requested. Null, foreign resources, pagination, duplicates, connector/tags,
+ALL_TRAFFIC or an unspecified egress enum are refused. Only absent `egress`
+uses the API's documented PRIVATE_RANGES_ONLY default; raw responses remain
+unaltered. All other Execution template bytes are compared exactly with the
+reviewed task (with the existing explicit CPU/zero-retry equivalence).
+
+The independent task response participates in metadata digests and durable
+output read receipts. Existing full-VPC Execution responses retain their exact
+validation path. CREATE/RUN single-use journals, private networking, freshness,
+all SQL/runtime sources, RC47 pins and RC48 images remain unchanged. This source
+change is not a new native acceptance, retry, activation or authorization: the
+currently protected objective catalogue still binds historical driver258, so a
+new explicit protected binding is required before operational use. The old
+consumed RUN must only be observed; its stale output remains unaccepted.
+
+Official contracts: [Execution](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs.executions),
+[Task list](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs.executions.tasks/list),
+[VpcAccess default](https://docs.cloud.google.com/run/docs/reference/rest/v2/VpcAccess).
