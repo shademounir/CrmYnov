@@ -13,7 +13,7 @@ export const IMAGE_CATALOG='docs/governance/runtime-image-only-objectives-v1.jso
 export const IMAGE_SCOPE='RC48_SERVICE_IMAGE_ONLY_V1';
 const repo='shademounir/CrmYnov',base='/repos/'+repo+'/',main='8253024ea35cee6be5636cc6b10a88ae7e177377';
 const hash=/^[a-f0-9]{64}$/u,sha=/^[a-f0-9]{40}$/u;
-const actions=['READ_METADATA','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION'];
+const actions=new Set(['READ_METADATA','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION']);
 const byteHash=b=>createHash('sha256').update(b).digest('hex');
 
 export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline,source,action,now}){
@@ -21,7 +21,7 @@ export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline
   assert.equal(entry.status,'approved');assert.equal(entry.scope,IMAGE_SCOPE);assert.equal(entry.ticket,'CRMY-63');
   assert.equal(entry.project,PROJECT);assert.equal(entry.googleAccount,'casablancaynovcampus@gmail.com');
   assert.equal(entry.businessMutation,false);assert.equal(entry.runtimeImageMutation,true);
-  assert.deepEqual([...entry.actions].sort(),[...actions].sort());assert(actions.includes(action));
+  assert.deepEqual([...entry.actions].sort((a,b)=>a.localeCompare(b,'en')),[...actions].sort((a,b)=>a.localeCompare(b,'en')));assert(actions.has(action));
   assert.equal(dossier.schemaVersion,1);assert.equal(dossier.id,id);assert.equal(dossier.scope,IMAGE_SCOPE);
   assert.equal(entry.dossierSha256,digest(dossier));assert(hash.test(entry.humanAuthorityReceiptSha256));
   assert.equal(entry.humanAuthorityReceiptSha256,dossier.humanAuthorityReceiptSha256);
@@ -54,7 +54,7 @@ export function validateImageOperationalMarker(comments,{actors,entry,dossier,pl
   assert.equal(value.planSha256,digest(plan));assert.equal(value.driverCommit,source.commit);assert.equal(value.grantDigest,grantDigest(grant));
   assert.equal(value.humanAuthorityReceiptSha256,entry.humanAuthorityReceiptSha256);
   assert.equal(value.productionRuntimeMutation,true);assert.equal(value.productionBusinessMutation,false);
-  assert(Array.isArray(value.actions)&&value.actions.includes(action)&&value.actions.every(a=>actions.includes(a)));
+  assert(Array.isArray(value.actions)&&value.actions.includes(action)&&value.actions.every(a=>actions.has(a)));
   // A separate protected, source-bound preparation receipt is required. It is
   // not replaced with a local true flag, an old SQL timestamp or an empty catalog.
   assert(hash.test(value.preparationReceiptSha256??''));assert.equal(value.preparationReceiptSha256,entry.preparationReceiptSha256);
@@ -66,7 +66,7 @@ export function validateImageOperationalMarker(comments,{actors,entry,dossier,pl
 
 export async function authorizeImageOnlyDriver(input){
   const {github,objectiveId,dossier,plan,candidate,baseline,localSource:source,action,clock=Date.now}=input;
-  const started=clock();assert(Number.isSafeInteger(started));assert(actions.includes(action));
+  const started=clock();assert(Number.isSafeInteger(started));assert(actions.has(action));
   const user=await github.get('/user');assert.equal(user.type,'User');const actor=user.login;
   const branch=await github.get(base+'branches/develop'),revision=branch.commit.sha;assert(sha.test(revision)&&branch.protected);
   const protection=await github.get(base+'branches/develop/protection');assert(protection.enforce_admins.enabled&&protection.required_status_checks.strict&&protection.required_conversation_resolution.enabled);

@@ -25,5 +25,10 @@ export async function approvedMerge(github,reference,{grant,actor,base:target}){
 }
 export async function verifySource(github,source,entry){
  assert.deepEqual({commit:source.commit,tree:source.tree,clean:source.clean,files:source.files},{commit:entry.driver.mergeCommit,tree:entry.driver.tree,clean:true,files:entry.driver.files});
- for(let offset=0;offset<source.files.length;offset+=4){await Promise.all(source.files.slice(offset,offset+4).map(async f=>{assert.match(f.sha256,/^[a-f0-9]{64}$/u);const bytes=await githubFile(github,f.path,source.commit);assert.equal(createHash('sha256').update(bytes).digest('hex'),f.sha256,'PROTECTED_IMAGE_EXTENSION_BYTES');}));}
+ async function verifyBatch(offset){
+  if(offset>=source.files.length){return;}
+  await Promise.all(source.files.slice(offset,offset+4).map(async f=>{assert.match(f.sha256,/^[a-f0-9]{64}$/u);const bytes=await githubFile(github,f.path,source.commit);assert.equal(createHash('sha256').update(bytes).digest('hex'),f.sha256,'PROTECTED_IMAGE_EXTENSION_BYTES');}));
+  return verifyBatch(offset+4);
+ }
+ await verifyBatch(0);
 }

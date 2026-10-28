@@ -17,7 +17,7 @@ export function validateImagePreparation({bytes,entry,dossier,readEvidence,now})
   assert.equal(p.backupRecoverabilityQualified,true);assert.equal(p.backupCreated,false,'BACKUP_NOT_PREMATURE');
   assert.deepEqual(p.jobs,dossier.preservedJobs);assert.deepEqual(p.schedulers,dossier.preservedSchedulers);
   assert(Array.isArray(p.evidence)&&p.evidence.length===kinds.length);assert.deepEqual(p.evidence,dossier.preparationEvidence);
-  assert.deepEqual(p.evidence.map(e=>e.kind).sort(),[...kinds].sort());
+  assert.deepEqual(p.evidence.map(e=>e.kind).sort((a,b)=>a.localeCompare(b,'en')),[...kinds].sort((a,b)=>a.localeCompare(b,'en')));
   for(const e of p.evidence){assert(hash.test(e.sha256));assert.equal(typeof e.path,'string');assert(e.path.endsWith('.json')&&!/private-key|\.private\.json/iu.test(e.path));const value=readEvidence(e.path);assert(Buffer.isBuffer(value)&&value.length<=1048576);assert.equal(sha(value),e.sha256,'PROTECTED_PREPARATION_EVIDENCE_CHANGED');}
   return Object.freeze({qualifiedAt:p.qualifiedAt,expiresAt:p.expiresAt,preparationReceiptSha256:sha(bytes),prospectivePermissionDecisionSha256:p.prospectivePermissionDecisionSha256,rollback:p.rollback});
 }
