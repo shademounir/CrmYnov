@@ -1,0 +1,18 @@
+// Composes source/output checks with the already protected semantic contract.
+// It never turns a typed JSON fixture into native acceptance or activation.
+import assert from 'node:assert/strict';
+import {byteHash,digest,reconcileFromOriginalIntent,TRUSTED_INTENT_SHA256,PREPARATION_AUTHORITY_SHA256} from './controlled-pool-contract-v1.mjs';
+export function reconcileVerifiedPoolOutput({verified,authority,dossier,intentBytes,independentInputBytes,priorProof=null,now}){
+  assert.equal(verified.officialReadPathExecuted,true);assert.equal(verified.sourceBoundClaimsChecked,true);
+  assert.equal(authority.entry.originalIntentSha256,TRUSTED_INTENT_SHA256);assert.equal(byteHash(intentBytes),TRUSTED_INTENT_SHA256);
+  assert.equal(byteHash(independentInputBytes),authority.entry.independentInputsSha256);
+  const inputs=JSON.parse(independentInputBytes),phase=dossier.bundle.request.phase;
+  assert.equal(inputs.trustedIntentSha256,TRUSTED_INTENT_SHA256);assert.equal(inputs.actor.identityNotLearnedFromPoolAudit,true);assert.equal(inputs.actor.mismatchWithFutureAuditMustRefuse,true);assert.equal(inputs.originalRawHistoricalHashRecovered,false);
+  const window=inputs.proposedCreationWindow;
+  const native={schemaVersion:1,phase,project:'crmynov-prod-n7x4q2',region:'europe-west1',database:'crmynov_prod',role:'crm_runtime',databaseInstanceBindingSha256:dossier.objective.databaseBindingSha256,helperSourceCommit:authority.receipt.driverCommit,helperSha256:dossier.objective.sourceSha256,imageDigest:dossier.objective.image.split('@')[1],jobName:verified.job.name,jobUid:verified.job.uid,executionName:verified.execution.name,nativeMetadataSha256:verified.metadataSha256,taskCount:1,taskIndex:0,attempt:0,readOnly:'on',isolation:'repeatable read',transactionStartedAt:verified.output.observation.transactionStartedAt,transactionCompletedAt:verified.output.observation.transactionCompletedAt,snapshotSha256:digest(verified.output.observation.snapshot)};
+  const nativeEvidenceBytes=Buffer.from(JSON.stringify(native));
+  const plan={schemaVersion:1,purpose:'DRAFT_CONTROLLED_POOL_RECONCILIATION',intentReceiptSha256:TRUSTED_INTENT_SHA256,preparationAuthoritySha256:PREPARATION_AUTHORITY_SHA256,expectedCreationActorSha256:inputs.actor.expectedCreationActorSha256,creationWindow:{notBefore:window.notBefore,notAfter:window.notAfter,receiptSha256s:window.receiptSha256s,clockSkewMs:window.clockSkewMs,meaning:window.meaning},helperSourceCommit:authority.receipt.driverCommit,helperSha256:dossier.objective.sourceSha256,imageDigest:native.imageDigest,expectedDatabaseInstanceBindingSha256:dossier.objective.databaseBindingSha256,expectedNativeEvidenceSha256:byteHash(nativeEvidenceBytes),nativeEvidenceTrust:'INDEPENDENT_OFFICIAL_NATIVE_VERIFIER_STILL_REQUIRED',phase,priorProofSha256:phase==='PRE'?null:authority.entry.reconciliationPriorProofSha256};
+  if(phase==='POST'){assert(priorProof);assert.equal(digest(priorProof),authority.entry.reconciliationPriorProofSha256);}
+  const proof=reconcileFromOriginalIntent({intentBytes,snapshot:verified.output.observation.snapshot,plan,nativeEvidenceBytes,now,priorProof});
+  return {schemaVersion:1,status:'SOURCE_BOUND_POOL_SEMANTICS_CHECKED',phase,proof,proofSha256:digest(proof),sourceOutput:{metadataSha256:verified.metadataSha256,sealedOutputSha256:verified.sealedOutputSha256,driverCommit:authority.receipt.driverCommit,objectiveId:authority.receipt.objectiveId},nativeEvidenceClaims:native,officialReadPathExecuted:true,providerCryptographicSignatureAsserted:false,historicalRawHashRecovered:false,migrationLedgerObserved:false,fullProductionPreservation:false,nativeAcceptance:false,activationAuthorized:false};
+}

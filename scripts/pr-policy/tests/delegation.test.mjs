@@ -38,6 +38,15 @@ test("delegation accepts exact SHA and evidence without human checklist or marke
   assert.deepEqual(result.checks, [...DELEGATED_CHECKS]);
 });
 
+for (const codeReview of [undefined, {status: "running"}, {status: "failed"}]) {
+  test("delegated policy does not use optional Codex summary as merge authority: " + (codeReview?.status ?? "absent"), () => {
+    const value = input(); value.codeReview = codeReview;
+    assert.equal(validatePullRequestPolicy(value).approvalValidated, true);
+    value.conversationsResolved = false;
+    assert.throws(() => validatePullRequestPolicy(value), error => error.reason === "conversations_unresolved");
+  });
+}
+
 for (const [name, mutate, reason] of [
   ["missing protected grant", (v) => { delete v.trustedGrant; }, "delegation_grant_missing_or_revoked"],
   ["revoked protected grant", (v) => { v.trustedGrant.status = "revoked"; }, "delegation_grant_missing_or_revoked"],
