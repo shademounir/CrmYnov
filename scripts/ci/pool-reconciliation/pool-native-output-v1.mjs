@@ -57,7 +57,33 @@ export function validateReadOnlyNativeJob(job,objective){
   assert.equal(job.template.taskCount,1);assert.equal(job.template.parallelism,1);
   assert.equal(digest(normalizedTask(job.template.template)),objective.taskTemplateSha256,'ACTUAL_TASK_BYTES');return job;
 }
-export function validateReadOnlyNativeExecution(job,execution,objective){
+// Execution.template may omit network fields. Never fill them from the parent
+// job: acquire the independently named, unique task0's native network instead.
+export function readOnlyTaskNetworkRequest(objective,executionName){
+  validateReadOnlyObjective(objective);const prefix=objective.jobName+'/executions/';
+  assert(executionName.startsWith(prefix));assert(/^[a-z0-9-]+$/u.test(executionName.slice(prefix.length)));
+  const fields='tasks(name,index,deleteTime,vpcAccess,serviceAccount,timeout,retried,conditions,containers(image,resources)),nextPageToken';
+  return {method:'GET',url:'https://run.googleapis.com/v2/'+executionName+'/tasks?'+new URLSearchParams({pageSize:'2',showDeleted:'true',fields})};
+}
+export function validateReadOnlyNativeTaskNetwork(tasks,execution,objective){
+  assert(tasks&&Object.getPrototypeOf(tasks)===Object.prototype,'INDEPENDENT_NATIVE_TASK_NETWORK_REQUIRED');
+  assert(tasks.nextPageToken===undefined||tasks.nextPageToken==='','NO_TASK_PAGINATION');assert(Array.isArray(tasks.tasks));assert.equal(tasks.tasks.length,1,'ONE_NATIVE_TASK_REQUIRED');
+  const task=tasks.tasks[0],leaf=execution.name.split('/').at(-1);
+  assert.equal(task.name,execution.name+'/tasks/'+leaf+'-task0','TASK_EXECUTION_BINDING');
+  assert(task.index===undefined||task.index===0,'TASK_ZERO_REQUIRED');assert.equal(task.deleteTime,undefined);
+  assert(task.retried===undefined||task.retried===0,'NO_TASK_RETRY');
+  assert.equal(task.serviceAccount,objective.serviceAccount);assert.equal(task.timeout,objective.taskTemplate.timeout);
+  assert(task.conditions.some(c=>c.type==='Completed'&&c.state==='CONDITION_SUCCEEDED'));
+  assert.equal(task.containers.length,1);const container=structuredClone(task.containers[0]);
+  assert(['1','1000m'].includes(container.resources?.limits?.cpu),'REVIEWED_NATIVE_CPU_REQUIRED');container.resources.limits.cpu='1000m';
+  assert.deepEqual(container,{image:objective.image,resources:{limits:{cpu:'1000m',memory:'512Mi'}}});
+  const network=structuredClone(task.vpcAccess);assert(network&&Object.getPrototypeOf(network)===Object.prototype,'NATIVE_TASK_VPC_REQUIRED');
+  // Official VpcAccess API: absent egress defaults to PRIVATE_RANGES_ONLY.
+  // Explicit null/UNSPECIFIED/ALL_TRAFFIC and any extra connector/tags still fail.
+  if(!Object.hasOwn(network,'egress'))network.egress='PRIVATE_RANGES_ONLY';
+  assert.deepEqual(network,objective.taskTemplate.vpcAccess,'INDEPENDENT_TASK_PRIVATE_NETWORK');return tasks;
+}
+export function validateReadOnlyNativeExecution(job,execution,objective,taskNetwork){
   validateReadOnlyNativeJob(job,objective);const prefix=objective.jobName+'/executions/';
   assert(execution.name.startsWith(prefix));assert(/^[a-z0-9-]+$/u.test(execution.name.slice(prefix.length)));
   assert.equal(job.executionCount,1,'ONE_NATIVE_EXECUTION_REQUIRED');
@@ -71,7 +97,14 @@ export function validateReadOnlyNativeExecution(job,execution,objective){
   assert([objective.jobName,objective.jobName.slice(ROOT.length)].includes(execution.job));
   assert.equal(execution.taskCount,1);assert.equal(execution.parallelism,1);assert.equal(execution.succeededCount,1);
   for(const field of ['failedCount','cancelledCount','runningCount','retriedCount'])assert.equal(execution[field]??0,0);
-  assert.equal(digest(normalizedTask(execution.template)),objective.taskTemplateSha256,'EXECUTION_TASK_BYTES');
+  if(execution.template.vpcAccess===undefined){
+    validateReadOnlyNativeTaskNetwork(taskNetwork,execution,objective);
+    const expected=structuredClone(objective.taskTemplate);delete expected.vpcAccess;
+    assert.equal(digest(normalizedTask(execution.template)),digest(normalizedTask(expected)),'EXECUTION_TASK_BYTES');
+  }else{
+    assert.equal(digest(normalizedTask(execution.template)),objective.taskTemplateSha256,'EXECUTION_TASK_BYTES');
+    if(taskNetwork!==undefined)validateReadOnlyNativeTaskNetwork(taskNetwork,execution,objective);
+  }
   assert(execution.conditions.some(c=>c.type==='Completed'&&c.state==='CONDITION_SUCCEEDED'));
   assert(time(execution.startTime)>=time(objective.intentAt));assert(time(execution.completionTime)>=time(execution.startTime));return execution;
 }
@@ -84,8 +117,8 @@ function validateLog(entry,execution,objective){
   assert(time(entry.timestamp)>=time(execution.startTime)-1000);assert(time(entry.timestamp)<=time(execution.completionTime)+1000);
   assert.equal(entry.textPayload,undefined);assert(entry.jsonPayload);return entry.jsonPayload;
 }
-export function verifyReadOnlyOutputClaims({job,execution,logs,bundle,objective,privateKeyPem,now}){
-  const p=profile(objective.purpose),isPool=objective.purpose==='POOL_RECONCILIATION_READ_ONLY_V1',binding=isPool?validatePoolRuntimeBundle(bundle):validateReadOnlyRuntimeBundle(bundle);validateReadOnlyNativeExecution(job,execution,objective);
+export function verifyReadOnlyOutputClaims({job,execution,logs,bundle,objective,privateKeyPem,now,taskNetwork}){
+  const p=profile(objective.purpose),isPool=objective.purpose==='POOL_RECONCILIATION_READ_ONLY_V1',binding=isPool?validatePoolRuntimeBundle(bundle):validateReadOnlyRuntimeBundle(bundle);validateReadOnlyNativeExecution(job,execution,objective,taskNetwork);
   assert.equal(bundle.request.purpose,objective.purpose,'PURPOSE_BINDING');
   assert.equal(binding.sourceSha256,objective.sourceSha256);assert.equal(binding.publicKeySha256,objective.publicKeySha256);
   assert.equal(bundle.databaseBindingSha256,objective.databaseBindingSha256);assert.equal(ROOT+bundle.jobName,objective.jobName);
@@ -114,7 +147,7 @@ export function verifyReadOnlyOutputClaims({job,execution,logs,bundle,objective,
   assert(Number.isSafeInteger(now));assert(time(o.transactionStartedAt)>=time(execution.startTime)-1000);assert(time(o.transactionCompletedAt)<=time(logs.entries[0].timestamp)+1000);
   assert(time(o.transactionCompletedAt)>=time(o.transactionStartedAt));assert(time(o.transactionCompletedAt)-time(o.transactionStartedAt)<=25000);
   assert(now>=time(execution.completionTime)&&now-time(o.transactionCompletedAt)<=300000,'FRESH_NATIVE_OUTPUT_REQUIRED');
-  return {output,metadataSha256:digest({job,execution,logs}),sealedOutputSha256:digest(record),sourceBoundClaimsChecked:true,officialOriginAuthenticatedByThisPureFunction:false,nativeAcceptance:false,activationAuthorized:false};
+  return {output,metadataSha256:digest({job,execution,logs,...(taskNetwork!==undefined?{taskNetwork}:{})}),sealedOutputSha256:digest(record),sourceBoundClaimsChecked:true,officialOriginAuthenticatedByThisPureFunction:false,nativeAcceptance:false,activationAuthorized:false};
 }
 export function readOnlyOutputReadRequests(objective,executionName,now){
   validateReadOnlyObjective(objective);const prefix=objective.jobName+'/executions/';assert(executionName.startsWith(prefix));assert(/^[a-z0-9-]+$/u.test(executionName.slice(prefix.length)));

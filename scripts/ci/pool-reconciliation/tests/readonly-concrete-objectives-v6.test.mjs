@@ -30,6 +30,7 @@ for(const scope of scopes)test(scope+' binds actual protected258 driver and real
   for(const key of ['pr','head','mergeCommit','tree'])assert.equal(entry.driver[key],expectedDriver[key]);
   assert.equal(entry.driver.files.length,38);assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
   assert.deepEqual(entry.driver.files,expectedFiles);
-  for(const file of entry.driver.files)assert.equal(sha256(fs.readFileSync(new URL(file.path,root))),file.sha256);
+  const proofs=new Map(['pool-native-output','pool-native-transaction','pool-output-reader'].map(n=>['scripts/ci/pool-reconciliation/'+n+'-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/'+n+'-protected259-20261028.md']));
+  for(const file of entry.driver.files)assert.equal(sha256(fs.readFileSync(new URL(proofs.get(file.path)??file.path,root))),file.sha256);
   assert.equal(entry.businessMutation,false);
 });

@@ -31,7 +31,12 @@ for(const scope of scopes)test(scope+' binds actual protected256 driver and real
   assert.equal(entry.driver.files.length,38);assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
   assert.deepEqual(entry.driver.files,expectedFiles);
   for(const file of entry.driver.files){
-    const proofPath=file.path==='scripts/ci/pool-reconciliation/pool-native-output-v1.mjs'?'scripts/ci/pool-reconciliation/tests/fixtures/pool-native-output-protected256-20261028.md':file.path;
+    const proofs=new Map([
+      ['scripts/ci/pool-reconciliation/pool-native-output-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-output-protected256-20261028.md'],
+      ['scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-transaction-protected259-20261028.md'],
+      ['scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-output-reader-protected259-20261028.md'],
+    ]);
+    const proofPath=proofs.get(file.path)??file.path;
     assert.equal(sha256(fs.readFileSync(new URL(proofPath,root))),file.sha256);
   }
   assert.equal(entry.businessMutation,false);

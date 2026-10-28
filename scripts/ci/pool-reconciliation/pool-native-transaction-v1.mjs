@@ -5,7 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {digest} from './controlled-pool-contract-v1.mjs';
-import {validateReadOnlyNativeJob,validateReadOnlyNativeExecution,validateReadOnlyObjective,readOnlyPurposeConfiguration} from './pool-native-output-v1.mjs';
+import {validateReadOnlyNativeJob,validateReadOnlyNativeExecution,validateReadOnlyObjective,readOnlyPurposeConfiguration,readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';
 import {assertAuthorityCurrent,createAuthorityBoundFetch} from '../readonly-probe/probe-driver-authority-v1.mjs';
 const PARENT='projects/crmynov-prod-n7x4q2/locations/europe-west1';
 const API='https://run.googleapis.com/v2/'+PARENT;
@@ -51,7 +51,7 @@ export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,
   assert.equal(typeof accessToken,'function');const p=readOnlyPurposeConfiguration(purpose),JOB=new RegExp('^'+PARENT+'/jobs/'+p.prefix+'[a-z0-9-]+$','u'),resourcePattern=new RegExp('^/jobs/'+p.prefix+'[a-z0-9-]+(?::run|/executions(?:/[a-z0-9-]+)?)?$','u');
   const scopedAuthority=()=>{const authority=getAuthority();assert.equal(authority?.entry?.scope,purpose,'AUTHORITY_PURPOSE');return authority;};const guarded=createAuthorityBoundFetch({fetchImpl,getAuthority:scopedAuthority});
   async function request(resource,{method='GET',body,query=''}={}){
-    scopedAuthority();assert(resource==='/jobs'||resourcePattern.test(resource)||/^\/operations\/[A-Za-z0-9_-]+$/u.test(resource));
+    scopedAuthority();assert(resource==='/jobs'||resourcePattern.test(resource)||/^\/operations\/[A-Za-z0-9_-]+$/u.test(resource)||(method==='GET'&&resource.endsWith('/tasks')&&resourcePattern.test(resource.slice(0,-6))));
     assert(['GET','POST'].includes(method));if(method==='POST'){assert(resource==='/jobs'||resource.endsWith(':run'));}else{assert.equal(body,undefined);assert(!resource.endsWith(':run'));}
     const controller=new AbortController();let timer;
     try{
@@ -76,7 +76,8 @@ export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,
     async create(name,body){assert(JOB.test(name));const r=await request('/jobs',{method:'POST',body,query:'?'+new URLSearchParams({jobId:name.slice((PARENT+'/jobs/').length)})});assert.equal(r.status,200);return r.value;},
     async run(name,etag){assert.equal(typeof etag,'string');assert(etag.length>0&&etag.length<=256);const r=await request(local(name)+':run',{method:'POST',body:{etag}});assert.equal(r.status,200);return r.value;},
     async operation(name){assert(OP.test(name));const r=await request(name.slice(PARENT.length));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;},
-    async execution(name,job){assert(JOB.test(job));assert(name.startsWith(job+'/executions/'));assert(/^[a-z0-9-]+$/u.test(name.slice((job+'/executions/').length)));const r=await request(name.slice(PARENT.length));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;}
+    async execution(name,job){assert(JOB.test(job));assert(name.startsWith(job+'/executions/'));assert(/^[a-z0-9-]+$/u.test(name.slice((job+'/executions/').length)));const r=await request(name.slice(PARENT.length));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;},
+    async taskNetwork(objective,execution){const spec=readOnlyTaskNetworkRequest(objective,execution),url=new URL(spec.url);const r=await request(url.pathname.slice(('/v2/'+PARENT).length),{query:url.search});assert.equal(r.status,200);return r.value;}
   });
 }
 function record(objective,state,extra={}){return {job:objective.jobName,objectiveSha256:objective.objectiveSha256,state,canRetry:false,...extra};}
@@ -102,10 +103,10 @@ export async function observeReadOnlyOperation({objective,stage,transport,journa
   const e=structuredClone(objective);validateReadOnlyObjective(e);const saved=journal.inspect(stage);assert.equal(saved?.state,'OPERATION','ONLY_DURABLY_KNOWN_OPERATION');
   const operation=await transport.operation(saved.operation);if(operation.done!==true)return record(e,'PENDING');
   if(operation.error){const result=record(e,'FAILED',{operation:saved.operation});journal.append(stage,result);return result;}
-  const job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);let execution;
+  const job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);let execution,taskNetwork;
   if(stage==='CREATE'){assert.equal(operation.response?.name,e.jobName);assert.equal(operation.response.uid,job.uid);requireNoCreatedExecution(job);await transport.listExecutions(e.jobName);}
-  else{assert.equal(job.uid,saved.uid);execution=await transport.execution(operation.response.name,e.jobName);validateReadOnlyNativeExecution(job,execution,e);}
-  const result=record(e,'RECONCILED',{operation:saved.operation,uid:job.uid,etag:job.etag,...(execution?{execution:execution.name,metadataSha256:digest({job,execution})}:{})});journal.append(stage,result);return result;
+  else{assert.equal(job.uid,saved.uid);execution=await transport.execution(operation.response.name,e.jobName);if(execution.template.vpcAccess===undefined)taskNetwork=await transport.taskNetwork(e,execution.name);validateReadOnlyNativeExecution(job,execution,e,taskNetwork);}
+  const result=record(e,'RECONCILED',{operation:saved.operation,uid:job.uid,etag:job.etag,...(execution?{execution:execution.name,metadataSha256:digest({job,execution,...(taskNetwork!==undefined?{taskNetwork}:{})}),...(taskNetwork!==undefined?{taskNetworkSha256:digest(taskNetwork)}:{})}:{})});journal.append(stage,result);return result;
 }
 
 
