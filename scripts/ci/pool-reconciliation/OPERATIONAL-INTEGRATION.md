@@ -124,3 +124,18 @@ The pool adapter projects every official timeline row to its `event` field with 
 # Empty native execution reference
 
 The observed Cloud Run CREATE response exposed an exact empty `latestCreatedExecution` object on a job with no execution. Only the omitted field or an exact plain empty object is accepted with zero execution count. Null, arrays and any reference fields still refuse. CREATE reconciliation additionally requires the native paginated execution inventory to be empty, including deleted resources. RUN repeats this inventory after each of its two UID/etag-bound job reads. No execution count, UID, etag, authority freshness, durable single-use intent or UNKNOWN guard is relaxed. A known CREATE operation is observed, never recreated; the existing journal is preserved. This source change is not native reconciliation or permission to run an unqualified driver.
+
+# Canonical native execution references (28 October)
+
+Cloud Run's `latestCreatedExecution.name` may be the canonical job-prefixed
+short name. Accept that shape only when it exactly matches the leaf of the
+independently fetched execution URI under the objective job, with a nonempty
+canonical suffix. Full URI equality remains supported. No metadata is rewritten;
+foreign jobs, suffix-only names, deleted references and multiple executions remain
+refused. All source, task, role, nonce and five-minute freshness guards remain.
+
+The protected 256 native-output source is retained byte-for-byte as a historical
+`.md` proof fixture for the 253/255/257 catalogue tests. Their pins are unchanged;
+this correction does not retarget any existing objective. A new protected driver
+binding is required before operational use. A consumed execution is never rerun
+by this correction, and late archived output does not become fresh evidence.
