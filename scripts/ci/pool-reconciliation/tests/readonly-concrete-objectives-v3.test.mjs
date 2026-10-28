@@ -33,6 +33,7 @@ for(const scope of scopes)test(scope+' binds actual corrected driver and real co
   assert.equal(sha256(JSON.stringify(entry.driver.files)),expectedFilesSha256);
   for(const file of entry.driver.files){
     const proofs=new Map([
+      ['scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-output-reader-protected259-20261028.md'],
       ['scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-driver-github-protected252-20261027.md'],
       ['scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-transaction-protected254-20261027.md'],
       ['scripts/ci/pool-reconciliation/pool-native-output-v1.mjs','scripts/ci/pool-reconciliation/tests/fixtures/pool-native-output-protected256-20261028.md'],

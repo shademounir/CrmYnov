@@ -139,3 +139,31 @@ The protected 256 native-output source is retained byte-for-byte as a historical
 this correction does not retarget any existing objective. A new protected driver
 binding is required before operational use. A consumed execution is never rerun
 by this correction, and late archived output does not become fresh evidence.
+# Native task-network evidence when Execution omits VPC
+
+The actual known pool Execution GET omitted `template.vpcAccess` although the
+parent Job still bound the exact reviewed private network. The validator must
+not copy the Job's VPC into an Execution or drop the network requirement.
+For this representation only, the existing official transport performs one
+bounded GET of that exact execution's tasks (`pageSize=2`, `showDeleted=true`,
+network/image/resource/identity metadata only). Exactly one non-deleted,
+completed, non-retried canonical task0 must bind the execution and the same
+image, CPU, memory, service account, timeout, VPC and subnet. No env payload is
+requested. Null, foreign resources, pagination, duplicates, connector/tags,
+ALL_TRAFFIC or an unspecified egress enum are refused. Only absent `egress`
+uses the API's documented PRIVATE_RANGES_ONLY default; raw responses remain
+unaltered. All other Execution template bytes are compared exactly with the
+reviewed task (with the existing explicit CPU/zero-retry equivalence).
+
+The independent task response participates in metadata digests and durable
+output read receipts. Existing full-VPC Execution responses retain their exact
+validation path. CREATE/RUN single-use journals, private networking, freshness,
+all SQL/runtime sources, RC47 pins and RC48 images remain unchanged. This source
+change is not a new native acceptance, retry, activation or authorization: the
+currently protected objective catalogue still binds historical driver258, so a
+new explicit protected binding is required before operational use. The old
+consumed RUN must only be observed; its stale output remains unaccepted.
+
+Official contracts: [Execution](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs.executions),
+[Task list](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs.executions.tasks/list),
+[VpcAccess default](https://docs.cloud.google.com/run/docs/reference/rest/v2/VpcAccess).
