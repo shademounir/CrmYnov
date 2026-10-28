@@ -9,6 +9,7 @@ import {GITHUB_CODE_REVIEW_POLICY_PATH,validateProtectedCodeReviewPolicy} from '
 import {imageJournalDigest as digest} from './journal.mjs';
 import {PROJECT} from './plan.mjs';
 import {validateImagePlan,imagePlanScope,isImageRollback} from './plan-mode.mjs';
+import {verifyImagePreparationOrigins} from './preparation-origins.mjs';
 
 export const IMAGE_CATALOG='docs/governance/runtime-image-only-objectives-v1.json';
 export const IMAGE_SCOPE='RC48_SERVICE_IMAGE_ONLY_V1';
@@ -28,6 +29,7 @@ export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline
   assert.equal(entry.humanAuthorityReceiptSha256,dossier.humanAuthorityReceiptSha256);
   assert(hash.test(entry.preparationReceiptSha256??''));assert.equal(entry.preparationReceiptSha256,dossier.preparationReceiptSha256);
   assert.deepEqual(dossier.candidate,candidate);
+  assert.deepEqual(dossier.readOnlyPreparationJobs??[],candidate.readOnlyPreparationJobs??[],'OBJECTIVE_PREPARATION_JOB_BINDINGS');
   validateImagePlan(plan,candidate,baseline,rollbackContext);
   assert(Date.parse(plan.baselineObservedAt)<=now,'FUTURE_NATIVE_BASELINE_REFUSED');
   if(isImageRollback(plan)){
@@ -102,6 +104,7 @@ export async function authorizeImageOnlyDriver(input){
   if(isImageRollback(plan)){await verifyRollbackOrigin(github,catalog,entry,rollbackContext,{grant,actor});}
   const objectivePull=await github.get(base+'pulls/'+entry.objectiveReview.pr);const objectiveRef={pr:entry.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
   const [driver,objective]=await Promise.all([approvedMerge(github,entry.driver,{grant,actor,base:'develop'}),approvedMerge(github,objectiveRef,{grant,actor,base:'develop'})]);
+  await verifyImagePreparationOrigins(github,candidate,{revision,grant,actor,now:started,driver});
   assert(objective.files.some(f=>f.filename===IMAGE_CATALOG));const approved=JSON.parse(await githubFile(github,IMAGE_CATALOG,objectiveRef.mergeCommit));assert.equal(digest(approved.entries.filter(e=>e.id===objectiveId)),digest([entry]));
   await Promise.all([source.commit,objectiveRef.mergeCommit].map(async commit=>{const comparison=await github.get(base+'compare/'+commit+'...'+revision);assert.equal(comparison.merge_base_commit.sha,commit);assert(['ahead','identical'].includes(comparison.status));}));
   const mainBranch=await github.get(base+'branches/main');assert.equal(mainBranch.commit.sha,main);assert(mainBranch.protected);
