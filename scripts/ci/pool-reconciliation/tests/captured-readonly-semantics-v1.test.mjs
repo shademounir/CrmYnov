@@ -93,6 +93,10 @@ function general(){
 test('general comparison is minimal observed invariants, not full portfolio/pool acceptance',()=>{
   const result=compareCapturedGeneral(general());assert.equal(result.activeMemberships,32);assert.equal(result.protectedLeadRecords,2);assert.equal(result.fullPortfolioCoverage,false);assert.equal(result.poolSemanticsRequireSeparateProof,true);assert.equal(result.historicalRawPoolHashRecovered,false);assert.equal(result.fullProductionPreservation,false);
 });
+test('general identity comparison is deterministic and does not reorder the observed source arrays',()=>{
+  const input=general();input.observation.snapshot.roster.reverse();input.observation.snapshotSha256=baselineDigest(input.observation.snapshot);
+  const before=structuredClone(input);assert.equal(compareCapturedGeneral(input).members,8);assert.deepEqual(input,before);
+});
 for(const [name,mutate] of [
   ['missing historical settings pin',x=>{x.baseline.settingsSha256='0'.repeat(64);}],
   ['changed mail settings',x=>{x.observation.snapshot.configuration[0].settings.syntheticOnly=false;}],

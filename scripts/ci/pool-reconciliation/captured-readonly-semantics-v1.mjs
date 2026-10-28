@@ -13,6 +13,7 @@ const H=/^[a-f0-9]{64}$/u;
 const time=value=>{const n=Date.parse(value);assert(Number.isFinite(n),'RECORDED_TIME_REQUIRED');return n;};
 function body(record){const {at,...value}=record;time(at);return value;}
 function same(actual,expected,code){assert.equal(digest(actual),digest(expected),code);}
+const alphabetical=values=>values.toSorted((a,b)=>a.localeCompare(b,'en'));
 function limitations(){return {providerCryptographicSignatureAsserted:false,currentFreshnessAsserted:false,sameSnapshotAsOtherPurpose:false,fullProductionPreservation:false,nativeAcceptance:false,activationAuthorized:false};}
 
 function checkedHost(capture){
@@ -136,7 +137,7 @@ function checkGeneralMembers(s,baseline){
   assert.equal(members.length,8);assert.equal(campaigns.length,4);assert(active.every(r=>r.campus_id===baseline.campusId));
   assert.equal(baselineDigest(active),baseline.membershipSha256,'MAIL_MEMBERSHIPS_CHANGED');
   assert.equal(s.roster.length,8);assert(s.roster.every(r=>r.active&&Array.isArray(r.roles)&&r.roles.length>0));
-  same([...s.roster.map(r=>r.id)].sort(),members.sort(),'MAIL_ROSTER_MEMBERS');
+  same(alphabetical(s.roster.map(r=>r.id)),alphabetical(members),'MAIL_ROSTER_MEMBERS');
   assert(s.roster.every(r=>r.roles.includes('SUPER_ADMIN')||r.campus_id===baseline.campusId));
   assert.equal(s.scopes.length,5);assert(s.scopes.every(r=>r.state==='ACTIVE'));
   assert(s.scopes.some(r=>r.id===baseline.campusId&&r.kind==='CAMPUS'));
@@ -164,7 +165,7 @@ function compareGeneralPrior(s,prior){
 export function compareCapturedGeneral({observation,baseline,prior=null}){
   const s=checkedObservation(observation,GENERAL);
   assert.equal(observation.snapshotSha256,baselineDigest(s),'GENERAL_CAPTURE_BYTES');
-  same(Object.keys(s).sort(),['configuration','memberships','roster','permissions','scopes','leads','followups','booking','pool','counters','journal'].sort(),'GENERAL_SCOPE');
+  same(alphabetical(Object.keys(s)),alphabetical(['configuration','memberships','roster','permissions','scopes','leads','followups','booking','pool','counters','journal']),'GENERAL_SCOPE');
   checkGeneralConfiguration(s,baseline);checkGeneralMembers(s,baseline);checkProtectedRecords(s);checkGeneralJournal(s,baseline);
   assert.equal(s.pool.length,1);assert.equal(s.pool[0].campus_id,baseline.campusId);assert.equal(s.pool[0].version,1);
   assert(s.counters.every(r=>r.campus_id===baseline.campusId&&r.version===1&&Number.isSafeInteger(r.assigned_count)&&r.assigned_count>=0));
