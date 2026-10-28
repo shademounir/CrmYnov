@@ -375,6 +375,11 @@ jobs:
         run: |
           node scripts/ci/windows-installer-fixture-ci.mjs produce
           if errorlevel 1 exit /b %errorlevel%
+      - name: Verify package notice planning without build or SDK execution
+        shell: cmd
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File scripts/telephony-agent/tests/package-notices.test.ps1
+          if errorlevel 1 exit /b %errorlevel%
       - name: Preserve minimized fixture evidence and incomplete diagnostics
         id: evidence
         if: always() && steps.fixture.outputs.artifact-path != ''
