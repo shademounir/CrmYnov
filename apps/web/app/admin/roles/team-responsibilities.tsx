@@ -17,7 +17,7 @@ export function TeamResponsibilities({ campuses }: { campuses: { id: string; cod
       setItems(result.responsibilities); setLoaded(true); setConfirmed(false);
       if (save) { setVersion((value) => value + 1); setNotice("Responsabilité enregistrée et auditée ; aucune appartenance déduite."); }
       else setNotice(result.responsibilities.length === 1 ? "1 responsabilité chargée." : `${result.responsibilities.length} responsabilités chargées.`);
-    } catch (failure) { setLoaded(false); setConfirmed(false); setError(failure instanceof Error ? failure.message : "Responsabilité indisponible."); } finally { setReading(false); setBusy(false); }
+    } catch (error_) { setLoaded(false); setConfirmed(false); setError(error_ instanceof Error ? error_.message : "Responsabilité indisponible."); } finally { setReading(false); setBusy(false); }
   }
   return <section className="panel permission-team" aria-label="Responsabilités explicites des équipes" aria-busy={busy}>
     <h2>Responsabilités d’équipe — Super Admin</h2>
