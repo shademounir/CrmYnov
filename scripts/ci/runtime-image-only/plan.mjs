@@ -1,0 +1,50 @@
+// Pure plan ported from the frozen RC48 draft. No transport/executor/credential/filesystem access.
+// Fixed native location only; no dependency on or invocation of an old RC45/mail plan factory.
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+export const PROJECT='crmynov-prod-n7x4q2',LOCATION=`projects/${PROJECT}/locations/europe-west1`;
+assert.equal(PROJECT,'crmynov-prod-n7x4q2');
+const MAIN='8253024ea35cee6be5636cc6b10a88ae7e177377',TREE='8e6c456f091cab3c6f095665ae021badf85315c0';
+const API44='f93e9868f3e96f457285ef79df4ec95fe07cbde5633b66b3eac9d6f3d95f081d',WEB44='ee129bc520d012a399e0289f6cc2ea8465b37de9aa814b6a6fa05d4069d94b6c',API48='d2b2f6b0cf0ed9d9eb1cb15b70924af38be7ca4c4a824b6b406bb62caf88cd8f',WEB48='926ec149b5b46cda187f3cf59cdd378affb81d717b021c5dea6a0840c5d60a66',MAIL='9f0e146feb5dc51fc53fac2b85a51bdf26f22fb8554398742abd5407373242d4',DUE='44d071f76853c86da668b9ac7238af76549bbe9f6a338f784dbc9c196a15ee45',MIG='a9d7337f6139b5ed46d4d85703a9a009c9c1eb550260fb8ba52ff7d5443ebb33';
+const image=(kind,d)=>`europe-west1-docker.pkg.dev/${PROJECT}/crm-ynov-prod/${kind}@sha256:${d}`;
+const services={api:{uid:'a45fd6a6-f0d7-40e2-a9e5-da8a6f5fba81',revision:'crm-prod-api-00023-np8',before:API44,after:API48},web:{uid:'a133df26-0ae0-4a0c-80c2-e42f387db4db',revision:'crm-prod-web-00023-pn2',before:WEB44,after:WEB48}};
+const knownJobs=new Map([
+ ['crm-prod-balanced-rc44-migrate',['0bfb4a65-1f9b-44aa-8901-f65fdddd4f7c',API44]],
+ ['crm-prod-balanced-rc44-probe',['e67b3b09-a68f-4c8e-9e33-79856eedaee1',API44]],
+ ['crm-prod-business-mail',['99d284ea-75a8-4b64-89b3-99b5d3c97dcb',MAIL]],
+ ['crm-prod-business-mail-migrate',['4a14ac71-2323-43bd-a174-90d3f4b26450',MAIL]],
+ ['crm-prod-business-mail-operator',['5ed3c0d0-801f-4885-ac48-6ac8252da363',MAIL]],
+ ['crm-prod-follow-up-due',['4e7234a8-7b73-44e0-ba94-22b91cf179a0',DUE]],
+ ['crm-prod-grant-runtime-database',['5a169f8d-339f-4e12-9535-d8e316c35119',MIG]],
+ ['crm-prod-migrate',['cbff2c9c-1dfd-4520-9878-aae19b71bbb5',MIG]],
+ ['crm-prod-pool-reconcile-pre-20261027-9b1b1fb83f',['a939cfe3-fd69-43d2-a43b-f0d664214b51',API48]],
+ ['crm-prod-pool-reconcile-pre-20261028-5d481699db',['e227aa77-5c0a-48e8-9ca1-3bf7a67aa6aa',API48]],
+ ['crm-prod-preservation-pre-20261027-febce8cb70',['fba0c8d4-17e1-4614-a394-a7d018075ff8',API48]],
+ ['crm-prod-schema-ledger-pre-20261027-d064303171',['21080a63-1820-42ab-b459-233a5fc7e9b3',API48]],
+ ['crm-prod-schema-ledger-pre-20261028-f4b3d88b78',['b214dcf9-0a6a-4de8-9164-cca88f62dd04',API48]],
+]);
+const flags=['SHEETS_ENABLED','SHEET_ROW_APPEND_ENABLED','CRM_SHEET_APPEND_POLICY_QUALIFIED','CRM_GOOGLE_SHEETS_ENABLED','SHEET_CUTOVER_ENABLED','FORMINATOR_WEBHOOK_ENABLED'];
+function canonical(v){if(Array.isArray(v))return'['+v.map(canonical).join(',')+']';if(v&&typeof v==='object')return'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}';return JSON.stringify(v);}
+const digest=v=>createHash('sha256').update(canonical(v)).digest('hex');
+function env(c,name,expected){const found=(c.env??[]).filter(e=>e.name===name);assert.equal(found.length,1,name);assert.equal(found[0].valueSource,undefined,name);assert.equal(found[0].value,expected,name);}
+function readyRevision(s,pin){const names=[s.name+'/revisions/'+pin.revision,pin.revision];assert(names.includes(s.latestReadyRevision),'EXACT_READY_REVISION');assert.equal(s.latestCreatedRevision,s.latestReadyRevision);assert.equal(typeof s.generation,'string');assert(/^[1-9]\d*$/u.test(s.generation));assert.equal(s.observedGeneration,s.generation);assert.equal(s.trafficStatuses.length,1);assert.equal(s.trafficStatuses[0].percent,100);assert.equal(s.trafficStatuses[0].type,'TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST');assert(names.includes(s.trafficStatuses[0].revision),'EXACT_TRAFFIC_REVISION');}
+function uid(v){assert.equal(typeof v,'string');assert(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(v));}
+function jobBindings(jobs){
+ assert(Array.isArray(jobs)&&jobs.length===knownJobs.size,'EXACT_13_JOB_INVENTORY_REQUIRED');const seen=new Set();
+ const bindings=jobs.map(j=>{assert.equal(typeof j.name,'string');const prefix=LOCATION+'/jobs/';assert(j.name.startsWith(prefix));const name=j.name.slice(prefix.length);assert(/^crm-prod-[a-z0-9-]+$/u.test(name));assert(!seen.has(name));seen.add(name);uid(j.uid);assert(j.template&&Array.isArray(j.template.template?.containers));assert.equal(j.template.template.containers.length,1);const actualImage=j.template.template.containers[0].image,known=knownJobs.get(name);assert(known,'UNREVIEWED_JOB_IDENTITY');assert.equal(j.uid,known[0]);assert.equal(actualImage,image('api',known[1]));
+  // Natural executions may advance counters/status/etag. Preserve fixed job
+  // configuration and identity, not a false freeze of legitimate business work.
+  return{name:j.name,uid:j.uid,configurationSha256:digest({template:j.template,labels:j.labels??{},annotations:j.annotations??{},launchStage:j.launchStage??null,binaryAuthorization:j.binaryAuthorization??null})};});
+ for(const name of knownJobs.keys())assert(seen.has(name),'MISSING_KNOWN_JOB');return bindings.sort((a,b)=>a.name.localeCompare(b.name,'en'));
+}
+function schedulerBindings(rows){assert(Array.isArray(rows)&&rows.length===2);const seen=new Set();return rows.map(s=>{const short=s.name?.slice((LOCATION+'/jobs/').length);assert.equal(s.name,LOCATION+'/jobs/'+short);assert(['crm-prod-business-mail','crm-prod-follow-up-due'].includes(short));assert(!seen.has(short));seen.add(short);assert.equal(s.state,'ENABLED');assert.equal(s.timeZone,'Etc/UTC');assert.equal(s.schedule,short==='crm-prod-business-mail'?'*/5 * * * *':'* * * * *');return{name:s.name,configurationSha256:digest({name:s.name,state:s.state,schedule:s.schedule,timeZone:s.timeZone,httpTarget:s.httpTarget??null,pubsubTarget:s.pubsubTarget??null,retryConfig:s.retryConfig??null,attemptDeadline:s.attemptDeadline??null,description:s.description??''})};}).sort((a,b)=>a.name.localeCompare(b.name,'en'));}
+export function makeRc48ServiceImagePlanDraft(candidate,baseline,now){
+ assert(Number.isSafeInteger(now));const observed=Date.parse(baseline.observedAt);assert(Number.isFinite(observed)&&now>=observed&&now-observed<=300000,'FRESH_BASELINE_REQUIRED');assert.equal(baseline.readOnly,true);
+ assert.equal(candidate.main,MAIN);assert.equal(candidate.tree,TREE);assert.equal(candidate.release,'v0.1.0-rc.48');assert.equal(candidate.releaseId,424492409);assert.deepEqual(Object.keys(candidate.images).sort(),['api','web']);assert.deepEqual(Object.keys(baseline.services).sort(),['api','web']);
+ const patches=[];
+ for(const kind of ['api','web']){const s=baseline.services[kind],pin=services[kind],target=candidate.images[kind];assert.equal(s.name,LOCATION+'/services/crm-prod-'+kind);assert.equal(s.uid,pin.uid);assert.equal(s.reconciling??false,false);assert.equal(s.deleteTime,undefined);assert.equal(s.terminalCondition?.state,'CONDITION_SUCCEEDED');assert.equal(typeof s.etag,'string');assert(s.etag.length>0);readyRevision(s,pin);assert.equal(s.template.containers.length,1);assert.equal(s.template.containers[0].image,image(kind,pin.before));assert.equal(target.sourceSha,MAIN);assert.equal(target.digest,'sha256:'+pin.after);assert.equal(target.destination,image(kind,pin.after));const containers=structuredClone(s.template.containers);containers[0].image=target.destination;patches.push({kind:'service',resource:s.name,method:'PATCH',updateMask:'template.containers',expectedUid:s.uid,expectedEtag:s.etag,expectedRevision:s.latestReadyRevision,beforeTemplateSha256:digest(s.template),body:{name:s.name,etag:s.etag,template:{containers}},allowedDifference:'containers[0].image only'});}
+ for(const flag of flags)env(baseline.services.api.template.containers[0],flag,'false');env(baseline.services.api.template.containers[0],'CRM_BACKGROUND_WORKERS','external');
+ return{schemaVersion:1,kind:'UNPROTECTED_PURE_RC48_SERVICE_IMAGE_PLAN_DRAFT',main:MAIN,tree:TREE,release:candidate.release,baselineObservedAt:baseline.observedAt,patches,preservedJobs:jobBindings(baseline.jobs),preservedSchedulers:schedulerBindings(baseline.schedulers),jobPatches:[],createJobs:[],runJobs:[],schedulerChanges:[],nonImageConfigurationWrites:[],iamChanges:[],migrations:[],secretPayloadReads:false,nativeOriginAuthenticated:false,nativePreservationQualified:false,backupQualified:false,executionAuthorized:false,activationAuthorized:false,executorProvided:false,requirements:['Protected exact-source/digest objective and all technical/governance gates','Independent current pool/source/ledger56/schema and general PRE/POST preservation proofs; distinct transactions are not one snapshot','Fresh successful native backup and independently qualified recoverability only when ready','Fresh full UID/etag/template inventory and real unchanged ingestion OFF flags immediately before each single-use PATCH','Durable intent before each PATCH, no automatic retry of UNKNOWN; reconcile actual operation/readiness/digests','All jobs and Schedulers unchanged; natural mail/follow-up executions and subsequent legitimate writes preserved'],rollback:{kind:'SEPARATE_FRESH_COMPATIBLE_IMAGE_ONLY_OBJECTIVE_REQUIRED',api:image('api',API44),web:image('web',WEB44),sqlRestoreForbidden:true,preserveInterveningWrites:true,afterSheetsActivationNotAuthorizedByThisDraft:true}};
+}
+export function validateRc48ServiceImagePlanDraft(plan,candidate,baseline,now){assert.deepEqual(plan,makeRc48ServiceImagePlanDraft(candidate,baseline,now));return true;}
+export function validateUnpatchedResourceClaims(plan,after){assert.deepEqual(jobBindings(after.jobs),plan.preservedJobs,'JOB_CONFIGURATION_DRIFT');assert.deepEqual(schedulerBindings(after.schedulers),plan.preservedSchedulers,'SCHEDULER_CONFIGURATION_DRIFT');return{claimsChecked:true,nativeOriginAuthenticated:false,nativeAcceptance:false};}
