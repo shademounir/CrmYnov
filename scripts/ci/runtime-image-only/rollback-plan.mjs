@@ -91,6 +91,7 @@ export function makeRc48ImageRollbackPlanDraft(input,now){
     originalForwardPlanSha256:digest(forwardPlan),forwardEvidenceSha256:digest(forwardEvidence),
     baselineObservedAt:currentBaseline.observedAt,patches,
     preservedJobs:structuredClone(forwardPlan.preservedJobs),preservedSchedulers:structuredClone(forwardPlan.preservedSchedulers),
+    ...(forwardPlan.readOnlyPreparationJobs?{readOnlyPreparationJobs:structuredClone(forwardPlan.readOnlyPreparationJobs)}:{}),
     jobPatches:[],runJobs:[],schedulerChanges:[],migrations:[],iamChanges:[],databaseRestore:false,
     preserveInterveningWrites:true,afterSheetsActivationAuthorized:false,nativeOriginAuthenticated:false,
     forwardJournalAuthenticityVerified:false,executionAuthorized:false,activationAuthorized:false,executorProvided:false,

@@ -1,10 +1,11 @@
-# RC48 service-image-only extension — unqualified draft
+# RC48 image-only — source et préparation opérationnelle
 
-This source extension is published as draft PR264. It is not an operational
-authority or a production delivery. Local tests pass, but the exact final SHA
-still requires successful remote technical checks and governed approval. There
-is no protected concrete runtime objective, qualified native preparation, or
-operational rollback/recoverability receipt for a deployment.
+The original extension was merged through protected PR264 at
+75f1422bdff08690733e4e52f39473a6056bdfe4 after technical and Sonar success.
+The current preparation-job admission and prospective permission interpretation
+are a separate candidate, not yet protected. Neither source merge nor local
+qualification is operational authority or production delivery. A concrete runtime
+objective, current preparation and recoverability still remain required.
 Protected PR263 source is integrated at 0fa91b2524badb34cd5cd64d438a3f71ca6b9155.
 The source publication does not qualify or authorize a runtime change.
 
@@ -16,7 +17,9 @@ Implemented local components:
   inventory now requires exactly the 13 actually observed job names, UIDs and
   digests (native GET receipt 28 October, SHA256
   b045622f011f81335ed0146fce2e8eb8420d186954d026b4f5969e1b7f7d644b).
-  No family-name fallback or additional job is accepted. Full current job
+  No family-name fallback or unknown additional job is accepted. Only the exact
+  completed GENERAL/LEDGER PRE pair described below can extend that inventory.
+  Full current job
   configuration hashes still have to match the protected operational objective
   immediately before mutation; the observed inventory is not perpetually fresh.
 - `journal.mjs`: exclusive fsynced per-stage intent, recorded operation, terminal
@@ -37,7 +40,7 @@ Implemented local components:
   the journal, retry an unknown exchange, or prove provider origin.
 - `authority.mjs` reuses the existing protected merge/source/delegation/Jira gates
   and requires an exact nonempty protected image objective, source-bound preparation,
-  13-job and Scheduler hashes, plus a fresh plan-specific operational marker. No
+  complete job and Scheduler hashes, plus a fresh plan-specific operational marker. No
   READ ONLY authority is upgraded; no Codex bot completion is required.
 - The versioned `operational-driver-v2.mjs image-only` dispatch extends the
   narrow CLI. `plan` is pure and unqualified. `inspect` reads local journals only.
@@ -108,3 +111,30 @@ Official API references inspected during development:
 - [Cloud SQL on-demand backup insert](https://docs.cloud.google.com/sql/docs/postgres/admin-api/rest/v1beta4/backupRuns/insert)
 - [Cloud SQL backup metadata](https://docs.cloud.google.com/sql/docs/postgres/admin-api/rest/v1beta4/backupRuns)
 - [Cloud SQL operation metadata](https://docs.cloud.google.com/sql/docs/postgres/admin-api/rest/v1beta4/operations)
+
+## Préparation fraîche sans rejeu des sondes terminées
+
+Le chemin historique à treize jobs reste strict. Un candidat peut déclarer
+`readOnlyPreparationJobs` uniquement pour la paire GENERAL/LEDGER PRE, créée et
+exécutée sous deux objectifs distincts du catalogue READ ONLY existant. Aucun
+nouveau contrat du pool, nouveau collecteur, droit SQL, secret ou image n'est requis.
+
+Les treize UID/images/configurations d'origine restent obligatoires. Les deux
+sondes supplémentaires doivent avoir un dossier exact, un UID natif, une unique
+exécution réussie et terminée avant le baseline, ainsi qu'une référence de catalogue
+protégée. Leur source ancienne à 38 entrées, les octets de chaque module embarqué,
+les fusions de source/objectif, les contrôles techniques, la délégation et
+l'ascendance sont vérifiés. Une identité inconnue, un objectif révoqué/expiré,
+une seconde exécution ou un changement de configuration est refusé. Les anciens
+journaux FIN ne sont ni réinitialisés ni réutilisés.
+
+Ce raccordement ne crée et ne lance aucun job. Le plan image-only et son rollback
+conservent les quinze configurations lorsqu'une telle paire est déclarée ; les
+jobs et Schedulers métier ne sont pas modifiés et leurs exécutions naturelles
+restent permises. L'objectif image, les preuves fraîches et la sauvegarde réussie
+demeurent des conditions séparées avant tout PATCH API/Web.
+
+Le rapprochement prospectif des permissions MANAGER ajoute uniquement la
+configuration déjà motivée et validée. Les deux configurations historiques doivent
+rester identiques. Le baseline historique n'est pas écrasé, son origine n'est pas
+inventée et une interprétation d'une capture ancienne n'est jamais un PRE frais.
