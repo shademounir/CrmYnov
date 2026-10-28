@@ -138,3 +138,14 @@ Le rapprochement prospectif des permissions MANAGER ajoute uniquement la
 configuration déjà motivée et validée. Les deux configurations historiques doivent
 rester identiques. Le baseline historique n'est pas écrasé, son origine n'est pas
 inventée et une interprétation d'une capture ancienne n'est jamais un PRE frais.
+
+La version corrective de PR265 propose les deux objectifs concrets
+`rc48-general-pre-20261028-147f390728` et
+`rc48-ledger-pre-20261028-61c3d8859d`. Leurs dossiers réels et journaux neufs sont
+épinglés dans le catalogue READ ONLY existant, sous la source immuable PR260 à
+38 entrées. Les cinq entrées historiques sont conservées sans changement ; le
+test historique PR262 utilise désormais sa copie exacte figée et un test distinct
+vérifie le catalogue courant à sept entrées. Cette proposition n'est pas une
+protection acquise, un job créé ou une preuve SQL fraîche. Les deux sondes n'ont
+pas encore été exécutées. L'objectif image-only reste séparé et à publier après
+qualification de ses véritables inputs et de la récupérabilité.

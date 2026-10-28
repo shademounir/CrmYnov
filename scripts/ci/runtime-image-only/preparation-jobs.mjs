@@ -3,21 +3,21 @@
 import assert from 'node:assert/strict';
 import {READONLY_RUNTIME_FILES,validateLocalReadOnlyDossier} from '../pool-reconciliation/pool-job-dossier-v1.mjs';
 import {validateReadOnlyNativeJob} from '../pool-reconciliation/pool-native-output-v1.mjs';
-const purposes=['GENERAL_PRESERVATION_READ_ONLY_V1','SCHEMA_LEDGER_READ_ONLY_V1'],H=/^[a-f0-9]{64}$/u,U=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
-function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);assert.deepEqual(Object.keys(value).sort(),[...keys].sort());}
+const purposes=new Set(['GENERAL_PRESERVATION_READ_ONLY_V1','SCHEMA_LEDGER_READ_ONLY_V1']),H=/^[a-f0-9]{64}$/u,U=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,alphabetical=(a,b)=>a.localeCompare(b,'en');
+function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);assert.deepEqual(Object.keys(value).sort(alphabetical),[...keys].sort(alphabetical));}
 export function validateImagePreparationJobs(candidate){
   const rows=candidate.readOnlyPreparationJobs;if(rows===undefined){return [];}
   assert(Array.isArray(rows)&&rows.length===2,'EXPLICIT_GENERAL_AND_LEDGER_PAIR_REQUIRED');
   const names=new Set(),ids=new Set();
   for(const row of rows){
     exact(row,['objectiveId','catalogEntrySha256','dossier','uid','execution']);assert.equal(typeof row.objectiveId,'string');assert.match(row.objectiveId,/^rc48-[a-z0-9-]{8,75}$/u);assert(!ids.has(row.objectiveId));ids.add(row.objectiveId);assert(H.test(row.catalogEntrySha256));assert(U.test(row.uid));
-    const d=row.dossier;assert(purposes.includes(d?.objective?.purpose),'ONLY_GENERAL_AND_LEDGER_PRE');assert.equal(d.bundle?.request?.phase,'PRE');assert(!names.has(d.objective.jobName));names.add(d.objective.jobName);
+    const d=row.dossier;assert(purposes.has(d?.objective?.purpose),'ONLY_GENERAL_AND_LEDGER_PRE');assert.equal(d.bundle?.request?.phase,'PRE');assert(!names.has(d.objective.jobName));names.add(d.objective.jobName);
     // Rebuild from the already source-hash-bound inline modules. Protected
     // catalogue/source lineage is independently checked by the authority port.
     validateLocalReadOnlyDossier(d,file=>{const name=Object.keys(READONLY_RUNTIME_FILES).find(k=>READONLY_RUNTIME_FILES[k]===file);assert(name);return Buffer.from(d.bundle.modules[name].source,'utf8');});
     const prefix=d.objective.jobName+'/executions/',leaf=d.objective.jobName.split('/').at(-1);assert.equal(typeof row.execution,'string');assert(row.execution.startsWith(prefix+leaf+'-'));assert.match(row.execution.slice(prefix.length),/^[a-z0-9-]+$/u);
   }
-  assert.deepEqual(rows.map(r=>r.dossier.objective.purpose).sort(),[...purposes].sort(),'ONE_OF_EACH_PRE_PURPOSE');return rows;
+  assert.deepEqual(rows.map(r=>r.dossier.objective.purpose).sort(alphabetical),[...purposes].sort(alphabetical),'ONE_OF_EACH_PRE_PURPOSE');return rows;
 }
 export function validatePreparedReadOnlyJob(job,row,observedAt){
   validateReadOnlyNativeJob(job,row.dossier.objective);assert.equal(job.uid,row.uid,'PREPARATION_JOB_UID');
