@@ -4,6 +4,14 @@ Ce contrat additif ne réconcilie pas le RUN du 28 octobre : son UNKNOWN, son sn
 
 `runProspectiveGeneralPre` est l'entrée concrète protégée. Elle construit la gouvernance GitHub/Jira, l'authentification officielle existante, le transport natif et le consommateur. Aucun callback externe ne remplace ces contrôles ; l'hôte fournit uniquement les données épinglées et la lecture de clé en mémoire. Les auxiliaires de protocole injectables sont destinés aux tests synthétiques et ne constituent jamais une acceptation native.
 
+## Preuve Jira native, sans substitution UI
+
+L'autorité prospective accepte le format réellement recueilli `OFFICIAL_ATLASSIAN_CONNECTOR_NATIVE_READ` : acteur/grant, compte Atlassian et tenant/cloud exacts, UUID d'invocation, URL du tenant, CRMY-63/id10681/Task/In Review, label `codex-ready`, absence de blocage et dépendance CRMY-61 Done sont contrôlés. Les bytes sont liés au hash du marqueur frais ; l'âge maximal reste 600 000 ms et borne la lease.
+
+Ce reçu natif ne contient ni `schemaVersion` ni claim UI : ces champs ne sont pas fabriqués ou ajoutés aux anciens reçus. Le validateur produit sa propre projection versionnée, explicitement sans signature cryptographique du fournisseur et sans approbation humaine personnelle. L'ancien validateur UI reste inchangé ; cette autorité n'offre aucun fallback ni ré-étiquetage vers UI.
+
+Les lectures de source et les polls d'opération/sortie restent séquentiels, arrêtés au premier refus et bornés, via récursion limitée. Aucun parallélisme de GCP, suppression de règle, exclusion ou changement de seuil de contrôle n'est introduit.
+
 ## Bornes et refus
 
 - Une capacité déterminée par le reçu humain, un dossier d'évidence fixe, un claim permanent `wx`/`fsync`, un INTENT distinct avant l'unique POST. Aucun faux CREATE, copie de journal, reset, suppression du claim ou réinitialisation.

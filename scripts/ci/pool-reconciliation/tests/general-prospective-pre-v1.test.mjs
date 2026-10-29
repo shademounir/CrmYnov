@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {BINDING,CONSUMER_PINS,PROSPECTIVE_DRIVER_INPUTS,validateProspectiveAuthorityRecord,validateProspectiveDossier,authorizeProspectiveGeneralPre} from '../general-prospective-pre-authority-v1.mjs';
+import {BINDING,CONSUMER_PINS,PROSPECTIVE_DRIVER_INPUTS,validateProspectiveAuthorityRecord,validateProspectiveDossier,authorizeProspectiveGeneralPre,NATIVE_JIRA_BINDING,validateNativeJiraReadObservation} from '../general-prospective-pre-authority-v1.mjs';
 import {openProspectiveEvidenceStore,createProspectiveSessionBudget,executeProspectiveGeneralPreProtocol,validateProspectiveConsumerInputs,runProspectiveGeneralPre,validateConsumerIndex,semanticFailureCode,comparisonAge,buildProspectiveCutoverDossier,protocolFailureCode} from '../general-prospective-pre-session-v1.mjs';
 import {createReadOnlyNativeTransport} from '../pool-native-transaction-v2.mjs';
 import {byteHash,digest} from '../controlled-pool-contract-v1.mjs';
@@ -12,7 +12,53 @@ import {fixture} from './readonly-native-output-fixture-v1.mjs';
 import {authorityFixture} from '../../readonly-probe/tests/probe-driver-fixtures-v1.mjs';
 import {GITHUB_CODE_REVIEW_POLICY_PATH} from '../../../pr-policy/github-code-review.mjs';
 import {grantDigest} from '../../../pr-policy/delegation.mjs';
+import {validateOperatorJiraObservation} from '../../readonly-probe/probe-driver-authority-v1.mjs';
 const NOW=Date.parse('2026-10-29T15:00:00.000Z'),H='a'.repeat(64),CAP='11111111-1111-4111-8111-111111111111';
+function nativeJiraReceipt(grantSha256=H){return{
+  observedAt:new Date(NOW-1000).toISOString(),source:'OFFICIAL_ATLASSIAN_CONNECTOR_NATIVE_READ',executor:'Codex',observedBy:'shademounir',grantDigest:grantSha256,
+  accountId:NATIVE_JIRA_BINDING.accountId,cloudId:NATIVE_JIRA_BINDING.cloudId,invocationId:'f7e770cf-9b1c-49c0-8d20-529f0b8708be',url:NATIVE_JIRA_BINDING.url,
+  ticket:{key:'CRMY-63',id:'10681',issueType:'Task',status:'In Review',labels:['cdc-v1-4-2','codex-ready','sprint-2','vertical-slice'],codexReady:true,blocked:false,
+    links:[{id:'11388',type:'Blocks',inward:{key:'CRMY-61',status:'Done'},outward:null}]},sourceReadinessOnly:true,notPersonalHumanApproval:true,productionDeploymentAuthorized:false,noJiraMutation:true,
+};}
+function nativeJiraCheck(value,options={}){const bytes=Buffer.from(JSON.stringify(value));return validateNativeJiraReadObservation(bytes,{expectedSha256:byteHash(bytes),actor:'shademounir',grantSha256:H,now:NOW,...options});}
+test('native Jira actual receipt shape has no invented schemaVersion/claim UI and projects explicit non-signature meaning',()=>{
+  const value=nativeJiraReceipt(),before=JSON.stringify(value),result=nativeJiraCheck(value);
+  assert.equal(result.source,'OFFICIAL_ATLASSIAN_CONNECTOR_NATIVE_READ');assert.equal(result.schemaVersion,1);assert.equal(result.providerCryptographicSignatureAsserted,false);
+  assert.equal(result.notPersonalHumanApproval,true);assert.equal(result.productionDeploymentAuthorized,false);assert.equal(result.accountId,NATIVE_JIRA_BINDING.accountId);
+  assert.equal(result.cloudId,NATIVE_JIRA_BINDING.cloudId);assert.equal(JSON.stringify(value),before);assert(!Object.hasOwn(value,'schemaVersion'));assert(!Object.hasOwn(value,'claim'));
+});
+for(const[name,mutate]of[
+  ['UI source',v=>v.source='OFFICIAL_JIRA_UI_OPERATOR_OBSERVATION'],
+  ['invented UI schema and claim',v=>{v.schemaVersion=1;v.claim='Operator-observed official Jira UI; not a cryptographic Jira connector or native signature';v.source='OFFICIAL_JIRA_UI_OPERATOR_OBSERVATION';}],
+  ['invented input schemaVersion',v=>v.schemaVersion=1],['unknown input field',v=>v.SYNTHETIC_PRIVATE_FIELD='PRIVATE'],
+  ['wrong account',v=>v.accountId='OTHER_ACCOUNT'],['wrong tenant',v=>v.cloudId='OTHER_CLOUD'],['foreign tenant URL',v=>v.url='https://other.atlassian.net/browse/CRMY-63'],
+  ['wrong actor',v=>v.observedBy='other'],['wrong grant',v=>v.grantDigest='b'.repeat(64)],['wrong executor',v=>v.executor='Other'],
+  ['missing invocation',v=>delete v.invocationId],['malformed invocation',v=>v.invocationId='invalid'],['nil invocation',v=>v.invocationId='00000000-0000-0000-0000-000000000000'],
+  ['wrong issue key',v=>v.ticket.key='CRMY-183'],['wrong issue id',v=>v.ticket.id='10682'],['numeric issue id',v=>v.ticket.id=10681],['wrong issue type',v=>v.ticket.issueType='Epic'],
+  ['wrong status',v=>v.ticket.status='In Progress'],['codex-ready absent',v=>v.ticket.labels=['sprint-2']],['duplicate label',v=>v.ticket.labels.push('codex-ready')],
+  ['labels malformed',v=>v.ticket.labels=[{}]],['readiness false',v=>v.ticket.codexReady=false],['blocked true',v=>v.ticket.blocked=true],['blocked label',v=>v.ticket.labels.push('blocked')],
+  ['dependency absent',v=>v.ticket.links=[]],['dependency wrong',v=>v.ticket.links[0].inward.key='CRMY-62'],['dependency not Done',v=>v.ticket.links[0].inward.status='In Review'],
+  ['both link directions',v=>v.ticket.links[0].outward={key:'CRMY-60',status:'Done'}],['neither link direction',v=>v.ticket.links[0].inward=null],
+  ['duplicate dependency',v=>v.ticket.links.push(structuredClone(v.ticket.links[0]))],
+  ['other open blocker',v=>v.ticket.links.push({id:'11389',type:'Blocks',inward:{key:'CRMY-60',status:'In Progress'},outward:null})],
+  ['future timestamp',v=>v.observedAt=new Date(NOW+1).toISOString()],['stale timestamp',v=>v.observedAt=new Date(NOW-600001).toISOString()],
+  ['malformed timestamp',v=>v.observedAt='invalid'],['readiness-only false',v=>v.sourceReadinessOnly=false],['personal approval claimed',v=>v.notPersonalHumanApproval=false],
+  ['deployment claimed',v=>v.productionDeploymentAuthorized=true],['mutation claimed',v=>v.noJiraMutation=false],
+  ['signature claimed',v=>v.providerCryptographicSignatureAsserted=true],
+])test('native Jira rejects '+name,()=>{const value=nativeJiraReceipt();mutate(value);assert.throws(()=>nativeJiraCheck(value),error=>error.name==='NativeJiraEvidenceError'&&/^NATIVE_JIRA_[A-Z_]+$/u.test(error.message));});
+test('native Jira hash and byte/schema boundaries refuse without exposing arbitrary values',()=>{
+  const secret='DEADBEEF'.repeat(8),value=nativeJiraReceipt();value.accountId=secret;
+  assert.throws(()=>nativeJiraCheck(value),error=>!JSON.stringify(error).includes(secret)&&!error.message.includes(secret));
+  const bytes=Buffer.from(JSON.stringify(nativeJiraReceipt()));
+  assert.throws(()=>validateNativeJiraReadObservation(bytes,{expectedSha256:H,actor:'shademounir',grantSha256:H,now:NOW}));
+  const bad=Buffer.from('{invalid '+secret);assert.throws(()=>validateNativeJiraReadObservation(bad,{expectedSha256:byteHash(bad),actor:'shademounir',grantSha256:H,now:NOW}),error=>error.message==='NATIVE_JIRA_JSON'&&!String(error).includes(secret));
+  assert.throws(()=>validateNativeJiraReadObservation('not a Buffer',{expectedSha256:H,actor:'shademounir',grantSha256:H,now:NOW}));
+  assert.equal(nativeJiraCheck({...nativeJiraReceipt(),observedAt:new Date(NOW-600000).toISOString()}).observedAt,new Date(NOW-600000).toISOString());
+});
+test('old UI validator remains unchanged and usable only for its original actual UI evidence contract',()=>{
+  const f=authorityFixture();assert.equal(validateOperatorJiraObservation(f.jiraBytes,{expectedSha256:byteHash(f.jiraBytes),ticket:'CRMY-63',actor:'shademounir',grantSha256:grantDigest(f.grant),now:f.now}).source,'OFFICIAL_JIRA_UI_OPERATOR_OBSERVATION');
+  assert.throws(()=>validateNativeJiraReadObservation(f.jiraBytes,{expectedSha256:byteHash(f.jiraBytes),actor:'shademounir',grantSha256:grantDigest(f.grant),now:f.now}));
+});
 function record(){return{schemaVersion:1,kind:'GENERAL_PROSPECTIVE_PRE_SINGLE_OBSERVATION_AUTHORITY_V1',
   proposalSha256:BINDING.proposalSha256,humanAuthorityReceiptSha256:BINDING.humanAuthorityReceiptSha256,binding:{...BINDING},
   validFrom:new Date(NOW-1000).toISOString(),expiresAt:new Date(NOW+900000).toISOString(),explicitWindowRenewal:true,
@@ -45,14 +91,22 @@ function governance(){
   for(const file of r.source.files)f.responses.set(base+'contents/'+file.path+'?ref='+s.commit,f.blob('// synthetic '+file.path));
   f.responses.get(base+'commits/'+'1'.repeat(40)+'/check-runs').push({id:999999,name:'simulate',status:'completed',conclusion:'success',head_sha:'1'.repeat(40)});
   f.responses.set(base+'contents/docs/governance/readonly-probe-objectives-v1.json?ref='+revision,f.blob({entries:[{id:BINDING.objectiveId,scope:BINDING.purpose,status:'approved',businessMutation:false,ticket:'CRMY-63',expiresAt:BINDING.originalExpiresAt,dossierSha256:BINDING.catalogueDossierSha256}]}));
-  const jira=JSON.parse(f.jiraBytes);jira.observedAt=new Date(NOW-1000).toISOString();const jiraBytes=Buffer.from(JSON.stringify(jira));
+  const jira=nativeJiraReceipt(grantDigest(f.grant)),jiraBytes=Buffer.from(JSON.stringify(jira));
   const marker={schemaVersion:1,executor:'Codex',capabilityId:r.capabilityId,authorityRecordSha256:digest(r),driverCommit:s.commit,grantDigest:grantDigest(f.grant),jiraObservationSha256:byteHash(jiraBytes),expiresAt:new Date(NOW+60000).toISOString(),businessMutation:false};
   f.responses.get(base+'issues/301/comments').push({id:999,user:{login:'shademounir',type:'User'},created_at:new Date(NOW-1000).toISOString().replace('.000Z','Z'),body:'<!-- codex-general-prospective-pre-authorization:v1 '+JSON.stringify(marker)+' -->'});
   return{...f,r,jiraBytes,localSource:{...r.source,clean:true},run:()=>authorizeProspectiveGeneralPre({github:f.github,record:r,jiraBytes,localSource:{...r.source,clean:true},clock:()=>NOW})};
 }
 test('real governance adapter verifies protected merge/grant/CI/Jira and fresh exact capability without requiring bot review',async()=>{
   const g=governance(),result=await g.run();assert.equal(result.receipt.capabilityId,BINDING.capabilityId);assert.equal(result.receipt.gitHubCodeReviewRequired,false);assert.equal(result.receipt.businessMutationAuthorized,false);
+  assert.equal(result.receipt.jiraEvidenceSource,'OFFICIAL_ATLASSIAN_CONNECTOR_NATIVE_READ');assert.equal(result.receipt.jiraAccountId,NATIVE_JIRA_BINDING.accountId);assert.equal(result.receipt.jiraProviderCryptographicSignatureAsserted,false);
   assert(g.calls.some(c=>c.includes('/check-runs')));assert(g.calls.filter(c=>c.includes('/contents/')).length>=PROSPECTIVE_DRIVER_INPUTS.length);
+});
+test('protected-source verification is sequential and stops before later files on first byte refusal',async()=>{
+  const g=governance(),routes=g.r.source.files.map(file=>g.base+'contents/'+file.path+'?ref='+g.r.source.commit),seen=[];
+  const original=g.github.get;let active=0,maximum=0;
+  g.github.get=async route=>{if(!routes.includes(route))return original(route);active++;maximum=Math.max(maximum,active);seen.push(route);await new Promise(resolve=>setTimeout(resolve,1));try{return await original(route);}finally{active--;}};
+  await g.run();assert.equal(maximum,1);assert.deepEqual(seen,routes);
+  const bad=governance();bad.responses.set(routes[2],bad.blob('changed'));await assert.rejects(bad.run());assert(!bad.calls.includes(routes[3]));
 });
 for(const[name,change]of[
   ['unprotected develop',g=>g.responses.get(g.base+'branches/develop').protected=false],
@@ -75,7 +129,7 @@ test('durable independent claim/append are exclusive and cannot overwrite a cons
   }finally{for(const file of fs.readdirSync(dir))fs.unlinkSync(path.join(dir,file));fs.rmdirSync(dir);}
 });
 function protocol(options={}){
-  const f=fixture('general'),events=[],calls=[];let now=f.now-4000,posted=false,tokens=0,consumers=0,refreshes=0,logReads=0;
+  const f=fixture('general'),events=[],calls=[];let now=f.now-4000,posted=false,tokens=0,consumers=0,refreshes=0,logReads=0,operationReads=0;
   f.job.etag='synthetic-etag';f.execution.uid='synthetic-execution-uid';f.execution.createTime='2026-10-27T14:00:00.200Z';
   const pre=structuredClone(f.job);pre.executionCount=0;pre.latestCreatedExecution={};
   const binding={...BINDING,job:f.job.name,uid:f.job.uid,objective:f.objective};
@@ -96,7 +150,7 @@ function protocol(options={}){
       if(options.timeoutPost)return new Promise(()=>{});
       value=options.pending?{name:op,done:false}:structuredClone(done);
       if(options.postValue)value=options.postValue;
-    }else if(url.includes('/operations/'))value=structuredClone(done);
+    }else if(url.includes('/operations/')){operationReads++;value=options.operationAlwaysPending||operationReads<=(options.pendingCount??0)?{name:op,done:false}:structuredClone(done);}
     else if(url.endsWith('/tasks?'+new URL(url).searchParams.toString()))value=tasks;
     else if(new URL(url).pathname.endsWith('/tasks'))value=tasks;
     else if(new URL(url).pathname.endsWith('/executions'))value=options.inventory??{};
@@ -270,4 +324,22 @@ test('expired lease at final dispatch check records zero invoked POST while pres
     leaseRemainingMs:()=>++remainingChecks===1?1000:0,fetchImpl:async()=>{calls++;return new Response('{}');}});
   await assert.rejects(budget.fetch('https://run.googleapis.com/v2/'+BINDING.job+':run',{method:'POST',redirect:'error',body:JSON.stringify({etag:'synthetic-etag'})}),/NATIVE_READ_DEADLINE/u);
   const stats=budget.close();assert.equal(calls,0);assert.equal(stats.runPosts,0);assert.equal(stats.runBoundaryAttempts,1);assert.equal(stats.nativeRequestsInvoked,0);
+});
+test('recursive operation polling preserves strictly sequential reads and exact protocol order',async()=>{
+  const p=protocol({pending:true,pendingCount:2}),result=await p.run();assert.equal(result.state,'FRESH_PROSPECTIVE_GENERAL_PRE_OBSERVED');
+  const labels=p.calls.map(call=>{const url=new URL(call.url);if(url.pathname.endsWith(':run'))return'RUN';if(url.pathname.includes('/operations/'))return'OP';if(url.pathname.endsWith('/tasks'))return'TASK';if(url.pathname.endsWith('/executions'))return'LIST';if(url.pathname.includes('/executions/'))return'EXEC';return url.hostname==='logging.googleapis.com'?'LOG':'JOB';});
+  assert.deepEqual(labels,['JOB','LIST','JOB','LIST','RUN','OP','OP','OP','JOB','EXEC','TASK','LOG']);
+});
+test('first refused operation read prevents every later read and cannot retry the RUN',async()=>{
+  const p=protocol({pending:true,httpAt:6}),result=await p.run();assert.equal(result.state,'PROSPECTIVE_CAPABILITY_CONSUMED_INCOMPLETE');
+  assert.equal(p.calls.length,6);assert.equal(p.calls.filter(call=>call.url.endsWith(':run')).length,1);assert.equal(p.metrics().consumers,0);
+});
+test('pending-operation recursion remains inside the global 200-request bound',async()=>{
+  const p=protocol({pending:true,operationAlwaysPending:true}),result=await p.run();assert.equal(result.state,'PROSPECTIVE_CAPABILITY_CONSUMED_INCOMPLETE');
+  assert.equal(p.calls.length,200);assert.equal(p.calls.filter(call=>call.url.endsWith(':run')).length,1);assert.equal(p.metrics().consumers,0);
+});
+test('empty output with pagination is ambiguous and stops instead of polling',async()=>{
+  const p=protocol({emptyAlways:true,changeResponse:(value,context)=>{if(context.url==='https://logging.googleapis.com/v2/entries:list')value.nextPageToken='ambiguous';}}),result=await p.run();
+  assert.equal(result.state,'PROSPECTIVE_CAPABILITY_CONSUMED_INCOMPLETE');assert.equal(result.failureCode,'UNAMBIGUOUS_OUTPUT_PAGE_REQUIRED');
+  assert.equal(p.calls.filter(call=>call.url==='https://logging.googleapis.com/v2/entries:list').length,1);assert.equal(p.metrics().consumers,0);
 });

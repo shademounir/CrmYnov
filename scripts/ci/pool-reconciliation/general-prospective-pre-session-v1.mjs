@@ -15,7 +15,7 @@ import {createOfficialAccessToken} from '../readonly-probe/rc47-probe-official-a
 import {fixedToolEnvironment} from '../readonly-probe/probe-driver-github-v1.mjs';
 import {createReadOnlyGithubReader} from './pool-driver-github-v1.mjs';
 import {POOL_OFFICIAL_GIT,readPoolPrivateFile} from './pool-operational-driver-v1.mjs';
-import {validateReadOnlyNativeJob,readOnlyOutputReadRequests,verifyReadOnlyOutputClaims} from './pool-native-output-v1.mjs';
+import {validateReadOnlyNativeJob,readOnlyOutputReadRequests,verifyReadOnlyOutputClaims,readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';
 import {NATIVE_OPERATION_PATTERN,diagnosticOf,diagnosticContext,sanitizedDiagnostic} from './readonly-native-diagnostics-v1.mjs';
 
 const API='https://run.googleapis.com/v2/',LOG='https://logging.googleapis.com/v2/entries:list';
@@ -57,7 +57,8 @@ function newExecution(operation,job){
 }
 function coherentOperation(operation,reference){
   assert.equal(operation.name,reference);assert(operation.done===undefined||typeof operation.done==='boolean','OPERATION_DONE_TYPE');
-  if(operation.done!==true)assert(operation.error===undefined&&operation.response===undefined,'PENDING_OPERATION_PAYLOAD_AMBIGUOUS');return operation;
+  if(operation.done!==true){assert(operation.error===undefined&&operation.response===undefined,'PENDING_OPERATION_PAYLOAD_AMBIGUOUS');}
+  return operation;
 }
 export function createProspectiveSessionBudget({binding,assertCurrent,save,fetchImpl=fetch,clock=epoch,leaseRemainingMs=()=>900000}){
   let started=null,last=null,requests=0,nativeRequestsInvoked=0,bytes=0,runPosts=0,runBoundaryAttempts=0,closed=false;const pages=new Map(),operations=new Set(),executions=new Set();
@@ -127,7 +128,6 @@ export function createProspectiveSessionBudget({binding,assertCurrent,save,fetch
     close(){closed=true;return{firstNativeAt:started===null?null:new Date(started).toISOString(),requests,nativeRequestsInvoked,responseBytes:bytes,runPosts,runBoundaryAttempts,canRetry:false};},
   });
 }
-import {readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';
 const readOnlyTaskUrl=(objective,name)=>readOnlyTaskNetworkRequest(objective,name).url;
 async function abortableRead(reader,signal){
   assert(!signal.aborted,'NATIVE_READ_DEADLINE');let onAbort;
@@ -153,6 +153,7 @@ const protocolCodes=new Set(['EXACT_JOB_UID_REQUIRED','PROSPECTIVE_REQUIRES_NATI
   'OPERATION_DONE_TYPE','PENDING_OPERATION_PAYLOAD_AMBIGUOUS','NATIVE_COUNTER_DELTA_EXACTLY_ONE','NATIVE_EXECUTION_UID_BINDING',
   'PROSPECTIVE_EXECUTION_CREATION_REQUIRED','UNAMBIGUOUS_OUTPUT_PAGE_REQUIRED','ONE_UNAMBIGUOUS_OUTPUT',
   'OUTPUT_READ_FRESHNESS_WINDOW_EXHAUSTED','CONSUMER_WITHIN_UNCHANGED_FRESHNESS','NATIVE_READ_DEADLINE',
+  'LOG_POLL_REQUEST_BOUND','OPERATION_POLL_REQUEST_BOUND',
   'PROSPECTIVE_SESSION_CLOSED','MONOTONIC_CLOCK_REQUIRED','PROSPECTIVE_SESSION_DEADLINE','RESPONSE_VOLUME_BOUND',
   'REQUEST_COUNT_BOUND','COLLECTION_PAGE_BOUND','NATIVE_REMAINING_TIME_EXHAUSTED']);
 export function protocolFailureCode(error){
@@ -220,18 +221,26 @@ export function consumeVerifiedGeneral(checked,inputs,store){
   const after=comparisonAge(observation,Date.now());if(!after.freshAtComparison)store.append('COMPARISON-EXPIRED-AFTER-PERSISTENCE',{...after,currentFreshnessAsserted:false});
   return result;
 }
-async function awaitEncryptedOutput({objective,execution,accessToken,budget,store,binding,clock,pause}){
-  for(;;){
-    budget.check();assert(clock()-Date.parse(execution.startTime)<300000,'OUTPUT_READ_FRESHNESS_WINDOW_EXHAUSTED');
-    const request=readOnlyOutputReadRequests(objective,execution.name,clock())[2];binding.logRequest=request;
-    const logs=await readEncryptedOutput({request,accessToken,budget,store});
-    assert(logs.nextPageToken===undefined||logs.nextPageToken==='','UNAMBIGUOUS_OUTPUT_PAGE_REQUIRED');
-    const rows=logs.entries===undefined?[]:logs.entries;assert(Array.isArray(rows)&&rows.length<=1,'ONE_UNAMBIGUOUS_OUTPUT');
-    if(rows.length===1)return logs;
-    // A successful empty read can be normal ingestion lag. Only that 200-empty
-    // state is polled; HTTP/decode/provenance/pagination failures never retry.
-    await pause(1000);
-  }
+async function awaitEncryptedOutput(input,attempt=0){
+  const {objective,execution,accessToken,budget,store,binding,clock,pause}=input;
+  assert(Number.isSafeInteger(attempt)&&attempt>=0&&attempt<200,'LOG_POLL_REQUEST_BOUND');
+  budget.check();assert(clock()-Date.parse(execution.startTime)<300000,'OUTPUT_READ_FRESHNESS_WINDOW_EXHAUSTED');
+  const request=readOnlyOutputReadRequests(objective,execution.name,clock())[2];binding.logRequest=request;
+  const logs=await readEncryptedOutput({request,accessToken,budget,store});
+  assert(logs.nextPageToken===undefined||logs.nextPageToken==='','UNAMBIGUOUS_OUTPUT_PAGE_REQUIRED');
+  const rows=logs.entries===undefined?[]:logs.entries;assert(Array.isArray(rows)&&rows.length<=1,'ONE_UNAMBIGUOUS_OUTPUT');
+  if(rows.length===1){return logs;}
+  // Only a successful empty read polls ingestion lag, never a refused request.
+  await pause(1000);
+  return awaitEncryptedOutput(input,attempt+1);
+}
+async function observeNewOperationUntilDone(input,attempt=0){
+  const {operation,reference,native,budget,pause}=input;
+  if(operation.done===true){return operation;}
+  assert(Number.isSafeInteger(attempt)&&attempt>=0&&attempt<200,'OPERATION_POLL_REQUEST_BOUND');
+  budget.check();await pause(1000);budget.check();
+  const next=coherentOperation(await native.operation(reference),reference);
+  return observeNewOperationUntilDone({...input,operation:next},attempt+1);
 }
 // Injectable protocol is tested with synthetic transport/keys. It is NOT an
 // authority source and never reports cryptographic/native acceptance itself.
@@ -251,8 +260,9 @@ export async function executeProspectiveGeneralPreProtocol({dossier,binding,stor
       store.append('NEW-RUN-OPERATION',{operation:reference,responseSha256});operationPersisted=true;budget.discoverOperation(reference);
     };
     let operation=await native.run(binding.job,last.etag,{onOperationReference:persistReference});
-    if(!reference)persistReference(operation.name,digest(operation));coherentOperation(operation,reference);
-    while(operation.done!==true){budget.check();await pause(1000);budget.check();operation=coherentOperation(await native.operation(reference),reference);}
+    if(!reference){persistReference(operation.name,digest(operation));}
+    coherentOperation(operation,reference);
+    operation=await observeNewOperationUntilDone({operation,reference,native,budget,pause});
     const target=newExecution(operation,binding.job);budget.discoverExecution(target.name);
     const job=await native.getJob(binding.job);validateReadOnlyNativeJob(job,objective);assert.equal(job.uid,binding.uid);assert.equal(job.executionCount,1,'NATIVE_COUNTER_DELTA_EXACTLY_ONE');
     const execution=await native.execution(target.name,binding.job);assert.equal(execution.uid,target.uid,'NATIVE_EXECUTION_UID_BINDING');

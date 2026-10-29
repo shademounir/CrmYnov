@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {byteHash,digest} from './controlled-pool-contract-v1.mjs';
 import {POOL_DRIVER_INPUTS} from './pool-operational-driver-v2.mjs';
 import {validateReadOnlyObjective} from './pool-native-output-v1.mjs';
-import {assertAuthorityCurrent,githubFile,validateOperatorJiraObservation} from '../readonly-probe/probe-driver-authority-v1.mjs';
+import {assertAuthorityCurrent,githubFile} from '../readonly-probe/probe-driver-authority-v1.mjs';
 import {DELEGATED_CHECKS,GRANT_PATH,grantDigest,validateGrant,selectDelegatedDecision,validateDelegatedDecision} from '../../pr-policy/delegation.mjs';
 import {GITHUB_CODE_REVIEW_POLICY_PATH,validateProtectedCodeReviewPolicy} from '../../pr-policy/github-code-review.mjs';
 import {validateRequiredChecks} from '../../release-manifest/checks.mjs';
@@ -46,6 +46,79 @@ export const CONSUMER_PINS=Object.freeze({
 const HASH=/^[a-f0-9]{64}$/u,SHA=/^[a-f0-9]{40}$/u,UUID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u;
 const REPO='shademounir/CrmYnov',API='/repos/'+REPO+'/';
 const alphabetical=(left,right)=>left.localeCompare(right,'en');
+export const NATIVE_JIRA_BINDING=Object.freeze({source:'OFFICIAL_ATLASSIAN_CONNECTOR_NATIVE_READ',
+  accountId:'712020:9cf2f30e-a9a6-440b-9153-a43958e4ecc7',cloudId:'80fb4313-ab5c-42ac-a082-d016c237af5d',
+  url:'https://mounirbaali-1778581315657.atlassian.net/browse/CRMY-63',key:'CRMY-63',id:'10681',issueType:'Task',status:'In Review',dependency:'CRMY-61'});
+const nativeJiraCodes=new Set(['NATIVE_JIRA_EVIDENCE_REFUSED','NATIVE_JIRA_BYTES','NATIVE_JIRA_HASH','NATIVE_JIRA_JSON',
+  'NATIVE_JIRA_SOURCE','NATIVE_JIRA_EXECUTOR','NATIVE_JIRA_ACTOR','NATIVE_JIRA_GRANT','NATIVE_JIRA_ACCOUNT','NATIVE_JIRA_TENANT',
+  'NATIVE_JIRA_INVOCATION','NATIVE_JIRA_URL','NATIVE_JIRA_SCOPE','NATIVE_JIRA_FLAGS','NATIVE_JIRA_LABELS','NATIVE_JIRA_READINESS',
+  'NATIVE_JIRA_LINKS','NATIVE_JIRA_LINK','NATIVE_JIRA_DEPENDENCY','NATIVE_JIRA_BLOCKED','NATIVE_JIRA_FRESHNESS']);
+class NativeJiraEvidenceError extends Error{constructor(code){assert(nativeJiraCodes.has(code));super(code);this.name='NativeJiraEvidenceError';}}
+function nativeJiraRequire(condition,code){if(!condition)throw new NativeJiraEvidenceError(code);}
+function nativeJiraEdge(edge){
+  if(edge===null){return null;}
+  dataFields(edge,['key','status']);
+  nativeJiraRequire(typeof edge.key==='string'&&/^CRMY-[1-9]\d{0,7}$/u.test(edge.key),'NATIVE_JIRA_LINK');
+  nativeJiraRequire(typeof edge.status==='string'&&edge.status.length>0&&edge.status.length<=80&&!/[\u0000-\u001f]/u.test(edge.status),'NATIVE_JIRA_LINK');return edge;
+}
+function nativeJiraLink(link){
+  dataFields(link,['id','type','inward','outward']);
+  nativeJiraRequire(typeof link.id==='string'&&/^[1-9]\d{0,15}$/u.test(link.id),'NATIVE_JIRA_LINK');
+  nativeJiraRequire(typeof link.type==='string'&&link.type.length>0&&link.type.length<=80&&!/[\u0000-\u001f]/u.test(link.type),'NATIVE_JIRA_LINK');
+  nativeJiraEdge(link.inward);nativeJiraEdge(link.outward);
+  nativeJiraRequire((link.inward===null)!==(link.outward===null),'NATIVE_JIRA_LINK');
+  if(link.type==='Blocks'&&link.inward!==null){nativeJiraRequire(link.inward.status==='Done','NATIVE_JIRA_BLOCKED');}
+  return link;
+}
+function nativeJiraDependencies(links){
+  nativeJiraRequire(Array.isArray(links)&&links.length<=100,'NATIVE_JIRA_LINKS');const checked=links.map(nativeJiraLink);
+  nativeJiraRequire(new Set(checked.map(link=>link.id)).size===checked.length,'NATIVE_JIRA_LINKS');
+  const prerequisite=checked.filter(link=>link.type==='Blocks'&&link.inward?.key===NATIVE_JIRA_BINDING.dependency);
+  nativeJiraRequire(prerequisite.length===1&&prerequisite[0].inward.status==='Done','NATIVE_JIRA_DEPENDENCY');
+}
+function nativeJiraTicket(ticket){
+  dataFields(ticket,['key','id','issueType','status','labels','codexReady','blocked','links']);
+  for(const key of ['key','id','issueType','status'])nativeJiraRequire(ticket[key]===NATIVE_JIRA_BINDING[key],'NATIVE_JIRA_SCOPE');
+  const labels=ticket.labels;nativeJiraRequire(Array.isArray(labels)&&labels.length<=100,'NATIVE_JIRA_LABELS');
+  nativeJiraRequire(labels.every(label=>typeof label==='string'&&label.length>0&&label.length<=128&&!/[\u0000-\u001f]/u.test(label)),'NATIVE_JIRA_LABELS');
+  nativeJiraRequire(new Set(labels).size===labels.length&&labels.includes('codex-ready'),'NATIVE_JIRA_LABELS');
+  nativeJiraRequire(ticket.codexReady===true&&ticket.blocked===false,'NATIVE_JIRA_READINESS');
+  nativeJiraRequire(!labels.some(label=>['blocked','codex-blocked'].includes(label.toLowerCase())),'NATIVE_JIRA_BLOCKED');nativeJiraDependencies(ticket.links);
+}
+function nativeJiraIdentity(value,{actor,grantSha256}){
+  nativeJiraRequire(value.source===NATIVE_JIRA_BINDING.source,'NATIVE_JIRA_SOURCE');nativeJiraRequire(value.executor==='Codex','NATIVE_JIRA_EXECUTOR');
+  nativeJiraRequire(typeof actor==='string'&&value.observedBy===actor,'NATIVE_JIRA_ACTOR');
+  nativeJiraRequire(HASH.test(grantSha256)&&value.grantDigest===grantSha256,'NATIVE_JIRA_GRANT');
+  nativeJiraRequire(value.accountId===NATIVE_JIRA_BINDING.accountId,'NATIVE_JIRA_ACCOUNT');nativeJiraRequire(value.cloudId===NATIVE_JIRA_BINDING.cloudId,'NATIVE_JIRA_TENANT');
+  nativeJiraRequire(typeof value.invocationId==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(value.invocationId),'NATIVE_JIRA_INVOCATION');
+  nativeJiraRequire(value.url===NATIVE_JIRA_BINDING.url,'NATIVE_JIRA_URL');
+}
+function nativeJiraFlags(value){
+  nativeJiraRequire(value.sourceReadinessOnly===true&&value.notPersonalHumanApproval===true&&value.productionDeploymentAuthorized===false&&value.noJiraMutation===true,'NATIVE_JIRA_FLAGS');
+}
+// Exact native receipt format actually acquired by the official connector. It
+// has NO schemaVersion/claim UI fields. This output projection has its own version;
+// it neither rewrites the original bytes nor asserts a provider signature.
+export function validateNativeJiraReadObservation(bytes,{expectedSha256,actor,grantSha256,now}){
+  try{
+    nativeJiraRequire(Buffer.isBuffer(bytes)&&bytes.length<=65536,'NATIVE_JIRA_BYTES');
+    nativeJiraRequire(HASH.test(expectedSha256)&&byteHash(bytes)===expectedSha256,'NATIVE_JIRA_HASH');
+    let value;try{value=JSON.parse(bytes);}catch{throw new NativeJiraEvidenceError('NATIVE_JIRA_JSON');}
+    dataFields(value,['observedAt','source','executor','observedBy','grantDigest','accountId','cloudId','invocationId','url','ticket',
+      'sourceReadinessOnly','notPersonalHumanApproval','productionDeploymentAuthorized','noJiraMutation']);
+    nativeJiraIdentity(value,{actor,grantSha256});nativeJiraTicket(value.ticket);nativeJiraFlags(value);
+    const observed=canonicalTime(value.observedAt);nativeJiraRequire(Number.isSafeInteger(now)&&observed<=now&&now-observed<=600000,'NATIVE_JIRA_FRESHNESS');
+    return Object.freeze({schemaVersion:1,kind:'PROSPECTIVE_NATIVE_JIRA_READINESS_PROJECTION_V1',source:NATIVE_JIRA_BINDING.source,
+      observedAt:value.observedAt,observedBy:actor,accountId:NATIVE_JIRA_BINDING.accountId,cloudId:NATIVE_JIRA_BINDING.cloudId,
+      invocationId:value.invocationId,ticket:NATIVE_JIRA_BINDING.key,dependency:NATIVE_JIRA_BINDING.dependency,
+      sourceReadinessOnly:true,notPersonalHumanApproval:true,providerCryptographicSignatureAsserted:false,
+      meaning:'Hash-pinned local receipt of an official Atlassian connector native read; not a provider cryptographic signature',
+      productionDeploymentAuthorized:false,noJiraMutation:true});
+  }catch(error){
+    if(error instanceof NativeJiraEvidenceError){throw error;}
+    throw new NativeJiraEvidenceError('NATIVE_JIRA_EVIDENCE_REFUSED');
+  }
+}
 export function dataFields(value,keys){
   assert(value&&Object.getPrototypeOf(value)===Object.prototype,'PLAIN_DATA_REQUIRED');
   assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(d=>Object.hasOwn(d,'value')),'ACCESSORS_REFUSED');
@@ -111,11 +184,18 @@ async function protectedSource(github,record,grant,actor){
     changedFiles:files.map(f=>f.filename),reasons:['production','audited-repository-tooling'],headSha:source.head,pullRequestNumber:source.pr,
     requiredChecks:DELEGATED_CHECKS,checkRuns:checks,mergedAt:pull.merged_at,headGrantDigest:grantDigest(headGrant)});
   const tree=await github.get(API+'git/commits/'+source.commit);assert.equal(tree.tree.sha,source.tree);
-  for(const file of source.files)assert.equal(byteHash(await githubFile(github,file.path,source.commit)),file.sha256,'PROTECTED_SOURCE_BYTES');
+  await verifyProtectedFilesSequentially(github,source);
   return comments;
 }
+async function verifyProtectedFilesSequentially(github,source,index=0){
+  assert(Number.isSafeInteger(index)&&index>=0&&index<=PROSPECTIVE_DRIVER_INPUTS.length,'SOURCE_READ_BOUND');
+  if(index===source.files.length){return;}
+  const file=source.files[index];assert.equal(byteHash(await githubFile(github,file.path,source.commit)),file.sha256,'PROTECTED_SOURCE_BYTES');
+  return verifyProtectedFilesSequentially(github,source,index+1);
+}
 // This is the real governance adapter, not a boolean/no-op authorization hook.
-// Existing grant/check/Jira/policy validators are reused, without a bot gate.
+// Existing grant/check/policy validators and an explicit native Jira schema are
+// composed here, without a bot gate or a connector-to-UI relabeling fallback.
 export async function authorizeProspectiveGeneralPre({github,record,jiraBytes,localSource,clock=Date.now}){
   const began=clock();validateProspectiveAuthorityRecord(record,began);
   assert.deepEqual(localSource,{...record.source,clean:true},'LOCAL_FINAL_PROTECTED_SOURCE_REQUIRED');
@@ -138,12 +218,14 @@ export async function authorizeProspectiveGeneralPre({github,record,jiraBytes,lo
   const now=clock();validateProspectiveAuthorityRecord(record,now);assert(now>=began&&now-began<60000,'AUTHORITY_COLLECTION_BOUND');
   const issued=githubTime(comment.updated_at??comment.created_at),expiry=canonicalTime(marker.expiresAt);
   assert(issued<=now&&now-issued<600000&&expiry>now&&expiry-issued<=600000,'FRESH_OPERATIONAL_AUTHORITY_REQUIRED');
-  const jira=validateOperatorJiraObservation(jiraBytes,{expectedSha256:marker.jiraObservationSha256,ticket:'CRMY-63',actor,grantSha256:grantDigest(grant),now});
+  const jira=validateNativeJiraReadObservation(jiraBytes,{expectedSha256:marker.jiraObservationSha256,actor,grantSha256:grantDigest(grant),now});
   assert.equal((await github.get(API+'branches/develop')).commit.sha,revision,'PROTECTED_AUTHORITY_DRIFT');
   const authority={entry:{scope:BINDING.purpose},receipt:{verifiedAt:new Date(now).toISOString(),
     expiresAt:new Date(Math.min(expiry,canonicalTime(record.expiresAt),Date.parse(jira.observedAt)+600000)).toISOString(),
     capabilityId:record.capabilityId,authorityRecordSha256:digest(record),authorityRevision:revision,
     jiraObservationSha256:byteHash(jiraBytes),humanAuthorityReceiptSha256:record.humanAuthorityReceiptSha256,
+    jiraEvidenceSource:jira.source,jiraAccountId:jira.accountId,jiraCloudId:jira.cloudId,jiraInvocationId:jira.invocationId,
+    jiraProviderCryptographicSignatureAsserted:false,
     driverCommit:record.source.commit,grantDigest:grantDigest(grant),operationalCommentId:comment.id,
     gitHubCodeReviewRequired:false,businessMutationAuthorized:false}};
   assertAuthorityCurrent(authority,clock());return Object.freeze(authority);
