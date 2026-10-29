@@ -120,7 +120,13 @@ export async function runReadOnlyOperationalDriver(args,{requiredPurpose}={}){
   finally{journal.close();}
   },{diagnostic:inputs.diagnostic,saveDiagnostic:inputs.saveDiagnostic,phase:'VALIDATION',reason:'VALIDATION_REFUSED'})();
 }
-export function parsePoolDriverArguments(args){const parsed=parseDiagnosticDriverArguments(args);if(parsed.options['--purpose'])assert.equal(parsed.options['--purpose'],'POOL_RECONCILIATION_READ_ONLY_V1');return parsed;}
+export function parsePoolDriverArguments(args){
+  const parsed=parseDiagnosticDriverArguments(args);
+  if(parsed.options['--purpose']){
+    assert.equal(parsed.options['--purpose'],'POOL_RECONCILIATION_READ_ONLY_V1');
+  }
+  return parsed;
+}
 export async function runPoolOperationalDriver(args){return runReadOnlyOperationalDriver(args,{requiredPurpose:'POOL_RECONCILIATION_READ_ONLY_V1'});}
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
   try{process.stdout.write(JSON.stringify({schemaVersion:1,...commandResult(await runReadOnlyOperationalDriver(process.argv.slice(2)))})+'\n');}

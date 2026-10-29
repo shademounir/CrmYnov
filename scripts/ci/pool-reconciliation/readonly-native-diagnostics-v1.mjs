@@ -17,7 +17,9 @@ const ownData = (object,key) => {
 export function permittedNetworkCode(error) {
   const direct = ownData(error,'code');
   const nested = ownData(ownData(error,'cause'),'code');
-  return networkCodes.has(direct) ? direct : networkCodes.has(nested) ? nested : null;
+  if (networkCodes.has(direct)) return direct;
+  if (networkCodes.has(nested)) return nested;
+  return null;
 }
 export function permittedGoogleCode(body) {
   const error = ownData(body,'error');
@@ -40,10 +42,13 @@ export function sanitizedDiagnostic(context, observed) {
   assert(Number.isSafeInteger(observed.startedMs) && Number.isSafeInteger(observed.endedMs) && observed.endedMs >= observed.startedMs,'DIAGNOSTIC_CLOCK_INVALID');
   const httpStatus = Number.isInteger(observed.httpStatus) && observed.httpStatus >= 100 && observed.httpStatus <= 599 ? observed.httpStatus : null;
   const operationReference = NATIVE_OPERATION_PATTERN.test(observed.operationReference ?? '') ? observed.operationReference : null;
+  let transportInvoked = null;
+  if (observed.transportInvoked === true) transportInvoked = true;
+  else if (observed.transportInvoked === false) transportInvoked = false;
   return Object.freeze({schemaVersion:1,kind:'EXPURGATED_READONLY_NATIVE_DIAGNOSTIC',...c,phase:observed.phase,
     startedAt:new Date(observed.startedMs).toISOString(),endedAt:new Date(observed.endedMs).toISOString(),durationMs:observed.endedMs-observed.startedMs,
     reason:observed.reason,httpStatus,networkCode:networkCodes.has(observed.networkCode)?observed.networkCode:null,
-    googleCode:googleCodes.has(observed.googleCode)?observed.googleCode:null,transportInvoked:observed.transportInvoked===true?true:observed.transportInvoked===false?false:null,
+    googleCode:googleCodes.has(observed.googleCode)?observed.googleCode:null,transportInvoked,
     operationAcceptance:operationReference?'ACKNOWLEDGED_OPERATION_REFERENCE':'NOT_ESTABLISHED',operationReference,
     diagnosticPersisted:observed.diagnosticPersisted===true,diagnosticPersistenceFailed:observed.diagnosticPersistenceFailed===true,canRetry:false});
 }
@@ -107,9 +112,9 @@ export function commandResult(result) {
     if(typeof value==='string')assert(value.length<=4096&&!/[\u0000-\u001f]/u.test(value),'COMMAND_RESULT_VALUE_BOUND');
     projected[key]=value;
   }
-  const reference=[projected.operation,projected.knownOperationReference,diagnostic?.operationReference].find(value=>NATIVE_OPERATION_PATTERN.test(value??''));
-  const requestAcceptance=reference?'ACKNOWLEDGED_OPERATION_REFERENCE':'NOT_ESTABLISHED';
-  const transportInvoked=diagnostic?.transportInvoked??(reference?true:null);
+  const hasReference=[projected.operation,projected.knownOperationReference,diagnostic?.operationReference].some(value=>NATIVE_OPERATION_PATTERN.test(value??''));
+  const requestAcceptance=hasReference?'ACKNOWLEDGED_OPERATION_REFERENCE':'NOT_ESTABLISHED';
+  const transportInvoked=diagnostic?.transportInvoked??(hasReference?true:null);
   return {...projected,...(Object.hasOwn(result,'diagnostic')?{diagnostic}:{}),commandCompleted:true,operationOutcome,operationSucceeded:operationOutcome==='SUCCEEDED',
     requestAcceptance,transportInvoked,
     nativeAcceptance:false,activationAuthorized:false,sheetsActivated:false,

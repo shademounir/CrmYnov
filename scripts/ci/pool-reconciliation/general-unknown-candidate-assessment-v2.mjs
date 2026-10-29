@@ -7,16 +7,19 @@ const parent='projects/crmynov-prod-n7x4q2/locations/europe-west1',operationPatt
 const demand=(ok,code)=>assert(ok,'GENERAL_PREPARATION_'+code);
 function plain(value){return value!==null&&typeof value==='object'&&Object.getPrototypeOf(value)===Object.prototype;}
 function utc(value){demand(typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(value),'UTC_TIME_REQUIRED');const n=Date.parse(value);demand(Number.isFinite(n),'UTC_TIME_REQUIRED');return n;}
+function validateUnknownEvents(events,objective){
+  demand(Array.isArray(events)&&events.length===5,'EXACT_UNKNOWN_CHAIN_REQUIRED');
+  const expected=[['CREATE',0,'INTENT'],['CREATE',1,'OPERATION'],['CREATE',2,'RECONCILED'],['RUN',0,'INTENT'],['RUN',1,'UNKNOWN']];
+  for(const [index,row]of events.entries()){
+    const [stage,ordinal,state]=expected[index];demand(plain(row)&&plain(row.payload),'EVENT_SHAPE');demand(row.stage===stage&&row.ordinal===ordinal&&row.payload.state===state,'EXACT_UNKNOWN_CHAIN_REQUIRED');
+    demand(hash.test(row.sha??'')&&digest(row.payload)===row.sha,'EVENT_DIGEST');demand(row.payload.job===objective.jobName&&row.payload.objectiveSha256===objective.objectiveSha256,'EVENT_OBJECTIVE');demand(row.payload.canRetry===false,'NO_RETRY');
+  }
+}
 export function assessRecoveredGeneralRunCandidate(input){
   demand(plain(input),'PLAIN_INPUT');demand(Object.keys(input).every(k=>['objective','journalSnapshotSha256','events','recovered'].includes(k)),'NO_EXECUTION_CAPABILITIES');
   const v=structuredClone(input);demand(Buffer.byteLength(JSON.stringify(v))<=262144,'INPUT_BOUND');
   const e=v.objective;validateReadOnlyObjective(e);demand(e.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1','GENERAL_PURPOSE_ONLY');demand(hash.test(v.journalSnapshotSha256??''),'SNAPSHOT_HASH');
-  demand(Array.isArray(v.events)&&v.events.length===5,'EXACT_UNKNOWN_CHAIN_REQUIRED');
-  const expected=[['CREATE',0,'INTENT'],['CREATE',1,'OPERATION'],['CREATE',2,'RECONCILED'],['RUN',0,'INTENT'],['RUN',1,'UNKNOWN']];
-  for(const [index,row]of v.events.entries()){
-    const [stage,ordinal,state]=expected[index];demand(plain(row)&&plain(row.payload),'EVENT_SHAPE');demand(row.stage===stage&&row.ordinal===ordinal&&row.payload.state===state,'EXACT_UNKNOWN_CHAIN_REQUIRED');
-    demand(hash.test(row.sha??'')&&digest(row.payload)===row.sha,'EVENT_DIGEST');demand(row.payload.job===e.jobName&&row.payload.objectiveSha256===e.objectiveSha256,'EVENT_OBJECTIVE');demand(row.payload.canRetry===false,'NO_RETRY');
-  }
+  validateUnknownEvents(v.events,e);
   const created=v.events[2].payload,intent=v.events[3].payload,unknown=v.events[4].payload;
   demand(typeof created.uid==='string'&&created.uid.length>8&&created.uid===intent.uid,'INTENT_UID');demand(operationPattern.test(created.operation??'')&&v.events[1].payload.operation===created.operation,'CREATE_OPERATION');
   demand(hash.test(v.events[0].payload.bodySha256??'')&&hash.test(v.events[1].payload.responseSha256??''),'CREATE_RECEIPT_DIGESTS');

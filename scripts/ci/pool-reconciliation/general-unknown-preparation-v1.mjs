@@ -49,13 +49,20 @@ function canonicalPath(value,{file=true,output=false}={}){
   let current=file?parent:resolved;
   while(true){
     demand(!fs.lstatSync(current).isSymbolicLink(),'REPARSE_PATH_REFUSED');
-    const next=path.dirname(current);if(next===current)break;current=next;
+    const next=path.dirname(current);
+    if(next===current){
+      break;
+    }
+    current=next;
   }
   const parts=resolved.split(/[\\/]/u).map(part=>part.toLowerCase());
   demand(!parts.some(part=>operationalNames.has(part)),'OPERATIONAL_JOURNAL_REFUSED');
   const realParent=fs.realpathSync(parent);
   demand(realParent===parent,'NONCANONICAL_PATH');
-  if(output){demand(!fs.existsSync(resolved),'RECEIPT_ALREADY_EXISTS');return resolved;}
+  if(output){
+    demand(!fs.existsSync(resolved),'RECEIPT_ALREADY_EXISTS');
+    return resolved;
+  }
   demand(!fs.lstatSync(resolved).isSymbolicLink()&&fs.realpathSync(resolved)===resolved,'REPARSE_PATH_REFUSED');
   const stat=fs.statSync(resolved);
   demand(stat.isFile()&&stat.nlink===1,'ORDINARY_SINGLE_LINK_FILE_REQUIRED');

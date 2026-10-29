@@ -20,22 +20,26 @@ async function emitDiagnostic(context,state,saveDiagnostic) {
 async function responseValue(response,state,phase) {
   phase('VALIDATION');
   state.httpStatus=response.status;
-  if(response.redirected!==false)throw Error('RESPONSE_REDIRECTED');
-  if(!/^application\/json(?:;|$)/iu.test(response.headers.get('content-type')??''))throw Error('RESPONSE_CONTENT_TYPE');
-  if(!response.body)throw Error('RESPONSE_BODY_MISSING');
+  if(response.redirected!==false)throw new Error('RESPONSE_REDIRECTED');
+  if(!/^application\/json(?:;|$)/iu.test(response.headers.get('content-type')??''))throw new Error('RESPONSE_CONTENT_TYPE');
+  if(!response.body)throw new Error('RESPONSE_BODY_MISSING');
   phase('READ');const reader=response.body.getReader(),chunks=[];let size=0;
   try {
     for(let index=0;;index++){
       const part=await reader.read();if(part.done)break;
-      size+=part.value.byteLength;if(size>1048576||index>=4096)throw Error('RESPONSE_TOO_LARGE');chunks.push(part.value);
+      size+=part.value.byteLength;
+      if(size>1048576||index>=4096){
+        throw new Error('RESPONSE_TOO_LARGE');
+      }
+      chunks.push(part.value);
     }
   } finally { await reader.cancel();reader.releaseLock(); }
   phase('DECODE');let text;
-  try{text=new TextDecoder('utf8',{fatal:true}).decode(Buffer.concat(chunks));}catch{throw Error('RESPONSE_DECODE_FAILED');}
-  let value;try{value=JSON.parse(text);}catch{throw Error('RESPONSE_JSON_INVALID');}
-  if(value===null||Object.getPrototypeOf(value)!==Object.prototype)throw Error('RESPONSE_SHAPE_INVALID');
+  try{text=new TextDecoder('utf8',{fatal:true}).decode(Buffer.concat(chunks));}catch{throw new Error('RESPONSE_DECODE_FAILED');}
+  let value;try{value=JSON.parse(text);}catch{throw new Error('RESPONSE_JSON_INVALID');}
+  if(value===null||Object.getPrototypeOf(value)!==Object.prototype)throw new Error('RESPONSE_SHAPE_INVALID');
   state.googleCode=permittedGoogleCode(value);
-  if(![200,404].includes(response.status))throw Error('HTTP_ERROR');
+  if(![200,404].includes(response.status))throw new Error('HTTP_ERROR');
   return {status:response.status,value};
 }
 const boundaryReasons=new Set(['RESPONSE_REDIRECTED','RESPONSE_CONTENT_TYPE','RESPONSE_BODY_MISSING','RESPONSE_TOO_LARGE','RESPONSE_DECODE_FAILED','RESPONSE_JSON_INVALID','RESPONSE_SHAPE_INVALID','HTTP_ERROR','DEADLINE_EXCEEDED','TOKEN_INVALID','OPERATION_REFERENCE_PERSISTENCE_FAILED']);
@@ -51,7 +55,7 @@ function validateRequestBoundary(resource,method,body,resourcePattern){
 }
 async function performExchange({resource,method,body,query,phase,accessToken,controller,scopedAuthority,guarded,state,onOperationReference}){
   phase('TOKEN');const token=await accessToken({signal:controller.signal});
-  phase('TOKEN');if(typeof token!=='string'||!token.length||/\s/u.test(token))throw Error('TOKEN_INVALID');
+  phase('TOKEN');if(typeof token!=='string'||!token.length||/\s/u.test(token))throw new Error('TOKEN_INVALID');
   scopedAuthority();
   const response=await guarded(API+resource+query,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
   const decoded=await responseValue(response,state,phase);
@@ -72,14 +76,19 @@ export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,
     const started=clock();assert(Number.isSafeInteger(started));
     const state={startedMs:started,endedMs:started,phase:'VALIDATION',transportInvoked:false};
     const controller=new AbortController();let timer;
-    const phase=value=>{if(controller.signal.aborted)throw Error('DEADLINE_EXCEEDED');state.phase=value;};
+    const phase=value=>{
+      if(controller.signal.aborted){
+        throw new Error('DEADLINE_EXCEEDED');
+      }
+      state.phase=value;
+    };
     const scopedAuthority=()=>{phase('AUTHORITY');const authority=getAuthority();assert.equal(authority?.entry?.scope,purpose,'AUTHORITY_PURPOSE');return authority;};
     const guarded=createAuthorityBoundFetch({getAuthority:scopedAuthority,clock,fetchImpl:(url,init)=>{phase('HTTP');state.transportInvoked=true;return fetchImpl(url,init);}});
     try {
       scopedAuthority();phase('VALIDATION');
       validateRequestBoundary(resource,method,body,resourcePattern);
       const work=performExchange({resource,method,body,query,phase,accessToken,controller,scopedAuthority,guarded,state,onOperationReference});
-      return await Promise.race([work,new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('DEADLINE_EXCEEDED'));},timeoutMs);})]);
+      return await Promise.race([work,new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('DEADLINE_EXCEEDED'));},timeoutMs);})]);
     } catch(error) {
       state.endedMs=assertFreshClock(clock,started);state.reason=failureReason(error,state.phase);state.networkCode=permittedNetworkCode(error);
       throw new ReadOnlyNativeDiagnosticError(await emitDiagnostic(context,state,saveDiagnostic));
@@ -97,7 +106,7 @@ export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,
       assert(!seen.has(token));seen.add(token);const query=new URLSearchParams({pageSize:'100',showDeleted:'true',fields:'jobs(name,uid,deleteTime),nextPageToken',...(token?{pageToken:token}:{})});
       const page=await request('/jobs',{query:'?'+query});assert.equal(page.status,200);const rows=page.value.jobs??[];assert(Array.isArray(rows)&&rows.length<=100);assert(rows.every(row=>row.name!==name));
       token=page.value.nextPageToken??'';assert.equal(typeof token,'string');assert(token.length<=8192);if(!token)return;
-    }throw Error('JOB_INVENTORY_BOUND');
+    }throw new Error('JOB_INVENTORY_BOUND');
   }
   const referenceOptions=options=>{
     if(options===undefined)return{};
@@ -106,7 +115,7 @@ export function createReadOnlyNativeTransport({purpose,accessToken,getAuthority,
   };
   const methods={requireAbsent:absent,
     async getJob(name){const r=await request(local(name));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;},
-    async listExecutions(name){let token='';const seen=new Set();for(let n=0;n<100;n++){assert(!seen.has(token));seen.add(token);const q=new URLSearchParams({pageSize:'100',showDeleted:'true',...(token?{pageToken:token}:{})});const r=await request(local(name)+'/executions',{query:'?'+q});assert.equal(r.status,200);const rows=r.value.executions??[];assert(Array.isArray(rows));assert.equal(rows.length,0,'PREEXISTING_EXECUTION');token=r.value.nextPageToken??'';assert.equal(typeof token,'string');assert(token.length<=8192);if(!token)return;}throw Error('EXECUTION_INVENTORY_BOUND');},
+    async listExecutions(name){let token='';const seen=new Set();for(let n=0;n<100;n++){assert(!seen.has(token));seen.add(token);const q=new URLSearchParams({pageSize:'100',showDeleted:'true',...(token?{pageToken:token}:{})});const r=await request(local(name)+'/executions',{query:'?'+q});assert.equal(r.status,200);const rows=r.value.executions??[];assert(Array.isArray(rows));assert.equal(rows.length,0,'PREEXISTING_EXECUTION');token=r.value.nextPageToken??'';assert.equal(typeof token,'string');assert(token.length<=8192);if(!token)return;}throw new Error('EXECUTION_INVENTORY_BOUND');},
     async create(name,body,options){assert(JOB.test(name));const r=await request('/jobs',{method:'POST',body,query:'?'+new URLSearchParams({jobId:name.slice((PARENT+'/jobs/').length)}),...referenceOptions(options)});assert.equal(r.status,200);return r.value;},
     async run(name,etag,options){assert.equal(typeof etag,'string');assert(etag.length>0&&etag.length<=256);const r=await request(local(name)+':run',{method:'POST',body:{etag},...referenceOptions(options)});assert.equal(r.status,200);return r.value;},
     async operation(name){assert(NATIVE_OPERATION_PATTERN.test(name));const r=await request(name.slice(PARENT.length));assert.equal(r.status,200);assert.equal(r.value.name,name);return r.value;},
