@@ -4,10 +4,12 @@ import {createHash,randomUUID} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {convertPowerShellCoverage} from './powershell-command-coverage.mjs';
+import {noticeTestSource,validateNoticePlannerEvidence} from './windows-installer-evidence.mjs';
 
 export const fixtureSourcePaths=Object.freeze([
   'scripts/telephony-agent/install-windows-agent.ps1','scripts/telephony-agent/installer-transactions.psm1',
-  'scripts/telephony-agent/package-windows-agent.ps1','scripts/telephony-agent/test-installer-transactions.ps1',
+  'scripts/telephony-agent/package-windows-agent.ps1','scripts/telephony-agent/package-notices.psm1',
+  'scripts/telephony-agent/test-installer-transactions.ps1',
 ]);
 export const fixtureCaseIds=Object.freeze(['fresh-off','upgrade-off','rollback-off','uninstall','explicit-uninstall-repeat-not-interruption-proof','new-cycle-fresh-off','upgrade-on','final-uninstall']);
 export const probeSourcePath='scripts/telephony-agent/tests/child-exit-semantics.ps1';
@@ -73,6 +75,7 @@ export function validateFixtureReport(report,context,io,expectedReferences){
   // Strict pure converter checks all original coordinates including zeros. Its
   // XML is not emitted here; the separately reviewed consumer owns CI import.
   convertPowerShellCoverage(report,relative=>source(io,context,relative));
+  validateNoticePlannerEvidence(report.noticePlannerResult,relative=>source(io,context,relative));
 }
 const rootFiles=Object.freeze(['coverage-evidence.json','source-manifest.json','probe-evidence.json','framework-provenance.json','FIXTURE-INTENT.json']);
 function artifactManifest(context,io,staging,names){
@@ -117,7 +120,7 @@ export function produceFixtureEvidence(context,io,nonce){
   try{
     const sourceManifest={schemaVersion:1,head:context.head,tree:context.tree,runId:context.runId,runAttempt:context.runAttempt,sources:fixtureSourcePaths.map(relative=>({path:relative,sha256:digest(source(io,context,relative))}))};
     const manifestPath=w.join(plan.work,'source-manifest.json');io.writeNew(manifestPath,jsonBytes(sourceManifest));
-    const boundPaths=[...fixtureSourcePaths.map(p=>w.join(context.workspace,p)),w.join(context.workspace,harnessPath),w.join(context.workspace,guardPath)];
+    const boundPaths=[...fixtureSourcePaths.map(p=>w.join(context.workspace,p)),w.join(context.workspace,harnessPath),w.join(context.workspace,guardPath),w.join(context.workspace,noticeTestSource)];
     const sourceHashes=boundPaths.map(file=>hashFile(io,file));
     const frameworkBefore=io.frameworkSnapshot();
     requireValue(Array.isArray(frameworkBefore)&&frameworkBefore.length>0&&frameworkBefore.length<=1000,'FRAMEWORK_BOUND');

@@ -3,7 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {productionSources} from './powershell-command-coverage.mjs';
-import {verifyWindowsFixtureArtifact, probeSource, guardSource} from './windows-installer-evidence.mjs';
+import {verifyWindowsFixtureArtifact, probeSource, guardSource, noticeTestSource} from './windows-installer-evidence.mjs';
 
 const repoName = 'shademounir/CrmYnov';
 const demand = (condition, code) => { if (!condition) throw new Error(`WINDOWS_FIXTURE_${code}`); };
@@ -62,7 +62,7 @@ export function importFixtureCli(args = process.argv.slice(2), env = process.env
   demand(repo === path.resolve(env.GITHUB_WORKSPACE), 'WORKSPACE');
   const tree = checkedGit(repo, 'rev-parse', 'HEAD^{tree}');
   demand(checkedGit(repo, 'rev-parse', 'HEAD') === head && tree === env.WINDOWS_FIXTURE_TREE && checkedGit(repo, 'status', '--porcelain', '--untracked-files=all') === '', 'CHECKOUT_CHANGED');
-  const sourcePaths = new Set([...productionSources, 'scripts/telephony-agent/test-installer-transactions.ps1', probeSource, guardSource]);
+  const sourcePaths = new Set([...productionSources, 'scripts/telephony-agent/test-installer-transactions.ps1', probeSource, guardSource, noticeTestSource]);
   const sources = new Map([...sourcePaths].map(relative => [relative, ordinaryFile(path.join(repo, relative), 1048576)]));
   const expected = {head, tree, runId: env.GITHUB_RUN_ID, runAttempt: env.GITHUB_RUN_ATTEMPT, artifactId: env.WINDOWS_FIXTURE_ARTIFACT_ID, artifactDigest: env.WINDOWS_FIXTURE_ARTIFACT_DIGEST, manifestSha256: env.WINDOWS_FIXTURE_MANIFEST_SHA256, reportSha256: env.WINDOWS_FIXTURE_REPORT_SHA256};
   const verified = verifyWindowsFixtureArtifact({expected, files: downloadedFiles(args[1], env.RUNNER_TEMP), readSource: relative => sources.get(relative)});
@@ -72,7 +72,7 @@ export function importFixtureCli(args = process.argv.slice(2), env = process.env
   fs.mkdirSync(coverage, {recursive: true});
   demand(fs.realpathSync(coverage) === coverage, 'COVERAGE_DIRECTORY');
   fs.writeFileSync(path.join(coverage, 'powershell.xml'), verified.xml, {flag: 'wx'});
-  fs.writeFileSync(path.join(coverage, 'windows-installer-import.json'), JSON.stringify({head, tree, runId: expected.runId, runAttempt: expected.runAttempt, artifactId: expected.artifactId, artifactDigestMetadata: expected.artifactDigest, sourceAndContentDigestsChecked: true, officialEvidenceAuthenticatedByThisReport: false, nativeAcceptance: false, branchCoverageMeasured: false}, null, 2) + '\n', {flag: 'wx'});
+  fs.writeFileSync(path.join(coverage, 'windows-installer-import.json'), JSON.stringify({head, tree, runId: expected.runId, runAttempt: expected.runAttempt, artifactId: expected.artifactId, artifactDigestMetadata: expected.artifactDigest, sourceAndContentDigestsChecked: true, noticePlannerResult: verified.noticePlannerResult, officialEvidenceAuthenticatedByThisReport: false, nativeAcceptance: false, branchCoverageMeasured: false}, null, 2) + '\n', {flag: 'wx'});
   return {head, tree, report: 'coverage/powershell.xml', nativeAcceptance: false};
 }
 

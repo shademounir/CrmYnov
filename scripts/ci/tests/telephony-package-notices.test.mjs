@@ -25,11 +25,24 @@ test('notice metadata cannot be treated as distribution or corresponding-source 
  assert.match(module,/PACKAGE_NOTICE_TEXT_EMPTY/);
  assert.doesNotMatch(module,/Invoke-WebRequest|Invoke-RestMethod|Start-Process|Set-ExecutionPolicy|Remove-Item|Copy-Item/);
 });
-test('official Windows job executes the synthetic notice planner test without a package build',()=>{
+test('official Windows job measures the unchanged synthetic notice planner suite inside the existing fixture',()=>{
  const workflow=read('.github/workflows/application-quality.yml');
- const step=workflow.split('- name: Verify package notice planning without build or SDK execution')[1]?.split('- name:')[0];
+ const step=workflow.split('- name: Measure isolated Windows fixture and notice planner without agent or SDK')[1]?.split('- name:')[0];
  assert.ok(step);
- assert.match(step,/powershell.exe -NoProfile -NonInteractive -File scripts\/telephony-agent\/tests\/package-notices.test.ps1/);
+ assert.match(step,/node scripts\/ci\/windows-installer-fixture-ci.mjs produce/);
  assert.match(step,/if errorlevel 1 exit \/b %errorlevel%/);
  assert.doesNotMatch(step,/package-windows-agent\.ps1|build-windows-installer\.ps1|native-check/);
+ assert.doesNotMatch(workflow,/powershell.exe -NoProfile -NonInteractive -File scripts\/telephony-agent\/tests\/package-notices.test.ps1/);
+ const harness=read('scripts/telephony-agent/tests/windows-installer.integration.ps1');
+ assert.match(harness,/\$noticeTestSource='scripts\/telephony-agent\/tests\/package-notices.test.ps1'/);
+ assert.match(harness,/\$noticeResult=\(& \$noticeTestPath\|Out-String\)\|ConvertFrom-Json/);
+ assert.match(harness,/sha256Before=\$noticeTestHash;sha256After=\(Sha \$noticeTestPath\)/);
+ assert.match(harness,/noticePlannerResult=\$noticePlannerResult/);
+ assert.match(harness,/Set-PSBreakpoint -Script \$Executed -Line/);
+ assert.match(harness,/'scripts\/telephony-agent\/package-notices.psm1'/);
+ assert.match(harness,/\$noticeModuleObservations\[0\]\.breakpoints\|Where-Object\{\$_\.HitCount -gt 0\}/);
+ assert.match(harness,/'NOTICE_MODULE_NATIVE_COUNTERS_REQUIRED'/);
+ const suite=read('scripts/telephony-agent/tests/package-notices.test.ps1');
+ assert.equal((suite.match(/^Test-Case '/gm)||[]).length,17);
+ assert.match(suite,/Import-Module \(Join-Path \$PSScriptRoot '\.\.\\package-notices.psm1'\) -Force/);
 });

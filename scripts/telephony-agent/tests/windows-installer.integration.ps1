@@ -66,7 +66,10 @@ function Read-Git([string[]]$Arguments){
 Require ((Read-Git -Arguments @('rev-parse','HEAD')) -ceq $ExpectedHead) 'CHECKOUT_HEAD_MISMATCH'
 Require ((Read-Git -Arguments @('rev-parse','HEAD^{tree}')) -ceq $ExpectedTree) 'CHECKOUT_TREE_MISMATCH'
 Require ([string]::IsNullOrEmpty((Read-Git -Arguments @('status','--porcelain','--untracked-files=all')))) 'DIRTY_CHECKOUT_REFUSED'
-$sourcePaths=@('scripts/telephony-agent/install-windows-agent.ps1','scripts/telephony-agent/installer-transactions.psm1','scripts/telephony-agent/package-windows-agent.ps1','scripts/telephony-agent/test-installer-transactions.ps1')
+$sourcePaths=@('scripts/telephony-agent/install-windows-agent.ps1','scripts/telephony-agent/installer-transactions.psm1','scripts/telephony-agent/package-windows-agent.ps1','scripts/telephony-agent/package-notices.psm1','scripts/telephony-agent/test-installer-transactions.ps1')
+$noticeTestSource='scripts/telephony-agent/tests/package-notices.test.ps1'
+$noticeTestPath=Join-Path $repo $noticeTestSource
+$noticeTestHash=Sha $noticeTestPath
 $sourceManifestBefore=Sha $SourceManifest
 $manifest=Get-Content -LiteralPath $SourceManifest -Raw|ConvertFrom-Json
 Require ($manifest.schemaVersion -eq 1 -and $manifest.head -ceq $ExpectedHead -and $manifest.tree -ceq $ExpectedTree) 'SOURCE_MANIFEST_MISMATCH'
@@ -231,10 +234,22 @@ function Case([string]$Id,[scriptblock]$Action){
     Write-NewJson (Join-Path $out ($Id+'.RESULT.json')) $passed
     $cases.Add($passed)
 }
-$status='FAILED';$errorCode=$null
+$status='FAILED';$errorCode=$null;$noticePlannerResult=$null
 $runnerAdminObserved=([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $failureType=$null;$failureHResult=$null
 try{
+    # Execute the unchanged planner-only synthetic suite in this interpreter so
+    # the module's native command breakpoints are observed, not assertion counts.
+    Require ((Sha $noticeTestPath) -ceq $noticeTestHash) 'NOTICE_TEST_CHANGED_BEFORE'
+    $noticeResult=(& $noticeTestPath|Out-String)|ConvertFrom-Json
+    Require ($noticeResult.synthetic -eq $true -and $noticeResult.plannerOnly -eq $true -and $noticeResult.productSdkInstallerNetworkNotExecuted -eq $true) 'NOTICE_TEST_SCOPE'
+    Require ($noticeResult.tests -eq 17 -and $noticeResult.pass -eq 17 -and $noticeResult.failures -eq 0 -and $noticeResult.results.Count -eq 17) 'NOTICE_TEST_NOT_PASS'
+    $noticeModuleObservations=@($observed|Where-Object{$_.sourcePath -ceq 'scripts/telephony-agent/package-notices.psm1'})
+    Require ($noticeModuleObservations.Count -eq 1) 'NOTICE_MODULE_OBSERVATION_REQUIRED'
+    # Import-Module -Force must not silently turn a passing suite into an
+    # unobserved module. Keep all zero counters; require at least one real hit.
+    Require (@($noticeModuleObservations[0].breakpoints|Where-Object{$_.HitCount -gt 0}).Count -gt 0) 'NOTICE_MODULE_NATIVE_COUNTERS_REQUIRED'
+    $noticePlannerResult=[pscustomobject]@{sourcePath=$noticeTestSource;sha256Before=$noticeTestHash;sha256After=(Sha $noticeTestPath);result=($noticeResult|Select-Object synthetic,tests,pass,failures,plannerOnly,productSdkInstallerNetworkNotExecuted,results)}
     # Both fixtures use CURRENT source and inert bytes. Version labels do NOT
     # qualify upgrading an actual historical0.4.13 installation or binary.
     $old=Fixture-Package '0.4.13-pilot';$new=Fixture-Package '0.4.14-pilot'
@@ -265,6 +280,11 @@ try{
         [pscustomobject]@{sourcePath=$_.sourcePath;executedPath=$_.executedPath;sha256Before=$_.sha256Before;sha256After=$after;commands=@($_.breakpoints|ForEach-Object{[pscustomobject]@{line=$_.Line;column=$_.Column;hitCount=$_.HitCount}})}
     })
     foreach($source in $sources){try{if((Sha (Join-Path $repo $source.path)) -cne $source.sha256){$sourceAfterVerified=$false}}catch{$sourceAfterVerified=$false}}
+    try{
+        $noticeTestAfter=Sha $noticeTestPath
+        if($noticeTestAfter -cne $noticeTestHash){$sourceAfterVerified=$false}
+        if($null -ne $noticePlannerResult){$noticePlannerResult.sha256After=$noticeTestAfter}
+    }catch{$sourceAfterVerified=$false}
     foreach($reference in $inputReferences){
         try{$reference.sha256After=Sha $reference.path}catch{$sourceAfterVerified=$false}
         if($reference.sha256After -cne $reference.sha256Before){$sourceAfterVerified=$false}
@@ -274,7 +294,7 @@ try{
         if(-not [string]::IsNullOrEmpty((Read-Git -Arguments @('status','--porcelain','--untracked-files=all')))){$sourceAfterVerified=$false}
     }catch{$sourceAfterVerified=$false}
     if(-not $sourceAfterVerified){$status='FAILED';$errorCode='SOURCE_AFTER_NOT_PROVEN'}
-    $payload=[pscustomobject]@{schemaVersion=1;head=$ExpectedHead;tree=$ExpectedTree;runId=$env:GITHUB_RUN_ID;runAttempt=$env:GITHUB_RUN_ATTEMPT;status=$status;evidenceKind='NATIVE_POWERSHELL_COMMAND_BREAKPOINTS';sourceBeforeAfterVerified=$sourceAfterVerified;sources=@($sources);observations=$observations;testCases=@($cases);inputReferences=$inputReferences;interpreterVersionObserved=$PSVersionTable.PSVersion.ToString();probeAuthorityAuthenticatedByThisReport=$false;errorCode=$errorCode;failureType=$failureType;failureHResult=$failureHResult;runnerAdminObserved=$runnerAdminObserved;standardUserOrUacAcceptance=$false;githubIdentityAuthenticatedByThisReport=$false;syntheticPackageOnly=$true;actualHistorical0413UpgradeTested=$false;packagedExeTested=$false;sdkSipUserOrProductionAcceptance=$false;interruptedUninstallTested=$false;unknownOutcomeCleanupAttempted=$false;frameworkProvenanceSha256=(Sha (Join-Path $out 'framework-provenance.json'))}
+    $payload=[pscustomobject]@{schemaVersion=1;head=$ExpectedHead;tree=$ExpectedTree;runId=$env:GITHUB_RUN_ID;runAttempt=$env:GITHUB_RUN_ATTEMPT;status=$status;evidenceKind='NATIVE_POWERSHELL_COMMAND_BREAKPOINTS';sourceBeforeAfterVerified=$sourceAfterVerified;sources=@($sources);observations=$observations;testCases=@($cases);noticePlannerResult=$noticePlannerResult;inputReferences=$inputReferences;interpreterVersionObserved=$PSVersionTable.PSVersion.ToString();probeAuthorityAuthenticatedByThisReport=$false;errorCode=$errorCode;failureType=$failureType;failureHResult=$failureHResult;runnerAdminObserved=$runnerAdminObserved;standardUserOrUacAcceptance=$false;githubIdentityAuthenticatedByThisReport=$false;syntheticPackageOnly=$true;actualHistorical0413UpgradeTested=$false;packagedExeTested=$false;sdkSipUserOrProductionAcceptance=$false;interruptedUninstallTested=$false;unknownOutcomeCleanupAttempted=$false;frameworkProvenanceSha256=(Sha (Join-Path $out 'framework-provenance.json'))}
     Write-NewJson (Join-Path $out 'coverage-evidence.json') $payload
     foreach($observation in $observed){$observation.breakpoints|Remove-PSBreakpoint}
     # NO forced cleanup: product maintenance/recovery and evidence remain for

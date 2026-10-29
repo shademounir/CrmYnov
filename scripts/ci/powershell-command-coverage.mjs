@@ -4,6 +4,7 @@ export const productionSources = Object.freeze([
   'scripts/telephony-agent/install-windows-agent.ps1',
   'scripts/telephony-agent/installer-transactions.psm1',
   'scripts/telephony-agent/package-windows-agent.ps1',
+  'scripts/telephony-agent/package-notices.psm1',
 ]);
 const testSource = 'scripts/telephony-agent/test-installer-transactions.ps1';
 const maximumCommands = 20000;
@@ -115,7 +116,7 @@ export function convertPowerShellCoverage(report, readSource) {
   requireValue(typeof report.head === 'string' && /^[a-f0-9]{40}$/u.test(report.head) && typeof report.tree === 'string' && /^[a-f0-9]{40}$/u.test(report.tree), 'REVISION_INVALID');
   requireValue(typeof readSource === 'function', 'SOURCE_READER_REQUIRED');
   checkCases(report.testCases);
-  boundedArray(report.sources, 4, 'SOURCES_REQUIRED');
+  boundedArray(report.sources, productionSources.length + 1, 'SOURCES_REQUIRED');
   const inventories = new Map();
   for (const source of report.sources) {
     requireValue(source && typeof source === 'object' && !Array.isArray(source), 'SOURCE_NOT_ALLOWED');

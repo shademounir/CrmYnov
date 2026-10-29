@@ -5,6 +5,14 @@ export const fixtureCases = Object.freeze(['fresh-off', 'upgrade-off', 'rollback
 export const fixtureRootFiles = Object.freeze(['coverage-evidence.json', 'source-manifest.json', 'probe-evidence.json', 'framework-provenance.json', 'FIXTURE-INTENT.json']);
 export const probeSource = 'scripts/telephony-agent/tests/child-exit-semantics.ps1';
 export const guardSource = 'scripts/telephony-agent/tests/windows-fixture-guards.psm1';
+export const noticeTestSource = 'scripts/telephony-agent/tests/package-notices.test.ps1';
+export const noticePlannerCases = Object.freeze([
+  'complete-provenance-plan', 'empty-upstream-copying-not-license-proof', 'libjpeg-name-not-global-sdk-license',
+  'runtime-notices-version-bound', 'missing-included-framework', 'duplicate-included-framework', 'additional-framework',
+  'malformed-version-path', 'runtime-assets-version-mismatch', 'duplicate-download-dependency', 'wrong-asset-framework',
+  'missing-runtime-pack', 'missing-ijg-required', 'wrong-libjpeg-identity', 'missing-core-transitive-notices',
+  'empty-runtime-license', 'oversized-notice',
+]);
 const testSource = 'scripts/telephony-agent/test-installer-transactions.ps1';
 const sourcePaths = [...productionSources, testSource];
 const requiredFiles = [...fixtureRootFiles, ...fixtureCases.flatMap(id => [`${id}.INTENT.json`, `${id}.RESULT.json`])].sort((a,b)=>a.localeCompare(b,'en'));
@@ -43,7 +51,7 @@ function manifestBinding(manifest, expected, files) {
 
 function sourceBinding(manifest, report, expected, readSource) {
   demand(manifest.schemaVersion === 1 && manifest.head === expected.head && manifest.tree === expected.tree, 'SOURCE_MANIFEST_CONTEXT');
-  demand(Array.isArray(manifest.sources) && manifest.sources.length === 4 && Array.isArray(report.sources) && report.sources.length === 4, 'SOURCE_INVENTORY');
+  demand(Array.isArray(manifest.sources) && manifest.sources.length === sourcePaths.length && Array.isArray(report.sources) && report.sources.length === sourcePaths.length, 'SOURCE_INVENTORY');
   for (const path of sourcePaths) {
     const records = manifest.sources.filter(source => source.path === path);
     const observations = report.sources.filter(source => source.path === path);
@@ -122,6 +130,21 @@ function frameworkBinding(files, report) {
   }
 }
 
+/** Binds the existing synthetic planner suite separately from the eight installer cases. */
+export function validateNoticePlannerEvidence(record, readSource) {
+  demand(record?.sourcePath === noticeTestSource && typeof readSource === 'function', 'NOTICE_TEST_SOURCE');
+  const bytes = readSource(noticeTestSource);
+  demand(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= 1048576, 'NOTICE_TEST_BYTES');
+  demand(hashValue(record.sha256Before) && record.sha256Before === digest(bytes) && record.sha256After === record.sha256Before, 'NOTICE_TEST_CHANGED');
+  const result = record.result;
+  demand(result?.synthetic === true && result.plannerOnly === true && result.productSdkInstallerNetworkNotExecuted === true, 'NOTICE_SCOPE');
+  demand(result.tests === noticePlannerCases.length && result.pass === noticePlannerCases.length && result.failures === 0, 'NOTICE_COUNTS');
+  demand(Array.isArray(result.results) && result.results.length === noticePlannerCases.length, 'NOTICE_CASES');
+  demand(result.results.every((item, index) => item?.name === noticePlannerCases[index] && item.status === 'PASS'), 'NOTICE_CASES');
+  return {sourcePath: noticeTestSource, sha256: record.sha256Before, tests: result.tests, pass: result.pass, failures: 0,
+    plannerOnly: true, productSdkInstallerNetworkNotExecuted: true, cases: [...noticePlannerCases]};
+}
+
 /** Structural/source binding only; official job/artifact identity is external. */
 export function verifyWindowsFixtureArtifact({expected, files, readSource}) {
   expectedBinding(expected);
@@ -138,6 +161,7 @@ export function verifyWindowsFixtureArtifact({expected, files, readSource}) {
   probeBinding(jsonFile(files, 'probe-evidence.json'), report, refs);
   caseBinding(files, report);
   frameworkBinding(files, report);
+  const noticePlannerResult = validateNoticePlannerEvidence(report.noticePlannerResult, readSource);
   const converted = convertPowerShellCoverage(report, readSource);
-  return {...converted, artifactId: expected.artifactId, artifactDigestMetadata: expected.artifactDigest, officialEvidenceAuthenticated: false, nativeAcceptance: false};
+  return {...converted, noticePlannerResult, artifactId: expected.artifactId, artifactDigestMetadata: expected.artifactDigest, officialEvidenceAuthenticated: false, nativeAcceptance: false};
 }

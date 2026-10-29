@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {fixtureCases, fixtureRootFiles, probeSource, guardSource, verifyWindowsFixtureArtifact} from '../windows-installer-evidence.mjs';
+import {fixtureCases, fixtureRootFiles, probeSource, guardSource, noticeTestSource, noticePlannerCases, verifyWindowsFixtureArtifact} from '../windows-installer-evidence.mjs';
 import {productionSources} from '../powershell-command-coverage.mjs';
 
 // These documents are SYNTHETIC unit inputs, never official/native receipts.
@@ -31,7 +31,7 @@ function rebind(f, role, name) {
 }
 
 function fixture() {
-  const f = {files: new Map(), expected: {head: 'a'.repeat(40), tree: 'b'.repeat(40), runId: '123', runAttempt: '2', artifactId: '456', artifactDigest: 'c'.repeat(64)}, sources: new Map([...sourcePaths, probeSource, guardSource].map(path => [path, sourceBytes]))};
+  const f = {files: new Map(), expected: {head: 'a'.repeat(40), tree: 'b'.repeat(40), runId: '123', runAttempt: '2', artifactId: '456', artifactDigest: 'c'.repeat(64)}, sources: new Map([...sourcePaths, probeSource, guardSource, noticeTestSource].map(path => [path, sourceBytes]))};
   set(f, 'source-manifest.json', {schemaVersion: 1, head: f.expected.head, tree: f.expected.tree, sources: sourcePaths.map(path => ({path, sha256: h(sourceBytes)}))});
   const references = [
     {role: 'SOURCE_MANIFEST', path: 'C:\\synthetic\\source-manifest.json', sha256Before: h(f.files.get('source-manifest.json'))},
@@ -53,6 +53,7 @@ function fixture() {
     return result;
   });
   set(f, 'coverage-evidence.json', {schemaVersion: 1, head: f.expected.head, tree: f.expected.tree, status: 'PASS', evidenceKind: 'NATIVE_POWERSHELL_COMMAND_BREAKPOINTS', sourceBeforeAfterVerified: true, sources: sourcePaths.map(path => ({path, sha256: h(sourceBytes), classification: productionSources.includes(path) ? 'PRODUCTION' : 'TEST', lineCount: 3, commands})), observations: sourcePaths.map(sourcePath => ({sourcePath, executedPath: windows(sourcePath), sha256Before: h(sourceBytes), sha256After: h(sourceBytes), commands: commands.map(command => ({...command, hitCount: 0}))})), inputReferences: reportRefs, testCases: results, interpreterVersionObserved: '5.1.synthetic', frameworkProvenanceSha256: h(f.files.get('framework-provenance.json')), githubIdentityAuthenticatedByThisReport: false, probeAuthorityAuthenticatedByThisReport: false, syntheticPackageOnly: true, packagedExeTested: false, standardUserOrUacAcceptance: false, sdkSipUserOrProductionAcceptance: false, actualHistorical0413UpgradeTested: false, interruptedUninstallTested: false, unknownOutcomeCleanupAttempted: false});
+  edit(f, 'coverage-evidence.json', report => {report.noticePlannerResult = {sourcePath: noticeTestSource, sha256Before: h(sourceBytes), sha256After: h(sourceBytes), result: {synthetic: true, plannerOnly: true, productSdkInstallerNetworkNotExecuted: true, tests: 17, pass: 17, failures: 0, results: noticePlannerCases.map(name => ({name, status: 'PASS'}))}};});
   return seal(f);
 }
 
@@ -63,7 +64,10 @@ test('synthetic unit documents are consistent but never become native or officia
   const result = verify(fixture());
   assert.equal(result.officialEvidenceAuthenticated, false);
   assert.equal(result.nativeAcceptance, false);
-  assert.equal(result.files.length, 3);
+  assert.equal(result.files.length, 4);
+  assert.deepEqual(result.noticePlannerResult.cases, noticePlannerCases);
+  assert.equal(result.noticePlannerResult.tests, 17);
+  assert.equal(fixture().files.size, 22);
   assert(result.files.every(file => file.commandsHit === 0));
 });
 
@@ -89,6 +93,16 @@ const cases = [
   ['case intent from another head', f => edit(f, 'fresh-off.INTENT.json', r => {r.head = 'f'.repeat(40);}), 'CASE_INTENT'],
   ['nonmonotonic case time', f => {edit(f, 'fresh-off.RESULT.json', r => {r.endUtc = '1969-01-01T00:00:00Z';}); edit(f, 'coverage-evidence.json', r => {r.testCases[0].endUtc = '1969-01-01T00:00:00Z';});}, 'CASE_TIME'],
   ['framework unbound', f => edit(f, 'framework-provenance.json', r => {r.version = '999';}), 'FRAMEWORK_DIGEST'],
+  ['notice result missing', f => edit(f, 'coverage-evidence.json', r => {delete r.noticePlannerResult;}), 'NOTICE_TEST_SOURCE'],
+  ['notice tests from another path', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.sourcePath = 'other.ps1';}), 'NOTICE_TEST_SOURCE'],
+  ['changed notice test source', f => {f.sources.set(noticeTestSource, Buffer.from('different'));}, 'NOTICE_TEST_CHANGED'],
+  ['notice test changed after', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.sha256After = 'f'.repeat(64);}), 'NOTICE_TEST_CHANGED'],
+  ['notice counts substituted for counters', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.result.tests = 16;}), 'NOTICE_COUNTS'],
+  ['notice failure hidden', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.result.failures = 1;}), 'NOTICE_COUNTS'],
+  ['notice case missing', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.result.results.pop();}), 'NOTICE_CASES'],
+  ['notice case duplicated', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.result.results[1] = r.noticePlannerResult.result.results[0];}), 'NOTICE_CASES'],
+  ['notice case pending', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.result.results[0].status = 'PENDING';}), 'NOTICE_CASES'],
+  ['notice scope broadened', f => edit(f, 'coverage-evidence.json', r => {r.noticePlannerResult.result.productSdkInstallerNetworkNotExecuted = false;}), 'NOTICE_SCOPE'],
 ];
 for (const [name, mutate, code] of cases) test(`refuses ${name}`, () => refuses(mutate, code));
 

@@ -1,5 +1,49 @@
 Set-StrictMode -Version Latest
 
+function Get-CrmRuntimeNoticeSpecifications {
+    param(
+        [Parameter(Mandatory = $true)]$Framework,
+        [Parameter(Mandatory = $true)]$AssetFramework,
+        [Parameter(Mandatory = $true)][string[]]$PackageFolders
+    )
+    if ($Framework.version -cnotmatch '^\d+\.\d+\.\d+$') { throw 'PACKAGE_NOTICE_RUNTIME_VERSION_INVALID' }
+    $packageId = $Framework.name + '.Runtime.win-x64'
+    $downloads = @($AssetFramework.Value.downloadDependencies | Where-Object { $_.name -ceq $packageId })
+    $range = "[$($Framework.version), $($Framework.version)]"
+    if ($downloads.Count -ne 1 -or $downloads[0].version -cne $range) { throw 'PACKAGE_NOTICE_RUNTIME_ASSET_VERSION_MISMATCH' }
+    $relativeRoot = $packageId.ToLowerInvariant() + '/' + $Framework.version
+    $roots = @($PackageFolders | ForEach-Object { Join-Path $_ $relativeRoot } | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+    if ($roots.Count -ne 1) { throw 'PACKAGE_NOTICE_RUNTIME_PACK_AMBIGUOUS_OR_MISSING' }
+    $names = if ($Framework.name -ceq 'Microsoft.NETCore.App') { @('LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT') } else { @('LICENSE') }
+    foreach ($name in $names) {
+        @{ component = $packageId; version = $Framework.version; root = $roots[0]; source = $name; destination = ($packageId + '/' + $Framework.version + '/' + $name); role = 'runtime-pack-notice' }
+    }
+}
+
+function Get-CrmNoticeEntry {
+    param([Parameter(Mandatory = $true)][hashtable]$Specification)
+    $source = Join-Path $Specification.root $Specification.source
+    $item = Get-Item -LiteralPath $source -ErrorAction Stop
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -lt 1 -or $item.Length -gt 1048576) {
+        throw 'PACKAGE_NOTICE_SOURCE_INVALID'
+    }
+    $content = Get-Content -LiteralPath $source -Raw
+    if ([String]::IsNullOrWhiteSpace($content)) { throw 'PACKAGE_NOTICE_TEXT_EMPTY' }
+    if ($Specification.destination -ceq 'libjpeg-turbo/LICENSE.md' -and -not $content.StartsWith('libjpeg-turbo Licenses', [StringComparison]::Ordinal)) {
+        throw 'PACKAGE_NOTICE_LIBJPEG_IDENTITY_INVALID'
+    }
+    [pscustomobject]@{
+        sourcePath = $item.FullName
+        sourceRelativePath = $Specification.source
+        destination = $Specification.destination
+        component = $Specification.component
+        version = $Specification.version
+        role = $Specification.role
+        bytes = $item.Length
+        sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Get-CrmPackageNoticePlan {
     [CmdletBinding()]
     param(
@@ -31,41 +75,11 @@ function Get-CrmPackageNoticePlan {
         @{ component = 'mediastreamer2'; version = 'sdk-5.5.21'; root = $SdkRoot; source = 'share/doc/mediastreamer2-5.5.0/html/mediastreamer2_license.html'; destination = 'mediastreamer2/COPYING-page.html'; role = 'upstream-page-not-license-proof' }
     )
     foreach ($framework in $frameworks) {
-        if ($framework.version -cnotmatch '^\d+\.\d+\.\d+$') { throw 'PACKAGE_NOTICE_RUNTIME_VERSION_INVALID' }
-        $packageId = $framework.name + '.Runtime.win-x64'
-        $downloads = @($assetFrameworks[0].Value.downloadDependencies | Where-Object { $_.name -ceq $packageId })
-        $range = "[$($framework.version), $($framework.version)]"
-        if ($downloads.Count -ne 1 -or $downloads[0].version -cne $range) { throw 'PACKAGE_NOTICE_RUNTIME_ASSET_VERSION_MISMATCH' }
-        $relativeRoot = $packageId.ToLowerInvariant() + '/' + $framework.version
-        $roots = @($packageFolders | ForEach-Object { Join-Path $_ $relativeRoot } | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
-        if ($roots.Count -ne 1) { throw 'PACKAGE_NOTICE_RUNTIME_PACK_AMBIGUOUS_OR_MISSING' }
-        $names = if ($framework.name -ceq 'Microsoft.NETCore.App') { @('LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT') } else { @('LICENSE') }
-        foreach ($name in $names) {
-            $specifications += @{ component = $packageId; version = $framework.version; root = $roots[0]; source = $name; destination = ($packageId + '/' + $framework.version + '/' + $name); role = 'runtime-pack-notice' }
-        }
+        $specifications += @(Get-CrmRuntimeNoticeSpecifications -Framework $framework -AssetFramework $assetFrameworks[0] -PackageFolders $packageFolders)
     }
     $entries = @()
     foreach ($spec in $specifications) {
-        $source = Join-Path $spec.root $spec.source
-        $item = Get-Item -LiteralPath $source -ErrorAction Stop
-        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -lt 1 -or $item.Length -gt 1048576) {
-            throw 'PACKAGE_NOTICE_SOURCE_INVALID'
-        }
-        $content = Get-Content -LiteralPath $source -Raw
-        if ([String]::IsNullOrWhiteSpace($content)) { throw 'PACKAGE_NOTICE_TEXT_EMPTY' }
-        if ($spec.destination -ceq 'libjpeg-turbo/LICENSE.md' -and -not $content.StartsWith('libjpeg-turbo Licenses', [StringComparison]::Ordinal)) {
-            throw 'PACKAGE_NOTICE_LIBJPEG_IDENTITY_INVALID'
-        }
-        $entries += [pscustomobject]@{
-            sourcePath = $item.FullName
-            sourceRelativePath = $spec.source
-            destination = $spec.destination
-            component = $spec.component
-            version = $spec.version
-            role = $spec.role
-            bytes = $item.Length
-            sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
+        $entries += Get-CrmNoticeEntry -Specification $spec
     }
     [pscustomobject]@{
         schemaVersion = 1

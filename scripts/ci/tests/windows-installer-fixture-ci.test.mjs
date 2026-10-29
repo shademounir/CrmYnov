@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {fixtureSourcePaths,fixtureCaseIds,probeSourcePath,selectFixtureContext,fixturePaths,produceFixtureEvidence,fixedFixtureEnvironment,fixtureGitExecutable} from '../windows-installer-fixture-ci.mjs';
-import {verifyWindowsFixtureArtifact} from '../windows-installer-evidence.mjs';
+import {verifyWindowsFixtureArtifact,noticeTestSource,noticePlannerCases} from '../windows-installer-evidence.mjs';
 const w=path.win32,h=b=>createHash('sha256').update(b).digest('hex'),bytes=v=>Buffer.from(JSON.stringify(v,null,2)+'\n');
 const head='a'.repeat(40),tree='b'.repeat(40),nonce='1'.repeat(32);
 test('fixture Git uses a canonical fixed absolute Windows executable without PATH resolution',()=>{
@@ -32,6 +32,7 @@ function fakeIO(context,mode={}){
   put(w.join(context.workspace,probeSourcePath),Buffer.from('SyntheticProbeSource'));
   put(w.join(context.workspace,'scripts/telephony-agent/tests/windows-installer.integration.ps1'),Buffer.from('SyntheticHarnessNotExecuted'));
   put(w.join(context.workspace,'scripts/telephony-agent/tests/windows-fixture-guards.psm1'),Buffer.from('SyntheticGuardSource'));
+  put(w.join(context.workspace,noticeTestSource),Buffer.from('SyntheticNoticeTestSource'));
   const interpreter='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';put(interpreter,Buffer.from('SyntheticInterpreterNotExecutable'));
   let frameworkReads=0;
   const io={frameworkSnapshot:()=>{frameworkReads++;return[{path:'SyntheticOnly',sha256:mode.frameworkDrift&&frameworkReads>1?'1'.repeat(64):'0'.repeat(64)}];},read,exists:p=>map.has(w.normalize(p)),mkdirNew:p=>{assert(!dirs.has(p));dirs.add(p);},writeNew:(p,b)=>{assert(!map.has(w.normalize(p)),'SYNTHETIC_NO_OVERWRITE');put(p,b);},outputs:v=>outputs.push(v),assertCheckout:()=>{if(mode.sourceDrift)throw new Error('WINDOWS_FIXTURE_CHECKOUT_CHANGED');},invokePowerShell:(script,args,timeoutMs)=>{
@@ -52,6 +53,11 @@ function fakeIO(context,mode={}){
       if(mode.reorderedCases)report.testCases.reverse();
       else report.testCases=results;
       Object.assign(report,{interpreterVersionObserved:'5.1.synthetic',probeAuthorityAuthenticatedByThisReport:false,syntheticPackageOnly:true,unknownOutcomeCleanupAttempted:false});
+      report.noticePlannerResult={sourcePath:noticeTestSource,sha256Before:h(read(w.join(context.workspace,noticeTestSource))),sha256After:h(read(w.join(context.workspace,noticeTestSource))),result:{synthetic:true,plannerOnly:true,productSdkInstallerNetworkNotExecuted:true,tests:17,pass:17,failures:0,results:noticePlannerCases.map(name=>({name,status:'PASS'}))}};
+      if(mode.missingNoticeResult)delete report.noticePlannerResult;
+      if(mode.badNoticeSource)report.noticePlannerResult.sha256After='e'.repeat(64);
+      if(mode.badNoticeCase)report.noticePlannerResult.result.results[1]=report.noticePlannerResult.result.results[0];
+      if(mode.noticeSourceDrift)put(w.join(context.workspace,noticeTestSource),Buffer.from('SyntheticNoticeTestChanged'));
       if(mode.badHead)report.head='d'.repeat(40);if(mode.missingCase)report.testCases.pop();if(mode.badReference)report.inputReferences[0].sha256After='e'.repeat(64);if(mode.missingZero)report.observations[2].commands=[];
       put(w.join(plan.harness,'coverage-evidence.json'),report);put(w.join(plan.harness,'FIXTURE-INTENT.json'),{head:context.head,tree:context.tree,status:'INTENT_ONLY_NOT_RESULT',syntheticPackageOnly:true,packagedExeTested:false,inputReferences:report.inputReferences.map(({sha256After,...r})=>r)});
       for(const result of results){const id=result.id;put(w.join(plan.harness,id+'.INTENT.json'),{id,head:context.head,status:'INTENT_ONLY_OUTCOME_UNKNOWN_UNTIL_RESULT',startUtc:result.startUtc});put(w.join(plan.harness,id+'.RESULT.json'),{...result,status:mode.failedCaseFile&&id==='fresh-off'?'FAILED':'PASS'});}
@@ -75,7 +81,7 @@ test('pure protocol produces exact-byte JSON-only artifact without counting mani
   assert.equal(h(f.read(w.join(result.staging,'artifact-manifest.json'))),result.manifestSha256);
   assert.equal(f.outputs.length,2);assert.equal(f.outputs[0]['artifact-path'],result.staging);assert.equal(f.outputs[1]['report-sha256'],result.reportSha256);
 });
-for(const mode of ['probeTimeout','probeFailure','harnessTimeout','badHead','missingCase','badReference','missingZero','failedCaseFile','frameworkDrift','reorderedCases'])test('fail closed '+mode+' with no retry or native cleanup',()=>{
+for(const mode of ['probeTimeout','probeFailure','harnessTimeout','badHead','missingCase','badReference','missingZero','failedCaseFile','frameworkDrift','reorderedCases','missingNoticeResult','badNoticeSource','badNoticeCase','noticeSourceDrift'])test('fail closed '+mode+' with no retry or native cleanup',()=>{
   const c=selectFixtureContext(facts()),f=fakeIO(c,{[mode]:true});assert.throws(()=>produceFixtureEvidence(c,f.io,nonce),/WINDOWS_FIXTURE_/u);assert(f.calls.length<=2);
   const d=JSON.parse(f.read(w.join(f.plan.staging,'producer-diagnostic.json')));assert.equal(d.retry,0);assert.equal(d.cleanupAttempted,false);assert.equal(f.outputs.length,1);assert(!f.outputs.some(o=>o['report-sha256']));
   if(mode==='harnessTimeout'){assert.equal(d.status,'UNKNOWN');assert(f.io.exists(w.join(f.plan.staging,'fresh-off.INTENT.json')));assert(!f.io.exists(w.join(f.plan.staging,'fresh-off.RESULT.json')));}
@@ -91,9 +97,10 @@ function composition(eventName='pull_request'){
 for(const eventName of ['pull_request','push'])test('pure producer to actual consumer composition '+eventName,()=>{
   const x=composition(eventName);assert.equal(x.files.size,22);
   const r=verifyWindowsFixtureArtifact(x);assert.equal(r.head,head);assert.equal(r.tree,tree);assert.equal(r.officialEvidenceAuthenticated,false);assert.equal(r.nativeAcceptance,false);
+  assert.equal(r.noticePlannerResult.tests,17);assert.deepEqual(r.noticePlannerResult.cases,noticePlannerCases);assert.equal(r.files.length,4);
   if(eventName==='pull_request')assert.notEqual(x.c.head,x.c.workflowSha);
 });
 test('composition refuses changed local source, probe alias or runtime reference',()=>{
-  for(const relative of [fixtureSourcePaths[0],probeSourcePath]){const x=composition();const original=x.readSource;x.readSource=p=>p===relative?Buffer.from('SYNTHETIC_DRIFT'):original(p);assert.throws(()=>verifyWindowsFixtureArtifact(x),/WINDOWS_FIXTURE_/u);}
+  for(const relative of [fixtureSourcePaths[0],probeSourcePath,noticeTestSource,'scripts/telephony-agent/package-notices.psm1']){const x=composition();const original=x.readSource;x.readSource=p=>p===relative?Buffer.from('SYNTHETIC_DRIFT'):original(p);assert.throws(()=>verifyWindowsFixtureArtifact(x),/WINDOWS_FIXTURE_/u);}
   const x=composition();x.expected.runAttempt='99';assert.throws(()=>verifyWindowsFixtureArtifact(x),/WINDOWS_FIXTURE_/u);
 });

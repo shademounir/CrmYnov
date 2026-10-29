@@ -23,9 +23,10 @@ const rejects = (mutate, code) => {
 
 test('converter preserves real zero observations without claiming native or authenticated evidence', () => {
   const result = convert(fixture());
-  assert.equal(result.files.length, 3);
+  assert.equal(result.files.length, 4);
+  assert.equal(result.files.at(-1).path, 'scripts/telephony-agent/package-notices.psm1');
   assert(result.files.every(file => file.commandsHit === 0));
-  assert.equal((result.xml.match(/covered="false"/gu) ?? []).length, 6);
+  assert.equal((result.xml.match(/covered="false"/gu) ?? []).length, 8);
   assert.equal(result.branchCoverageMeasured, false);
   assert.equal(result.officialEvidenceAuthenticated, false);
   assert.equal(result.nativeAcceptance, false);
@@ -53,6 +54,21 @@ test('actual test source cannot inflate production coverage', () => {
   assert.deepEqual(result.testsExcludedFromProductionReport, [testPath]);
   assert(result.files.every(file => file.commandsHit === 0));
   assert(!result.xml.includes(testPath));
+});
+
+test('notice module coverage uses its own unchanged-source native observations, including zeros', () => {
+  const report = fixture();
+  const notice = report.observations.find(item => item.sourcePath === 'scripts/telephony-agent/package-notices.psm1');
+  notice.commands[0].hitCount = 1;
+  let converted = convert(report).files.at(-1);
+  assert.equal(converted.commandsHit, 1);
+  assert.equal(converted.lines[0].covered, false);
+  assert.equal(converted.lines[1].covered, false);
+  notice.commands[1].hitCount = 1;
+  converted = convert(report).files.at(-1);
+  assert.equal(converted.lines[0].covered, true);
+  notice.sha256After = 'c'.repeat(64);
+  assert.throws(() => convert(report), /OBSERVATION_HASH_MISMATCH/u);
 });
 
 const invalidReports = [
