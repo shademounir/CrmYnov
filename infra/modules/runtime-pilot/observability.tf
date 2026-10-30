@@ -102,3 +102,27 @@ resource "google_monitoring_alert_policy" "job_failure" {
     notification_rate_limit { period = "300s" }
   }
 }
+
+resource "google_monitoring_alert_policy" "sheet_append_failure" {
+  count                 = local.sheet_runtime_ready ? 1 : 0
+  project               = local.project_id
+  display_name          = "CRM ${var.environment} Sheets append job failure"
+  combiner              = "OR"
+  enabled               = true
+  notification_channels = [google_monitoring_notification_channel.operations.id]
+  user_labels           = local.labels
+  conditions {
+    display_name = "Sheets append worker error or completed false"
+    condition_matched_log {
+      filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${local.prefix}-sheet-append\" AND (severity>=ERROR OR (jsonPayload.job=\"sheet-append\" AND jsonPayload.completed=false))"
+    }
+  }
+  alert_strategy {
+    auto_close = "1800s"
+    notification_rate_limit { period = "300s" }
+  }
+  documentation {
+    content   = "Sheets append only. Match the worker's completed:false summary on stdout or stderr as well as ERROR severity. Correlate expurgated execution and durable row/run receipts before any action. Flag-OFF skips are not ingestion; policy creation or automatic incident closure proves neither notification receipt nor recovery."
+    mime_type = "text/markdown"
+  }
+}

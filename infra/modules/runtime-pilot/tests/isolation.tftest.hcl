@@ -17,6 +17,20 @@ variables {
   environment            = "staging"
   billing_account_id     = join("-", ["000000", "000000", "000000"])
   operations_alert_email = "synthetic@example.invalid"
+  // Deterministic synthetic pins only; no private payload or native artifact.
+  sheet_append_artifact_objects = {
+    boundary              = "synthetic-boundary-${sha256("synthetic-boundary")}.json"
+    qualification         = "synthetic-qualification-${sha256("synthetic-qualification")}.json"
+    allowlist             = "synthetic-allowlist-${sha256("synthetic-allowlist")}.json"
+    historical_capability = "synthetic-capability-${sha256("synthetic-historical-capability")}.json"
+  }
+  sheet_append_artifact_sha256 = {
+    boundary              = sha256("synthetic-boundary")
+    qualification         = sha256("synthetic-qualification")
+    allowlist             = sha256("synthetic-allowlist")
+    historical_capability = sha256("synthetic-historical-capability")
+  }
+  sheet_append_expected_boundary_sha256 = sha256("synthetic-boundary")
 }
 
 run "staging_isolated_foundation" {
@@ -84,9 +98,129 @@ run "prod_sheet_storage_only_keeps_runtime_off" {
     sheet_append_storage_prepared = true
   }
   assert {
-    condition     = length(google_storage_bucket.sheet_private) == 1 && length(google_cloud_run_v2_job.sheet_append) == 0 && length(google_cloud_scheduler_job.sheet_append) == 0
+    condition     = length(google_storage_bucket.sheet_private) == 1 && length(google_cloud_run_v2_job.sheet_append) == 0 && length(google_cloud_scheduler_job.sheet_append) == 0 && length(google_monitoring_alert_policy.sheet_append_failure) == 0
     error_message = "Storage preparation may create only the private store and identities, never executable append runtime."
   }
+}
+run "prod_sheet_four_artifacts_prepared_stays_off" {
+  command = plan
+  variables {
+    environment                   = "prod"
+    deploy_services               = true
+    sheet_append_storage_prepared = true
+    sheet_append_runtime_prepared = true
+    api_image                     = "europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    web_image                     = "europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }
+  assert {
+    condition = alltrue([
+      for container in [google_cloud_run_v2_service.api[0].template[0].containers[0], google_cloud_run_v2_job.sheet_append[0].template[0].template[0].containers[0]] :
+      one([for e in container.env : e.value if e.name == "CRM_SHEET_HISTORICAL_CAPABILITY_FILE"]) == "/var/run/crm-sheet-private/${var.sheet_append_artifact_objects.historical_capability}"
+      && one([for e in container.env : e.value if e.name == "CRM_SHEET_HISTORICAL_CAPABILITY_SHA256"]) == var.sheet_append_artifact_sha256.historical_capability
+    ])
+    error_message = "Both the API and isolated worker must receive the same fourth private capability path and SHA."
+  }
+  assert {
+    condition = alltrue([
+      for container in [google_cloud_run_v2_service.api[0].template[0].containers[0], google_cloud_run_v2_job.sheet_append[0].template[0].template[0].containers[0]] :
+      length([for e in container.env : e.name if contains(["FORMINATOR_WEBHOOK_ENABLED", "SHEETS_ENABLED", "SHEET_CUTOVER_ENABLED", "CRM_GOOGLE_SHEETS_ENABLED", "SHEET_ROW_APPEND_ENABLED", "CRM_SHEET_APPEND_POLICY_QUALIFIED"], e.name)]) == 6
+      && alltrue([for e in container.env : e.value == "false" if contains(["FORMINATOR_WEBHOOK_ENABLED", "SHEETS_ENABLED", "SHEET_CUTOVER_ENABLED", "CRM_GOOGLE_SHEETS_ENABLED", "SHEET_ROW_APPEND_ENABLED", "CRM_SHEET_APPEND_POLICY_QUALIFIED"], e.name)])
+    ])
+    error_message = "Mounting four artifacts must leave all six ingestion flags OFF in both consumers."
+  }
+  assert {
+    condition     = google_cloud_run_v2_service.api[0].template[0].volumes[0].gcs[0].read_only && google_cloud_run_v2_job.sheet_append[0].template[0].template[0].volumes[0].gcs[0].read_only
+    error_message = "The existing shared private mount remains read-only in API and worker."
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.sheet_append[0].paused && google_cloud_run_v2_job.sheet_append[0].template[0].template[0].max_retries == 0 && google_cloud_run_v2_job.sheet_append[0].template[0].template[0].timeout == "300s"
+    error_message = "Preparation must keep the append Scheduler PAUSED and preserve the bounded worker retry/timeout settings."
+  }
+  assert {
+    condition     = length(google_monitoring_alert_policy.sheet_append_failure) == 1 && google_monitoring_alert_policy.sheet_append_failure[0].conditions[0].condition_matched_log[0].filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"crm-prod-sheet-append\" AND (severity>=ERROR OR (jsonPayload.job=\"sheet-append\" AND jsonPayload.completed=false))"
+    error_message = "Only the append job has the additional matched-log policy, including completed:false stdout summaries."
+  }
+}
+run "reject_sheet_runtime_missing_capability_object" {
+  command = plan
+  variables {
+    deploy_services               = true
+    sheet_append_storage_prepared = true
+    sheet_append_runtime_prepared = true
+    api_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    web_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    sheet_append_artifact_objects = {
+      boundary      = "synthetic-boundary-${sha256("synthetic-boundary")}.json"
+      qualification = "synthetic-qualification-${sha256("synthetic-qualification")}.json"
+      allowlist     = "synthetic-allowlist-${sha256("synthetic-allowlist")}.json"
+    }
+  }
+  expect_failures = [google_sql_database_instance.postgres]
+}
+run "reject_sheet_runtime_missing_capability_sha" {
+  command = plan
+  variables {
+    deploy_services               = true
+    sheet_append_storage_prepared = true
+    sheet_append_runtime_prepared = true
+    api_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    web_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    sheet_append_artifact_sha256 = {
+      boundary      = sha256("synthetic-boundary")
+      qualification = sha256("synthetic-qualification")
+      allowlist     = sha256("synthetic-allowlist")
+    }
+  }
+  expect_failures = [google_sql_database_instance.postgres]
+}
+run "reject_sheet_runtime_extra_artifact" {
+  command = plan
+  variables {
+    deploy_services               = true
+    sheet_append_storage_prepared = true
+    sheet_append_runtime_prepared = true
+    api_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    web_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    sheet_append_artifact_objects = {
+      boundary              = "synthetic-boundary-${sha256("synthetic-boundary")}.json"
+      qualification         = "synthetic-qualification-${sha256("synthetic-qualification")}.json"
+      allowlist             = "synthetic-allowlist-${sha256("synthetic-allowlist")}.json"
+      historical_capability = "synthetic-capability-${sha256("synthetic-historical-capability")}.json"
+      unexpected            = "synthetic-extra-${sha256("synthetic-extra")}.json"
+    }
+  }
+  expect_failures = [google_sql_database_instance.postgres]
+}
+run "reject_sheet_runtime_capability_name_hash_mismatch" {
+  command = plan
+  variables {
+    deploy_services               = true
+    sheet_append_storage_prepared = true
+    sheet_append_runtime_prepared = true
+    api_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    web_image                     = "europe-west1-docker.pkg.dev/crmynov-stg-n7x4q2/crm-ynov-staging/web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    sheet_append_artifact_objects = {
+      boundary              = "synthetic-boundary-${sha256("synthetic-boundary")}.json"
+      qualification         = "synthetic-qualification-${sha256("synthetic-qualification")}.json"
+      allowlist             = "synthetic-allowlist-${sha256("synthetic-allowlist")}.json"
+      historical_capability = "synthetic-capability-${sha256("wrong-synthetic-capability")}.json"
+    }
+  }
+  expect_failures = [google_sql_database_instance.postgres]
+}
+run "reject_sheet_capability_traversal" {
+  command = plan
+  variables {
+    sheet_append_artifact_objects = { historical_capability = "../capability.json" }
+  }
+  expect_failures = [var.sheet_append_artifact_objects]
+}
+run "reject_sheet_capability_malformed_digest" {
+  command = plan
+  variables {
+    sheet_append_artifact_sha256 = { historical_capability = "not-a-sha256" }
+  }
+  expect_failures = [var.sheet_append_artifact_sha256]
 }
 run "reject_sheet_runtime_before_storage" {
   command = plan

@@ -132,7 +132,7 @@ variable "sheet_append_scheduler_paused" {
   default     = true
 }
 variable "sheet_append_artifact_objects" {
-  description = "Private bucket object basenames for boundary, qualification and allowlist. Names must include their pinned SHA-256."
+  description = "Private bucket object basenames for boundary, qualification, allowlist and historical_capability. Runtime preparation requires exactly these four names, each including its pinned SHA-256."
   type        = map(string)
   default     = {}
   validation {
@@ -144,7 +144,7 @@ variable "sheet_append_artifact_objects" {
   }
 }
 variable "sheet_append_artifact_sha256" {
-  description = "Lowercase SHA-256 values for boundary, qualification and allowlist; payloads remain outside Terraform state."
+  description = "Lowercase SHA-256 values for boundary, qualification, allowlist and historical_capability; payloads remain outside Terraform state."
   type        = map(string)
   default     = {}
   validation {

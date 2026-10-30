@@ -1400,5 +1400,721 @@
         "noNewBaselineOrCohort": true
       }
     }
+  ,
+    {
+      "schemaVersion": 2,
+      "id": "rc48-general-post-20261030-operational-v1",
+      "status": "approved",
+      "scope": "GENERAL_PRESERVATION_READ_ONLY_V1",
+      "phase": "POST",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT",
+        "READ_METADATA",
+        "TEST_PERMISSIONS"
+      ],
+      "validFrom": "2026-10-30T16:54:24.466Z",
+      "expiresAt": "2026-10-31T16:54:24.466Z",
+      "dossierSha256": "60355bd69eb83c092d97b8469eca367569b410e5eb31da64af11ac0be292dd06",
+      "humanAuthorityReceiptSha256": "64b91382c47403e88dedfa3a3c9241a3231a99d636312ae2a888619c65729fe6",
+      "journalDirectorySha256": "560698225c76f8e5f26994ffd0be2721854ca031a12f8ee23ef04741de467722",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 273,
+        "head": "e0a8a803dfbb0109087bdc76f77be653afa5f966",
+        "mergeCommit": "c3890630bad613e51ee6e38ae6aca5032a4fbb66",
+        "tree": "cf1d2e9d0ed3280e069ed8979472c7cc8ee919ea",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/operational-driver-v2.mjs",
+            "sha256": "3e2eeff5e7564f50ec580f2c03019344e0a0196bda9fefee2e668051ff48d065"
+          },
+          {
+            "path": "scripts/ci/operational-driver-v3.mjs",
+            "sha256": "c029718dc7ed7d25322ebe80cb197eaec1b292bbf6a19f7b9f1ebd52e5c6dd22"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/captured-readonly-semantics-v1.mjs",
+            "sha256": "98c9fd0682c19569dd8e003889c4307ebac0dfdf2c7f1e192fa4f1bd034ecdc6"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-operational-pre-v3.mjs",
+            "sha256": "9fd8d443ff3aa87c6bd26dc9e6e43f5bb4d65b3f520988b2ba91a402829668f6"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-prospective-pre-authority-v1.mjs",
+            "sha256": "8048ffe8042de826894d6c35432b92c78b5d9ad22abeee25faa96dbee2e88d5f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-prospective-pre-session-v1.mjs",
+            "sha256": "8986b6cda1b261adce715f7565fe7c30f528f82f44f0433ac7533d83852f2b93"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v2.mjs",
+            "sha256": "0729d7a63ed650d80c08b963348a87be719ccafc5a8d323e454a1b5804354584"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v2.mjs",
+            "sha256": "e1570aeeb6726923e7450ec7c23c35e0fc3bb0a1565f188c742248525ef48c4b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-native-diagnostics-v1.mjs",
+            "sha256": "20453942924e5bcf8206bca48434fbe4bd82ba408d2218026c78b0807eef006c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/official-sdk-auth-preflight-v1.mjs",
+            "sha256": "73b39c141d449de841ea7f628d6980b72aee2641a2221645228f6bd4c2cc1936"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/authority.mjs",
+            "sha256": "607ae557d36fd9ce05dfddfc245327049a31e100133ebdc927a2d13975db068e"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/catalogue-origin-v2.mjs",
+            "sha256": "48777c64558f2a65df28d3b05be3a6115c063eb1521f00d259a8f2fea3c2ab06"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/cli.mjs",
+            "sha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/executor.mjs",
+            "sha256": "29bbfa338f9cdfedffd95cbc92fb865c85b3a97141d5836e7222bd6d77e5dc10"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/inventory-authority-v2.mjs",
+            "sha256": "3f7c9d7e3f40ef694bb440f99e6ea0255a4a405654e37e4dd7264fc48cde5dee"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/journal-budget-v2.mjs",
+            "sha256": "2584bd09969bf5d950d0db479b02abf8d8da9514121d0dbc558f0261cde9d89e"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/journal.mjs",
+            "sha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/late-binding-v2.mjs",
+            "sha256": "f457834ffe894eef7ce93e45d40f233abb10bb0abbfb86ed44db654ddcad9ad3"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/local-source.mjs",
+            "sha256": "e208f43237b89d53158576931e8b4c13acbb0577070c29c39233d1e0fd04237d"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-cli-v2.mjs",
+            "sha256": "0b582649afb0025311c5be33e0366c1de925d224514c418beb68512945d629a4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs",
+            "sha256": "0f247ca4adb761dcec0ff19f8eea689fe282602464b8904f0380d0a085119ac3"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-forward-sequence-v2.mjs",
+            "sha256": "d3ab824454e9dd9e06d6b3653072fb1d37af8395e90f3edae89e8170d6eed33c"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-permissions-v2.mjs",
+            "sha256": "24c9b900c1c94501df2b57ba4b567ba6be8be2e72177cb53c4bb4388410b2a93"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
+            "sha256": "efeada75721c1569c02b9771e617a078af5c041e7c79024b4265045d2a34b309"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/plan-mode.mjs",
+            "sha256": "3a5879088821a31f0aa8a1d2d31cf1d01a0eb8d24b4f84512ea0e80d15517119"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/plan.mjs",
+            "sha256": "6e5e904bf2899d7578cc0dfb888f63152208501efa1f67808046fadb36dbaa99"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-operational-v2.mjs",
+            "sha256": "d41fba329d92da4061a15bd8f2965491b7cba184a38748c3a7c51e45a802e300"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-preservation-v2.mjs",
+            "sha256": "3f2b9bae58726139855a448848eae6c98073c1295231fad351cc73eefd8008f4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-preservation.mjs",
+            "sha256": "c560ae1a53a328442474eae488cb300b2c5b873da681fba7b67122dccbf87341"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-readiness-v2.mjs",
+            "sha256": "d619321293dedf57bac8fb6e1abba5c0b029b30ed817d0ddd567078f2f87bc11"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-startup-permissions.mjs",
+            "sha256": "8540444c7820ba4f35d54aeee929dea3d440439eb3a34bf1c98a183b4cdc0f25"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation-jobs.mjs",
+            "sha256": "9836bf803913b531a7da107c3acf31f7802b41fe4677ec77f383a5d4bcb8da5a"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation-origins.mjs",
+            "sha256": "f837925c97a6d900654b4fcf5be7ead1b4c2ef132c3f4350a0d628bb920ef78b"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation-v2.mjs",
+            "sha256": "5791e2b5a422d449108a441c93e5882f34299ab230df6a685e884d016665d7f5"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation.mjs",
+            "sha256": "c72cc4be5d519bbf3b744ed3faefd230168ce3327a08121b28f7b19d5ac459a4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/prospective-permissions.mjs",
+            "sha256": "7531239029d20a1a9d9dd2d1434f866812212b24c6a53238698e67acd5e90d2b"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/protected-gates.mjs",
+            "sha256": "722c94d4f623072131f339950a7077491013d15fb08fddddc5236309c0197a04"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/rollback-context.mjs",
+            "sha256": "40c77554a7079fa2aa0bbf687ff6eb85c7a83003fa38315faa4174e22d6b4d2b"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/rollback-plan.mjs",
+            "sha256": "46565a63674c2b658a8a2d67ca89b93ed4170a09068c66e5b7cbaad54b938d63"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/served-state.mjs",
+            "sha256": "b5a418172904398accd174f8e14f8f945686aa592d18cea3d0279b0c17b2d0f4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/transport.mjs",
+            "sha256": "8a4f996457488ebc3b8e1ae76c09c6de17f4781df36f6803f71a5c2702e56ecf"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "kind": "PROTECTED_CATALOGUE_PATH_HISTORY",
+        "path": "docs/governance/readonly-probe-objectives-v1.json"
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      },
+      "post": {
+        "job": "projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/crm-prod-preservation-post-20261030-op-v1",
+        "purpose": "GENERAL_PRESERVATION_READ_ONLY_V1",
+        "queryContractSha256": "5fc539ee53eb709e958e34306d7b04714f3d4b08aec4c340dde366fc15d31b60",
+        "sourceSha256": "f2bdf90d80078a428a5a50bdf4d993592e9bac07dea798c13877c40030c71051",
+        "bundleSha256": "f89d4f72c7976af74fbfc025c8d0ea4e62c2609ec3f5dd8f143c33de1826de46",
+        "image": "europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/api@sha256:d2b2f6b0cf0ed9d9eb1cb15b70924af38be7ca4c4a824b6b406bb62caf88cd8f",
+        "role": "crm_runtime",
+        "selectCount": 13,
+        "createBeforePre": true,
+        "runOnlyAfterImages": true,
+        "maximumCreatePosts": 1,
+        "maximumRunPosts": 1
+      }
+    }
+  ],
+  "operationalPreAuthoritiesV3": [
+    {
+      "schemaVersion": 3,
+      "authorityId": "rc48-general-operational-pre-v3-64b91382c474",
+      "objectiveId": "rc48-general-pre-20261028-147f390728",
+      "status": "approved",
+      "scope": "GENERAL_PRESERVATION_READ_ONLY_V1",
+      "ticket": "CRMY-63",
+      "authorityRecordSha256": "4f8439e6f3958fc947b9a6c571640ec31d63e8652147d3a226c7fffa6b970e1f",
+      "humanAuthorityReceiptSha256": "64b91382c47403e88dedfa3a3c9241a3231a99d636312ae2a888619c65729fe6",
+      "driver": {
+        "pr": 273,
+        "head": "e0a8a803dfbb0109087bdc76f77be653afa5f966",
+        "mergeCommit": "c3890630bad613e51ee6e38ae6aca5032a4fbb66",
+        "tree": "cf1d2e9d0ed3280e069ed8979472c7cc8ee919ea",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/operational-driver-v2.mjs",
+            "sha256": "3e2eeff5e7564f50ec580f2c03019344e0a0196bda9fefee2e668051ff48d065"
+          },
+          {
+            "path": "scripts/ci/operational-driver-v3.mjs",
+            "sha256": "c029718dc7ed7d25322ebe80cb197eaec1b292bbf6a19f7b9f1ebd52e5c6dd22"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/captured-readonly-semantics-v1.mjs",
+            "sha256": "98c9fd0682c19569dd8e003889c4307ebac0dfdf2c7f1e192fa4f1bd034ecdc6"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-operational-pre-v3.mjs",
+            "sha256": "9fd8d443ff3aa87c6bd26dc9e6e43f5bb4d65b3f520988b2ba91a402829668f6"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-prospective-pre-authority-v1.mjs",
+            "sha256": "8048ffe8042de826894d6c35432b92c78b5d9ad22abeee25faa96dbee2e88d5f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-prospective-pre-session-v1.mjs",
+            "sha256": "8986b6cda1b261adce715f7565fe7c30f528f82f44f0433ac7533d83852f2b93"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v2.mjs",
+            "sha256": "0729d7a63ed650d80c08b963348a87be719ccafc5a8d323e454a1b5804354584"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v2.mjs",
+            "sha256": "e1570aeeb6726923e7450ec7c23c35e0fc3bb0a1565f188c742248525ef48c4b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-native-diagnostics-v1.mjs",
+            "sha256": "20453942924e5bcf8206bca48434fbe4bd82ba408d2218026c78b0807eef006c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/official-sdk-auth-preflight-v1.mjs",
+            "sha256": "73b39c141d449de841ea7f628d6980b72aee2641a2221645228f6bd4c2cc1936"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/authority.mjs",
+            "sha256": "607ae557d36fd9ce05dfddfc245327049a31e100133ebdc927a2d13975db068e"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/catalogue-origin-v2.mjs",
+            "sha256": "48777c64558f2a65df28d3b05be3a6115c063eb1521f00d259a8f2fea3c2ab06"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/cli.mjs",
+            "sha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/executor.mjs",
+            "sha256": "29bbfa338f9cdfedffd95cbc92fb865c85b3a97141d5836e7222bd6d77e5dc10"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/inventory-authority-v2.mjs",
+            "sha256": "3f7c9d7e3f40ef694bb440f99e6ea0255a4a405654e37e4dd7264fc48cde5dee"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/journal-budget-v2.mjs",
+            "sha256": "2584bd09969bf5d950d0db479b02abf8d8da9514121d0dbc558f0261cde9d89e"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/journal.mjs",
+            "sha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/late-binding-v2.mjs",
+            "sha256": "f457834ffe894eef7ce93e45d40f233abb10bb0abbfb86ed44db654ddcad9ad3"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/local-source.mjs",
+            "sha256": "e208f43237b89d53158576931e8b4c13acbb0577070c29c39233d1e0fd04237d"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-cli-v2.mjs",
+            "sha256": "0b582649afb0025311c5be33e0366c1de925d224514c418beb68512945d629a4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs",
+            "sha256": "0f247ca4adb761dcec0ff19f8eea689fe282602464b8904f0380d0a085119ac3"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-forward-sequence-v2.mjs",
+            "sha256": "d3ab824454e9dd9e06d6b3653072fb1d37af8395e90f3edae89e8170d6eed33c"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-permissions-v2.mjs",
+            "sha256": "24c9b900c1c94501df2b57ba4b567ba6be8be2e72177cb53c4bb4388410b2a93"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
+            "sha256": "efeada75721c1569c02b9771e617a078af5c041e7c79024b4265045d2a34b309"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/plan-mode.mjs",
+            "sha256": "3a5879088821a31f0aa8a1d2d31cf1d01a0eb8d24b4f84512ea0e80d15517119"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/plan.mjs",
+            "sha256": "6e5e904bf2899d7578cc0dfb888f63152208501efa1f67808046fadb36dbaa99"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-operational-v2.mjs",
+            "sha256": "d41fba329d92da4061a15bd8f2965491b7cba184a38748c3a7c51e45a802e300"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-preservation-v2.mjs",
+            "sha256": "3f2b9bae58726139855a448848eae6c98073c1295231fad351cc73eefd8008f4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-preservation.mjs",
+            "sha256": "c560ae1a53a328442474eae488cb300b2c5b873da681fba7b67122dccbf87341"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-readiness-v2.mjs",
+            "sha256": "d619321293dedf57bac8fb6e1abba5c0b029b30ed817d0ddd567078f2f87bc11"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/post-startup-permissions.mjs",
+            "sha256": "8540444c7820ba4f35d54aeee929dea3d440439eb3a34bf1c98a183b4cdc0f25"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation-jobs.mjs",
+            "sha256": "9836bf803913b531a7da107c3acf31f7802b41fe4677ec77f383a5d4bcb8da5a"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation-origins.mjs",
+            "sha256": "f837925c97a6d900654b4fcf5be7ead1b4c2ef132c3f4350a0d628bb920ef78b"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation-v2.mjs",
+            "sha256": "5791e2b5a422d449108a441c93e5882f34299ab230df6a685e884d016665d7f5"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/preparation.mjs",
+            "sha256": "c72cc4be5d519bbf3b744ed3faefd230168ce3327a08121b28f7b19d5ac459a4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/prospective-permissions.mjs",
+            "sha256": "7531239029d20a1a9d9dd2d1434f866812212b24c6a53238698e67acd5e90d2b"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/protected-gates.mjs",
+            "sha256": "722c94d4f623072131f339950a7077491013d15fb08fddddc5236309c0197a04"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/rollback-context.mjs",
+            "sha256": "40c77554a7079fa2aa0bbf687ff6eb85c7a83003fa38315faa4174e22d6b4d2b"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/rollback-plan.mjs",
+            "sha256": "46565a63674c2b658a8a2d67ca89b93ed4170a09068c66e5b7cbaad54b938d63"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/served-state.mjs",
+            "sha256": "b5a418172904398accd174f8e14f8f945686aa592d18cea3d0279b0c17b2d0f4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/transport.mjs",
+            "sha256": "8a4f996457488ebc3b8e1ae76c09c6de17f4781df36f6803f71a5c2702e56ecf"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "origin": {
+        "kind": "PROTECTED_CATALOGUE_PATH_HISTORY",
+        "path": "docs/governance/readonly-probe-objectives-v1.json"
+      }
+    }
   ]
 }
