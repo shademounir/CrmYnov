@@ -7,7 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {byteHash,digest} from './controlled-pool-contract-v1.mjs';
 import {dataFields} from './general-prospective-pre-authority-v1.mjs';
 import {validateProspectiveConsumerInputs} from './general-prospective-pre-session-v1.mjs';
-import {AUTH_HUMAN_SHA256,AUTH_SDK_CACHE_HUMAN_SHA256,AUTH_PREFLIGHT_DRIVER_INPUTS,validateAuthOnlyRecord,validateAuthHumanAndQualification,validateSdkCacheClarification,authorizeAuthOnlyPreflight} from './general-auth-preflight-authority-v1.mjs';
+import {AUTH_HUMAN_SHA256,AUTH_SDK_CACHE_HUMAN_SHA256,AUTH_JIRA_V2_HUMAN_SHA256,AUTH_JIRA_V2_NEW_FILES,authRecordVersion,authDriverInputs,authGuard,authRefusalDiagnostic,validateJiraV2HumanAuthority,validateAuthOnlyRecord,validateAuthHumanAndQualification,validateSdkCacheClarification,authorizeAuthOnlyPreflight} from './general-auth-preflight-authority-v1.mjs';
 import {AUTH_FACTORY_SHA256,runOfficialSdkAuthOnly} from '../readonly-probe/official-sdk-auth-preflight-v1.mjs';
 import {createReadOnlyGithubReader} from './pool-driver-github-v1.mjs';
 import {POOL_OFFICIAL_GIT,readPoolPrivateFile} from './pool-operational-driver-v1.mjs';
@@ -22,6 +22,8 @@ const HISTORICAL=Object.freeze([
   {path:OUT+'general-prospective-pre-native-20261029-v1/prospective-0d48bd85-8b95-f624-e32c-560406e6ddd8-CLAIM.json',sha256:'3ccfd96471f27c0ab8b36f07891e5974ec498cd574bb9d43ebf34a387dc6faa2'},
 ]);
 const QUAL_STATUS='LOCAL_AUTH_ONLY_WINDOWS_BUDGET_AND_PRECLAIM_BOUNDARY_ROOT_STATIC_PASS_NOT_NATIVE_ACCEPTANCE';
+export const AUTH_JIRA_V2_QUAL_STATUS='LOCAL_AUTH_ONLY_JIRA_V2_COMPOSITION_AND_DIAGNOSTIC_ROOT_STATIC_PASS_NOT_NATIVE_ACCEPTANCE';
+export const AUTH_JIRA_V2_EXISTING_DELTA=Object.freeze(['scripts/ci/pool-reconciliation/general-auth-preflight-authority-v1.mjs','scripts/ci/pool-reconciliation/general-prospective-pre-session-v2.mjs']);
 const epoch=()=>Math.floor(performance.timeOrigin+performance.now());
 function durableNew(file,value){const fd=fs.openSync(file,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(value,null,2)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}
 function canonicalDirectory(directory){assert(path.isAbsolute(directory));assert.equal(fs.realpathSync(directory),path.resolve(directory));assert(fs.lstatSync(directory).isDirectory()&&!fs.lstatSync(directory).isSymbolicLink());}
@@ -35,12 +37,24 @@ function localSource(root,record){
   const git=args=>execFileSync(POOL_OFFICIAL_GIT,['-C',root,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env:fixedToolEnvironment(process.env)}).trim();
   assert.equal(git(['status','--porcelain','--untracked-files=all']),'','CLEAN_AUTH_SOURCE_REQUIRED');
   return{commit:git(['rev-parse','HEAD']),tree:git(['rev-parse','HEAD^{tree}']),head:record.source.head,pr:record.source.pr,clean:true,
-    files:AUTH_PREFLIGHT_DRIVER_INPUTS.map(relative=>({path:relative,sha256:byteHash(readPoolPrivateFile(path.join(root,relative)))}))};
+    files:authDriverInputs(record).map(relative=>({path:relative,sha256:byteHash(readPoolPrivateFile(path.join(root,relative)))}))};
 }
-export function validateAuthSourceQualification(bytes,source){
-  assert(Buffer.isBuffer(bytes));const qualification=JSON.parse(bytes);assert.equal(qualification.status,QUAL_STATUS);
-  assert.equal(qualification.base,'fd9127d8a7bb04ca191caf4ba83a512aa542004b');
-  assert.equal(qualification.sourceFrozen,true);assert.equal(qualification.allOldSourcesUnchanged,true);
+function validateQualificationProfile(qualification,record){
+  if(record&&authRecordVersion(record)===2){
+    assert.equal(qualification.status,AUTH_JIRA_V2_QUAL_STATUS);assert.equal(qualification.base,'d123032cc46b5fc08fa524615e090c3fe8f3f313');
+    assert.equal(qualification.allOtherSourcesUnchanged,true);assert.equal(qualification.oldHostV1Unchanged,true);
+    assert.deepEqual(qualification.changedExistingSourcePaths,AUTH_JIRA_V2_EXISTING_DELTA);
+    assert.deepEqual(qualification.addedSourcePaths,AUTH_JIRA_V2_NEW_FILES);
+    assert.equal(qualification.jiraV2HumanAuthority.sha256,AUTH_JIRA_V2_HUMAN_SHA256);
+    assert.equal(qualification.previousQualification.sha256,'cb9f78025bac81377b81f0961701241520304d3e49aa03ee165b4047e36154c0');
+  }else{
+    assert.equal(qualification.status,QUAL_STATUS);assert.equal(qualification.base,'fd9127d8a7bb04ca191caf4ba83a512aa542004b');
+    assert.equal(qualification.allOldSourcesUnchanged,true);
+  }
+}
+export function validateAuthSourceQualification(bytes,source,record){
+  assert(Buffer.isBuffer(bytes)&&bytes.length<=20971520);const qualification=JSON.parse(bytes);validateQualificationProfile(qualification,record);
+  assert.equal(qualification.sourceFrozen,true);
   for(const key of ['sdkCalls','nativeCalls','productionSqlQueries','dockerCalls']){assert.equal(qualification[key],0);}
   assert.equal(qualification.oldUnknownAndClosedClaimsUnchanged,true);assert.equal(qualification.newRunCapacityArmed,false);
   assert.equal(qualification.rootTotals.fail,0);assert.equal(qualification.rootTotals.cancelled,0);assert.equal(qualification.rootTotals.skipped,3);
@@ -60,6 +74,7 @@ function finalInvariants(input,authority,source){
   assert.equal(byteHash(jiraBytes),authority.receipt.jiraObservationSha256);validateAuthHumanAndQualification({record,humanAuthorityBytes,qualificationBytes});
   assert.equal(byteHash(readPoolPrivateFile(HUMAN)),AUTH_HUMAN_SHA256);historicalGuard();reusableEvidenceGuard(consumerInputs);
   validateSdkCacheClarification(readPoolPrivateFile(AUTH_ONLY_EVIDENCE_DIRECTORY+'/HUMAN-SDK-STANDARD-CACHE-AUTHORITY.json'));
+  if(authRecordVersion(record)===2)validateJiraV2HumanAuthority(input.jiraV2HumanAuthorityBytes);
   for(const file of source.files){assert.equal(byteHash(readPoolPrivateFile(path.join(root,file.path))),file.sha256,'AUTH_LOCAL_SOURCE_DRIFT');}
   assert.equal(byteHash(readPoolPrivateFile(path.join(root,'scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs'))),AUTH_FACTORY_SHA256);
   assertAuthorityCurrent(authority,epoch());
@@ -73,35 +88,49 @@ const outcome=(state,extra={})=>({schemaVersion:1,kind:'GENERAL_COMPLETE_AUTH_ON
 // governance, resource or mode callback. The real SDK path is built only after
 // concrete protected source/Jira/lease verification and the AUTH-only wx intent.
 async function executeAuthOnlyAttempt(steps){
-  let intentCreated=false,report;
+  let intentCreated=false,report,stage='AUTH_PREPARE';
   try{
-    const authority=await steps.prepare();steps.intent(authority);intentCreated=true;
-    report=await steps.authenticate(authority);steps.revalidate(authority);
+    const authority=await steps.prepare();stage='AUTH_INTENT';steps.intent(authority);intentCreated=true;
+    stage='AUTH_SDK';report=await steps.authenticate(authority);stage='AUTH_FINAL_REVALIDATION';steps.revalidate(authority);
     const result=outcome(report.authenticationChainValidated?'AUTH_ONLY_COMPLETE_NO_RUN_AUTHORITY':'AUTH_ONLY_TERMINAL_STOP',{
       authority:authority.receipt,authentication:report,tokenReferencesReleased:true,physicalStringErasureAsserted:false,
       sourceAndClosedEvidenceRevalidatedAfterTrial:true,nextRequired:'SEPARATE_RUN_AUTHORITY_AND_QUALIFIED_RIGHTS_RESOURCE_ADAPTER'});
-    steps.finish(result);return result;
-  }catch{
+    stage='AUTH_FIN_PERSISTENCE';steps.finish(result);return result;
+  }catch(error){
     const result=outcome(intentCreated?'AUTH_ONLY_ATTEMPT_CLOSED_INCOMPLETE':'AUTH_ONLY_REFUSED_BEFORE_ATTEMPT',{
       failureCode:intentCreated?'AUTH_ONLY_FINAL_REVALIDATION_OR_PERSISTENCE_REFUSED':'AUTH_ONLY_INPUT_GOVERNANCE_OR_ALREADY_CONSUMED_REFUSED',
-      authentication:report??null,tokenReferencesReleased:true,physicalStringErasureAsserted:false});
+      refusal:authRefusalDiagnostic(error,stage),authentication:report??null,tokenReferencesReleased:true,physicalStringErasureAsserted:false});
     if(intentCreated){try{steps.stop(result);}catch{result.evidencePersistenceFailed=true;}}return result;
   }
 }
+async function prepareAuthOnly(input){
+  authGuard('AUTH_INPUTS',()=>{
+    const fields=['root','record','jiraBytes','humanAuthorityBytes','qualificationBytes','consumerInputs'];
+    dataFields(input,Object.hasOwn(input,'jiraV2HumanAuthorityBytes')?[...fields,'jiraV2HumanAuthorityBytes']:fields);
+    assert.equal(Object.hasOwn(input,'jiraV2HumanAuthorityBytes'),authRecordVersion(input.record)===2);
+  });
+  const {root,record,jiraBytes,humanAuthorityBytes,qualificationBytes,consumerInputs}=input;
+  authGuard('AUTH_ENVIRONMENT',()=>{assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);});
+  authGuard('AUTH_RECORD',()=>validateAuthOnlyRecord(record,epoch()));
+  authGuard('AUTH_HUMAN_QUALIFICATION',()=>validateAuthHumanAndQualification({record,humanAuthorityBytes,qualificationBytes}));
+  if(authRecordVersion(record)===2)authGuard('AUTH_JIRA_V2_HUMAN',()=>validateJiraV2HumanAuthority(input.jiraV2HumanAuthorityBytes));
+  authGuard('AUTH_QUALIFICATION',()=>validateAuthSourceQualification(qualificationBytes,record.source,record));
+  authGuard('AUTH_GLOBAL_LOCK',()=>{canonicalDirectory(AUTH_ONLY_EVIDENCE_DIRECTORY);assert(!fs.existsSync(path.join(AUTH_ONLY_EVIDENCE_DIRECTORY,'AUTH-ONLY-ATTEMPT-INTENT.json')),'AUTH_ONLY_ATTEMPT_ALREADY_CONSUMED');});
+  authGuard('AUTH_HISTORICAL_BOUNDARIES',historicalGuard);authGuard('AUTH_REUSABLE_INPUTS',()=>reusableEvidenceGuard(consumerInputs));
+  const source=authGuard('AUTH_LOCAL_SOURCE',()=>{const value=localSource(root,record);assert.deepEqual(value,{...record.source,clean:true});return value;});
+  const github=createReadOnlyGithubReader();
+  const authority=await authorizeAuthOnlyPreflight({github,record,jiraBytes,humanAuthorityBytes,qualificationBytes,jiraV2HumanAuthorityBytes:input.jiraV2HumanAuthorityBytes,localSource:source,clock:epoch});
+  const guard=()=>authGuard('AUTH_FINAL_REVALIDATION',()=>finalInvariants(input,authority,source));guard();return{authority,guard};
+}
+// Same preparation as the actual entry, without AUTH intent, SDK or resource client.
+export async function inspectProspectiveAuthOnlyReadiness(input){
+  try{const {authority}=await prepareAuthOnly(input);return outcome('AUTH_ONLY_READINESS_VALIDATED_NOT_ATTEMPTED',{authority:authority.receipt,authentication:null,authIntentCreated:false,sdkCommands:0});}
+  catch(error){return outcome('AUTH_ONLY_READINESS_REFUSED_BEFORE_ATTEMPT',{refusal:authRefusalDiagnostic(error),authentication:null,authIntentCreated:false,sdkCommands:0});}
+}
 export async function runProspectiveAuthPreflightV2(input){
   let guard;
-  const steps={async prepare(){
-    dataFields(input,['root','record','jiraBytes','humanAuthorityBytes','qualificationBytes','consumerInputs']);
-    const {root,record,jiraBytes,humanAuthorityBytes,qualificationBytes,consumerInputs}=input;
-    assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);
-    validateAuthOnlyRecord(record,epoch());validateAuthHumanAndQualification({record,humanAuthorityBytes,qualificationBytes});
-    validateAuthSourceQualification(qualificationBytes,record.source);canonicalDirectory(AUTH_ONLY_EVIDENCE_DIRECTORY);
-    const intentPath=path.join(AUTH_ONLY_EVIDENCE_DIRECTORY,'AUTH-ONLY-ATTEMPT-INTENT.json');assert(!fs.existsSync(intentPath),'AUTH_ONLY_ATTEMPT_ALREADY_CONSUMED');
-    historicalGuard();reusableEvidenceGuard(consumerInputs);const source=localSource(root,record);assert.deepEqual(source,{...record.source,clean:true});
-    const github=createReadOnlyGithubReader();
-    const authority=await authorizeAuthOnlyPreflight({github,record,jiraBytes,humanAuthorityBytes,qualificationBytes,localSource:source,clock:epoch});
-    guard=()=>finalInvariants(input,authority,source);guard();return authority;
-  },intent(authority){
+  const steps={async prepare(){const prepared=await prepareAuthOnly(input);guard=prepared.guard;return prepared.authority;},intent(authority){
+    guard();
     const {record}=input;const intentPath=path.join(AUTH_ONLY_EVIDENCE_DIRECTORY,'AUTH-ONLY-ATTEMPT-INTENT.json');
     durableNew(intentPath,{schemaVersion:1,kind:'ONE_AUTH_ONLY_ATTEMPT_INTENT_NOT_A_RUN_CLAIM',at:new Date(epoch()).toISOString(),
       authorityRecordSha256:digest(record),humanAuthorityReceiptSha256:AUTH_HUMAN_SHA256,sdkCacheClarificationSha256:AUTH_SDK_CACHE_HUMAN_SHA256,driverCommit:record.source.commit,
