@@ -129,11 +129,19 @@ const AUDITED_POWERSHELL_MODULE_PATHS = new Set([
   "scripts/telephony-agent/package-notices.psm1",
   "scripts/telephony-agent/tests/windows-fixture-guards.psm1",
 ]);
+// Two non-executable historical source comparators, not a blanket .txt rule.
+// This path-only classification is not a content/hash attestation; their bytes
+// and the historical source closure remain checked by the consuming tests.
+const AUDITED_RAW_SOURCE_COMPARATOR_PATHS = new Set([
+  "scripts/ci/runtime-image-only/fixtures/c389-local-source.mjs.fixture.txt",
+  "scripts/ci/runtime-image-only/fixtures/c389-operational-forward-cli-v2.mjs.fixture.txt",
+]);
 const TOOLING_ROOT_FILES = new Set(["package.json", "package-lock.json", "release-manifest.json", "eslint.config.mjs",
   ".gitattributes", ".gitignore", ".dockerignore", ".npmrc", "sonar-project.properties"]);
 
 function auditedToolingPath(path) {
   if (AUDITED_POWERSHELL_MODULE_PATHS.has(path)) return true;
+  if (AUDITED_RAW_SOURCE_COMPARATOR_PATHS.has(path)) return true;
   const segments = path.split("/");
   if (["scripts", "infra", ".github"].includes(segments[0]) && /^[A-Za-z0-9_./-]+$/.test(path)) {
     return TOOLING_EXTENSIONS.has(path.split(".").at(-1));
