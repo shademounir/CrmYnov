@@ -1,9 +1,10 @@
 // Pure fake ports only. No SDK, native call, SQL, token, persistent claim or sleep.
 import test from 'node:test';import assert from 'node:assert/strict';
+import path from 'node:path';
 import {simulateImageForwardSequenceV2,IMAGE_FORWARD_SEQUENCE_RULES_V2} from './operational-forward-sequence-v2.mjs';
 import {IMAGE_PREPARATION_RULES_SHA256_V2} from './late-binding-v2.mjs';
 const H='a'.repeat(64),PLAN='b'.repeat(64),DOSSIER='c'.repeat(64),START=Date.parse('2026-10-30T12:00:00.000Z');
-const ref=name=>({path:'C:/synthetic/'+name+'.json',sha256:H}),stages=['BACKUP','API_IMAGE','WEB_IMAGE'];
+const ref=name=>({path:path.resolve('synthetic',name+'.json'),sha256:H}),stages=['BACKUP','API_IMAGE','WEB_IMAGE'];
 function fixture(){
   let clock=START,closed=false,released=false,stopped=false,stopCode=null,sqlFin=null,readinessChange=p=>p,finalChange=p=>p,preexisting=null;
   const calls=[],saved=[],pauses=[],states=new Map(stages.map(s=>[s,{state:'UNUSED',rows:[]}])),running=new Map(),failures=new Map(),fakeNativeFin=new Map(),nativeAt=new Map();

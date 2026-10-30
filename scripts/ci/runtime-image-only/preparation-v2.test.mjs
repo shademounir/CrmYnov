@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {resolve as resolvePath} from 'node:path';
 import {prepareImagePostReadiness} from './post-preservation.mjs';
 import {fixture as postFixture} from './post-preservation-fixtures.mjs';
 import {IMAGE_GENERAL_BINDING_V2} from './late-binding-v2.mjs';
@@ -13,7 +14,7 @@ import {IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2} from './rollback-plan.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
 import {OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from './late-binding-v2.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex'),H='a'.repeat(64);
-function store(){const files=new Map();return{files,read:p=>files.get(p),save(name,value){const bytes=Buffer.from(JSON.stringify(value)),path='C:/synthetic/'+name+'.json';files.set(path,bytes);return{path,sha256:hash(bytes)};}};}
+function store(){const files=new Map();return{files,read:p=>files.get(p),save(name,value){const bytes=Buffer.from(JSON.stringify(value)),path=resolvePath('synthetic',name+'.json');files.set(path,bytes);return{path,sha256:hash(bytes)};}};}
 function generalFixture(){
   const s=store(),now=Date.parse('2026-10-30T12:00:00.000Z'),completed=new Date(now-1000).toISOString().replace('Z','000Z');
   const execution=IMAGE_GENERAL_BINDING_V2.job+'/executions/crm-prod-preservation-pre-20261028-147f390728-synthetic',operation='projects/crmynov-prod-n7x4q2/locations/europe-west1/operations/synthetic';
