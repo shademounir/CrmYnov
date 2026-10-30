@@ -1,9 +1,12 @@
 // A protected reviewed preparation receipt, not a local boolean or an empty catalog.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {validateImagePreparationV2} from './preparation-v2.mjs';
 const hash=/^[a-f0-9]{64}$/u;
 const kinds=['POOL','LEDGER','GENERAL','PERMISSIONS','JOB_INVENTORY','RECOVERABILITY','ROLLBACK'];
-export function validateImagePreparation({bytes,entry,dossier,readEvidence,now}){
+export function validateImagePreparation(input){
+  if(input.entry?.schemaVersion===2){return validateImagePreparationV2(input);}
+  const {bytes,entry,dossier,readEvidence,now}=input;
   assert(Buffer.isBuffer(bytes)&&bytes.length<=1048576);assert.equal(typeof readEvidence,'function');
   const sha=b=>createHash('sha256').update(b).digest('hex');
   assert.equal(sha(bytes),entry.preparationReceiptSha256);assert.equal(sha(bytes),dossier.preparationReceiptSha256);

@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {imageJournalDigest as digest,inspectImageTransaction} from './journal.mjs';
 import {imageExternalDirectory} from './local-source.mjs';
 import {validateRc48ServiceImagePlanDraft,LOCATION} from './plan.mjs';
+import {IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2} from './rollback-plan.mjs';
 
 const stages=['BACKUP','API_IMAGE','WEB_IMAGE'],sha=/^[a-f0-9]{64}$/u;
 function jsonFile(file,readFile){
@@ -36,17 +37,19 @@ function stageEvidence(stage,journal,binding,receipts,readFile){
   return row;
 }
 export function readImageRollbackContext(descriptor,candidate,readFile){
-  assert.equal(typeof readFile,'function');assert.equal(descriptor.schemaVersion,1);
+  assert.equal(typeof readFile,'function');assert([1,2].includes(descriptor.schemaVersion),'EXPLICIT_ROLLBACK_DESCRIPTOR_VERSION');const operational=descriptor.schemaVersion===2;
   assert.match(descriptor.forwardObjectiveId,/^rc48-image-only-[a-z0-9-]{8,80}$/u);
   assert.match(descriptor.forwardSourceHead,/^[a-f0-9]{40}$/u);
-  assert.deepEqual(Object.keys(descriptor.files).sort((a,b)=>a.localeCompare(b,'en')),['baseline','dossier','plan']);
+  assert.deepEqual(Object.keys(descriptor.files).sort((a,b)=>a.localeCompare(b,'en')),operational?['baseline','completionContext','dossier','plan']:['baseline','dossier','plan']);
   assert(Object.keys(descriptor.receipts).every(k=>stages.includes(k)));
   const journal=imageExternalDirectory(descriptor.forwardJournalDirectory);
   const forwardPlan=pinnedFile(descriptor.files.plan,readFile),dossier=pinnedFile(descriptor.files.dossier,readFile),originalBaseline=pinnedFile(descriptor.files.baseline,readFile);
   assert.equal(dossier.id,descriptor.forwardObjectiveId);assert.deepEqual(dossier.candidate,candidate);
   validateRc48ServiceImagePlanDraft(forwardPlan,candidate,originalBaseline,Date.parse(forwardPlan.baselineObservedAt));
+  if(operational){assert.equal(forwardPlan.readOnlyPreparationVersion,2,'ROLLBACK_V2_REQUIRES_REVIEWED_COLLECTOR_V2');assert.equal(descriptor.rollbackCompletionRulesSha256,IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2);}else{assert.equal(forwardPlan.readOnlyPreparationVersion,undefined,'V2_FORWARD_REQUIRES_EXPLICIT_ROLLBACK_DESCRIPTOR_V2');}
   const binding={objectiveId:descriptor.forwardObjectiveId,objectiveSha256:digest(dossier),planSha256:digest(forwardPlan),sourceHead:descriptor.forwardSourceHead};
   const evidence=Object.fromEntries(stages.map(stage=>[stage,stageEvidence(stage,journal,binding,descriptor.receipts,readFile)]));
   assert.equal(evidence.BACKUP.state,'FIN_NO_REPLAY');assert.equal(evidence.BACKUP.outcome,'SUCCEEDED');
-  return{forwardPlan,originalBaseline,forwardObjectiveId:descriptor.forwardObjectiveId,forwardDossierSha256:digest(dossier),originalJournalDirectory:journal,forwardEvidence:{planSha256:binding.planSha256,sourceHead:binding.sourceHead,stages:evidence}};
+  const completionContext=operational?pinnedFile(descriptor.files.completionContext,readFile):undefined;
+  return{...(operational?{schemaVersion:2,completionContext,completionContextSha256:digest(completionContext),completionContextEvidence:structuredClone(descriptor.files.completionContext),rollbackCompletionRulesSha256:IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2}:{}),forwardPlan,originalBaseline,forwardObjectiveId:descriptor.forwardObjectiveId,forwardDossierSha256:digest(dossier),originalJournalDirectory:journal,forwardEvidence:{planSha256:binding.planSha256,sourceHead:binding.sourceHead,stages:evidence}};
 }

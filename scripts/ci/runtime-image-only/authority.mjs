@@ -10,15 +10,19 @@ import {imageJournalDigest as digest} from './journal.mjs';
 import {PROJECT} from './plan.mjs';
 import {validateImagePlan,imagePlanScope,isImageRollback} from './plan-mode.mjs';
 import {verifyImagePreparationOrigins} from './preparation-origins.mjs';
+import {validateLateBoundImageObjective,validateImageMarkerV2} from './late-binding-v2.mjs';
+import {resolveImageCatalogueReviewV2} from './catalogue-origin-v2.mjs';
 
 export const IMAGE_CATALOG='docs/governance/runtime-image-only-objectives-v1.json';
 export const IMAGE_SCOPE='RC48_SERVICE_IMAGE_ONLY_V1';
 const repo='shademounir/CrmYnov',base='/repos/'+repo+'/',main='8253024ea35cee6be5636cc6b10a88ae7e177377';
 const hash=/^[a-f0-9]{64}$/u,sha=/^[a-f0-9]{40}$/u;
 const actions=new Set(['READ_METADATA','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION']);
+export {authorizeImageInventory,validateImageInventoryObjective,validateImageInventoryMarker} from './inventory-authority-v2.mjs';
 const byteHash=b=>createHash('sha256').update(b).digest('hex');
 
-export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline,rollbackContext,source,action,now}){
+export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline,rollbackContext,source,action,preparationPhase,now}){
+  if(entry?.schemaVersion===2){return validateLateBoundImageObjective(entry,{id,dossier,plan,candidate,baseline,rollbackContext,source,action,preparationPhase,now});}
   assert.equal(entry?.schemaVersion,1);assert.equal(entry.id,id);assert.match(id,/^rc48-image-only-[a-z0-9-]{8,80}$/u);
   assert.equal(entry.status,'approved');assert.equal(entry.scope,imagePlanScope(plan));assert.equal(entry.ticket,'CRMY-63');
   assert.equal(entry.project,PROJECT);assert.equal(entry.googleAccount,'casablancaynovcampus@gmail.com');
@@ -52,7 +56,8 @@ export function validateImageObjective(entry,{id,dossier,plan,candidate,baseline
   return true;
 }
 
-export function validateImageOperationalMarker(comments,{actors,entry,dossier,plan,source,jiraBytes,grant,actor,action,now}){
+export function validateImageOperationalMarker(comments,{actors,entry,dossier,plan,source,jiraBytes,grant,actor,action,preparationPhase,now}){
+  if(entry?.schemaVersion===2){return validateImageMarkerV2(comments,{actors,entry,dossier,plan,source,jiraBytes,grant,actor,action,now,preparationPhase},grantDigest(grant),byteHash);}
   const prefix='<!-- codex-runtime-image-authorization:v1';
   const rows=comments.filter(c=>actors.includes(c.user?.login)&&c.user.type==='User'&&typeof c.body==='string'&&c.body.includes(prefix)).sort((a,b)=>b.id-a.id);
   assert(rows.length>0,'FRESH_IMAGE_OPERATIONAL_MARKER_REQUIRED');const comment=rows[0];
@@ -75,7 +80,7 @@ export function validateImageOperationalMarker(comments,{actors,entry,dossier,pl
   return {commentId:comment.id,jira,expiresAt:Math.min(expires,issued+600000,Date.parse(jira.observedAt)+600000,Date.parse(entry.expiresAt)),planSha256:value.planSha256};
 }
 
-async function verifyRollbackOrigin(github,catalog,entry,context,authorization){
+async function verifyRollbackOrigin(github,catalog,entry,context,authorization,revision){
   const rows=catalog.entries.filter(e=>e.id===context.forwardObjectiveId);assert.equal(rows.length,1,'PROTECTED_FORWARD_OBJECTIVE_REQUIRED');
   const forward=rows[0];assert.equal(forward.status,'approved');assert.equal(forward.scope,IMAGE_SCOPE);
   assert.equal(digest(forward),entry.forwardCatalogEntrySha256);assert.equal(forward.dossierSha256,context.forwardDossierSha256);
@@ -83,28 +88,33 @@ async function verifyRollbackOrigin(github,catalog,entry,context,authorization){
   assert.equal(forward.journalDirectorySha256,byteHash(context.originalJournalDirectory));
   const originalSource={commit:forward.driver.mergeCommit,tree:forward.driver.tree,clean:true,files:forward.driver.files};
   await verifySource(github,originalSource,forward);
-  const objectivePull=await github.get(base+'pulls/'+forward.objectiveReview.pr);
-  const objectiveRef={pr:forward.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
+  const objectiveRef=await resolveObjectiveReview(github,forward,revision);
   await Promise.all([approvedMerge(github,forward.driver,{...authorization,base:'develop'}),approvedMerge(github,objectiveRef,{...authorization,base:'develop'})]);
   const protectedCatalog=JSON.parse(await githubFile(github,IMAGE_CATALOG,objectiveRef.mergeCommit));
   assert.equal(digest(protectedCatalog.entries.filter(e=>e.id===forward.id)),digest([forward]));
 }
+async function resolveObjectiveReview(github,entry,revision){
+  if(entry.schemaVersion===2){return resolveImageCatalogueReviewV2(github,{descriptor:entry.objectiveReview,revision});}
+  const pull=await github.get(base+'pulls/'+entry.objectiveReview.pr);
+  return{pr:entry.objectiveReview.pr,head:pull.head.sha,mergeCommit:pull.merge_commit_sha};
+}
 export async function authorizeImageOnlyDriver(input){
   const {github,objectiveId,dossier,plan,candidate,baseline,rollbackContext,localSource:source,action,clock=Date.now}=input;
-  const started=clock();assert(Number.isSafeInteger(started));assert(actions.has(action));
+  const started=clock();assert(Number.isSafeInteger(started));assert(actions.has(action)||action==='TEST_PERMISSIONS');
   const user=await github.get('/user');assert.equal(user.type,'User');const actor=user.login;
   const branch=await github.get(base+'branches/develop'),revision=branch.commit.sha;assert(sha.test(revision)&&branch.protected);
   const protection=await github.get(base+'branches/develop/protection');assert(protection.enforce_admins.enabled&&protection.required_status_checks.strict&&protection.required_conversation_resolution.enabled);
   assert(protection.required_status_checks.contexts.includes('pr-policy'));assert(!protection.allow_force_pushes.enabled&&!protection.allow_deletions.enabled);
   const grant=JSON.parse(await githubFile(github,GRANT_PATH,revision));validateGrant(grant,{repository:repo,actor,base:'develop',reasons:['production','audited-repository-tooling']});
   assert.equal(grant.id,'crm-ynov-po-delegation-20261001');const policyBytes=await githubFile(github,GITHUB_CODE_REVIEW_POLICY_PATH,revision);validateProtectedCodeReviewPolicy(JSON.parse(policyBytes),repo);
-  const catalog=JSON.parse(await githubFile(github,IMAGE_CATALOG,revision));assert.equal(catalog.schemaVersion,1);assert(Array.isArray(catalog.entries)&&catalog.entries.length>0&&catalog.entries.length<=100);
+  const catalog=JSON.parse(await githubFile(github,IMAGE_CATALOG,revision));assert([1,2].includes(catalog.schemaVersion));assert(Array.isArray(catalog.entries)&&catalog.entries.length>0&&catalog.entries.length<=100);
   const entries=catalog.entries.filter(e=>e.id===objectiveId);assert.equal(entries.length,1,'PROTECTED_CONCRETE_IMAGE_OBJECTIVE_REQUIRED');const entry=entries[0];
-  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,rollbackContext,source,action,now:started});await verifySource(github,source,entry);
-  if(isImageRollback(plan)){await verifyRollbackOrigin(github,catalog,entry,rollbackContext,{grant,actor});}
-  const objectivePull=await github.get(base+'pulls/'+entry.objectiveReview.pr);const objectiveRef={pr:entry.objectiveReview.pr,head:objectivePull.head.sha,mergeCommit:objectivePull.merge_commit_sha};
+  assert.equal(catalog.schemaVersion,entry.schemaVersion,'EXPLICIT_IMAGE_CATALOGUE_VERSION_REQUIRED');
+  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,rollbackContext,source,action,preparationPhase:input.preparationPhase,now:started});await verifySource(github,source,entry);
+  if(isImageRollback(plan)){await verifyRollbackOrigin(github,catalog,entry,rollbackContext,{grant,actor},revision);}
+  const objectiveRef=await resolveObjectiveReview(github,entry,revision);
   const [driver,objective]=await Promise.all([approvedMerge(github,entry.driver,{grant,actor,base:'develop'}),approvedMerge(github,objectiveRef,{grant,actor,base:'develop'})]);
-  await verifyImagePreparationOrigins(github,candidate,{revision,grant,actor,now:started,driver});
+  await verifyImagePreparationOrigins(github,candidate,{revision,grant,actor,now:started,driver,readEvidence:input.readEvidence,protectedSource:source});
   assert(objective.files.some(f=>f.filename===IMAGE_CATALOG));const approved=JSON.parse(await githubFile(github,IMAGE_CATALOG,objectiveRef.mergeCommit));assert.equal(digest(approved.entries.filter(e=>e.id===objectiveId)),digest([entry]));
   await Promise.all([source.commit,objectiveRef.mergeCommit].map(async commit=>{const comparison=await github.get(base+'compare/'+commit+'...'+revision);assert.equal(comparison.merge_base_commit.sha,commit);assert(['ahead','identical'].includes(comparison.status));}));
   const mainBranch=await github.get(base+'branches/main');assert.equal(mainBranch.commit.sha,main);assert(mainBranch.protected);
@@ -112,10 +122,11 @@ export async function authorizeImageOnlyDriver(input){
   const release=await github.get(base+'releases/tags/v0.1.0-rc.48');assert.equal(release.id,424492409);assert.equal(release.draft,false);assert.equal(release.prerelease,true);
   const tag=await github.get(base+'git/ref/tags/v0.1.0-rc.48');assert.equal(tag.object.type,'commit');assert.equal(tag.object.sha,main);
   const post=await github.get(base+'actions/runs/'+entry.release.postPublishRun);assert.equal(post.head_sha,main);assert.equal(post.event,'release');assert.equal(post.path,'.github/workflows/release-publish.yml');assert.equal(post.status,'completed');assert.equal(post.conclusion,'success');
-  const args={actors:grant.authenticatedActors,entry,dossier,plan,source,jiraBytes:input.jiraBytes,grant,actor,action};
+  const args={actors:grant.authenticatedActors,entry,dossier,plan,source,jiraBytes:input.jiraBytes,grant,actor,action,preparationPhase:input.preparationPhase};
   validateImageOperationalMarker(objective.comments,{...args,now:started});assert.equal((await github.get(base+'branches/develop')).commit.sha,revision);
   const now=clock();assert(Number.isSafeInteger(now)&&now>=started&&now-started<60000);
-  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,rollbackContext,source,action,now});const marker=validateImageOperationalMarker(objective.comments,{...args,now});
+  validateImageObjective(entry,{id:objectiveId,dossier,plan,candidate,baseline,rollbackContext,source,action,preparationPhase:input.preparationPhase,now});const marker=validateImageOperationalMarker(objective.comments,{...args,now});
   const authority={entry:{...structuredClone(entry),objectiveId,planSha256:marker.planSha256},receipt:{schemaVersion:1,executor:'Codex',actor,authorityRevision:revision,grantDigest:grantDigest(grant),objectiveId,catalogEntrySha256:digest(entry),dossierSha256:digest(dossier),planSha256:marker.planSha256,driverCommit:source.commit,driverPr:driver.pull.number,objectivePr:objectiveRef.pr,operationalCommentId:marker.commentId,codeReviewRequired:false,codeReviewPolicySha256:byteHash(policyBytes),verifiedAt:new Date(now).toISOString(),expiresAt:new Date(marker.expiresAt).toISOString(),businessMutationAuthorized:false,runtimeImageMutationAuthorized:true}};
+  if(entry.schemaVersion===2){const fields={authorityRecordSha256:digest(entry),resourceBindingSha256:digest(entry.resourceBindings),scope:entry.scope,project:entry.project,region:entry.region,validFrom:entry.validFrom,preparationPhase:input.preparationPhase};Object.assign(authority.entry,fields);Object.assign(authority.receipt,fields,{schemaVersion:2,authorizedActions:marker.authorizedActions,allowedPreparationPhases:marker.allowedPreparationPhases,operationalMarkerSha256:marker.markerSha256,operationalMarkerUpdatedAt:marker.markerUpdatedAt,operationalMarkerObservationSha256:digest(marker.markerObservation)});authority.operationalMarkerObservation=structuredClone(marker.markerObservation);}
   assertAuthorityCurrent(authority,now);return Object.freeze(authority);
 }
