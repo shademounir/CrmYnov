@@ -37,7 +37,7 @@ class AuthOnlyJiraEvidenceError extends Error{
 // Never project a foreign error's message/body or an unrecognized code.
 export function diagnosticAuthOnlyJiraRefusal(error){return error instanceof AuthOnlyJiraEvidenceError?Object.freeze({code:error.code,stage:error.stage}):null;}
 function requireFact(condition,code,stage){if(!condition)throw new AuthOnlyJiraEvidenceError(code,stage);}
-function atStage(stage,code,operation){try{return operation();}catch(error){if(error instanceof AuthOnlyJiraEvidenceError)throw error;throw new AuthOnlyJiraEvidenceError(code,stage);}}
+function atStage(stage,code,operation){try{return operation();}catch(error){if(error instanceof AuthOnlyJiraEvidenceError){throw error;}throw new AuthOnlyJiraEvidenceError(code,stage);}}
 function exact(value,fields,stage){atStage(stage,'AUTH_JIRA_V2_FIELDS',()=>dataFields(value,fields));}
 function plainJsonData(value,depth=0){
   assert(depth<=40,'JSON_DEPTH_BOUND');
@@ -47,7 +47,7 @@ function plainJsonData(value,depth=0){
   const descriptors=Object.getOwnPropertyDescriptors(value);assert(Object.values(descriptors).every(d=>Object.hasOwn(d,'value')));
   if(Array.isArray(value)){
     assert.equal(Object.getPrototypeOf(value),Array.prototype);assert.equal(Object.keys(value).length,value.length);
-    assert(Object.keys(value).every((key,index)=>key===String(index)));for(const item of value)plainJsonData(item,depth+1);return;
+    assert(Object.keys(value).every((key,index)=>key===String(index)));for(const item of value){plainJsonData(item,depth+1);}return;
   }
   assert.equal(Object.getPrototypeOf(value),Object.prototype);assert(Object.values(descriptors).every(d=>d.enumerable));
   for(const item of Object.values(value))plainJsonData(item,depth+1);
@@ -107,7 +107,7 @@ function tenantResponse(value){
   requireFact(value.resources.filter(r=>r.cloudId===NATIVE_JIRA_BINDING.cloudId&&r.url===AUTH_JIRA_EXPECTED_BINDINGS.tenantUrl).length===1,'AUTH_JIRA_V2_TENANT','TENANT');
 }
 function text(value,max){return typeof value==='string'&&value.length>0&&value.length<=max&&!/[\u0000-\u001f]/u.test(value);}
-function edge(value){if(value===null)return;exact(value,['key','status'],'TICKET');requireFact(/^CRMY-[1-9]\d{0,7}$/u.test(value.key)&&text(value.status,80),'AUTH_JIRA_V2_LINKS','TICKET');}
+function edge(value){if(value===null){return;}exact(value,['key','status'],'TICKET');requireFact(/^CRMY-[1-9]\d{0,7}$/u.test(value.key)&&text(value.status,80),'AUTH_JIRA_V2_LINKS','TICKET');}
 function dependencies(links){
   requireFact(Array.isArray(links)&&links.length<=100,'AUTH_JIRA_V2_LINKS','TICKET');
   for(const link of links){
