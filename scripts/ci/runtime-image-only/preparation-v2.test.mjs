@@ -5,14 +5,13 @@ import {createHash} from 'node:crypto';
 import {resolve as resolvePath} from 'node:path';
 import {prepareImagePostReadiness} from './post-preservation.mjs';
 import {fixture as postFixture} from './post-preservation-fixtures.mjs';
-import {IMAGE_GENERAL_BINDING_V2} from './late-binding-v2.mjs';
+import {IMAGE_GENERAL_BINDING_V2,OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from './late-binding-v2.mjs';
 import {CONSUMER_PINS} from '../pool-reconciliation/general-prospective-pre-authority-v1.mjs';
 import {makeImageStaticPostContractV2,bindImageLivePostReadinessV2,validateImageGeneralPreEvidenceV2,validateImagePreparationV2,simulateImageIndependentEvidenceV2,validateImageIndependentEvidenceV2} from './preparation-v2.mjs';
 import {operationalPreparationFixtureV2} from './operational-preparation-fixtures-v2.mjs';
 import {makeRc48ServiceImagePlanDraft} from './plan.mjs';
 import {IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2} from './rollback-plan.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
-import {OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from './late-binding-v2.mjs';
 const hash=b=>createHash('sha256').update(b).digest('hex'),H='a'.repeat(64);
 function store(){const files=new Map();return{files,read:p=>files.get(p),save(name,value){const bytes=Buffer.from(JSON.stringify(value)),path=resolvePath('synthetic',name+'.json');files.set(path,bytes);return{path,sha256:hash(bytes)};}};}
 function generalFixture(){
@@ -70,7 +69,7 @@ function independentFixture(){
   const pool=add('POOL',{syntheticOnly:true});pins.POOL=pool.sha256;
   const ledger=add('LEDGER',{status:'NEW_ACTUAL_LEDGER_56_AND_BUSINESS_SCHEMA_MATCH_PROTECTED_RC48',sameSnapshotAsGeneralOrPool:false,activation:false});pins.LEDGER=ledger.sha256;
   const configuration=s.save('configuration',{syntheticOnly:true}),decision=s.save('decision',{noPermissionWrite:true,historicalOriginAuditUnproved:true});
-  const comparison=s.save('comparison',{all49MatchCapturedAndProspectivelyRequalifiedConfiguration:true,noPermissionWrite:true,notCommonSqlSnapshot:true,grants:Array(49).fill({syntheticOnly:true})});
+  const comparison=s.save('comparison',{all49MatchCapturedAndProspectivelyRequalifiedConfiguration:true,noPermissionWrite:true,notCommonSqlSnapshot:true,grants:new Array(49).fill({syntheticOnly:true})});
   Object.assign(consumerPins,{configurationSha256:configuration.sha256,decisionSha256:decision.sha256,currentComparisonSha256:comparison.sha256});
   const permissions=add('PERMISSIONS',{schemaVersion:2,kind:'RC48_PROSPECTIVE_PERMISSION_RULE_READY_V2',configuration,decision,comparison});
   const inventory=add('JOB_INVENTORY',{schemaVersion:2,kind:'RC48_NATIVE_INVENTORY_PINNED_BASELINE_V2',baselineSha256:digest(f.b),baseline:f.b});

@@ -20,7 +20,7 @@ const HASH=/^[a-f0-9]{64}$/u;
 const byteHash=bytes=>createHash('sha256').update(bytes).digest('hex');
 class InventoryRefusal extends Error{constructor(code){super(code);Object.defineProperty(this,'code',{value:code});}}
 function refuse(code){throw new InventoryRefusal(code);}
-function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);const d=Object.getOwnPropertyDescriptors(value);assert(Reflect.ownKeys(d).every(k=>typeof k==='string'&&Object.hasOwn(d[k],'value')));assert.deepEqual(Object.keys(d).sort(),[...keys].sort());}
+function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);const d=Object.getOwnPropertyDescriptors(value);assert(Reflect.ownKeys(d).every(k=>typeof k==='string'&&Object.hasOwn(d[k],'value')));assert.deepEqual(Object.keys(d).sort((a,b)=>a.localeCompare(b,'en')),[...keys].sort((a,b)=>a.localeCompare(b,'en')));}
 function iso(value){assert.equal(typeof value,'string');const time=Date.parse(value);assert(Number.isSafeInteger(time)&&new Date(time).toISOString()===value);return time;}
 export function parseImageInventoryArguments(args){
   try{
@@ -36,13 +36,29 @@ export function validateImageInventoryDirectoryState(journalNames,outputNames){
 function secretRef(value){exact(value,['secret','version']);assert.equal(typeof value.secret,'string');assert.match(value.secret,/^(?:projects\/[a-z0-9-]+\/secrets\/)?[A-Za-z0-9_-]{1,255}$/u);assert.equal(typeof value.version,'string');assert.match(value.version,/^(?:latest|[1-9]\d{0,19})$/u);}
 function publicObject(value){assert(value&&Object.getPrototypeOf(value)===Object.prototype);const d=Object.getOwnPropertyDescriptors(value);assert(Reflect.ownKeys(d).every(k=>typeof k==='string'&&Object.hasOwn(d[k],'value')));return value;}
 function nonempty(value){return value!==null&&value!==undefined&&value!=='';}
-const SECRET_KEY=/^(?:token|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|password|passwd|rootPassword|private[_-]?key|credentials?|authorization|proxy[_-]?authorization|cookies?|api[_-]?key|stdout|stderr|rawPayload)$/iu;
+const SECRET_KEY_PATTERNS=[/^(?:token|password|passwd|rootPassword|credentials?)$/iu,/^(?:authorization|cookies?|stdout|stderr|rawPayload)$/iu,/^(?:access|refresh|id)[_-]?token$/iu,/^(?:client[_-]?secret|private[_-]?key|api[_-]?key|proxy[_-]?authorization)$/iu];
+const isSecretKey=key=>SECRET_KEY_PATTERNS.some(pattern=>pattern.test(key));
 const SECRET_ENV=/(?:^|_)(?:PASSWORD|PASSWD|SECRET|TOKEN|PRIVATE_KEY|API_KEY|CREDENTIALS?|DATABASE_URL|CONNECTION_STRING)(?:_|$)/iu;
+function uriStart(value,separator){
+ let start=separator;while(start>0&&/[A-Za-z0-9+.-]/u.test(value[start-1])){start--;}
+ while(start<separator&&!/[A-Za-z]/u.test(value[start])){start++;}return start;
+}
+function uriEnd(value,start){let end=start;while(end<value.length&&!/[\s<>"']/u.test(value[end])){end++;}return end;}
+function embeddedUrls(value){
+ const urls=[];let cursor=0;
+ while(cursor<value.length){
+  const separator=value.indexOf('://',cursor);if(separator<0){break;}
+  const start=uriStart(value,separator);if(start===separator){cursor=separator+3;continue;}
+  const end=uriEnd(value,separator+3);cursor=end;
+  try{urls.push(new URL(value.slice(start,end)));}catch{/* malformed URI is not an authenticated credential URL */}
+ }
+ return urls;
+}
 function safeString(value){
-  assert(!/-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----/u.test(value));assert(!/\bBearer\s+[A-Za-z0-9._~+\/-]+(?=$|[\s,;])/iu.test(value));
+  assert(!/-----BEGIN (?:[A-Z ]* )?PRIVATE KEY-----/u.test(value));assert(!/\bBearer\s+[a-z0-9._~+/-]+(?=$|[\s,;])/iu.test(value));
   assert(!/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b/u.test(value));
-  for(const match of value.matchAll(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"']+/gu)){
-    let url;try{url=new URL(match[0]);}catch{continue;}assert(!url.username&&!url.password);
+  for(const url of embeddedUrls(value)){
+    assert(!url.username&&!url.password);
     for(const params of [url.searchParams,new URLSearchParams(url.hash.slice(1))]){for(const key of params.keys()){assert(!/^(?:access_token|refresh_token|id_token|client_secret|password|passwd|api_key)$/iu.test(key));}}
   }
 }
@@ -72,7 +88,7 @@ function publicMember(key,value,walk,depth){
   if(key==='secretKeyRef'){secretRef(value);safeString(value.secret);return;}
   if(key==='secret'){publicVolumeSecret(value,walk,depth);return;}
   if(key==='oidcToken'||key==='oauthToken'){publicIdentityConfiguration(key,value,walk,depth);return;}
-  assert(!SECRET_KEY.test(key)||!nonempty(value));
+  assert(!isSecretKey(key)||!nonempty(value));
   if(key==='env'){assert(Array.isArray(value));for(const entry of value){walk(entry,depth+1,'envEntry');}return;}
   walk(value,depth+1,key);
 }

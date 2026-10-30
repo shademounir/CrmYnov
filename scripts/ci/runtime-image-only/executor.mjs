@@ -94,13 +94,48 @@ export function createImageOnlyExecutor({plan,candidate,baseline,rollbackContext
     recordImageOperation(journalDirectory,binding(stage),name,clock());
     return {state:'KNOWN_OPERATION_OBSERVE_ONLY',stage,operation:name,automaticRetryAllowed:false};
   }
-  async function observe(stage){const saved=inspect(stage);assert.equal(saved.state,'KNOWN_OPERATION_OBSERVE_ONLY','ONLY_KNOWN_OPERATION_CAN_BE_OBSERVED');const a=await authority('OBSERVE_OPERATION');const name=saved.rows[1].payload.details.operation,op=stage==='BACKUP'?await transport.getSqlOperation(name):await transport.getRunOperation(name);const done=stage==='BACKUP'?op.status==='DONE':op.done===true;if(!done){return {state:'KNOWN_OPERATION_RUNNING',stage,operation:name,automaticRetryAllowed:false};}
-    const failed=!!op.error;let proof={stage,operation:name,outcome:failed?'FAILED':'SUCCEEDED',nativeResponseSha256:digest(op),at:new Date(clock()).toISOString()};
-    if(!failed&&stage==='BACKUP'){assert.equal(op.operationType,'BACKUP_VOLUME');const backup=await transport.getBackup(String(op.backupContext?.backupId));assert.equal(backup.status,'SUCCESSFUL');assert.equal(backup.type,'ON_DEMAND');assert.equal(backup.instance,sqlInstance);assert(Date.parse(backup.startTime)>=Date.parse(saved.rows[0].payload.at));if(a.entry.schemaVersion===2){const end=Date.parse(backup.endTime);assert(Number.isSafeInteger(end)&&Date.parse(backup.startTime)<=end&&end<=clock(),'ACTUAL_BACKUP_COMPLETION_TIME_REQUIRED');}proof={...proof,backupId:String(backup.id),backupSha256:digest(backup),backupStartTime:backup.startTime,backupEndTime:backup.endTime};}
-    if(!failed&&stage!=='BACKUP'){const kind=stage==='API_IMAGE'?'api':'web',v2=a.entry.schemaVersion===2;proof={...proof,served:await served(kind,v2)};const observed=v2?[proof.served.observedAt]:[];if(!rollingBack&&kind==='web'){const api=await served('api',v2);if(v2){proof.relatedServed={api};observed.push(api.observedAt);}}if(rollingBack&&kind==='api'&&planned('web')){const web=await served('web',v2);if(v2){proof.relatedServed={web};observed.push(web.observedAt);}}if(v2){proof.servedObservedAt=new Date(Math.max(...observed.map(Date.parse))).toISOString();}await preserved(a);}
+  async function completedBackupProof(op,saved,a){
+    assert.equal(op.operationType,'BACKUP_VOLUME');
+    const backup=await transport.getBackup(String(op.backupContext?.backupId));
+    assert.equal(backup.status,'SUCCESSFUL');assert.equal(backup.type,'ON_DEMAND');assert.equal(backup.instance,sqlInstance);
+    assert(Date.parse(backup.startTime)>=Date.parse(saved.rows[0].payload.at));
+    if(a.entry.schemaVersion===2){const end=Date.parse(backup.endTime);assert(Number.isSafeInteger(end)&&Date.parse(backup.startTime)<=end&&end<=clock(),'ACTUAL_BACKUP_COMPLETION_TIME_REQUIRED');}
+    return{backupId:String(backup.id),backupSha256:digest(backup),backupStartTime:backup.startTime,backupEndTime:backup.endTime};
+  }
+  async function completedImageProof(stage,a,proof){
+    const kind=stage==='API_IMAGE'?'api':'web',v2=a.entry.schemaVersion===2;
+    proof={...proof,served:await served(kind,v2)};
+    const observed=v2?[proof.served.observedAt]:[];
+    let relatedKind;
+    if(!rollingBack&&kind==='web'){relatedKind='api';}
+    if(rollingBack&&kind==='api'&&planned('web')){relatedKind='web';}
+    if(relatedKind){const related=await served(relatedKind,v2);if(v2){proof.relatedServed={[relatedKind]:related};observed.push(related.observedAt);}}
+    if(v2){proof.servedObservedAt=new Date(Math.max(...observed.map(Date.parse))).toISOString();}
+    await preserved(a);return proof;
+  }
+  function completedResult(stage,a,proof,receipt){
+    const result={state:'FIN_NO_REPLAY',stage,outcome:proof.outcome,receiptSha256:receipt.sha256,httpAndRoleRecipesStillRequired:true,automaticRetryAllowed:false};
+    if(a.entry.schemaVersion!==2){return result;}
+    result.nativeReceiptSha256=receipt.sha256;
+    if(typeof receipt.path==='string'){result.nativeReceipt={path:receipt.path,sha256:receipt.sha256};}
+    if(proof.servedObservedAt){result.servedObservedAt=proof.servedObservedAt;}
+    if(proof.outcome==='SUCCEEDED'&&stage==='BACKUP'){result.backup={id:proof.backupId,status:'SUCCESSFUL',completedAt:proof.backupEndTime,nativeReceiptSha256:receipt.sha256};}
+    return result;
+  }
+  async function observe(stage){
+    const saved=inspect(stage);assert.equal(saved.state,'KNOWN_OPERATION_OBSERVE_ONLY','ONLY_KNOWN_OPERATION_CAN_BE_OBSERVED');
+    const a=await authority('OBSERVE_OPERATION'),name=saved.rows[1].payload.details.operation;
+    const op=stage==='BACKUP'?await transport.getSqlOperation(name):await transport.getRunOperation(name);
+    const done=stage==='BACKUP'?op.status==='DONE':op.done===true;
+    if(!done){return{state:'KNOWN_OPERATION_RUNNING',stage,operation:name,automaticRetryAllowed:false};}
+    const failed=!!op.error;
+    let proof={stage,operation:name,outcome:failed?'FAILED':'SUCCEEDED',nativeResponseSha256:digest(op),at:new Date(clock()).toISOString()};
+    if(!failed&&stage==='BACKUP'){proof={...proof,...await completedBackupProof(op,saved,a)};}
+    if(!failed&&stage!=='BACKUP'){proof=await completedImageProof(stage,a,proof);}
     if(a.entry.schemaVersion===2){proof.at=new Date(clock()).toISOString();}
-    const receipt=await saveReceipt(stage,proof);assert.match(receipt.sha256,/^[a-f0-9]{64}$/u);finishImageTransaction(journalDirectory,binding(stage),name,receipt.sha256,proof.outcome,clock());const result={state:'FIN_NO_REPLAY',stage,outcome:proof.outcome,receiptSha256:receipt.sha256,httpAndRoleRecipesStillRequired:true,automaticRetryAllowed:false};
-    if(a.entry.schemaVersion===2){result.nativeReceiptSha256=receipt.sha256;if(typeof receipt.path==='string'){result.nativeReceipt={path:receipt.path,sha256:receipt.sha256};}if(proof.servedObservedAt){result.servedObservedAt=proof.servedObservedAt;}if(!failed&&stage==='BACKUP'){result.backup={id:proof.backupId,status:'SUCCESSFUL',completedAt:proof.backupEndTime,nativeReceiptSha256:receipt.sha256};}}return result;
+    const receipt=await saveReceipt(stage,proof);assert.match(receipt.sha256,/^[a-f0-9]{64}$/u);
+    finishImageTransaction(journalDirectory,binding(stage),name,receipt.sha256,proof.outcome,clock());
+    return completedResult(stage,a,proof,receipt);
   }
   return Object.freeze({inspect,dispatch,observe});
 }

@@ -23,7 +23,8 @@ function fixture(options={}){
     const index=count++,child=new EventEmitter();calls.push({file,args,timeout:config.timeout});const step=options.steps?.[index]??{};
     config.signal.addEventListener('abort',()=>queueMicrotask(()=>{callback(Object.assign(new Error(TOKEN),{code:'ABORT_ERR'}),'');child.emit('close',null,'SIGTERM');}),{once:true});
     queueMicrotask(()=>{child.emit('spawn');if(step.hang){return;}now+=step.duration??100;
-      callback(step.error?new Error(TOKEN):null,step.output??(index===0?'{}':index===1?'{"auth":{"token_host":"https://oauth2.googleapis.com/token"}}':TOKEN));child.emit('close',step.error?1:0,null);
+      const configurationOutputs=['{}','{"auth":{"token_host":"https://oauth2.googleapis.com/token"}}'],defaultOutput=index<configurationOutputs.length?configurationOutputs[index]:TOKEN;
+      callback(step.error?new Error(TOKEN):null,step.output??defaultOutput);child.emit('close',step.error?1:0,null);
     });return child;
   };
   const input={syntheticOnly:true,operationContract:contract,getAuthority:()=>authority,assertCurrent:()=>{if(refused){throw new Error(TOKEN);}},environment:options.environment??{},platform:options.platform??'win32',clock:()=>now,invoke,schedule,cancel};
@@ -44,13 +45,13 @@ for(const [name,change]of [
   ['source',f=>f.contract.sourceCommit='d'.repeat(40)],['tree',f=>f.authority.entry.driver.tree='d'.repeat(40)],['authority hash',f=>f.authority.receipt.authorityRecordSha256='d'.repeat(64)],
   ['resource binding',f=>f.authority.entry.resourceBindingSha256='d'.repeat(64)],['wrong region',f=>f.contract.region='us-central1'],['legacy schema',f=>f.authority.entry.schemaVersion=1],
   ['expired',f=>f.advance(600001)],['future',f=>f.contract.windowStart=new Date(NOW+1).toISOString()],['wide window',f=>f.contract.windowEnd=new Date(NOW+900001).toISOString()],
-  ['missing field',f=>delete f.contract.sessionId],['unexpected URL',f=>f.contract.url='https://private.invalid'],['getter',f=>Object.defineProperty(f.contract,'sourceCommit',{enumerable:true,get(){throw Error(TOKEN);}})],
+  ['missing field',f=>delete f.contract.sessionId],['unexpected URL',f=>f.contract.url='https://private.invalid'],['getter',f=>Object.defineProperty(f.contract,'sourceCommit',{enumerable:true,get(){throw new Error(TOKEN);}})],
   ['unprotected mode',f=>f.authority.entry.preparationMode='ANYTHING'],['wrong phase',f=>f.authority.entry.preparationPhase='RUN'],['source guard',f=>f.refuse()]
 ]){test('operational contract refuses before SDK: '+name,async()=>{const f=fixture();change(f);await assert.rejects(f.open(),/^Error: SDK_OPERATION_CONTRACT_REFUSED$/u);assert.equal(f.calls.length,0);});}
 test('ambient override is distinguished without process or retained token',async()=>{const f=fixture({environment:{CLOUDSDK_AUTH_ACCESS_TOKEN:TOKEN}}),s=await f.open();assert.equal(s.report().state,'AUTH_AMBIENT_OVERRIDE_REFUSED');assert.equal(s.report().tokenReferencesReleased,true);assert.equal(f.calls.length,0);assert(!JSON.stringify(s.report()).includes(TOKEN));});
 for(const index of [0,1,2]){test('operational stage timeout '+index+' closes once without fallback',async()=>{const steps=[];steps[index]={hang:true};const f=fixture({steps}),s=await f.open();assert.equal(s.report().state,'AUTH_DEADLINE_TRIGGERED');assert.equal(s.report().tokenReferencesReleased,true);assert.equal(f.calls.length,index+1);await assert.rejects(s.accessToken());assert.equal(f.calls.length,index+1);});}
 test('late SDK result is not accepted even without fired timer',async()=>{const f=fixture({steps:[{duration:5000}]}),s=await f.open();assert.equal(s.report().authenticationChainValidated,false);assert.equal(s.report().state,'AUTH_DEADLINE_EXCEEDED');assert.equal(f.calls.length,1);});
-test('consumer failure can be followed by guaranteed close, not a second auth',async()=>{const f=fixture(),s=await f.open();try{await s.accessToken();throw Error(TOKEN);}catch{}finally{s.close();}assert.equal(s.report().tokenReferencesReleased,true);assert.equal(f.calls.length,3);assert(!JSON.stringify(s.report()).includes(TOKEN));});
+test('consumer failure can be followed by guaranteed close, not a second auth',async()=>{const f=fixture(),s=await f.open();try{await s.accessToken();throw new Error(TOKEN);}catch{}finally{s.close();}assert.equal(s.report().tokenReferencesReleased,true);assert.equal(f.calls.length,3);assert(!JSON.stringify(s.report()).includes(TOKEN));});
 for(const [name,mutate]of [['lease',f=>f.advance(600001)],['source',f=>f.authority.receipt.driverCommit='d'.repeat(40)],['guard',f=>f.refuse()],['backwards clock',f=>f.advance(-1000)]]){
   test('provider refuses '+name+' drift, releases references, never reacquires',async()=>{const f=fixture(),s=await f.open();mutate(f);await assert.rejects(s.accessToken(),/^Error: SDK_OPERATION_SESSION_CLOSED_OR_PRECONDITION_REFUSED$/u);assert.equal(s.report().tokenReferencesReleased,true);assert.equal(f.calls.length,3);});
 }

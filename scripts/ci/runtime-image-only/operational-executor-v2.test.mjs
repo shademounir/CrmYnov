@@ -15,7 +15,7 @@ function synthetic(t){
   const transport={
     assertMutationReady(action){events.push('RIGHTS_'+action);assert(rights,'SYNTHETIC_ACTUAL_PERMISSIONS_MISSING');},
     collectJobs:async()=>{events.push('JOBS_ALL_PAGES');return current.jobs;},collectSchedulers:async()=>{events.push('SCHEDULERS_ALL_PAGES');return current.schedulers;},
-    listJobs:async()=>{throw Error('V2_MUST_COLLECT_ALL_PAGES');},listSchedulers:async()=>{throw Error('V2_MUST_COLLECT_ALL_PAGES');},
+    listJobs:async()=>{throw new Error('V2_MUST_COLLECT_ALL_PAGES');},listSchedulers:async()=>{throw new Error('V2_MUST_COLLECT_ALL_PAGES');},
     getService:async kind=>structuredClone(current.services[kind]),getSqlInstance:async()=>({project:'crmynov-prod-n7x4q2',name:'crm-ynov-prod-pg17',databaseVersion:'POSTGRES_17',state:'RUNNABLE',settings:{backupConfiguration:{enabled:true}}}),
     getSqlOperation:async()=>structuredClone(sqlOperation),getBackup:async()=>structuredClone(backup),getRunOperation:async name=>({name,done:true}),getRevision:async(kind,name)=>({name:L+'/services/crm-prod-'+kind+'/revisions/'+name,conditions:[{type:'Ready',state:'CONDITION_SUCCEEDED'}],containers:[{image:uri(kind,kind==='api'?API48:WEB48)}]}),
     createBackup:async()=>{calls.push('BACKUP');return structuredClone(sqlOperation);},

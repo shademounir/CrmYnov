@@ -19,3 +19,15 @@ test('SYNTHETIC N02 protected concrete inventory authority verifies actualderive
 for(const [name,change] of [['unmergedsource',f=>f.responses.get(f.base+'pulls/301').merged=false],['technicalpending',f=>f.responses.get(f.base+'commits/'+'1'.repeat(40)+'/check-runs')[0].status='in_progress'],['unresolvedconversation',f=>f.github.reviewThreads=async()=>({reviewThreads:{pageInfo:{hasNextPage:false},nodes:[{isResolved:false}]},reviews:{nodes:[]}})],['weakprotection',f=>f.responses.get(f.base+'branches/develop/protection').allow_force_pushes.enabled=true],['foreignaccount',f=>f.entry.googleAccount='other@example.invalid'],['expirednativeJira',f=>f.jira.observedAt=new Date(f.now-600001).toISOString()],['fabricatedfutureplan',f=>f.entry.planSha256='a'.repeat(64)]]){test('SYNTHETIC N02 refuses '+name,async()=>{const f=fixture();change(f);f.refresh();await assert.rejects(run(f));});}
 test('SYNTHETIC N02 emptycatalogue/lineagedrift/nativeversion2/RUNmarker each refuse',async()=>{for(const mutate of [f=>f.responses.set(f.base+'contents/'+PATH+'?ref='+revision,f.blob({schemaVersion:2,entries:[]})),f=>f.responses.set(f.base+'contents/'+PATH+'?ref='+objectiveMerge,f.blob({schemaVersion:2,entries:[]})),f=>{f.marker.jiraEvidenceVersion=2;},f=>{f.marker.runAuthorized=true;}]){const f=fixture();mutate(f);if(f.marker.jiraEvidenceVersion===2||f.marker.runAuthorized){f.responses.get(f.base+'issues/302/comments').find(c=>c.id===102).body='<!-- codex-runtime-inventory-authorization:v2\n'+JSON.stringify(f.marker)+'\n-->';}await assert.rejects(run(f));}});
 test('SYNTHETIC N02 final protected revision drift stops before native admission',async()=>{const f=fixture(),get=f.github.get;let seen=0;f.github.get=async route=>{const v=await get(route);if(route===f.base+'branches/develop'&&++seen===2){v.commit.sha='f'.repeat(40);}return v;};await assert.rejects(run(f));});
+
+test('SYNTHETIC source and catalogue ancestry comparisons stay strictly sequential',async()=>{
+ const f=fixture(),get=f.github.get,paths=[f.localSource.commit,objectiveMerge].map(commit=>f.base+'compare/'+commit+'...'+revision),targeted=new Set(paths),seen=[];
+ let active=0;
+ f.github.get=async route=>{
+  if(!targeted.has(route)){return get(route);}
+  assert.equal(active,0,'ANCESTRY_READS_MUST_NOT_OVERLAP');active+=1;seen.push(route);
+  try{await new Promise(resolve=>queueMicrotask(resolve));return await get(route);}
+  finally{active-=1;}
+ };
+ await run(f);assert.deepEqual(seen.slice(-2),paths);assert.equal(active,0);
+});

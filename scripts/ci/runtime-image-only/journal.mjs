@@ -55,7 +55,7 @@ export const HISTORICAL_GENERAL_PINS_V2=Object.freeze([
  {path:'C:/Crm Ynov/output/casablanca-pilot-20261022/general-prospective-pre-native-20261029-v1/prospective-0d48bd85-8b95-f624-e32c-560406e6ddd8-CLAIM.json',sha256:'3ccfd96471f27c0ab8b36f07891e5974ec498cd574bb9d43ebf34a387dc6faa2'}
 ].map(Object.freeze));
 export function inspectImageMutationDomainV2(dir,input,historicalGeneralPins=HISTORICAL_GENERAL_PINS_V2){
-  assert.deepEqual(Object.keys(input).sort(),['objectiveId','objectiveSha256','planSha256','sourceHead']);assert.deepEqual(historicalGeneralPins,HISTORICAL_GENERAL_PINS_V2,'HISTORICAL_GENERAL_PINS_MUST_NOT_BE_SUBSTITUTED');
+  assert.deepEqual(Object.keys(input).toSorted((a,b)=>a.localeCompare(b,'en')),['objectiveId','objectiveSha256','planSha256','sourceHead']);assert.deepEqual(historicalGeneralPins,HISTORICAL_GENERAL_PINS_V2,'HISTORICAL_GENERAL_PINS_MUST_NOT_BE_SUBSTITUTED');
   // Read the sealed raw bytes only; never open SQLite, reset its transaction or
   // interpret a bounded empty history as absence of the original RUN effects.
   const historical=historicalGeneralPins.map(ref=>{const st=fs.lstatSync(ref.path);assert(st.isFile()&&!st.isSymbolicLink()&&st.size<=10485760);assert.equal(createHash('sha256').update(fs.readFileSync(ref.path)).digest('hex'),ref.sha256,'HISTORICAL_GENERAL_BYTES_CHANGED');return{...ref};});
@@ -63,7 +63,7 @@ export function inspectImageMutationDomainV2(dir,input,historicalGeneralPins=HIS
   return Object.freeze({schemaVersion:2,kind:'IMAGE_AND_HISTORICAL_GENERAL_DOMAINS_V2',imageMutationUnresolved,transactions,historicalGeneral:{state:'UNKNOWN_READ_ONLY_RUN_UNCHANGED',pins:historical,absenceOfEffectProven:false,replayAuthorized:false},automaticMutationRetryAllowed:false,nativeAcceptance:false});
 }
 export function inspectImageStagesV2(dir,input){
-  assert.deepEqual(Object.keys(input).sort(),['objectiveId','objectiveSha256','planSha256','sourceHead']);
+  assert.deepEqual(Object.keys(input).toSorted((a,b)=>a.localeCompare(b,'en')),['objectiveId','objectiveSha256','planSha256','sourceHead']);
   const transactions=[...stages].map(stage=>{const observed=inspectImageTransaction(dir,{...input,stage});return{stage,state:observed.state,recordSha256s:observed.rows.map(r=>r.sha256),outcome:observed.rows.at(-1)?.payload.details.outcome??null};});
   const imageMutationUnresolved=transactions.some(t=>['INTENT_ONLY_UNKNOWN_DO_NOT_RETRY','KNOWN_OPERATION_OBSERVE_ONLY'].includes(t.state));
   return{transactions,imageMutationUnresolved,nativeAcceptance:false,automaticMutationRetryAllowed:false};

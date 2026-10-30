@@ -201,7 +201,7 @@ function operationalAuthority(contract,getAuthority,assertCurrent,clock){
     assert(entry.actions.every(action=>['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION'].includes(action)));
   }else if(contract.scope==='POST_PRESERVATION_READ_ONLY_V2'){
     assert.equal(entry.preparationMode,'POST_PRESERVATION_V2');assert.equal(entry.preparationPhase,contract.preparationPhase);assert.equal(entry.commonSessionBindingSha256,contract.commonSessionBindingSha256);assert.equal(receipt.commonSessionBindingSha256,contract.commonSessionBindingSha256);
-    const actions=['CREATE_POST_JOB','RUN_POST_JOB','READ_POST_OUTPUT','READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION'];assert.deepEqual([...entry.actions].sort(alphabetical),actions.sort(alphabetical));
+    const actions=['CREATE_POST_JOB','RUN_POST_JOB','READ_POST_OUTPUT','READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION'];assert.deepEqual([...entry.actions].sort(alphabetical),actions.toSorted(alphabetical));
     assert.equal(operationalPostResources(entry.resourceBindings),contract.resourceBindingSha256);
   }else{assert.equal(entry.preparationMode,'LATE_BOUND_V2');assert(['BACKUP_READY','FORWARD_FINAL'].includes(entry.preparationPhase));}
   const start=operationalTime(contract.windowStart),end=operationalTime(contract.windowEnd),lease=operationalTime(receipt.expiresAt);

@@ -5,14 +5,19 @@ import assert from 'node:assert/strict';
 import {imageJournalDigest as digest} from './journal.mjs';
 export const IMAGE_SESSION_LIMITS_V2=Object.freeze({durationMs:900000,maxRequests:200,maxExchangeMs:15000,maxResponseBytes:1048576,maxTotalResponseBytes:20971520});
 const H=/^[a-f0-9]{64}$/u,S=/^[a-f0-9]{40}$/u,U=/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
-function exact(v,keys){assert(v&&Object.getPrototypeOf(v)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(v)).every(d=>Object.hasOwn(d,'value')));assert.deepEqual(Object.keys(v).sort(),[...keys].sort());}
+function exact(v,keys){assert(v&&Object.getPrototypeOf(v)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(v)).every(d=>Object.hasOwn(d,'value')));assert.deepEqual(Object.keys(v).toSorted((a,b)=>a.localeCompare(b,'en')),keys.toSorted((a,b)=>a.localeCompare(b,'en')));}
 function time(v){assert.equal(typeof v,'string');const n=Date.parse(v);assert(Number.isSafeInteger(n)&&new Date(n).toISOString()===v);return n;}
 function write(file,v){const fd=fs.openSync(file,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(v,null,2)+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}
 function read(file){const st=fs.lstatSync(file);assert(st.isFile()&&!st.isSymbolicLink()&&st.size<=16384);return JSON.parse(fs.readFileSync(file,'utf8'));}
 function applicationOriginsFor(scope,origins){
  assert(Array.isArray(origins));if(origins.length===0){return [];}
  assert(['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(scope),'APPLICATION_ORIGINS_REQUIRE_IMAGE_SCOPE');assert.equal(origins.length,2,'EXACT_NATIVE_API_AND_WEB_ORIGINS_REQUIRED');
- return ['api','web'].map((kind,index)=>{const value=origins[index];assert.equal(typeof value,'string');const u=new URL(value);assert.equal(u.protocol,'https:');assert.equal(u.origin,value);assert.equal(u.pathname,'/');assert.equal(u.username+u.password+u.search+u.hash,'');assert(new RegExp('^crm-prod-'+kind+'-[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.run\\.app$','u').test(u.hostname),'ONLY_PINNED_NATIVE_API_AND_WEB_ORIGINS');return value;});
+ return ['api','web'].map((kind,index)=>{const value=origins[index];assert.equal(typeof value,'string');const u=new URL(value);assert.equal(u.protocol,'https:');assert.equal(u.origin,value);assert.equal(u.pathname,'/');assert.equal(u.username+u.password+u.search+u.hash,'');assert(new RegExp(String.raw`^crm-prod-${kind}-[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app$`,'u').test(u.hostname),'ONLY_PINNED_NATIVE_API_AND_WEB_ORIGINS');return value;});
+}
+function responseStopCode(responseBytes,totalResponseBytes,now,deadlineAt,limits){
+ if(responseBytes>limits.maxResponseBytes||totalResponseBytes+responseBytes>limits.maxTotalResponseBytes){return 'RESPONSE_BYTES_LIMIT';}
+ if(now>=deadlineAt){return 'REQUEST_DEADLINE_EXCEEDED';}
+ return null;
 }
 export function createImageSessionBudget({directory,binding,limits=IMAGE_SESSION_LIMITS_V2,applicationOrigins=[],clock=Date.now}){
  assert(path.isAbsolute(directory)&&fs.realpathSync(directory)===path.resolve(directory)&&fs.lstatSync(directory).isDirectory());
@@ -54,7 +59,7 @@ export function createImageSessionBudget({directory,binding,limits=IMAGE_SESSION
   exact(ticket,['ordinal','deadlineAt','remainingMs']);exact(response,['responseBytes']);assert(Number.isSafeInteger(response.responseBytes)&&response.responseBytes>=0);
   const s=records(),now=current(s);assert(!s.stopped&&s.pending&&s.pending.ordinal===ticket.ordinal&&s.pending.deadlineAt===ticket.deadlineAt,'UNMATCHED_OR_REPLAYED_IMAGE_RESPONSE');
   append(s,'RESPONSE',{ordinal:ticket.ordinal,responseBytes:response.responseBytes},now);
-  const code=response.responseBytes>limits.maxResponseBytes||s.totalResponseBytes+response.responseBytes>limits.maxTotalResponseBytes?'RESPONSE_BYTES_LIMIT':now>=ticket.deadlineAt?'REQUEST_DEADLINE_EXCEEDED':null;
+  const code=responseStopCode(response.responseBytes,s.totalResponseBytes,now,ticket.deadlineAt,limits);
   if(code){const next=records();append(next,'STOP',{code},now);throw new Error(code);}return inspectUnlocked();
  });}
  function stop(code){assert(/^[A-Z][A-Z0-9_]{0,63}$/u.test(code));return locked(()=>{const s=records();if(!s.stopped){append(s,'STOP',{code},current(s));}return inspectUnlocked();});}

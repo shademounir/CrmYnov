@@ -5,7 +5,7 @@ export const READONLY_CATALOGUE_PATH_V2='docs/governance/readonly-probe-objectiv
 const API='/repos/shademounir/CrmYnov/',S=/^[a-f0-9]{40}$/u;
 export function validateImageCatalogueReviewV2(value,expectedPath=IMAGE_CATALOGUE_PATH_V2){
   assert(value&&Object.getPrototypeOf(value)===Object.prototype);
-  assert.deepEqual(Object.keys(value).sort(),['kind','path']);
+  assert.deepEqual(Object.keys(value).toSorted((a,b)=>a.localeCompare(b,'en')),['kind','path']);
   assert.equal(value.kind,'PROTECTED_CATALOGUE_PATH_HISTORY');
   assert([IMAGE_CATALOGUE_PATH_V2,READONLY_CATALOGUE_PATH_V2].includes(expectedPath));assert.equal(value.path,expectedPath);return true;
 }

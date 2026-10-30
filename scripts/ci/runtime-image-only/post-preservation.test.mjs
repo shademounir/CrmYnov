@@ -39,11 +39,47 @@ for(const [name,fn] of [
 ])test('POST job readiness refuses '+name,async()=>{const f=fixture();mutateRecord(f,'job-observation.json',fn,'job');await assert.rejects(prepare(f.args));});
 test('readiness is pinned before asynchronous protected-origin verification',async()=>{const f=fixture();f.args.verifyProtectedObjective=async()=>{f.args.recipe.apiOrigin='https://changed.invalid';f.args.source.commit='f'.repeat(40);return f.origin;};const p=await prepare(f.args);assert.equal(p.recipe.apiOrigin,'https://crm-prod-api-synthetic-ew.a.run.app');assert.equal(p.source.commit,'c'.repeat(40));});
 test('retained readiness cannot silently expire, change source, become execution authority or claim future observations',async()=>{const f=fixture(),p=await prepare(f.args);assert.throws(()=>check(f,p,f.now+300000));for(const field of ['nativeExecutionAuthorized','postExecutionAllocated','postObservationAcquired','sameSnapshotClaimed']){const changed=structuredClone(p);changed[field]=true;assert.throws(()=>check(f,changed));}const changed=structuredClone(p);changed.source.commit='f'.repeat(40);assert.throws(()=>check(f,changed));});
-function http(f,p){return imagePostHttpRequests(p).map((request,index)=>{let projection;if(index===0){projection={service:'api',status:'ok',database:'ready'};}else if(index===1){projection={documentKind:'HTML',assetPaths:['/_next/static/synthetic.js']};}else{projection=JSON.parse(f.files.get(p.recipe.actors[index-2].key+'.json')).response.projection;}const r=f.record(request,projection);r.requestStartedAt=new Date(f.now+1000).toISOString();r.responseReceivedAt=new Date(f.now+1200).toISOString();return r;});}
+function http(f,p){
+ return imagePostHttpRequests(p).map((request,index)=>{
+  let projection;
+  if(index===0){
+   projection={service:'api',status:'ok',database:'ready'};
+  }else if(index===1){
+   projection={documentKind:'HTML',assetPaths:['/_next/static/synthetic.js']};
+  }else{
+   projection=JSON.parse(f.files.get(p.recipe.actors[index-2].key+'.json')).response.projection;
+  }
+  const r=f.record(request,projection);
+  r.requestStartedAt=new Date(f.now+1000).toISOString();
+  r.responseReceivedAt=new Date(f.now+1200).toISOString();
+  return r;
+ });
+}
 test('HTTP checks require native exact GET, real-shaped observed roles and origin, never Ready metadata alone',async()=>{const f=fixture(),p=await prepare(f.args),records=http(f,p),r=validateImagePostHttpObservations({readiness:p,records,afterImageObservedAt:new Date(f.now+500).toISOString(),now:f.now+1500});assert.equal(r.requestsAndRoleResponsesChecked,true);assert.equal(r.providerOriginAuthenticatedByThisPureFunction,false);assert.equal(r.notVisualOrInteractionQualification,true);});
 for(const [name,change] of [['metadata instead HTTP',r=>r.length=0],['HTML absent',r=>r[1].response.projection.assetPaths=[]],['cross-origin asset',r=>r[1].response.projection.assetPaths=['https://foreign.invalid/a.js']],['database unavailable',r=>r[0].response.projection.database='offline'],['session expired',r=>r[2].response.status=401],['future response',r=>r[0].responseReceivedAt='2026-10-31T00:00:00.000Z']])test('POST HTTP refuses '+name,async()=>{const f=fixture(),p=await prepare(f.args),records=http(f,p);change(records);assert.throws(()=>validateImagePostHttpObservations({readiness:p,records,afterImageObservedAt:new Date(f.now+500).toISOString(),now:f.now+1500}));});
 test('startup current MANAGER49 is unchanged; no epoch/audit absence of effects is claimed',()=>{const rows=startupPermissions(),before=structuredClone(rows),p=projectRc48StartupPermissions(rows);assert.deepEqual(p.permissions,rows);assert.deepEqual(rows,before);assert.equal(p.changes.length,0);assert.equal(p.managerExisting49Preserved,true);assert.equal(p.epochOrAuditAbsenceOfChangeNotClaimed,true);});
-for(const role of ['MANAGER','ADMIN','SUPER_ADMIN'])test('only missing startup capabilities get a deterministic append-only projection for '+role,()=>{const rows=startupPermissions();rows[0].role=role;rows[0].grants=rows[0].grants.filter(g=>!['lead.qualification.update','telephony.free-call.create','reporting.pilotage.view'].includes(g.permission));const p=projectRc48StartupPermissions(rows),next=p.permissions[0];assert.equal(next.version,2);assert.equal(next.grants.length,49);assert.equal(next.grants.find(g=>g.permission==='telephony.free-call.create').scope,role==='SUPER_ADMIN'?'GLOBAL':role==='ADMIN'?'CAMPUS':'NONE');assert.equal(p.changes[0].auditObserved,false);});
+for(const role of ['MANAGER','ADMIN','SUPER_ADMIN'])test('only missing startup capabilities get a deterministic append-only projection for '+role,()=>{const rows=startupPermissions();rows[0].role=role;rows[0].grants=rows[0].grants.filter(g=>!['lead.qualification.update','telephony.free-call.create','reporting.pilotage.view'].includes(g.permission));const p=projectRc48StartupPermissions(rows),next=p.permissions[0],expectedScope={SUPER_ADMIN:'GLOBAL',ADMIN:'CAMPUS',MANAGER:'NONE'}[role];assert.equal(next.version,2);assert.equal(next.grants.length,49);assert.equal(next.grants.find(g=>g.permission==='telephony.free-call.create').scope,expectedScope);assert.equal(p.changes[0].auditObserved,false);});
+test('startup projection keeps the exact role, ceiling, campus and pilotage matrix after branch extraction',()=>{
+ const roles=['SUPER_ADMIN','ADMIN','MANAGER','ADMISSIONS','AUDITOR','*'];
+ for(const role of roles){
+  for(const campus of ['GLOBAL','SYNTHETIC_CAMPUS']){
+   const rows=startupPermissions(),row=rows[0];row.role=role;row.kind=role==='*'?'CEILING':'ROLE';row.campus=campus;
+   row.grants=row.grants.filter(g=>!['lead.qualification.update','telephony.free-call.create','reporting.pilotage.view'].includes(g.permission));
+   row.grants.find(g=>g.permission==='reporting.view').scope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';
+   const before=structuredClone(rows),result=projectRc48StartupPermissions(rows),next=result.permissions[0],grants=Object.fromEntries(next.grants.map(g=>[g.permission,g.scope]));
+   let mutationScope='NONE';
+   if(role==='SUPER_ADMIN'||role==='*'){mutationScope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';}else if(role==='ADMIN'){mutationScope='CAMPUS';}
+   let pilotageScope='NONE';
+   if(role==='SUPER_ADMIN'||role==='*'){pilotageScope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';}else if(role==='ADMIN'||role==='MANAGER'){pilotageScope='CAMPUS';}
+   assert.equal(grants['lead.qualification.update'],mutationScope);assert.equal(grants['telephony.free-call.create'],mutationScope);assert.equal(grants['reporting.pilotage.view'],pilotageScope);assert.equal(next.version,2);assert.equal(next.grants.length,49);assert.deepEqual(rows,before);assert.equal(result.changes[0].auditObserved,false);assert.equal(result.epochOrAuditAbsenceOfChangeNotClaimed,true);
+  }
+ }
+});
+test('AUDITOR keeps read-only view scope but cannot acquire a mutating permission',()=>{
+ const rows=startupPermissions();rows[0].role='AUDITOR';rows[0].grants.find(g=>g.permission==='lead.view').scope='CAMPUS';
+ assert.deepEqual(projectRc48StartupPermissions(rows).permissions,rows);
+ rows[0].grants.find(g=>g.permission==='lead.edit').scope='CAMPUS';assert.throws(()=>projectRc48StartupPermissions(rows));
+});
 for(const [name,change] of [['partial catalogue',r=>r[0].grants.pop()],['duplicate grant',r=>r[0].grants.push(r[0].grants[0])],['unknown grant',r=>r[0].grants[0].permission='invented'],['forbidden scope',r=>r[0].grants.find(g=>g.permission==='users.edit').scope='GLOBAL']])test('startup projection refuses '+name,()=>{const rows=startupPermissions();change(rows);assert.throws(()=>projectRc48StartupPermissions(rows));});
 test('startup projection pins actual RC48 source bytes',()=>{const f=fixture();assert.match(verifyRc48StartupRuleSources(f.args.readStartupSource),/^[a-f0-9]{64}$/u);assert.throws(()=>verifyRc48StartupRuleSources(()=>Buffer.from('changed')));});
 test('SQL POST compares independent real-shaped encrypted records and preserves historical freshness limits honestly',async()=>{const f=fixture(),p=await prepare(f.args),input=sqlFixture(p,f.dossier),r=compareImagePostSqlPreservation(input);assert.equal(r.managerExisting49Preserved,true);assert.equal(r.nativeAcceptance,false);assert.equal(r.sameSnapshotAsLedger,false);assert.equal(r.epochAndPermissionAuditObserved,false);assert.equal(r.fullPortfolioCoverage,false);assert.equal(r.compared.postCompared,true);});

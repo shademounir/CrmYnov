@@ -18,10 +18,11 @@ const LEGACY=Object.freeze({
   LOCAL_RESTORE:'e7dbbddeedafc0d928313686ebd47f43b261262d14295bdd66cc4e05b154c766',
 });
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const compareSchemaStrings=(left,right)=>left.localeCompare(right,'en');
 function exact(value,names){
   assert(value&&Object.getPrototypeOf(value)===Object.prototype,'PREPARATION_V2_PLAIN_DATA');
   assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(row=>Object.hasOwn(row,'value')),'PREPARATION_V2_DATA_FIELDS');
-  assert.deepEqual(Object.keys(value).sort(),[...names].sort(),'PREPARATION_V2_FIELDS');
+  assert.deepEqual(Object.keys(value).toSorted(compareSchemaStrings),names.toSorted(compareSchemaStrings),'PREPARATION_V2_FIELDS');
 }
 function time(value){assert.equal(typeof value,'string');const n=Date.parse(value);assert(Number.isSafeInteger(n));return n;}
 function readJson(reference,readEvidence){
@@ -137,7 +138,7 @@ function rollbackEvidence(value,readEvidence,currentSource,pins){
 }
 function independentEvidence(dossier,context,pins,consumerPins){
   const rows=dossier.independentEvidence;assert(Array.isArray(rows)&&rows.length===6);
-  assert.deepEqual(rows.map(row=>row.kind).sort(),[...IMAGE_PREPARATION_RULES_V2.independentFamilies].sort());
+  assert.deepEqual(rows.map(row=>row.kind).toSorted(compareSchemaStrings),IMAGE_PREPARATION_RULES_V2.independentFamilies.toSorted(compareSchemaStrings));
   return rows.map(row=>{
     const value=independentRef(row,context.readEvidence);
     if(['POOL','LEDGER'].includes(row.kind)){return legacyEvidence(row.kind,row,value,pins);}

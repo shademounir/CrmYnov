@@ -7,6 +7,7 @@ import {validateNativeJiraReadObservation} from '../pool-reconciliation/general-
 import {validateImageCatalogueReviewV2} from './catalogue-origin-v2.mjs';
 export const OPERATIONAL_HUMAN_SHA256='64b91382c47403e88dedfa3a3c9241a3231a99d636312ae2a888619c65729fe6';
 const LOCATION='projects/crmynov-prod-n7x4q2/locations/europe-west1',H=/^[a-f0-9]{64}$/u;
+const compareSchemaStrings=(left,right)=>left.localeCompare(right,'en');
 export const IMAGE_OPERATIONAL_RESOURCES_V2=Object.freeze({services:[
  {name:LOCATION+'/services/crm-prod-api',uid:'a45fd6a6-f0d7-40e2-a9e5-da8a6f5fba81'},
  {name:LOCATION+'/services/crm-prod-web',uid:'a133df26-0ae0-4a0c-80c2-e42f387db4db'}],
@@ -25,14 +26,14 @@ export const IMAGE_PREPARATION_RULES_V2=Object.freeze({schemaVersion:2,kind:'RC4
 function freeze(value){if(value&&typeof value==='object'){for(const child of Object.values(value)){freeze(child);}Object.freeze(value);}return value;}
 freeze(IMAGE_OPERATIONAL_RESOURCES_V2);freeze(IMAGE_PREPARATION_RULES_V2);
 export const IMAGE_PREPARATION_RULES_SHA256_V2=digest(IMAGE_PREPARATION_RULES_V2);
-export function imagePublicRefV2(ref){assert(ref&&Object.getPrototypeOf(ref)===Object.prototype);assert.deepEqual(Object.keys(ref).sort(),['path','sha256']);assert(path.isAbsolute(ref.path)&&ref.path.endsWith('.json')&&!/private-key|credentials|\.private\.json/iu.test(ref.path));assert(H.test(ref.sha256));return ref;}
+export function imagePublicRefV2(ref){assert(ref&&Object.getPrototypeOf(ref)===Object.prototype);assert.deepEqual(Object.keys(ref).toSorted(compareSchemaStrings),['path','sha256']);assert(path.isAbsolute(ref.path)&&ref.path.endsWith('.json')&&!/private-key|credentials|\.private\.json/iu.test(ref.path));assert(H.test(ref.sha256));return ref;}
 export function validateImageResourcesV2(resources){assert.deepEqual(resources,IMAGE_OPERATIONAL_RESOURCES_V2,'EXACT_OPERATIONAL_RESOURCE_BINDINGS_REQUIRED');return digest(resources);}
 export function validateLateBoundImageObjective(entry,{id,dossier,plan,candidate,baseline,rollbackContext,source,action,preparationPhase,now}){
  assert.equal(entry.schemaVersion,2);assert.equal(entry.preparationMode,'LATE_BOUND_V2');assert.equal(entry.id,id);assert.match(id,/^rc48-image-only-[a-z0-9-]{8,80}$/u);
  assert.equal(entry.status,'approved');assert.equal(entry.scope,imagePlanScope(plan));assert.equal(entry.ticket,'CRMY-63');assert.equal(entry.project,'crmynov-prod-n7x4q2');assert.equal(entry.region,'europe-west1');assert.equal(entry.googleAccount,'casablancaynovcampus@gmail.com');
  assert.equal(entry.humanAuthorityReceiptSha256,OPERATIONAL_HUMAN_SHA256);assert.equal(entry.businessMutation,false);assert.equal(entry.runtimeImageMutation,true);
  assert.deepEqual(entry.allowedPreparationPhases,['BACKUP_READY','FORWARD_FINAL']);assert(entry.allowedPreparationPhases.includes(preparationPhase),'EXPLICIT_IMAGE_PREPARATION_PHASE_REQUIRED');
- const permitted=['READ_METADATA','TEST_PERMISSIONS','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION'];assert.deepEqual([...entry.actions].sort(),[...permitted].sort());assert(permitted.includes(action));
+ const permitted=['READ_METADATA','TEST_PERMISSIONS','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION'];assert.deepEqual(entry.actions.toSorted(compareSchemaStrings),permitted.toSorted(compareSchemaStrings));assert(permitted.includes(action));
  if(preparationPhase==='BACKUP_READY'){assert(['READ_METADATA','TEST_PERMISSIONS','CREATE_BACKUP','OBSERVE_OPERATION'].includes(action),'BACKUP_READY_CANNOT_PATCH');}
  if(action==='CREATE_BACKUP'){assert.equal(preparationPhase,'BACKUP_READY','BACKUP_MUST_PRECEDE_FRESH_GENERAL');}
  assert.equal(entry.preparationRulesSha256,IMAGE_PREPARATION_RULES_SHA256_V2);assert.equal(entry.preparationReceiptSha256,undefined,'FUTURE_PREPARATION_HASH_MUST_NOT_BE_FABRICATED');
@@ -40,8 +41,8 @@ export function validateLateBoundImageObjective(entry,{id,dossier,plan,candidate
  assert.equal(dossier.humanAuthorityReceiptSha256,OPERATIONAL_HUMAN_SHA256);assert.equal(dossier.preparationRulesSha256,entry.preparationRulesSha256);assert.equal(entry.dossierSha256,digest(dossier),'PROTECTED_STATIC_DOSSIER_REQUIRED');assert.equal(entry.planSha256,digest(plan),'PRE_PRE_PLAN_PIN_REQUIRED');
  assert.equal(dossier.preparationReceiptSha256,undefined);assert.deepEqual(dossier.candidate,candidate);assert.deepEqual(dossier.resourceBindings,entry.resourceBindings);assert.equal(candidate.readOnlyPreparationVersion,2,'LATE_BOUND_IMAGE_REQUIRES_EXPLICIT_COLLECTOR_V2');assert(candidate.readOnlyPostJob,'DISTINCT_POST_JOB_MUST_BE_READY_IN_PRE_PRE_PLAN');
  assert.deepEqual(dossier.readOnlyPreparationJobs??[],candidate.readOnlyPreparationJobs??[]);assert.deepEqual(dossier.preservedJobs,plan.preservedJobs);assert.deepEqual(dossier.preservedSchedulers,plan.preservedSchedulers);
- assert(Array.isArray(dossier.independentEvidence)&&dossier.independentEvidence.length===6);assert.deepEqual(dossier.independentEvidence.map(r=>r.kind).sort(),[...IMAGE_PREPARATION_RULES_V2.independentFamilies].sort());
- for(const row of dossier.independentEvidence){assert.deepEqual(Object.keys(row).sort(),['kind','path','sha256']);imagePublicRefV2({path:row.path,sha256:row.sha256});}
+ assert(Array.isArray(dossier.independentEvidence)&&dossier.independentEvidence.length===6);assert.deepEqual(dossier.independentEvidence.map(r=>r.kind).toSorted(compareSchemaStrings),IMAGE_PREPARATION_RULES_V2.independentFamilies.toSorted(compareSchemaStrings));
+ for(const row of dossier.independentEvidence){assert.deepEqual(Object.keys(row).toSorted(compareSchemaStrings),['kind','path','sha256']);imagePublicRefV2({path:row.path,sha256:row.sha256});}
  imagePublicRefV2(dossier.postReadiness);assert.deepEqual(dossier.pendingGeneral.binding,IMAGE_GENERAL_BINDING_V2);assert(H.test(dossier.pendingGeneral.prospectiveAuthoritySha256));assert.equal(dossier.pendingGeneral.execution,undefined,'NO_FUTURE_EXECUTION_IDENTIFIER');
  const generalRows=(candidate.readOnlyPreparationJobs??[]).filter(r=>r.dossier.objective.purpose==='GENERAL_PRESERVATION_READ_ONLY_V1');assert.equal(generalRows.length,1);assert.equal(generalRows[0].admission?.authorityRecordSha256,dossier.pendingGeneral.prospectiveAuthoritySha256,'ONE_PROSPECTIVE_GENERAL_RECORD_ACROSS_PLAN_AND_DOSSIER');
  for(const key of ['noDatabaseRestore','noMigration','noFlagActivation','noJobOrSchedulerMutation','preserveInterveningWrites']){assert.equal(dossier[key],true);}

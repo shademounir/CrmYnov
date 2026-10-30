@@ -104,8 +104,8 @@ export function makeRc48ImageRollbackPlanDraft(input,now){
 }
 function validateRollbackCompletionContextV2(input){
   assert.equal(input.schemaVersion,2,'EXPLICIT_ROLLBACK_CONTEXT_V2_REQUIRED');assert.equal(input.rollbackCompletionRulesSha256,IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2);
-  const context=input.completionContext;assert(context&&context.schemaVersion===2&&Array.isArray(context.completions));assert.equal(input.completionContextSha256,digest(context),'ROLLBACK_ACTUAL_COMPLETION_CONTEXT_BINDING');
-  const ref=input.completionContextEvidence;assert(ref&&Object.getPrototypeOf(ref)===Object.prototype);assert.deepEqual(Object.keys(ref).sort(),['path','sha256']);assert.equal(typeof ref.path,'string');assert(/^(?:[A-Za-z]:[\\/]|\/)/u.test(ref.path)&&ref.path.endsWith('.json')&&!/private-key|credentials|\.private\.json/iu.test(ref.path));assert(hash.test(ref.sha256));
+  const context=input.completionContext;assert(context?.schemaVersion===2&&Array.isArray(context.completions));assert.equal(input.completionContextSha256,digest(context),'ROLLBACK_ACTUAL_COMPLETION_CONTEXT_BINDING');
+  const ref=input.completionContextEvidence;assert(ref&&Object.getPrototypeOf(ref)===Object.prototype);assert.deepEqual(Object.keys(ref).toSorted((left,right)=>left.localeCompare(right,'en')),['path','sha256']);assert.equal(typeof ref.path,'string');assert(/^(?:[A-Za-z]:[\\/]|\/)/u.test(ref.path)&&ref.path.endsWith('.json')&&!/private-key|credentials|\.private\.json/iu.test(ref.path));assert(hash.test(ref.sha256));
   const general=input.forwardPlan.readOnlyPreparationJobs.filter(row=>row.admission?.kind==='PROSPECTIVE_GENERAL_0_TO_1');assert.equal(general.length,1);assert.equal(context.completions.filter(c=>c.objectiveId===general[0].objectiveId).length,1,'ACTUAL_GENERAL_FIN_BEFORE_IMAGE_RETURN_REQUIRED');
 }
 export function validateRc48ImageRollbackPlanDraft(plan,input,now){assert.deepEqual(plan,makeRc48ImageRollbackPlanDraft(input,now));return true;}

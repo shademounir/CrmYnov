@@ -6,17 +6,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {assertAuthorityCurrent} from '../readonly-probe/probe-driver-authority-v1.mjs';
 import {validateImageObjective,authorizeImageOnlyDriver} from './authority.mjs';
-import {validateImageMarkerV2} from './late-binding-v2.mjs';
-import {imageJournalDigest as digest} from './journal.mjs';
-import {createImageSessionBudget} from './journal.mjs';
+import {validateImageMarkerV2,imagePublicRefV2,OPERATIONAL_HUMAN_SHA256} from './late-binding-v2.mjs';
+import {imageJournalDigest as digest,createImageSessionBudget} from './journal.mjs';
 import {readPoolPrivateFile} from '../pool-reconciliation/pool-operational-driver-v1.mjs';
 import {createReadOnlyGithubReader} from '../pool-reconciliation/pool-driver-github-v1.mjs';
 import {openOfficialSdkOperationalSession} from '../readonly-probe/official-sdk-auth-preflight-v1.mjs';
 import {readImageOperationalSource,imageExternalDirectory} from './local-source.mjs';
 import {validateImageInventoryPublicProjection} from './operational-cli-v2.mjs';
-import {imagePublicRefV2,OPERATIONAL_HUMAN_SHA256} from './late-binding-v2.mjs';
-import {acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2} from './post-operational-v2.mjs';
-import {runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2} from './post-operational-v2.mjs';
+import {acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2,runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2,observeImagePostUnusedResourceV2} from './post-operational-v2.mjs';
 import {runGeneralOperationalPreV3,releaseVerifiedGeneralPreV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
 import {validateProspectiveConsumerInputs} from '../pool-reconciliation/general-prospective-pre-session-v1.mjs';
 import {validateImagePreparationV2,validateImageIndependentEvidenceV2,bindImageLivePostReadinessV2} from './preparation-v2.mjs';
@@ -30,7 +27,8 @@ import {READONLY_RUNTIME_FILES} from '../pool-reconciliation/pool-job-dossier-v1
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const H=/^[a-f0-9]{64}$/u;
 const fields=['objectiveId','authorityRecordSha256','resourceBindingSha256','preparationPhase'];
-const actions=['READ_METADATA','TEST_PERMISSIONS','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION'];
+const actions=new Set(['READ_METADATA','TEST_PERMISSIONS','CREATE_BACKUP','PATCH_API','PATCH_WEB','OBSERVE_OPERATION']);
+const alphabetical=(left,right)=>left.localeCompare(right,'en');
 export function makeImageForwardLocalLeaseV2({authority,dossier,plan,candidate,baseline,source,jiraBytes,assertSource}){
   assert.equal(typeof assertSource,'function');assert(Buffer.isBuffer(jiraBytes));
   const initial=structuredClone(authority),raw=structuredClone(initial.entry);
@@ -51,7 +49,7 @@ export function makeImageForwardLocalLeaseV2({authority,dossier,plan,candidate,b
   assert(Number.isSafeInteger(oldestVerified));
   return Object.freeze({
     current(action,preparationPhase,now){
-      assertSource(source);assert.equal(hash(jiraBytes),jiraHash);assert(actions.includes(action));
+      assertSource(source);assert.equal(hash(jiraBytes),jiraHash);assert(actions.has(action));
       assert(initial.receipt.authorizedActions.includes(action),'ACTION_OUTSIDE_VERIFIED_OPERATIONAL_MARKER');
       assert(initial.receipt.allowedPreparationPhases.includes(preparationPhase),'PHASE_OUTSIDE_VERIFIED_OPERATIONAL_MARKER');
       assertAuthorityCurrent(initial,now);assert(now>=oldestVerified);
@@ -89,7 +87,7 @@ export function parseImagePostPreparationArgumentsV2(args){
   assert.match(result['--objective-id'],/^rc48-general-post-[a-z0-9-]{8,63}$/u);
   for(const key of allowed.filter(key=>key!=='--objective-id')){assert(path.isAbsolute(result[key]));}return result;
 }
-function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(d=>Object.hasOwn(d,'value')));assert.deepEqual(Object.keys(value).sort(),[...keys].sort());}
+function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(d=>Object.hasOwn(d,'value')));assert.deepEqual(Object.keys(value).sort(alphabetical),[...keys].sort(alphabetical));}
 function publicJson(file,max=1048576){const bytes=readPoolPrivateFile(file,max),value=JSON.parse(bytes);validateImageInventoryPublicProjection(value);return value;}
 function verifiedPublicBytes(ref){imagePublicRefV2(ref);const bytes=readPoolPrivateFile(ref.path,1048576);assert.equal(hash(bytes),ref.sha256,'FORWARD_INPUT_BYTES_CHANGED');validateImageInventoryPublicProjection(JSON.parse(bytes));return bytes;}
 export function readImageForwardPublicReferenceV2(ref){return JSON.parse(verifiedPublicBytes(ref));}
@@ -155,8 +153,8 @@ export async function runImagePostResourcePreparationV2(args){
 }
 
 export function parseImageForwardArgumentsV2(args){
-  const keys=['--input','--jira-evidence','--journal-dir','--output-dir'];assert(Array.isArray(args)&&args[0]==='forward-v2'&&args.length===9,'EXPLICIT_FORWARD_V2_REQUIRED');const result={};
-  for(let i=1;i<args.length;i+=2){assert(keys.includes(args[i])&&!Object.hasOwn(result,args[i]));const value=args[i+1];assert(typeof value==='string'&&path.isAbsolute(value)&&value.length<=4096&&!/[\u0000-\u001f\u007f]/u.test(value));result[args[i]]=value;}return result;
+  const keys=new Set(['--input','--jira-evidence','--journal-dir','--output-dir']);assert(Array.isArray(args)&&args[0]==='forward-v2'&&args.length===9,'EXPLICIT_FORWARD_V2_REQUIRED');const result={};
+  for(let i=1;i<args.length;i+=2){assert(keys.has(args[i])&&!Object.hasOwn(result,args[i]));const value=args[i+1];assert(typeof value==='string'&&path.isAbsolute(value)&&value.length<=4096&&!/[\u0000-\u001f\u007f]/u.test(value));result[args[i]]=value;}return result;
 }
 function forwardInputs(value){
   exact(value,['schemaVersion','kind','objectiveId','dossier','plan','candidate','baseline','postReadiness','sessionBinding','general','post','roleObservationsFile']);
@@ -184,7 +182,8 @@ async function publicImageGet(kind,url,{budget,guard,save},{fetchImpl=fetch,cloc
   try{
     const response=await fetchImpl(url,{method:'GET',redirect:'error',credentials:'omit',signal:controller.signal,headers:{accept:kind==='api'?'application/json':'text/html'}});
     assert.equal(response.url,url);assert.equal(response.redirected,false);const chunks=[];reader=response.body.getReader();
-    for(;;){const part=await reader.read();if(part.done){break;}size+=part.value.byteLength;assert(size<=1048576&&size<=budget.inspect().remainingResponseBytes,'POST_PUBLIC_HTTP_VOLUME_BOUND');chunks.push(part.value);}
+    async function readNextChunk(){const part=await reader.read();if(part.done){return;}size+=part.value.byteLength;assert(size<=1048576&&size<=budget.inspect().remainingResponseBytes,'POST_PUBLIC_HTTP_VOLUME_BOUND');chunks.push(part.value);return readNextChunk();}
+    await readNextChunk();
     accountingAttempted=true;budget.recordResponse(ticket,{responseBytes:size});recorded=true;
     save('POST-PUBLIC-HTTP-STATUS',{schemaVersion:2,kind:'EXPURGATED_POST_PUBLIC_HTTP_STATUS_V2',request,status:response.status,requestStartedAt:new Date(started).toISOString(),responseReceivedAt:new Date(clock()).toISOString(),responseBytes:size,semanticAcceptance:false,credentialsSent:false,sessionBindingSha256:budget.inspect().bindingSha256});
     assert.equal(response.status,200,'POST_PUBLIC_HTTP_STATUS_REFUSED');
@@ -200,7 +199,8 @@ export async function simulateImageForwardPublicHttpV2({syntheticOnly,kind,url,b
 }
 async function browserRoles({file,readiness,afterImageObservedAt,planSha256,budget,guard,save}){
   const last=Math.min(Date.now()+120000,budget.inspect().deadlineAt-1000);save('POST-BROWSER-ROLE-OBSERVATIONS-REQUIRED',{schemaVersion:2,kind:'POST_BROWSER_ROLE_OBSERVATIONS_REQUIRED_V2',path:file,afterImageObservedAt,planSha256,roles:readiness.recipe.actors.map(a=>({key:a.key,role:a.role,campusId:a.campusId})),deadlineAt:new Date(last).toISOString(),observationsNotYetQualified:true});
-  while(!fs.existsSync(file)&&Date.now()<last){guard();await new Promise(resolve=>setTimeout(resolve,1000));}
+  async function waitForObservationFile(){if(fs.existsSync(file)||Date.now()>=last){return;}guard();await new Promise(resolve=>setTimeout(resolve,1000));return waitForObservationFile();}
+  await waitForObservationFile();
   assert(fs.existsSync(file),'POST_BROWSER_ROLE_OBSERVATIONS_NOT_AVAILABLE');const packet=publicJson(file);exact(packet,['schemaVersion','kind','planSha256','afterImageObservedAt','records']);assert.equal(packet.schemaVersion,2);assert.equal(packet.kind,'POST_BROWSER_ROLE_OBSERVATIONS_V2');assert.equal(packet.planSha256,planSha256);assert.equal(packet.afterImageObservedAt,afterImageObservedAt);assert.equal(packet.records.length,readiness.recipe.actors.length);
   const results=readiness.recipe.actors.map(actor=>{const rows=packet.records.filter(row=>row.actorKey===actor.key);assert.equal(rows.length,1);exact(rows[0],['actorKey','record']);return validateImagePostBffSessionObservationV2(rows[0].record,{readiness,actorKey:actor.key,afterImageObservedAt,now:Date.now()});});
   assert.equal(new Set(results.map(row=>row.professionalEmailSha256)).size,results.length,'POST_DISTINCT_ROLE_IDENTITIES_REQUIRED');return results;
@@ -247,7 +247,6 @@ export async function runImageForwardOperationalV2(args){
     const adapter={
       assertLocalState:async()=>guard(),
       prepareBackupReady:async()=>{currentAuthority=lease.current('TEST_PERMISSIONS',phase,Date.now());await transport.testProjectPermissions();await transport.testServicePermissions('api');await transport.testServicePermissions('web');await transport.testJobPermissions();transport.assertGeneralPermissionsReady();
-        const {observeImagePostUnusedResourceV2}=await import('./post-operational-v2.mjs');
         const runtimeContract=makeImagePostRuntimeContractV2({authority:postAuthority.authority,dossier:x.postDossier,source,sharedBudget:budget,preparationPhase:'POST_EXECUTION'});
         const fresh=await observeImagePostUnusedResourceV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard});
         assert.equal(fresh.state,'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2');assert.equal(fresh.uid,x.candidate.readOnlyPostJob.uid);
@@ -271,7 +270,9 @@ export async function runImageForwardOperationalV2(args){
       },
       verifyPost:async({afterImageObservedAt})=>{
         const sql=await withVerifiedImagePostV2(postResult.privatePostCapability,({checked,capturedAt})=>compareImagePostUsingPrivateGeneralV2({privatePreCapability:generalResult.privatePreCapability,postChecked:checked,consumerInputs:x.consumerInputs,expectedGeneralAuthorityRecordSha256:x.dossier.pendingGeneral.prospectiveAuthoritySha256,postCapturedAt:capturedAt,afterImageObservedAt,now:Date.now()}));
-        const publicHttp=[];for(const [kind,url]of [['api',x.postReadiness.recipe.apiOrigin+'/health/ready'],['web',x.postReadiness.recipe.webOrigin+'/']]){publicHttp.push(await publicImageGet(kind,url,{budget,guard,save}));}
+        const apiHttp=await publicImageGet('api',x.postReadiness.recipe.apiOrigin+'/health/ready',{budget,guard,save});
+        const webHttp=await publicImageGet('web',x.postReadiness.recipe.webOrigin+'/',{budget,guard,save});
+        const publicHttp=[apiHttp,webHttp];
         const roles=await browserRoles({file:x.descriptor.roleObservationsFile,readiness:x.postReadiness,afterImageObservedAt,planSha256:digest(x.plan),budget,guard,save});
         const postJobs=await transport.collectJobs(),postSchedulers=await transport.collectSchedulers();
         const postCompletion={schemaVersion:2,completions:[...completionContext.completions,...postResult.completionContext.completions]};
