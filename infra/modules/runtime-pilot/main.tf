@@ -37,10 +37,12 @@ locals {
   }) : local.disabled_ingestion
   sheet_private_mount  = "/var/run/crm-sheet-private"
   sheet_private_bucket = "${local.prefix}-sheet-private-n7x4q2"
+  sheet_artifact_keys  = toset(["boundary", "qualification", "allowlist", "historical_capability"])
   sheet_artifact_paths = local.sheet_runtime_ready ? {
-    boundary      = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "boundary", "missing-boundary.json")}"
-    qualification = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "qualification", "missing-qualification.json")}"
-    allowlist     = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "allowlist", "missing-allowlist.json")}"
+    boundary              = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "boundary", "missing-boundary.json")}"
+    qualification         = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "qualification", "missing-qualification.json")}"
+    allowlist             = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "allowlist", "missing-allowlist.json")}"
+    historical_capability = "${local.sheet_private_mount}/${lookup(var.sheet_append_artifact_objects, "historical_capability", "missing-historical-capability.json")}"
   } : {}
   sheet_runtime_environment = local.sheet_runtime_ready ? {
     CRM_GOOGLE_SHEETS_AUTH_MODE                   = "ADC_IMPERSONATION"
@@ -51,6 +53,8 @@ locals {
     CRM_SHEET_APPEND_BOUNDARY_SHA256              = lookup(var.sheet_append_artifact_sha256, "boundary", "")
     CRM_SHEET_APPEND_QUALIFICATION_FILE           = local.sheet_artifact_paths.qualification
     CRM_SHEET_APPEND_QUALIFICATION_SHA256         = lookup(var.sheet_append_artifact_sha256, "qualification", "")
+    CRM_SHEET_HISTORICAL_CAPABILITY_FILE          = local.sheet_artifact_paths.historical_capability
+    CRM_SHEET_HISTORICAL_CAPABILITY_SHA256        = lookup(var.sheet_append_artifact_sha256, "historical_capability", "")
   } : {}
   gmail_secrets = { client_id = "gmail-oauth-client-id", client_secret = "gmail-oauth-client-secret", refresh_token = "gmail-oauth-refresh-token" }
   accounts      = toset(["api", "web", "jobs", "migrator", "scheduler"])
@@ -201,12 +205,12 @@ resource "google_sql_database_instance" "postgres" {
     precondition {
       condition = !var.sheet_append_runtime_prepared || (
         var.deploy_services && local.deploy_jobs
-        && toset(keys(var.sheet_append_artifact_objects)) == toset(["boundary", "qualification", "allowlist"])
-        && toset(keys(var.sheet_append_artifact_sha256)) == toset(["boundary", "qualification", "allowlist"])
-        && alltrue([for key in ["boundary", "qualification", "allowlist"] : strcontains(lookup(var.sheet_append_artifact_objects, key, ""), lookup(var.sheet_append_artifact_sha256, key, "_missing_"))])
+        && toset(keys(var.sheet_append_artifact_objects)) == local.sheet_artifact_keys
+        && toset(keys(var.sheet_append_artifact_sha256)) == local.sheet_artifact_keys
+        && alltrue([for key in local.sheet_artifact_keys : strcontains(lookup(var.sheet_append_artifact_objects, key, ""), lookup(var.sheet_append_artifact_sha256, key, "_missing_"))])
         && lookup(var.sheet_append_artifact_sha256, "boundary", "") == var.sheet_append_expected_boundary_sha256
       )
-      error_message = "Runtime preparation requires compatible services/jobs, the canonical boundary, and exactly three private artifact names containing their pinned digests."
+      error_message = "Runtime preparation requires compatible services/jobs, the canonical boundary, and exactly four private artifact names containing their pinned digests, including historical_capability."
     }
   }
   depends_on = [google_service_networking_connection.private_services, google_project_service.runtime]

@@ -157,6 +157,59 @@ test("private Sheets artifacts are durable, read-only and hash pinned without en
   assert.doesNotMatch(main, /google_storage_bucket_object/);
 });
 
+test("schema3 preparation requires exactly four pinned artifacts in the existing private mount", () => {
+  assert.match(main, /sheet_artifact_keys\s*=\s*toset\(\["boundary", "qualification", "allowlist", "historical_capability"\]\)/);
+  assert.match(main, /toset\(keys\(var\.sheet_append_artifact_objects\)\) == local\.sheet_artifact_keys/);
+  assert.match(main, /toset\(keys\(var\.sheet_append_artifact_sha256\)\) == local\.sheet_artifact_keys/);
+  assert.match(main, /alltrue\(\[for key in local\.sheet_artifact_keys : strcontains/);
+  assert.match(main, /CRM_SHEET_HISTORICAL_CAPABILITY_FILE\s*=\s*local\.sheet_artifact_paths\.historical_capability/);
+  assert.match(main, /CRM_SHEET_HISTORICAL_CAPABILITY_SHA256\s*=\s*lookup\(var\.sheet_append_artifact_sha256, "historical_capability", ""\)/);
+  assert.match(main, /historical_capability\s*=\s*"\$\{local\.sheet_private_mount\}\/\$\{lookup\(var\.sheet_append_artifact_objects, "historical_capability", "missing-historical-capability\.json"\)\}"/);
+  for (const [type, name] of [["google_cloud_run_v2_service", "api"], ["google_cloud_run_v2_job", "sheet_append"]]) {
+    const consumer = block(main, type, name);
+    assert.match(consumer, /merge\(local\.sheet_ingestion, local\.sheet_runtime_environment,/);
+    assert.match(consumer, /read_only\s*=\s*true/);
+    assert.match(consumer, /mount_path\s*=\s*local\.sheet_private_mount/);
+  }
+  assert.match(variables, /variable "sheet_append_artifact_objects"[\s\S]*?historical_capability/);
+  assert.match(variables, /variable "sheet_append_artifact_sha256"[\s\S]*?historical_capability/);
+  assert.doesNotMatch(main, /secret_data[^\n]*historical_capability|google_storage_bucket_object/);
+});
+
+test("Sheets failure policy is separate from follow-up and reuses the unchanged operations channel", () => {
+  const append = block(observability, "google_monitoring_alert_policy", "sheet_append_failure");
+  const followUp = block(observability, "google_monitoring_alert_policy", "job_failure");
+  assert.match(append, /count\s*=\s*local\.sheet_runtime_ready \? 1 : 0/);
+  assert.match(append, /notification_channels\s*=\s*\[google_monitoring_notification_channel\.operations\.id\]/);
+  assert.match(followUp, /Follow-up due job error/);
+  assert.doesNotMatch(followUp, /sheet-append|jsonPayload/);
+  assert.equal([...observability.matchAll(/resource "google_monitoring_notification_channel"/g)].length, 1);
+  const match = /filter\s*=\s*("(?:\\.|[^"\\])*")/.exec(append);
+  if (!match) throw new Error("Sheets matched-log filter missing");
+  assert.equal(JSON.parse(match[1]), 'resource.type="cloud_run_job" AND resource.labels.job_name="${local.prefix}-sheet-append" AND (severity>=ERROR OR (jsonPayload.job="sheet-append" AND jsonPayload.completed=false))');
+  const worker = read("../apps/api/src/jobs/sheet-append.ts");
+  assert.match(worker, /process\.stdout\.write\([^\n]*completed: failed === 0/);
+  assert.match(worker, /process\.stderr\.write\([^\n]*completed: false/);
+  assert.match(worker, /skipped: "append_flags_off"/);
+});
+
+test("synthetic fixed-filter cases cover stdout and stderr failures without treating OFF or success as failure", () => {
+  const errorLevels = new Set(["ERROR", "CRITICAL", "ALERT", "EMERGENCY"]);
+  const matchesFixedFilter = entry => entry.resource.type === "cloud_run_job" && entry.resource.labels.job_name === "crm-prod-sheet-append"
+    && (errorLevels.has(entry.severity) || (entry.jsonPayload?.job === "sheet-append" && entry.jsonPayload?.completed === false));
+  const resource = { type: "cloud_run_job", labels: { job_name: "crm-prod-sheet-append" } };
+  const cases = [
+    { name: "stdout completed false", entry: { resource, severity: "INFO", logName: "stdout", jsonPayload: { job: "sheet-append", completed: false, failed: 1 } }, expected: true },
+    { name: "stderr completed false", entry: { resource, severity: "DEFAULT", logName: "stderr", jsonPayload: { job: "sheet-append", completed: false } }, expected: true },
+    { name: "infrastructure ERROR", entry: { resource, severity: "ERROR", logName: "stderr" }, expected: true },
+    { name: "completed success", entry: { resource, severity: "INFO", logName: "stdout", jsonPayload: { job: "sheet-append", completed: true } }, expected: false },
+    { name: "flags OFF", entry: { resource, severity: "INFO", logName: "stdout", jsonPayload: { job: "sheet-append", skipped: "append_flags_off" } }, expected: false },
+    { name: "follow-up ERROR", entry: { resource: { type: "cloud_run_job", labels: { job_name: "crm-prod-follow-up-due" } }, severity: "ERROR" }, expected: false },
+    { name: "business-mail ERROR", entry: { resource: { type: "cloud_run_job", labels: { job_name: "crm-prod-business-mail" } }, severity: "ERROR" }, expected: false },
+  ];
+  for (const item of cases) assert.equal(matchesFixedFilter(item.entry), item.expected, item.name);
+});
+
 test("Sheets reader impersonation, worker and Scheduler are least-privilege and separate", () => {
   const impersonation = block(main, "google_service_account_iam_member", "sheet_reader_impersonation");
   assert.match(impersonation, /roles\/iam\.serviceAccountTokenCreator/);

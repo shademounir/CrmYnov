@@ -1,0 +1,1404 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "id": "rc48-pool-pre-20261027-9b1b1fb83f",
+      "status": "approved",
+      "scope": "POOL_RECONCILIATION_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T02:52:26.252Z",
+      "expiresAt": "2026-10-28T08:00:00.000Z",
+      "dossierSha256": "a956c052cec71ca53cdf43df539aa04f6c660df9e4b2ce36e07cb8e441ca3c92",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "21fbec8b5e639da1806f0ae91e915e5fd8f5f91504d5e31d61c28b2c89f9a396",
+      "journalDirectorySha256": "60d67daa318f0f7d8297a55570659c4703980993587db3188cb03011e4b254fa",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 261
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "rc48-general-pre-20261027-febce8cb70",
+      "status": "approved",
+      "scope": "GENERAL_PRESERVATION_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T02:52:26.252Z",
+      "expiresAt": "2026-10-28T08:00:00.000Z",
+      "dossierSha256": "747c115a341982869732a3cdc50ade252920415e6494abda9aaa93976ab71eeb",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "21fbec8b5e639da1806f0ae91e915e5fd8f5f91504d5e31d61c28b2c89f9a396",
+      "journalDirectorySha256": "18b6edc388ab3b64029432ef6ea8f537aacde6534ab295948efd34cc200793ed",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 261
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "rc48-ledger-pre-20261027-d064303171",
+      "status": "approved",
+      "scope": "SCHEMA_LEDGER_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T02:52:26.252Z",
+      "expiresAt": "2026-10-28T08:00:00.000Z",
+      "dossierSha256": "aed35f1a75817f9339a4d65dae8abe13e6c304226bcff905e5733b5498376527",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "21fbec8b5e639da1806f0ae91e915e5fd8f5f91504d5e31d61c28b2c89f9a396",
+      "journalDirectorySha256": "05fc86607cc65faeddbb96b838aa89c34165a9db50fa208d5d074fdeac1c662b",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 261
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "rc48-pool-pre-20261028-5d481699db",
+      "status": "approved",
+      "scope": "POOL_RECONCILIATION_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T04:02:58.407Z",
+      "expiresAt": "2026-10-28T08:00:00.000Z",
+      "dossierSha256": "359a48162741da3dcc68a70e3a4a556ab717088de43c39a1eeb718358513ce00",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "21fbec8b5e639da1806f0ae91e915e5fd8f5f91504d5e31d61c28b2c89f9a396",
+      "journalDirectorySha256": "e22b78bfc955f2155e9b0c94217cafc16daa8903a47aebcee2a834baad950986",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 262
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      },
+      "freshEvidence": {
+        "reason": "KNOWN_FIN_OLD_OUTPUT_EXCEEDED_FRESHNESS_BOUND",
+        "previousObjectiveId": "rc48-pool-pre-20261027-9b1b1fb83f",
+        "previousJobName": "projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/crm-prod-pool-reconcile-pre-20261027-9b1b1fb83f",
+        "knownFinReceiptSha256": "d928fa65cb33a102b469170937ddae55bb226e27db997696c44da09972dd5c58",
+        "failedOrStaleCaptureReceiptSha256": "9a6a229a54635148655fe9147fc20a29e22aca40662622ba793cba4f03a1895d",
+        "originalCreateRunMustNotBeReplayed": true,
+        "noNewBaselineOrCohort": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "rc48-ledger-pre-20261028-f4b3d88b78",
+      "status": "approved",
+      "scope": "SCHEMA_LEDGER_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T04:02:58.407Z",
+      "expiresAt": "2026-10-28T08:00:00.000Z",
+      "dossierSha256": "3ea6d42053ecea846bf105b70341e63d27e091ac573000fb92f5a62d90602f00",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "21fbec8b5e639da1806f0ae91e915e5fd8f5f91504d5e31d61c28b2c89f9a396",
+      "journalDirectorySha256": "28a9cc39a10801d895bb7fc341e04473846b7da36ae3718945c2be3670138b1d",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 262
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      },
+      "freshEvidence": {
+        "reason": "KNOWN_FIN_ORIGINAL_FIRST_OUTPUT_GET_FAILED_NO_SQL_CLAIMS",
+        "previousObjectiveId": "rc48-ledger-pre-20261027-d064303171",
+        "previousJobName": "projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/crm-prod-schema-ledger-pre-20261027-d064303171",
+        "knownFinReceiptSha256": "e78ed8b1b378e6916af2e0c4e12918e8d9d647f22c915359103887e7c3a78508",
+        "failedOrStaleCaptureReceiptSha256": "e78ed8b1b378e6916af2e0c4e12918e8d9d647f22c915359103887e7c3a78508",
+        "originalCreateRunMustNotBeReplayed": true,
+        "noNewBaselineOrCohort": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "rc48-general-pre-20261028-147f390728",
+      "status": "approved",
+      "scope": "GENERAL_PRESERVATION_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T14:35:01.178Z",
+      "expiresAt": "2026-10-29T14:35:01.178Z",
+      "dossierSha256": "d388c05e23b9b13f355b71c6f4d598207fba7d97b5b5aff8f4a058ba2875098f",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "85aa40f017f9bd457dbeb7787a2a8eb528ec9804b306d8665e2b54fee1699497",
+      "journalDirectorySha256": "5714f004a255834e02931340a64cde2d96fefbb0fce9d86ad31a4077d9afb43e",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 265
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      },
+      "freshEvidence": {
+        "reason": "KNOWN_FIN_PREVIOUS_CAPTURE_NOT_CURRENT_RUNTIME_PRE",
+        "previousObjectiveId": "rc48-general-pre-20261027-febce8cb70",
+        "previousJobName": "projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/crm-prod-preservation-pre-20261027-febce8cb70",
+        "knownFinReceiptSha256": "2ea79cf1e3707ee0c290814972618114b3aed0a51486af366e98cce968be2e17",
+        "originalCreateRunMustNotBeReplayed": true,
+        "noNewBaselineOrCohort": true
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "rc48-ledger-pre-20261028-61c3d8859d",
+      "status": "approved",
+      "scope": "SCHEMA_LEDGER_READ_ONLY_V1",
+      "businessMutation": false,
+      "ticket": "CRMY-63",
+      "actions": [
+        "VERIFY",
+        "CREATE",
+        "OBSERVE_CREATE",
+        "RUN",
+        "OBSERVE_RUN",
+        "READ_OUTPUT"
+      ],
+      "validFrom": "2026-10-28T14:35:01.178Z",
+      "expiresAt": "2026-10-29T14:35:01.178Z",
+      "dossierSha256": "5221cdbcc35dfcc326c7ea1c6d5360bb8d0a1ef246601f804d58d425bf0fe282",
+      "originalIntentSha256": "5a7bf55e05bd1adaf2b2805f300b119a2205e227fef594cdf96699d100d83af7",
+      "independentInputsSha256": "7873b65dae9efaa82dee931531db07d40e4fe7870f94022c343d1edbe89ab4ca",
+      "humanAuthorityReceiptSha256": "85aa40f017f9bd457dbeb7787a2a8eb528ec9804b306d8665e2b54fee1699497",
+      "journalDirectorySha256": "cb59510f6a586c809e794911cd8a03e951397c9a4836420b1896b3ff2c2c37e7",
+      "googleAccount": "casablancaynovcampus@gmail.com",
+      "driver": {
+        "pr": 260,
+        "head": "7204d94fc5418a4f5565ad4adedafa9932233387",
+        "mergeCommit": "994fd9c1ca56dfc0f70a4a926dee52a968bc120c",
+        "tree": "248381e27cf32cab6a7e159b4baaaa697d5df7e5",
+        "files": [
+          {
+            "path": "docs/governance/github-code-review-policy.json",
+            "sha256": "a9e786d75c29e21d2a70ff437707474ada9fd3091c50d9d697370b1157efd338"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/controlled-pool-contract-v1.mjs",
+            "sha256": "95275d5b8a4f55c30841b8231fd32cd2fc133681ad2b3cc8cb1f9b7a7fa48725"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
+            "sha256": "ed2f3a66e5bbf642ed2955fc41b323d1b33d94b4c502663f9d74fb798ff144af"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-authority-v1.mjs",
+            "sha256": "1eabbb230eec81288278b46cf0d85cd51d8c6873e77c49eb1bdfead1b62abd5c"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-driver-github-v1.mjs",
+            "sha256": "a5bacd81df4a2e52641f2ba2291469982b5598206931879a957ac63997b93ef4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-job-dossier-v1.mjs",
+            "sha256": "9fd6f23a97b403c359d64ed303c51b473f098459f1d7831d957f9c4b0cefa856"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
+            "sha256": "4063ad8019383193f0f3961f2b645d72572887741411a344b6fa43dbcebaeec9"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
+            "sha256": "7b225a229e54e8bdfd8918745d8316582779a0099615132eebeea750a5d0e405"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-operational-driver-v1.mjs",
+            "sha256": "8625a0025ab06563e749d5bc3d4ebad1d75d72ae713162c8e3eff1b5fc0e577e"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-output-reader-v1.mjs",
+            "sha256": "76d6f3dfa693d51055cd168382c59afb3263fdf81f193b7d6100365b3018977a"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-read-only-collector-v1.mjs",
+            "sha256": "7a5d7a624757cc448601e3c10e90a369b98ae123780f47eed83a87b748b3f084"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-bundle-v1.mjs",
+            "sha256": "dcdb4618c2095b97a41a5e9df48bd15a8ce4fee1b3d60c2ff17e6c45f4bbab9d"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-runtime-entry-v1.mjs",
+            "sha256": "1d66c3803cf0ddf4d2aab71c43739cd44658b9c936ebf1dda5e529c0a28f5f69"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/pool-sealed-output-v1.mjs",
+            "sha256": "8dd18146cd07635f5f0c0b8fe4e3e7b56174c2fc9a4149c1060d904e119d212f"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-output-codec-v1.mjs",
+            "sha256": "3630e81a59efa377962315ef50c4290847290455dfc1c3d7b3a6749d107f11e1"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-bundle-v1.mjs",
+            "sha256": "fb33a479d8c208f76857ba7e8fa55fd2aba1c1f08501765cf5993c7838b9d8c4"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/readonly-runtime-entry-v1.mjs",
+            "sha256": "4ff781754af3e883d0a255b8a7f0981e1936622ea55c7d6596dc393f71bed32b"
+          },
+          {
+            "path": "scripts/ci/pool-reconciliation/schema-ledger-read-only-collector-v1.mjs",
+            "sha256": "0f794ee0701718a18b899c86cb37d6a2f6c354bda3476e20ddcf81acbd520bfe"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
+            "sha256": "254f522efff433e6e71e0e9dbd1ac4310dfe76a57b7c12944cc10b03a58d09e7"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-github-v1.mjs",
+            "sha256": "6f1a45fda97b8e018818f9afe22f7cd26bd866322e4ebb832436b8626c52c1aa"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-driver-payload-v1.mjs",
+            "sha256": "1c33cdf2e8c2b3d7266ca5e16ae0972083ab14d01a11aa4d0adf15b49e634f3b"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-job-creation-v1.mjs",
+            "sha256": "1e56a05b64fe353b9f99333ea96355dda04cdae3546f1236d31593670c45c39f"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/probe-operational-driver-v1.mjs",
+            "sha256": "4b67e88ebf18dcbbcacc11f8068c1b1b89441ef45861c8f96bcbf27afe40e985"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bounded-exchange-v1.mjs",
+            "sha256": "c4bba467bc43200f5cddd2e2a552475af16a08647cabe2d34d4767204749dd2e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-bundle-v2.mjs",
+            "sha256": "94b930cd49be769d9e02344f2bb37a1ea737ef03a33c072559cc5e03feb50331"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-controlled-entry-v2.mjs",
+            "sha256": "fec578d37e160ae22acb1a29843e7f5e2219eddb693684e1fd5044b0f68b9066"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-exclusive-journal-v1.mjs",
+            "sha256": "556a812e36698e7599e2b7d80f71f99f0f910f6b2fcbe376411b1d4de3cf6624"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-executor-v1.mjs",
+            "sha256": "53075e8a9cd4c7d277a3e117f135c25c80b6347263b8fb3963b3ad83062f804a"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-http-contract-v1.mjs",
+            "sha256": "8fe91cf140b4f21fa556be4701879bf985f901881cbd7f27e2c9d9592a25e31d"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-native-guards-v1.mjs",
+            "sha256": "89aa16562e00ad98ab3d095f48c5c2e2a78089e2443463ed01bfb95dd8ec6903"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-official-auth-v1.mjs",
+            "sha256": "1a3abc2f3826ad70055745f380d83b23708b188d6a03f1b6245f6ea0420f32c5"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-probe-single-run-v1.mjs",
+            "sha256": "1e643f20de977b90718838f4d856d79a99fdc7b96ea4f93fd4125b334a2b425e"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-adapter-v1.mjs",
+            "sha256": "f469e2895c5074c29a96be91ff2435fd6869366574c6b0f3b83b9276a29a97c0"
+          },
+          {
+            "path": "scripts/ci/readonly-probe/rc47-select-only-probe-core-v1.mjs",
+            "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
+          },
+          {
+            "path": "scripts/pr-policy/delegation.mjs",
+            "sha256": "9f20f513d515ed37272ef2ca3bf637542615ca21330d07f619f6f23cd09596d4"
+          },
+          {
+            "path": "scripts/pr-policy/github-code-review.mjs",
+            "sha256": "5a5081740eb1227eeddf0c107a8141d51179b118f76151586446f463741b62bd"
+          },
+          {
+            "path": "scripts/release-manifest/checks.mjs",
+            "sha256": "25acd49f4d3f361821bb61372c8c047df15b6e39c7b4fe4f961b8c3d36d4a047"
+          }
+        ]
+      },
+      "objectiveReview": {
+        "pr": 265
+      },
+      "release": {
+        "pr": 243,
+        "head": "d06302f13bc35cca78466a8bec8972e75804c72f",
+        "mergeCommit": "8253024ea35cee6be5636cc6b10a88ae7e177377",
+        "tag": "v0.1.0-rc.48",
+        "releaseId": 424492409,
+        "postPublishRun": 40359422772
+      },
+      "freshEvidence": {
+        "reason": "KNOWN_FIN_PREVIOUS_CAPTURE_NOT_CURRENT_RUNTIME_PRE",
+        "previousObjectiveId": "rc48-ledger-pre-20261028-f4b3d88b78",
+        "previousJobName": "projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/crm-prod-schema-ledger-pre-20261028-f4b3d88b78",
+        "knownFinReceiptSha256": "a57e679937cb1513071d9e9c7abc4e8d2e6deed30fb12bf61ee3fb2cac52f25d",
+        "originalCreateRunMustNotBeReplayed": true,
+        "noNewBaselineOrCohort": true
+      }
+    }
+  ]
+}
