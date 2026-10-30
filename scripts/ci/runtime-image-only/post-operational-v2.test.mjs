@@ -65,12 +65,14 @@ function operationalFixture(){
   function jobResponse(){if(!created){return response({error:{status:'NOT_FOUND',code:404}},404);}const job=structuredClone(d.job);if(ran){job.executionCount=1;job.latestCreatedExecution={name:d.execution.name,completionStatus:'EXECUTION_SUCCEEDED',completionTime:d.execution.completionTime};}return response(job);}
   function logResponse(){const logs=structuredClone(d.logs);if(corruptLogs){logs.entries[0].jsonPayload.ciphertext='BROKEN_PRIVATE_RAW_RESPONSE';}return response(logs);}
   const staticRoutes=new Map([[RUNURL(d.job.name),jobResponse],[RUNURL(createOp),()=>response({name:createOp,done:true,response:{name:d.job.name,uid:d.job.uid}})],[RUNURL(runOp),()=>{now=Math.max(now,d.now+500);return response({name:runOp,done:true,response:{name:d.execution.name,uid:d.execution.uid}});}],[RUNURL(d.execution.name),()=>response(d.execution)],[LOGURL,logResponse]]);
+  const permissionResponse=body=>response({permissions:permissionsMissing?[]:body.permissions});
+  const jobsResponse=()=>response({jobs:created?[{name:d.job.name,uid:d.job.uid}]:[]});
   const fetchImpl=async(url,init)=>{calls.push({url,method:init.method,body:init.body?JSON.parse(init.body):null});now+=1;const u=new URL(url),body=init.body?JSON.parse(init.body):null;
-    if(url.includes(':testIamPermissions')){return response({permissions:permissionsMissing?[]:body.permissions});}
+    if(url.includes(':testIamPermissions')){return permissionResponse(body);}
     if(init.method==='POST'&&u.pathname.endsWith('/jobs')){return createResponse();}
     if(init.method==='POST'&&u.pathname.endsWith(':run')){return runResponse();}
     if(staticRoutes.has(url)){return staticRoutes.get(url)();}
-    if(u.pathname==='/v2/'+PARENT+'/jobs'){return response({jobs:created?[{name:d.job.name,uid:d.job.uid}]:[]});}
+    if(u.pathname==='/v2/'+PARENT+'/jobs'){return jobsResponse();}
     if(u.pathname.endsWith('/executions')){return response({executions:ran?[d.execution]:[]});}
     throw new Error('SYNTHETIC_UNKNOWN_NATIVE_ROUTE');
   };

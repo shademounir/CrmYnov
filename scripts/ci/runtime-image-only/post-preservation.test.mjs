@@ -59,20 +59,25 @@ test('HTTP checks require native exact GET, real-shaped observed roles and origi
 for(const [name,change] of [['metadata instead HTTP',r=>r.length=0],['HTML absent',r=>r[1].response.projection.assetPaths=[]],['cross-origin asset',r=>r[1].response.projection.assetPaths=['https://foreign.invalid/a.js']],['database unavailable',r=>r[0].response.projection.database='offline'],['session expired',r=>r[2].response.status=401],['future response',r=>r[0].responseReceivedAt='2026-10-31T00:00:00.000Z']])test('POST HTTP refuses '+name,async()=>{const f=fixture(),p=await prepare(f.args),records=http(f,p);change(records);assert.throws(()=>validateImagePostHttpObservations({readiness:p,records,afterImageObservedAt:new Date(f.now+500).toISOString(),now:f.now+1500}));});
 test('startup current MANAGER49 is unchanged; no epoch/audit absence of effects is claimed',()=>{const rows=startupPermissions(),before=structuredClone(rows),p=projectRc48StartupPermissions(rows);assert.deepEqual(p.permissions,rows);assert.deepEqual(rows,before);assert.equal(p.changes.length,0);assert.equal(p.managerExisting49Preserved,true);assert.equal(p.epochOrAuditAbsenceOfChangeNotClaimed,true);});
 for(const role of ['MANAGER','ADMIN','SUPER_ADMIN'])test('only missing startup capabilities get a deterministic append-only projection for '+role,()=>{const rows=startupPermissions();rows[0].role=role;rows[0].grants=rows[0].grants.filter(g=>!['lead.qualification.update','telephony.free-call.create','reporting.pilotage.view'].includes(g.permission));const p=projectRc48StartupPermissions(rows),next=p.permissions[0],expectedScope={SUPER_ADMIN:'GLOBAL',ADMIN:'CAMPUS',MANAGER:'NONE'}[role];assert.equal(next.version,2);assert.equal(next.grants.length,49);assert.equal(next.grants.find(g=>g.permission==='telephony.free-call.create').scope,expectedScope);assert.equal(p.changes[0].auditObserved,false);});
+function expectedMutationScope(role,campus){
+ if(role==='SUPER_ADMIN'||role==='*'){return campus==='GLOBAL'?'GLOBAL':'CAMPUS';}
+ return role==='ADMIN'?'CAMPUS':'NONE';
+}
+function expectedPilotageScope(role,campus){
+ if(role==='SUPER_ADMIN'||role==='*'){return campus==='GLOBAL'?'GLOBAL':'CAMPUS';}
+ return role==='ADMIN'||role==='MANAGER'?'CAMPUS':'NONE';
+}
+function assertStartupMatrixCase(role,campus){
+ const rows=startupPermissions(),row=rows[0];row.role=role;row.kind=role==='*'?'CEILING':'ROLE';row.campus=campus;
+ row.grants=row.grants.filter(g=>!['lead.qualification.update','telephony.free-call.create','reporting.pilotage.view'].includes(g.permission));
+ row.grants.find(g=>g.permission==='reporting.view').scope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';
+ const before=structuredClone(rows),result=projectRc48StartupPermissions(rows),next=result.permissions[0],grants=Object.fromEntries(next.grants.map(g=>[g.permission,g.scope]));
+ const mutationScope=expectedMutationScope(role,campus),pilotageScope=expectedPilotageScope(role,campus);
+ assert.equal(grants['lead.qualification.update'],mutationScope);assert.equal(grants['telephony.free-call.create'],mutationScope);assert.equal(grants['reporting.pilotage.view'],pilotageScope);assert.equal(next.version,2);assert.equal(next.grants.length,49);assert.deepEqual(rows,before);assert.equal(result.changes[0].auditObserved,false);assert.equal(result.epochOrAuditAbsenceOfChangeNotClaimed,true);
+}
 test('startup projection keeps the exact role, ceiling, campus and pilotage matrix after branch extraction',()=>{
- const roles=['SUPER_ADMIN','ADMIN','MANAGER','ADMISSIONS','AUDITOR','*'];
- for(const role of roles){
-  for(const campus of ['GLOBAL','SYNTHETIC_CAMPUS']){
-   const rows=startupPermissions(),row=rows[0];row.role=role;row.kind=role==='*'?'CEILING':'ROLE';row.campus=campus;
-   row.grants=row.grants.filter(g=>!['lead.qualification.update','telephony.free-call.create','reporting.pilotage.view'].includes(g.permission));
-   row.grants.find(g=>g.permission==='reporting.view').scope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';
-   const before=structuredClone(rows),result=projectRc48StartupPermissions(rows),next=result.permissions[0],grants=Object.fromEntries(next.grants.map(g=>[g.permission,g.scope]));
-   let mutationScope='NONE';
-   if(role==='SUPER_ADMIN'||role==='*'){mutationScope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';}else if(role==='ADMIN'){mutationScope='CAMPUS';}
-   let pilotageScope='NONE';
-   if(role==='SUPER_ADMIN'||role==='*'){pilotageScope=campus==='GLOBAL'?'GLOBAL':'CAMPUS';}else if(role==='ADMIN'||role==='MANAGER'){pilotageScope='CAMPUS';}
-   assert.equal(grants['lead.qualification.update'],mutationScope);assert.equal(grants['telephony.free-call.create'],mutationScope);assert.equal(grants['reporting.pilotage.view'],pilotageScope);assert.equal(next.version,2);assert.equal(next.grants.length,49);assert.deepEqual(rows,before);assert.equal(result.changes[0].auditObserved,false);assert.equal(result.epochOrAuditAbsenceOfChangeNotClaimed,true);
-  }
+ for(const role of ['SUPER_ADMIN','ADMIN','MANAGER','ADMISSIONS','AUDITOR','*']){
+  for(const campus of ['GLOBAL','SYNTHETIC_CAMPUS']){assertStartupMatrixCase(role,campus);}
  }
 });
 test('AUDITOR keeps read-only view scope but cannot acquire a mutating permission',()=>{

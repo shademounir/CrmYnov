@@ -7,6 +7,15 @@ import {validateImagePlan,validatePlannedImageServedState,imagePlanScope,isImage
 import {imageServiceConfiguration} from './served-state.mjs';
 const sqlInstance='crm-ynov-prod-pg17',stages=new Set(['BACKUP','API_IMAGE','WEB_IMAGE']);
 const stageDetails={BACKUP:{action:'CREATE_BACKUP'},API_IMAGE:{action:'PATCH_API',kind:'api',patchIndex:0},WEB_IMAGE:{action:'PATCH_WEB',kind:'web',patchIndex:1}};
+function completedResult(stage,a,proof,receipt){
+  const result={state:'FIN_NO_REPLAY',stage,outcome:proof.outcome,receiptSha256:receipt.sha256,httpAndRoleRecipesStillRequired:true,automaticRetryAllowed:false};
+  if(a.entry.schemaVersion!==2){return result;}
+  result.nativeReceiptSha256=receipt.sha256;
+  if(typeof receipt.path==='string'){result.nativeReceipt={path:receipt.path,sha256:receipt.sha256};}
+  if(proof.servedObservedAt){result.servedObservedAt=proof.servedObservedAt;}
+  if(proof.outcome==='SUCCEEDED'&&stage==='BACKUP'){result.backup={id:proof.backupId,status:'SUCCESSFUL',completedAt:proof.backupEndTime,nativeReceiptSha256:receipt.sha256};}
+  return result;
+}
 export function createImageOnlyExecutor({plan,candidate,baseline,rollbackContext,source,objectiveId,dossier,journalDirectory,transport,authorizeFresh,qualifyPreparation,saveReceipt,getCompletionContext,clock=Date.now}){
   plan=structuredClone(plan);candidate=structuredClone(candidate);baseline=structuredClone(baseline);rollbackContext=structuredClone(rollbackContext);source=structuredClone(source);dossier=structuredClone(dossier);
   validateImagePlan(plan,candidate,baseline,rollbackContext);
@@ -112,15 +121,6 @@ export function createImageOnlyExecutor({plan,candidate,baseline,rollbackContext
     if(relatedKind){const related=await served(relatedKind,v2);if(v2){proof.relatedServed={[relatedKind]:related};observed.push(related.observedAt);}}
     if(v2){proof.servedObservedAt=new Date(Math.max(...observed.map(Date.parse))).toISOString();}
     await preserved(a);return proof;
-  }
-  function completedResult(stage,a,proof,receipt){
-    const result={state:'FIN_NO_REPLAY',stage,outcome:proof.outcome,receiptSha256:receipt.sha256,httpAndRoleRecipesStillRequired:true,automaticRetryAllowed:false};
-    if(a.entry.schemaVersion!==2){return result;}
-    result.nativeReceiptSha256=receipt.sha256;
-    if(typeof receipt.path==='string'){result.nativeReceipt={path:receipt.path,sha256:receipt.sha256};}
-    if(proof.servedObservedAt){result.servedObservedAt=proof.servedObservedAt;}
-    if(proof.outcome==='SUCCEEDED'&&stage==='BACKUP'){result.backup={id:proof.backupId,status:'SUCCESSFUL',completedAt:proof.backupEndTime,nativeReceiptSha256:receipt.sha256};}
-    return result;
   }
   async function observe(stage){
     const saved=inspect(stage);assert.equal(saved.state,'KNOWN_OPERATION_OBSERVE_ONLY','ONLY_KNOWN_OPERATION_CAN_BE_OBSERVED');

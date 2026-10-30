@@ -87,9 +87,9 @@ function hasPostgresCredentials(value){
  const schemes=['postgres://','postgresql://'];let cursor=0;
  while(cursor<value.length){
   const starts=schemes.map(scheme=>({scheme,index:value.indexOf(scheme,cursor)})).filter(row=>row.index>=0);if(starts.length===0){return false;}
-  const next=starts.reduce((left,right)=>left.index<=right.index?left:right),start=next.index+next.scheme.length;let end=start;
+  const next=starts.reduce((left,right)=>left.index<=right.index?left:right,starts[0]),start=next.index+next.scheme.length;let end=start;
   while(end<value.length&&!/\s/u.test(value[end])){end++;}
-  const segment=value.slice(start,end),colon=segment.indexOf(':',1);if(colon>=1&&segment.indexOf('@',colon+2)>=0){return true;}
+  const segment=value.slice(start,end),colon=segment.indexOf(':',1);if(colon>=1&&segment.includes('@',colon+2)){return true;}
   cursor=end+1;
  }
  return false;
