@@ -12,8 +12,8 @@ import {readPoolPrivateFile} from '../pool-reconciliation/pool-operational-drive
 import {createReadOnlyGithubReader} from '../pool-reconciliation/pool-driver-github-v1.mjs';
 import {openOfficialSdkOperationalSession} from '../readonly-probe/official-sdk-auth-preflight-v1.mjs';
 import {readImageOperationalSource,imageExternalDirectory} from './local-source.mjs';
-import {validateImageInventoryPublicProjection} from './operational-cli-v2.mjs';
-import {acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2,runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2,observeImagePostUnusedResourceV2} from './post-operational-v2.mjs';
+import {validateImageDossierPublicProjectionV3} from './dossier-public-projection-v3.mjs';
+import {validateImagePostDossierV2,acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2,runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2,observeImagePostUnusedResourceV2} from './post-operational-v2.mjs';
 import {runGeneralOperationalPreV3,releaseVerifiedGeneralPreV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
 import {validateProspectiveConsumerInputs} from '../pool-reconciliation/general-prospective-pre-session-v1.mjs';
 import {validateImagePreparationV2,validateImageIndependentEvidenceV2,bindImageLivePostReadinessV2} from './preparation-v2.mjs';
@@ -88,11 +88,12 @@ export function parseImagePostPreparationArgumentsV2(args){
   for(const key of allowed.filter(key=>key!=='--objective-id')){assert(path.isAbsolute(result[key]));}return result;
 }
 function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(value)).every(d=>Object.hasOwn(d,'value')));assert.deepEqual(Object.keys(value).sort(alphabetical),[...keys].sort(alphabetical));}
-function publicJson(file,max=1048576){const bytes=readPoolPrivateFile(file,max),value=JSON.parse(bytes);validateImageInventoryPublicProjection(value);return value;}
-function verifiedPublicBytes(ref){imagePublicRefV2(ref);const bytes=readPoolPrivateFile(ref.path,1048576);assert.equal(hash(bytes),ref.sha256,'FORWARD_INPUT_BYTES_CHANGED');validateImageInventoryPublicProjection(JSON.parse(bytes));return bytes;}
+function validatePublic(value){return validateImageDossierPublicProjectionV3(value,readImageForwardCollectorSourceV2);}
+function publicJson(file,max=1048576){const bytes=readPoolPrivateFile(file,max),value=JSON.parse(bytes);validatePublic(value);return value;}
+function verifiedPublicBytes(ref){imagePublicRefV2(ref);const bytes=readPoolPrivateFile(ref.path,1048576);assert.equal(hash(bytes),ref.sha256,'FORWARD_INPUT_BYTES_CHANGED');validatePublic(JSON.parse(bytes));return bytes;}
 export function readImageForwardPublicReferenceV2(ref){return JSON.parse(verifiedPublicBytes(ref));}
 function publicSaver(output){let ordinal=0;return(name,value)=>{
-  assert(/^[A-Z][A-Z0-9-]{0,95}$/u.test(name));validateImageInventoryPublicProjection(value);
+  assert(/^[A-Z][A-Z0-9-]{0,95}$/u.test(name));validatePublic(value);
   const bytes=Buffer.from(JSON.stringify(value,null,2)+'\n'),file=path.join(output,String(ordinal++).padStart(4,'0')+'-'+name+'.json'),fd=fs.openSync(file,'wx',0o600);
   try{let offset=0;while(offset<bytes.length){const n=fs.writeSync(fd,bytes,offset,bytes.length-offset);assert(n>0);offset+=n;}fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
   return{path:file,sha256:hash(fs.readFileSync(file))};
@@ -104,8 +105,16 @@ function cleanupEntry(result,{sdk,budget,postAuthority,postResult,generalResult,
   if(refused){return{...result,observedStateBeforeCleanup:result?.state,state:'OPERATIONAL_ENTRY_STOPPED_LOCAL_CLEANUP_INCOMPLETE',secondaryGuard:'LOCAL_CLEANUP_FAILED_NO_RETRY',canRetry:false};}return result;
 }
 function entryTerminal(result,{sdk,budget,save,name}){
-  let publicResult;try{publicResult={...result};if(sdk){publicResult.sdkAuthentication=sdk.report();}if(budget){publicResult.nativeSession=budget.inspect();}validateImageInventoryPublicProjection(publicResult);}catch{publicResult={schemaVersion:2,kind:'EXPURGATED_OPERATIONAL_ENTRY_TERMINAL_REFUSED_V2',state:'STOPPED_TERMINAL_PROJECTION_NOT_PUBLIC',guardCode:'LOCAL_TERMINAL_PROJECTION_FAILED_NO_RETRY',canRetry:false};}
+  let publicResult;try{publicResult={...result};if(sdk){publicResult.sdkAuthentication=sdk.report();}if(budget){publicResult.nativeSession=budget.inspect();}validatePublic(publicResult);}catch{publicResult={schemaVersion:2,kind:'EXPURGATED_OPERATIONAL_ENTRY_TERMINAL_REFUSED_V2',state:'STOPPED_TERMINAL_PROJECTION_NOT_PUBLIC',guardCode:'LOCAL_TERMINAL_PROJECTION_FAILED_NO_RETRY',canRetry:false};}
   if(!save){return publicResult;}try{return{...publicResult,entryReceipt:save(name,publicResult)};}catch{return{...publicResult,receiptPersistence:'FAILED_NO_RETRY',secondaryGuard:publicResult.secondaryGuard??'LOCAL_TERMINAL_PERSISTENCE_FAILED_NO_RETRY',canRetry:false};}
+}
+// Qualification only: the real private public-write helpers, no SDK/native port.
+export function simulateImageForwardPublicPersistenceV3(input){
+  validatePublic(input);exact(input,['syntheticOnly','outputDirectory','result','name']);assert.equal(input.syntheticOnly,true);
+  assert(typeof input.name==='string'&&/^[A-Z][A-Z0-9-]{0,95}$/u.test(input.name));
+  const directory=imageExternalDirectory(input.outputDirectory);assert.equal(fs.readdirSync(directory).length,0,'SYNTHETIC_PUBLIC_OUTPUT_MUST_BE_EMPTY');
+  const result=entryTerminal({...input.result,syntheticOnly:true,nativeAuthority:false,nativeAcceptance:false},{save:publicSaver(directory),name:input.name});
+  return{syntheticOnly:true,nativeAuthority:false,nativeAcceptance:false,result};
 }
 function validateSessionBinding(binding,authority,source,scope,resources){
   exact(binding,['sessionId','authorityRecordSha256','resourceBindingSha256','scope','windowStart','windowEnd','sourceCommit','project','region']);
@@ -124,6 +133,7 @@ export async function runImagePostResourcePreparationV2(args){
   try{
     assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);
     const o=parseImagePostPreparationArgumentsV2(args),source=readImageOperationalSource(),dossier=publicJson(o['--dossier']);
+    validateImagePostDossierV2(dossier,readImageForwardCollectorSourceV2);
     const jiraBytes=readPoolPrivateFile(o['--jira-evidence'],65536),binding=publicJson(o['--session-binding']);
     const directory=imageExternalDirectory(o['--journal-dir']),output=imageExternalDirectory(o['--output-dir']);assert.notEqual(directory,output);
     assert.equal(fs.readdirSync(directory).length,0,'POST_CREATE_REQUIRES_NEW_EMPTY_JOURNAL');assert.equal(fs.readdirSync(output).length,0,'POST_CREATE_REQUIRES_NEW_EMPTY_OUTPUT');save=publicSaver(output);
