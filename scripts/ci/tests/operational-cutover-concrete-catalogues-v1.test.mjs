@@ -32,6 +32,17 @@ const window={validFrom:'2026-10-30T16:54:24.466Z',expiresAt:'2026-10-31T16:54:2
 const midpoint=Date.parse(window.validFrom)+(Date.parse(window.expiresAt)-Date.parse(window.validFrom))/2;
 const review=relative=>({kind:'PROTECTED_CATALOGUE_PATH_HISTORY',path:relative});
 const sourceProjection=()=>({commit:sourceIdentity.mergeCommit,tree:sourceIdentity.tree,clean:true,files:inventory.driver.files});
+// These two exact RAW, non-executable fixtures retain PR273/c389 source bytes.
+// The other77 source bytes still equal this checkout; this is not a new common
+// native snapshot or a claim that the future V3 driver uses the c389 closure.
+const historicalSourceFixtures={
+ 'scripts/ci/runtime-image-only/local-source.mjs':{path:'scripts/ci/runtime-image-only/fixtures/c389-local-source.mjs.fixture.txt',sha256:'e208f43237b89d53158576931e8b4c13acbb0577070c29c39233d1e0fd04237d'},
+ 'scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs':{path:'scripts/ci/runtime-image-only/fixtures/c389-operational-forward-cli-v2.mjs.fixture.txt',sha256:'0f247ca4adb761dcec0ff19f8eea689fe282602464b8904f0380d0a085119ac3'},
+};
+function historicalSourceBytes(relative){
+ const pin=historicalSourceFixtures[relative];if(!pin){return readBytes(relative);}
+ const bytes=readBytes(pin.path);assert.equal(sha(bytes),pin.sha256);return bytes;
+}
 
 // clean:true is an explicit pure-validator input, not a Git/native observation.
 function assertSourceClosure(driver){
@@ -39,7 +50,8 @@ function assertSourceClosure(driver){
  assert.deepEqual(identity,sourceIdentity);
  assert.equal(files.length,79);
  assert.deepEqual(files.map(file=>file.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V2);
- for(const file of files){assert.equal(sha(readBytes(file.path)),file.sha256,file.path);}
+ assert.equal(digest(files),'cd76dd409cdabf7153ba6bd9dee9dd0e5c064b15fef7f1cec7f3a699f8bfa20d');
+ for(const file of files){assert.equal(sha(historicalSourceBytes(file.path)),file.sha256,file.path);}
  assert(!files.some(file=>file.path===readonlyPath||file.path===imagePath));
 }
 

@@ -11,6 +11,9 @@ export const IMAGE_OPERATIONAL_DRIVER_INPUTS_V2=Object.freeze([...new Set([
  'scripts/ci/readonly-probe/official-sdk-auth-preflight-v1.mjs',
  'scripts/ci/pool-reconciliation/general-operational-pre-v3.mjs',
 ])].sort((a,b)=>a.localeCompare(b,'en')));
+// Source-bound public dossier adaptation has a distinct explicit closure.
+// The protected c389/V2 list and historical catalogue pins remain unchanged.
+export const IMAGE_OPERATIONAL_DRIVER_INPUTS_V3=Object.freeze([...IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,'scripts/ci/runtime-image-only/dossier-public-projection-v3.mjs'].sort((a,b)=>a.localeCompare(b,'en')));
 export function readImageLocalSource(){
  assert.equal(process.platform,'win32');assert.equal(fs.realpathSync(POOL_OFFICIAL_GIT),path.win32.normalize(POOL_OFFICIAL_GIT));assert(!fs.lstatSync(POOL_OFFICIAL_GIT).isSymbolicLink());assert(!Object.keys(process.env).some(k=>/^GIT_/iu.test(k)));
  const env=fixedToolEnvironment(process.env),git=(...args)=>execFileSync(POOL_OFFICIAL_GIT,['-C',root,...args],{encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1048576,env}).trim();
@@ -22,7 +25,7 @@ export function readImageLocalSource(){
 // continue to receive exactly their original manifest.
 export function readImageOperationalSource(){
  const legacy=readImageLocalSource();
- const files=IMAGE_OPERATIONAL_DRIVER_INPUTS_V2.map(relative=>({path:relative,sha256:createHash('sha256').update(readPoolPrivateFile(path.join(root,relative))).digest('hex')}));
+ const files=IMAGE_OPERATIONAL_DRIVER_INPUTS_V3.map(relative=>({path:relative,sha256:createHash('sha256').update(readPoolPrivateFile(path.join(root,relative))).digest('hex')}));
  return {...legacy,files};
 }
 export function imageExternalDirectory(p){
