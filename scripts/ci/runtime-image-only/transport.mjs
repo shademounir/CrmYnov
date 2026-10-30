@@ -6,6 +6,7 @@ import {assertAuthorityCurrent} from '../readonly-probe/probe-driver-authority-v
 import {imageJournalDigest as digest} from './journal.mjs';
 import {PROJECT,LOCATION} from './plan.mjs';
 import {imagePlanScope,isImageRollback} from './plan-mode.mjs';
+export {createImageOperationalTransport} from './operational-transport-v2.mjs';
 
 const runOrigin='https://run.googleapis.com/v2/',sqlOrigin='https://sqladmin.googleapis.com/sql/v1beta4/',schedulerOrigin='https://cloudscheduler.googleapis.com/v1/';
 const instance='crm-ynov-prod-pg17',sqlInstance='projects/'+PROJECT+'/instances/'+instance;

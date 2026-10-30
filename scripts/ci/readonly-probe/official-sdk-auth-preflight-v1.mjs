@@ -2,6 +2,7 @@
 // byte-identical. This module has no CLI and never constructs a GCP client.
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {createOfficialAccessToken,TOKEN_ENDPOINT} from './rc47-probe-official-auth-v1.mjs';
 export const AUTH_ACCOUNT='casablancaynovcampus@gmail.com';
 export const AUTH_PYTHON='C:/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/platform/bundledpython/python.exe';
@@ -134,11 +135,11 @@ function createStageExecutor(context){
     finally{context.cancel(timer);}
   }};
 }
-async function performAuth({environment,platform,clock,invoke,schedule,cancel,guard,leaseExpiresAt,requestDeadline}){
+async function performAuth({environment,platform,clock,invoke,schedule,cancel,guard,leaseExpiresAt,requestDeadline,retainOperationalToken=false}){
   assert(['win32','linux','darwin'].includes(platform));const started=clock();assert(Number.isSafeInteger(started));
   const absoluteDeadline=started+15000,controller=new AbortController(),caps=[platform==='win32'?5000:3000,3000,6000],facts=STAGES.map((stage,i)=>factsFor(stage,caps[i]));
   const executor=createStageExecutor({controller,environment,clock,invoke,schedule,cancel,guard,absoluteDeadline,leaseExpiresAt,requestDeadline,facts});
-  let token,returned=false,state='AUTH_PRECONDITION_REFUSED',authEnded;
+  let token,retainedToken,returned=false,state='AUTH_PRECONDITION_REFUSED',authEnded;
   try{
     guard();assert(started<leaseExpiresAt&&started<requestDeadline&&!ambientOverride(environment));
     const provider=createOfficialAccessToken({account:AUTH_ACCOUNT,gcloudPath:AUTH_GCLOUD,pythonPath:AUTH_PYTHON,environment,execute:executor.execute});
@@ -151,8 +152,9 @@ async function performAuth({environment,platform,clock,invoke,schedule,cancel,gu
     if(returned){state='AUTH_POSTCHECK_REFUSED';}
     else if(active){state=active.outcome.startsWith('AUTH_')?active.outcome:stageFailure(active);active.outcome=state;}
     else if(ambientOverride(environment)){state='AUTH_AMBIENT_OVERRIDE_REFUSED';}
-  }finally{token=undefined;executor.finish();authEnded=clock();}
-  await executor.settle();return reportOf(state,facts,started,authEnded,clock());
+  }finally{if(retainOperationalToken&&state==='AUTHENTICATION_CHAIN_VALIDATED'){retainedToken=token;}token=undefined;executor.finish();authEnded=clock();}
+  await executor.settle();const report=reportOf(state,facts,started,authEnded,clock());
+  return retainOperationalToken?{report,retainedToken}:report;
 }
 // Closed actual SDK entry. No injectable factory, process, account, deadline,
 // clock or environment; caller only supplies a verified lease and local guard.
@@ -165,5 +167,90 @@ export async function runOfficialSdkAuthOnly({leaseExpiresAt,assertCurrent}){
 // Explicit synthetic test surface; returned data never includes the fake token.
 // This is not a source of human, governance, permission, or RUN authority.
 export async function simulateOfficialSdkAuthPreflight({syntheticOnly,...input}){
-  assert.equal(syntheticOnly,true);return performAuth(input);
+  assert.equal(syntheticOnly,true);return performAuth({...input,retainOperationalToken:false});
+}
+
+// This is a resource-session authentication adapter, not the closed historical
+// AUTH_ONLY trial. It never constructs a URL, sends a resource request, grants
+// IAM rights or arms an execution claim. The caller closes it in finally.
+const OPERATIONAL_SCOPE=new Set(['READ_ONLY_INVENTORY','RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1','POST_PRESERVATION_READ_ONLY_V2']);
+const OPERATIONAL_FIELDS=['schemaVersion','kind','sessionId','authorityRecordSha256','resourceBindingSha256','sourceCommit','sourceTree','scope','project','region','windowStart','windowEnd','googleAccount'];
+function operationalData(value,keys){
+  assert(value&&Object.getPrototypeOf(value)===Object.prototype);const descriptors=Object.getOwnPropertyDescriptors(value);
+  assert(Reflect.ownKeys(descriptors).every(key=>typeof key==='string'&&Object.hasOwn(descriptors[key],'value')));
+  assert.deepEqual(Object.keys(descriptors).sort(alphabetical),[...keys].sort(alphabetical));
+}
+function operationalTime(value){assert.equal(typeof value,'string');const n=Date.parse(value);assert(Number.isSafeInteger(n)&&new Date(n).toISOString()===value);return n;}
+function operationalPostResources(value){
+  operationalData(value,['schemaVersion','kind','project','region','objectiveId','job','dossierSha256','sourceSha256','bundleSha256','image','role','selectCount']);
+  assert.equal(value.schemaVersion,2);assert.equal(value.kind,'POST_PRESERVATION_RESOURCE_BINDING_V2');assert.equal(value.project,'crmynov-prod-n7x4q2');assert.equal(value.region,'europe-west1');
+  assert.match(value.objectiveId,/^rc48-general-post-[a-z0-9-]{8,63}$/u);assert.match(value.job,/^projects\/crmynov-prod-n7x4q2\/locations\/europe-west1\/jobs\/crm-prod-preservation-post-[a-z0-9-]+$/u);
+  for(const key of ['dossierSha256','sourceSha256','bundleSha256']){assert.match(value[key],/^[a-f0-9]{64}$/u);}
+  assert.equal(value.image,'europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/api@sha256:d2b2f6b0cf0ed9d9eb1cb15b70924af38be7ca4c4a824b6b406bb62caf88cd8f');assert.equal(value.role,'crm_runtime');assert.equal(value.selectCount,13);
+  const canonical='{'+Object.keys(value).sort(alphabetical).map(key=>JSON.stringify(key)+':'+JSON.stringify(value[key])).join(',')+'}';return createHash('sha256').update(canonical).digest('hex');
+}
+function operationalAuthority(contract,getAuthority,assertCurrent,clock){
+  assertCurrent();const now=clock();assert(Number.isSafeInteger(now));const authority=getAuthority(),entry=authority?.entry,receipt=authority?.receipt;
+  assert(entry?.schemaVersion===2&&receipt?.schemaVersion===2);assert.equal(entry.googleAccount,AUTH_ACCOUNT);
+  assert.equal(entry.scope,contract.scope);assert.equal(entry.project,contract.project);assert.equal(entry.region,contract.region);
+  assert.equal(entry.authorityRecordSha256,contract.authorityRecordSha256);assert.equal(receipt.authorityRecordSha256,contract.authorityRecordSha256);
+  assert.equal(entry.resourceBindingSha256,contract.resourceBindingSha256);assert.equal(receipt.resourceBindingSha256,contract.resourceBindingSha256);
+  assert.equal(entry.driver.mergeCommit,contract.sourceCommit);assert.equal(receipt.driverCommit,contract.sourceCommit);assert.equal(entry.driver.tree,contract.sourceTree);
+  if(contract.scope==='READ_ONLY_INVENTORY'){
+    assert.equal(entry.preparationMode,'READ_ONLY_INVENTORY');assert.equal(entry.preparationPhase,'READ_ONLY_INVENTORY');
+    assert(entry.actions.every(action=>['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION'].includes(action)));
+  }else if(contract.scope==='POST_PRESERVATION_READ_ONLY_V2'){
+    assert.equal(entry.preparationMode,'POST_PRESERVATION_V2');assert.equal(entry.preparationPhase,contract.preparationPhase);assert.equal(entry.commonSessionBindingSha256,contract.commonSessionBindingSha256);assert.equal(receipt.commonSessionBindingSha256,contract.commonSessionBindingSha256);
+    const actions=['CREATE_POST_JOB','RUN_POST_JOB','READ_POST_OUTPUT','READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION'];assert.deepEqual([...entry.actions].sort(alphabetical),actions.sort(alphabetical));
+    assert.equal(operationalPostResources(entry.resourceBindings),contract.resourceBindingSha256);
+  }else{assert.equal(entry.preparationMode,'LATE_BOUND_V2');assert(['BACKUP_READY','FORWARD_FINAL'].includes(entry.preparationPhase));}
+  const start=operationalTime(contract.windowStart),end=operationalTime(contract.windowEnd),lease=operationalTime(receipt.expiresAt);
+  assert(operationalTime(entry.validFrom)<=start&&end<=operationalTime(entry.expiresAt));assert(now>=start&&now<end&&now<lease);
+  assert(operationalTime(receipt.verifiedAt)<=now);return Math.min(end,lease);
+}
+function operationalContract(input){
+  const post=own(input,'scope')==='POST_PRESERVATION_READ_ONLY_V2';operationalData(input,post?[...OPERATIONAL_FIELDS,'preparationPhase','commonSessionBindingSha256']:OPERATIONAL_FIELDS);assert.equal(input.schemaVersion,2);assert.equal(input.kind,'OFFICIAL_SDK_OPERATIONAL_RESOURCE_SESSION_V2');
+  if(post){assert(['POST_RESOURCE_PREPARATION','POST_EXECUTION'].includes(input.preparationPhase));assert.match(input.commonSessionBindingSha256,/^[a-f0-9]{64}$/u);}
+  assert.match(input.sessionId,/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u);
+  for(const key of ['authorityRecordSha256','resourceBindingSha256']){assert.match(input[key],/^[a-f0-9]{64}$/u);}
+  for(const key of ['sourceCommit','sourceTree']){assert.match(input[key],/^[a-f0-9]{40}$/u);}
+  assert(OPERATIONAL_SCOPE.has(input.scope));assert.equal(input.project,'crmynov-prod-n7x4q2');assert.equal(input.region,'europe-west1');assert.equal(input.googleAccount,AUTH_ACCOUNT);
+  const start=operationalTime(input.windowStart),end=operationalTime(input.windowEnd);assert(end>start&&end-start<=900000);return structuredClone(input);
+}
+async function operationalSession(input,dependencies){
+  let contract,leaseExpiresAt;const {getAuthority,assertCurrent}=input;
+  try{assert.equal(typeof getAuthority,'function');assert.equal(typeof assertCurrent,'function');contract=operationalContract(input.operationContract);leaseExpiresAt=operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock);}
+  catch{throw new Error('SDK_OPERATION_CONTRACT_REFUSED');}
+  const guard=()=>{operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock);},started=dependencies.clock();
+  const auth=await performAuth({...dependencies,guard,leaseExpiresAt,requestDeadline:started+15000,retainOperationalToken:true});
+  let token=auth.retainedToken;auth.retainedToken=undefined;let closed=false,last=dependencies.clock();
+  const authentication=auth.report;
+  function close(){token=undefined;closed=true;}
+  function report(){
+    const value=structuredClone(authentication);
+    // Zero-resource fields belong only to AUTH_ONLY. This report describes
+    // authentication, not the encompassing session's resource side effects.
+    for(const key of ['cloudRunOrLoggingResourceCalls','runPosts','sqlQueries','runCapabilityCreated']){delete value[key];}
+    return{...value,schemaVersion:2,kind:'EXPURGATED_OFFICIAL_SDK_OPERATIONAL_SESSION_AUTH_V2',
+      scope:'OPERATIONAL_AUTHENTICATION_ONLY_NOT_RESOURCE_RESULT',sessionId:contract.sessionId,
+      authorityRecordSha256:contract.authorityRecordSha256,resourceBindingSha256:contract.resourceBindingSha256,
+      resourceAuthorityScope:contract.scope,...(contract.scope==='POST_PRESERVATION_READ_ONLY_V2'?{preparationPhase:contract.preparationPhase,commonSessionBindingSha256:contract.commonSessionBindingSha256}:{}),
+      tokenReferencesReleased:closed||token===undefined,tokenReferenceReleaseScope:'ADAPTER_JAVASCRIPT_ONLY',closed};
+  }
+  async function accessToken({signal}={}){
+    try{
+      assert(!closed&&authentication.authenticationChainValidated&&typeof token==='string');assert(!signal?.aborted);
+      const now=dependencies.clock();assert(Number.isSafeInteger(now)&&now>=last);last=now;guard();assert(!signal?.aborted);return token;
+    }catch{close();throw new Error('SDK_OPERATION_SESSION_CLOSED_OR_PRECONDITION_REFUSED');}
+  }
+  if(!authentication.authenticationChainValidated){close();}
+  return Object.freeze({accessToken,close,report});
+}
+export async function openOfficialSdkOperationalSession({operationContract,getAuthority,assertCurrent}){
+  return operationalSession({operationContract,getAuthority,assertCurrent},{environment:process.env,platform:process.platform,clock:epoch,
+    invoke:execFile,schedule:setTimeout,cancel:clearTimeout});
+}
+// Pure test surface: fake processes only, never an operational authority issuer.
+export async function simulateOfficialSdkOperationalSession({syntheticOnly,operationContract,getAuthority,assertCurrent,...dependencies}){
+  assert.equal(syntheticOnly,true);return operationalSession({operationContract,getAuthority,assertCurrent},dependencies);
 }

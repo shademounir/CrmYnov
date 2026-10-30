@@ -27,6 +27,9 @@ export function parseImageOnlyArguments(args){
 }
 function save(dir,name,value){assert(/^(?:PREPARED-PLAN|BACKUP-native-FIN|API_IMAGE-native-FIN|WEB_IMAGE-native-FIN)$/u.test(name));const file=path.join(dir,name+'.json'),bytes=Buffer.from(JSON.stringify(value,null,2)+'\n'),fd=fs.openSync(file,'wx',0o600);try{let offset=0;while(offset<bytes.length){const count=fs.writeSync(fd,bytes,offset,bytes.length-offset);assert(count>0);offset+=count;}fs.fsyncSync(fd);}finally{fs.closeSync(fd);}return {path:file,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')};}
 export async function runImageOnlyOperationalDriver(args){
+  if(args[0]==='inventory-v2'){const {runImageInventoryV2}=await import('./operational-cli-v2.mjs');return runImageInventoryV2(args);}
+  if(args[0]==='post-create-v2'){const {runImagePostResourcePreparationV2}=await import('./operational-forward-cli-v2.mjs');return runImagePostResourcePreparationV2(args);}
+  if(args[0]==='forward-v2'){const {runImageForwardOperationalV2}=await import('./operational-forward-cli-v2.mjs');return runImageForwardOperationalV2(args);}
   assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);
   const {mode,options}=parseImageOnlyArguments(args),read=p=>JSON.parse(readPoolPrivateFile(p)),candidate=read(options['--candidate']),baseline=read(options['--baseline']),output=imageExternalDirectory(options['--output-dir']);
   const loadRollback=()=>options['--rollback-context']?readImageRollbackContext(read(options['--rollback-context']),candidate,readPoolPrivateFile):undefined;

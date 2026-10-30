@@ -6,6 +6,8 @@ import {validateRc48ServiceImagePlanDraft,validateUnpatchedResourceClaims,LOCATI
 import {imageServiceConfiguration,validateImageOnlyServedState,validateImageOnlyResourceState} from './served-state.mjs';
 
 const stages=['API_IMAGE','BACKUP','WEB_IMAGE'],imageStages={api:'API_IMAGE',web:'WEB_IMAGE'},hash=/^[a-f0-9]{64}$/u;
+export const IMAGE_ROLLBACK_COMPLETION_RULES_V2=Object.freeze({schemaVersion:2,kind:'RC48_CONDITIONAL_IMAGE_RETURN_COMPLETION_RULES_V2',forwardPlanRequired:true,sourceBoundForwardFinRequired:true,unknownOrRunningForwardForbidden:true,currentMetadataMaxAgeMs:300000,generalCompletionRequiredBeforeAnyImageReturn:true,postCompletionOnlyIfActuallyExecuted:true,collectorCounts:'EXACT_ZERO_TO_ONE_NEVER_BLIND_TWO',ledgerReplayForbidden:true,configurationAndSchedulersPreserved:true,databaseRestore:false,preserveInterveningWrites:true,afterSheetsActivationAuthorized:false,actualReturnObserved:false});
+export const IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2=digest(IMAGE_ROLLBACK_COMPLETION_RULES_V2);
 function validateEvidence(evidence,forwardPlan){
   assert.equal(evidence.planSha256,digest(forwardPlan),'FORWARD_PLAN_BINDING');
   assert.match(evidence.sourceHead,/^[a-f0-9]{40}$/u);
@@ -84,18 +86,27 @@ export function makeRc48ImageRollbackPlanDraft(input,now){
   assert(Number.isSafeInteger(now));const observed=Date.parse(currentBaseline.observedAt);
   assert(Number.isFinite(observed)&&now>=observed&&now-observed<=300000,'FRESH_ROLLBACK_BASELINE_REQUIRED');
   assert.equal(currentBaseline.readOnly,true);validateEvidence(forwardEvidence,forwardPlan);
-  validateUnpatchedResourceClaims(forwardPlan,{jobs:currentBaseline.jobs,schedulers:currentBaseline.schedulers});
+  const operational=forwardPlan.readOnlyPreparationVersion===2;
+  if(operational){validateRollbackCompletionContextV2(input);validateUnpatchedResourceClaims(forwardPlan,{jobs:currentBaseline.jobs,schedulers:currentBaseline.schedulers,observedAt:currentBaseline.observedAt},input.completionContext);}
+  else{validateUnpatchedResourceClaims(forwardPlan,{jobs:currentBaseline.jobs,schedulers:currentBaseline.schedulers});}
   const patches=['web','api'].map(kind=>rollbackPatch(kind,input,now)).filter(Boolean);
   assert(patches.length>0,'NO_IMAGE_CHANGE_TO_ROLL_BACK');
-  return{schemaVersion:1,kind:'UNPROTECTED_PURE_RC48_TO_RC44_IMAGE_ROLLBACK_DRAFT',
+  return{schemaVersion:operational?2:1,kind:'UNPROTECTED_PURE_RC48_TO_RC44_IMAGE_ROLLBACK_DRAFT',
     originalForwardPlanSha256:digest(forwardPlan),forwardEvidenceSha256:digest(forwardEvidence),
     baselineObservedAt:currentBaseline.observedAt,patches,
     preservedJobs:structuredClone(forwardPlan.preservedJobs),preservedSchedulers:structuredClone(forwardPlan.preservedSchedulers),
     ...(forwardPlan.readOnlyPreparationJobs?{readOnlyPreparationJobs:structuredClone(forwardPlan.readOnlyPreparationJobs)}:{}),
+    ...(operational?{readOnlyPreparationVersion:2,readOnlyPostJob:structuredClone(forwardPlan.readOnlyPostJob),completionContextSha256:input.completionContextSha256,rollbackCompletionRulesSha256:IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2}:{}),
     jobPatches:[],runJobs:[],schedulerChanges:[],migrations:[],iamChanges:[],databaseRestore:false,
     preserveInterveningWrites:true,afterSheetsActivationAuthorized:false,nativeOriginAuthenticated:false,
     forwardJournalAuthenticityVerified:false,executionAuthorized:false,activationAuthorized:false,executorProvided:false,
     requirements:['Distinct fresh protected rollback objective and exact forward context','Existing durable forward journal and native receipt bytes verified before provider operations','Actual recorded forward operations re-read terminal and hash-matched before rollback intent','Current preservation/compatible image-only rollback, fresh backup and single-use native operation reconciliation required']};
+}
+function validateRollbackCompletionContextV2(input){
+  assert.equal(input.schemaVersion,2,'EXPLICIT_ROLLBACK_CONTEXT_V2_REQUIRED');assert.equal(input.rollbackCompletionRulesSha256,IMAGE_ROLLBACK_COMPLETION_RULES_SHA256_V2);
+  const context=input.completionContext;assert(context&&context.schemaVersion===2&&Array.isArray(context.completions));assert.equal(input.completionContextSha256,digest(context),'ROLLBACK_ACTUAL_COMPLETION_CONTEXT_BINDING');
+  const ref=input.completionContextEvidence;assert(ref&&Object.getPrototypeOf(ref)===Object.prototype);assert.deepEqual(Object.keys(ref).sort(),['path','sha256']);assert.equal(typeof ref.path,'string');assert(/^(?:[A-Za-z]:[\\/]|\/)/u.test(ref.path)&&ref.path.endsWith('.json')&&!/private-key|credentials|\.private\.json/iu.test(ref.path));assert(hash.test(ref.sha256));
+  const general=input.forwardPlan.readOnlyPreparationJobs.filter(row=>row.admission?.kind==='PROSPECTIVE_GENERAL_0_TO_1');assert.equal(general.length,1);assert.equal(context.completions.filter(c=>c.objectiveId===general[0].objectiveId).length,1,'ACTUAL_GENERAL_FIN_BEFORE_IMAGE_RETURN_REQUIRED');
 }
 export function validateRc48ImageRollbackPlanDraft(plan,input,now){assert.deepEqual(plan,makeRc48ImageRollbackPlanDraft(input,now));return true;}
 export function validateImageRollbackServedState({plan,candidate,baseline,rollbackContext,kind,service,revision,observedAt},now){
