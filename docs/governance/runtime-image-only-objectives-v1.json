@@ -45,10 +45,10 @@
       "validFrom": "2026-10-30T16:54:24.466Z",
       "expiresAt": "2026-10-31T16:54:24.466Z",
       "driver": {
-        "pr": 273,
-        "head": "e0a8a803dfbb0109087bdc76f77be653afa5f966",
-        "mergeCommit": "c3890630bad613e51ee6e38ae6aca5032a4fbb66",
-        "tree": "cf1d2e9d0ed3280e069ed8979472c7cc8ee919ea",
+        "pr": 278,
+        "head": "e6cdff6529cbd7bb7cc8af0cdf07de6346a84108",
+        "mergeCommit": "d6b9124d013a739ccce239815f2035a19440e6b1",
+        "tree": "d4049a88fa2caac070e83ded35edb7bed1ebf906",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -243,6 +243,10 @@
             "sha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19"
           },
           {
+            "path": "scripts/ci/runtime-image-only/dossier-public-projection-v3.mjs",
+            "sha256": "b8c8ad05865d83b9bfc68372285fb889d9425d6e341cc8c33913f23317cfd2d6"
+          },
+          {
             "path": "scripts/ci/runtime-image-only/executor.mjs",
             "sha256": "29bbfa338f9cdfedffd95cbc92fb865c85b3a97141d5836e7222bd6d77e5dc10"
           },
@@ -264,7 +268,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/local-source.mjs",
-            "sha256": "e208f43237b89d53158576931e8b4c13acbb0577070c29c39233d1e0fd04237d"
+            "sha256": "87a7cad4d3b0530315cc54889f6ad6af03075c1e56a88ec66e311ba7ac7d2003"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-cli-v2.mjs",
@@ -272,7 +276,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs",
-            "sha256": "0f247ca4adb761dcec0ff19f8eea689fe282602464b8904f0380d0a085119ac3"
+            "sha256": "48cb81d4f44088df9336b9882b3e412d978b5d1c205d51b26b5ac4718cb25e70"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-forward-sequence-v2.mjs",
