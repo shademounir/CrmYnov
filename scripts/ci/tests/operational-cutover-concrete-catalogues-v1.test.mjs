@@ -10,7 +10,7 @@ import {BINDING,CONSUMER_PINS} from '../pool-reconciliation/general-prospective-
 import {GENERAL_OPERATIONAL_DIRECTORY,GENERAL_OPERATIONAL_BINDING,GENERAL_OPERATIONAL_AUTHORITY_ID,GENERAL_OPERATIONAL_CAPABILITY_ID,validateHistoricalReadOnlyEntriesV3,validateGeneralOperationalRecordV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
 import {QUERY_CONTRACT_SHA256,QUERIES} from '../pool-reconciliation/general-preservation-read-only-collector-v1.mjs';
 import {POOL_IMAGE} from '../pool-reconciliation/pool-native-output-v1.mjs';
-import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2} from '../runtime-image-only/local-source.mjs';
+import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,IMAGE_OPERATIONAL_DRIVER_INPUTS_V3} from '../runtime-image-only/local-source.mjs';
 import {OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from '../runtime-image-only/late-binding-v2.mjs';
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operational-v2.mjs';
@@ -27,7 +27,8 @@ const current=JSON.parse(raw),historical=JSON.parse(historicalRaw),images=read(i
 const post=current.entries[7],inventory=images.entries[0],general=current.operationalPreAuthoritiesV3[0];
 const POST_ID='rc48-general-post-20261030-operational-v1';
 const INVENTORY_ID='rc48-image-only-inventory-20261030-operational-v1';
-const sourceIdentity={pr:273,head:'e0a8a803dfbb0109087bdc76f77be653afa5f966',mergeCommit:'c3890630bad613e51ee6e38ae6aca5032a4fbb66',tree:'cf1d2e9d0ed3280e069ed8979472c7cc8ee919ea'};
+const historicalIdentity={pr:273,head:'e0a8a803dfbb0109087bdc76f77be653afa5f966',mergeCommit:'c3890630bad613e51ee6e38ae6aca5032a4fbb66',tree:'cf1d2e9d0ed3280e069ed8979472c7cc8ee919ea'};
+const sourceIdentity={"pr":278,"head":"e6cdff6529cbd7bb7cc8af0cdf07de6346a84108","mergeCommit":"d6b9124d013a739ccce239815f2035a19440e6b1","tree":"d4049a88fa2caac070e83ded35edb7bed1ebf906"};
 const window={validFrom:'2026-10-30T16:54:24.466Z',expiresAt:'2026-10-31T16:54:24.466Z'};
 const midpoint=Date.parse(window.validFrom)+(Date.parse(window.expiresAt)-Date.parse(window.validFrom))/2;
 const review=relative=>({kind:'PROTECTED_CATALOGUE_PATH_HISTORY',path:relative});
@@ -45,13 +46,24 @@ function historicalSourceBytes(relative){
 }
 
 // clean:true is an explicit pure-validator input, not a Git/native observation.
-function assertSourceClosure(driver){
+function assertHistoricalSourceClosure(){
+ const driver={...historicalIdentity,files:IMAGE_OPERATIONAL_DRIVER_INPUTS_V2.map(relative=>({path:relative,sha256:sha(historicalSourceBytes(relative))}))};
  const {files,...identity}=driver;
- assert.deepEqual(identity,sourceIdentity);
+ assert.deepEqual(identity,historicalIdentity);
  assert.equal(files.length,79);
  assert.deepEqual(files.map(file=>file.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V2);
  assert.equal(digest(files),'cd76dd409cdabf7153ba6bd9dee9dd0e5c064b15fef7f1cec7f3a699f8bfa20d');
  for(const file of files){assert.equal(sha(historicalSourceBytes(file.path)),file.sha256,file.path);}
+ assert(!files.some(file=>file.path===readonlyPath||file.path===imagePath));
+}
+
+function assertSourceClosure(driver){
+ const {files,...identity}=driver;
+ assert.deepEqual(identity,sourceIdentity);
+ assert.equal(files.length,80);
+ assert.deepEqual(files.map(file=>file.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V3);
+ assert.equal(digest(files),"24b980d476acb9a2805c5147cd156a9f096ed64cf6cc2a34663ffc4b2f0d5bfa");
+ for(const file of files){assert.equal(sha(readBytes(file.path)),file.sha256,file.path);}
  assert(!files.some(file=>file.path===readonlyPath||file.path===imagePath));
 }
 
@@ -66,8 +78,8 @@ function generalRecord(){
 
 test('SOURCE ONLY current catalogues retain seven exact historical entries and one additive POST',()=>{
  assert.equal(sha(historicalRaw),'afb76023a6943f66f34f05c93aae0cf5455818984d19313551f61e24ddf6833e');
- assert.equal(sha(raw),'b962e15e7af24b02126748ad91cac0fb3d77d54fa054ab443b4376e00d965509');
- assert.equal(sha(readBytes(imagePath)),'04e5918d16c7d1616a190e03fe8c6195de4aaca226c65f4f5eb71805549fe025');
+ assert.equal(sha(raw),'09009dedca366cb334a9f24f8e85a760e01158660e8f3be50b067222fc6a4849');
+ assert.equal(sha(readBytes(imagePath)),'f60638310e81e8adbee53734e459b755ea8e1f54d089e4dc25dbebc531ae27ed');
  assert.deepEqual(Object.keys(current).sort(),['entries','operationalPreAuthoritiesV3','schemaVersion']);
  assert.deepEqual(Object.keys(images).sort(),['entries','schemaVersion']);
  assert.equal(current.schemaVersion,1);assert.equal(images.schemaVersion,2);
@@ -81,6 +93,7 @@ test('SOURCE ONLY current catalogues retain seven exact historical entries and o
 });
 
 test('SOURCE ONLY all additive descriptors use the exact protected S01 source closure without catalogue cycles',()=>{
+ assertHistoricalSourceClosure();
  for(const driver of [post.driver,inventory.driver,general.driver]){assertSourceClosure(driver);}
  assert.deepEqual(post.driver,inventory.driver);assert.deepEqual(general.driver,inventory.driver);
 });
@@ -90,7 +103,7 @@ test('SOURCE ONLY POST pins actual assembled dossier metadata and the existing t
  assert.equal(post.schemaVersion,2);assert.equal(post.id,POST_ID);assert.equal(post.phase,'POST');
  assert.equal(post.businessMutation,false);assert.equal(post.googleAccount,'casablancaynovcampus@gmail.com');
  assert.equal(post.dossierSha256,'60355bd69eb83c092d97b8469eca367569b410e5eb31da64af11ac0be292dd06');
- assert.equal(digest(post),'fb031da24a6bc8292d6b4b9cb39a2ebc8884f3f9ae6a510d2416a14d31b25058');
+ assert.equal(digest(post),'7d4701bcc815f402d91de38ed631e72dd9ec474950f1023671b555a19a1ff795');
  assert.equal(QUERY_CONTRACT_SHA256,'5fc539ee53eb709e958e34306d7b04714f3d4b08aec4c340dde366fc15d31b60');
  assert.equal(Object.keys(QUERIES).length+1,13);
  assert.deepEqual(post.post,{job:'projects/crmynov-prod-n7x4q2/locations/europe-west1/jobs/crm-prod-preservation-post-20261030-op-v1',
@@ -104,7 +117,7 @@ test('SOURCE ONLY POST pins actual assembled dossier metadata and the existing t
 test('SOURCE ONLY GENERAL V3 record binds the old job prospectively without altering UNKNOWN or closed claims',()=>{
  const record=generalRecord();
  assert.equal(validateGeneralOperationalRecordV3(record,midpoint),record);
- assert.equal(digest(record),'4f8439e6f3958fc947b9a6c571640ec31d63e8652147d3a226c7fffa6b970e1f');
+ assert.equal(digest(record),'45164416f4266036391c8c0fd0a39ab05753a3c952b74056e327a777483e2080');
  assert.deepEqual(general,{schemaVersion:3,authorityId:GENERAL_OPERATIONAL_AUTHORITY_ID,objectiveId:BINDING.objectiveId,
   status:'approved',scope:BINDING.purpose,ticket:'CRMY-63',authorityRecordSha256:digest(record),
   humanAuthorityReceiptSha256:OPERATIONAL_HUMAN_SHA256,driver:inventory.driver,origin:review(readonlyPath)});
@@ -120,7 +133,7 @@ test('SOURCE ONLY N02 has concrete read-only targets and no future plan or runti
  }
  assert.deepEqual(inventory.resourceBindings,IMAGE_OPERATIONAL_RESOURCES_V2);
  assert.equal(digest(inventory.resourceBindings),'ca4368937beda7b604f8ae87b574c99403f243bda02b3dd27c7a2a69126acc10');
- assert.equal(digest(inventory),'5d2800c92595b1cf8fad96f3eb7ed0bd4f8c2b1e83c4bea66b8ae74b27bcf51b');
+ assert.equal(digest(inventory),'00fb84fc8bf2ea45c4eb18dfeed83ca08de1f2afa99139f3f215f65f904def72');
  assert.deepEqual(inventory.objectiveReview,review(imagePath));
  assert.equal(inventory.planSha256,undefined);assert.equal(inventory.preparationReceiptSha256,undefined);
  assert.equal(inventory.runtimeImageMutation,false);assert.equal(inventory.businessMutation,false);
