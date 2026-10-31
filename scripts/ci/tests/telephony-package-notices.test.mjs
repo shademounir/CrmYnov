@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const read=p=>readFileSync(new URL(`../../../${p}`,import.meta.url),'utf8');
+test('packaging preserves explicit notice provenance and binds the planner into tracked source distribution',()=>{
+ const pack=read('scripts/telephony-agent/package-windows-agent.ps1');
+ assert.match(pack,/PACKAGE_NOTICE_MODULE_TRACKED_SOURCE_REQUIRED/);
+ assert.match(pack,/PACKAGE_NOTICE_MODULE_SYNTAX_INVALID/);
+ assert.match(pack,/Get-CrmPackageNoticePlan -SdkRoot/);
+ assert.match(pack,/CrmYnov.TelephonyAgent.runtimeconfig.json/);
+ assert.match(pack,/obj\\project.assets.json/);
+ assert.match(pack,/PACKAGE_NOTICE_SOURCE_CHANGED/);
+ assert.match(pack,/PACKAGE_NOTICE_COPY_MISMATCH/);
+ assert.match(pack,/notice-inventory.json/);
+ assert.match(pack,/Select-Object sourceRelativePath,destination,component,version,role,bytes,sha256/);
+ assert.doesNotMatch(pack,/if \(Test-Path -LiteralPath \$source\) \{ Copy-Item/);
+});
+test('notice metadata cannot be treated as distribution or corresponding-source approval',()=>{
+ const module=read('scripts/telephony-agent/package-notices.psm1');
+ for(const name of ['distributionApproved','completeComponentLicenseInventory','correspondingSourcesComplete','licenseChoiceApproved']) assert.match(module,new RegExp(`${name} = \\$false`));
+ assert.match(module,/libjpeg-turbo\/README.ijg/);
+ assert.match(module,/upstream-page-not-license-proof/);
+ assert.match(module,/PACKAGE_NOTICE_RUNTIME_ASSET_VERSION_MISMATCH/);
+ assert.match(module,/PACKAGE_NOTICE_RUNTIME_PACK_AMBIGUOUS_OR_MISSING/);
+ assert.match(module,/PACKAGE_NOTICE_TEXT_EMPTY/);
+ assert.doesNotMatch(module,/Invoke-WebRequest|Invoke-RestMethod|Start-Process|Set-ExecutionPolicy|Remove-Item|Copy-Item/);
+});
+test('official Windows job measures the unchanged synthetic notice planner suite inside the existing fixture',()=>{
+ const workflow=read('.github/workflows/application-quality.yml');
+ const step=workflow.split('- name: Measure isolated Windows fixture and notice planner without agent or SDK')[1]?.split('- name:')[0];
+ assert.ok(step);
+ assert.match(step,/node scripts\/ci\/windows-installer-fixture-ci.mjs produce/);
+ assert.match(step,/if errorlevel 1 exit \/b %errorlevel%/);
+ assert.doesNotMatch(step,/package-windows-agent\.ps1|build-windows-installer\.ps1|native-check/);
+ assert.doesNotMatch(workflow,/powershell.exe -NoProfile -NonInteractive -File scripts\/telephony-agent\/tests\/package-notices.test.ps1/);
+ const harness=read('scripts/telephony-agent/tests/windows-installer.integration.ps1');
+ assert.match(harness,/\$noticeTestSource='scripts\/telephony-agent\/tests\/package-notices.test.ps1'/);
+ assert.match(harness,/\$noticeResult=\(& \$noticeTestPath\|Out-String\)\|ConvertFrom-Json/);
+ assert.match(harness,/sha256Before=\$noticeTestHash;sha256After=\(Sha \$noticeTestPath\)/);
+ assert.match(harness,/noticePlannerResult=\$noticePlannerResult/);
+ assert.match(harness,/Set-PSBreakpoint -Script \$Executed -Line/);
+ assert.match(harness,/'scripts\/telephony-agent\/package-notices.psm1'/);
+ assert.match(harness,/\$noticeModuleObservations\[0\]\.breakpoints\|Where-Object\{\$_\.HitCount -gt 0\}/);
+ assert.match(harness,/'NOTICE_MODULE_NATIVE_COUNTERS_REQUIRED'/);
+ const suite=read('scripts/telephony-agent/tests/package-notices.test.ps1');
+ assert.equal((suite.match(/^Test-Case '/gm)||[]).length,17);
+ assert.match(suite,/Import-Module \(Join-Path \$PSScriptRoot '\.\.\\package-notices.psm1'\) -Force/);
+});

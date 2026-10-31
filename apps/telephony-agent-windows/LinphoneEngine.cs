@@ -173,6 +173,39 @@ internal sealed class LinphoneEngine : IDisposable
             () => Thread.Sleep(20), TimeSpan.FromSeconds(10));
     }
 
+    public Task<SdkShutdownReceipt> StopAttestedForMaintenanceAsync()
+    {
+        if (core is null || shutdownSignals is null)
+            throw new InvalidOperationException("SDK_SHUTDOWN_STATE_UNPROVEN");
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        return SdkShutdownCoordinator.StopAsync(new ShutdownControl(this), () => timer.Elapsed,
+            () => Task.Delay(20), TimeSpan.FromSeconds(10));
+    }
+
+    // Ordinary disconnection remains distinct from maintenance/revocation proof.
+    // A timeout keeps the native object and credentials, never claims a clean stop.
+    public async Task StopForDisconnectAsync()
+    {
+        replayCapturedSample = false;
+        if (shutdownSignals?.CoreOffObserved == true || core is null) return;
+        if (!strictShutdownStarted) {
+            StopMicrophoneTest();
+            localPlayer?.Close();
+            activeCall?.Terminate();
+            shutdownSignals!.BeginShutdown();
+            strictShutdownStarted = true;
+            core.StopAsync();
+        }
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        for (var iterations = 0; iterations < 500; iterations++) {
+            if (shutdownSignals!.CoreOffObserved) return;
+            if (timer.Elapsed >= TimeSpan.FromSeconds(10)) break;
+            Iterate();
+            await Task.Delay(20).ConfigureAwait(true);
+        }
+        throw new InvalidOperationException("SDK_SHUTDOWN_TIMEOUT");
+    }
+
     private SdkShutdownObservation ObserveShutdown()
     {
         var snapshot = shutdownSignals!.Observe(HasActiveCall, AudioTestActive);

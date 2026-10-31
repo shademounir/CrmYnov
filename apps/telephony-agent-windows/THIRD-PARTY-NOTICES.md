@@ -7,10 +7,18 @@ archive. Liblinphone est proposé par son éditeur sous double licence
 AGPL-3.0-or-later / commerciale. Les composants transitifs conservent leurs
 propres licences.
 
-Le script de paquetage copie, sans les modifier, les notices disponibles dans
-l’archive pour `linphone-sdk`, `mediastreamer2` et `oRTP`. Cet inventaire est une
-preuve technique du pilote, pas une conclusion juridique ni un inventaire de
-distribution exhaustif.
+Le script copie les textes disponibles sans les modifier, dans des sous-dossiers
+nommés : `libjpeg-turbo` (y compris `README.ijg`), `ortp` et les deux packs .NET
+déclarés par le binaire publié et les assets restaurés, aux mêmes versions.
+Le `LICENSE.md` rangé en amont sous `linphone-sdk` est un texte libjpeg-turbo,
+pas une licence globale du SDK. La page HTML `mediastreamer2/COPYING-page.html`
+est conservée comme document amont, pas comme preuve de licence : son fragment
+COPYING est vide dans l'archive retenue. `notice-inventory.json` relie chaque
+copie à son composant, sa version et son empreinte, sans chemin privé absolu.
+Les textes .NET proviennent des packs runtime utilisés, pas d'une licence du
+SDK .NET prise comme substitut. Une notice requise absente provoque un refus.
+Cet inventaire n'est ni une conclusion juridique, ni un inventaire exhaustif
+des licences transitives ou des sources correspondantes, ni un accord de diffusion.
 
 Avant toute diffusion au-delà du poste pilote, il reste obligatoire de :
 
