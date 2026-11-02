@@ -20,7 +20,19 @@ const root=new URL('../../../',import.meta.url);
 const readonlyPath='docs/governance/readonly-probe-objectives-v1.json';
 const imagePath='docs/governance/runtime-image-only-objectives-v1.json';
 const fixturePath='scripts/ci/pool-reconciliation/tests/fixtures/readonly-probe-objectives-before-operational-273-20261030.json';
-const readBytes=relative=>fs.readFileSync(new URL(relative,root));
+// Exact historical D6 catalogue preimages, not current V4 source admission.
+// The current catalogues and their additive relation are tested in the V4 suite.
+const readBytes=relative=>{
+ const actual=fs.readFileSync(new URL(relative,root));
+ if(relative===readonlyPath){
+  const historicalBytes=fs.readFileSync(new URL('scripts/ci/runtime-image-only/fixtures/pre-v4-readonly.json',root));
+  assert.equal(createHash('sha256').update(historicalBytes).digest('hex'),'09009dedca366cb334a9f24f8e85a760e01158660e8f3be50b067222fc6a4849');
+  assert(actual.subarray(0,65280).equals(historicalBytes.subarray(0,65280)));
+  return historicalBytes;
+ }
+ if(relative===imagePath){return fs.readFileSync(new URL('scripts/ci/runtime-image-only/fixtures/pre-v4-image.json',root));}
+ return actual;
+};
 const read=relative=>JSON.parse(readBytes(relative));
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const raw=readBytes(readonlyPath),historicalRaw=readBytes(fixturePath);
@@ -103,7 +115,7 @@ function generalRecord(){
   oldUnknownUnchanged:true,closedClaimsRemainClosed:true};
 }
 
-test('SOURCE ONLY current catalogues retain seven exact historical entries and one additive POST',()=>{
+test('HISTORICAL D6 CONTRACT ONLY current catalogues retain seven exact historical entries and one additive POST',()=>{
  assert.equal(sha(historicalRaw),'afb76023a6943f66f34f05c93aae0cf5455818984d19313551f61e24ddf6833e');
  assert.equal(sha(raw),'09009dedca366cb334a9f24f8e85a760e01158660e8f3be50b067222fc6a4849');
  assert.equal(sha(readBytes(imagePath)),'f60638310e81e8adbee53734e459b755ea8e1f54d089e4dc25dbebc531ae27ed');
@@ -119,7 +131,7 @@ test('SOURCE ONLY current catalogues retain seven exact historical entries and o
  assert.deepEqual(validateHistoricalReadOnlyEntriesV3(current),{historicalCount:7,historicalEntriesSha256:'27c33fb80406e3d41a6f23b04585dc6d782c3290787491996d0589ae2bb57adc'});
 });
 
-test('SOURCE ONLY all additive descriptors use the exact protected S01 source closure without catalogue cycles',async()=>{
+test('HISTORICAL D6 CONTRACT ONLY all additive descriptors use the exact protected S01 source closure without catalogue cycles',async()=>{
  assertHistoricalSourceClosure();
  for(const driver of [post.driver,inventory.driver,general.driver]){assertSourceClosure(driver);}
  assert.deepEqual(post.driver,inventory.driver);assert.deepEqual(general.driver,inventory.driver);
@@ -137,7 +149,7 @@ test('SOURCE ONLY all additive descriptors use the exact protected S01 source cl
  for(const row of historicalProjection.rows){const corrupt=Buffer.from(readBytes(row.path));corrupt[0]^=1;assert.throws(()=>projectHistoricalDriverSourceBytes(row.path,corrupt),/CLOSED_CURRENT_V4_WHOLE_SOURCE_REQUIRED/u);}
 });
 
-test('SOURCE ONLY POST pins actual assembled dossier metadata and the existing thirteen-SELECT contract',()=>{
+test('HISTORICAL D6 CONTRACT ONLY POST pins actual assembled dossier metadata and the existing thirteen-SELECT contract',()=>{
  assert.equal(validateImagePostCatalogueV2(current,POST_ID),post);
  assert.equal(post.schemaVersion,2);assert.equal(post.id,POST_ID);assert.equal(post.phase,'POST');
  assert.equal(post.businessMutation,false);assert.equal(post.googleAccount,'casablancaynovcampus@gmail.com');
@@ -153,7 +165,7 @@ test('SOURCE ONLY POST pins actual assembled dossier metadata and the existing t
  assert.equal(post.post.uid,undefined);assert.equal(post.post.etag,undefined);
 });
 
-test('SOURCE ONLY GENERAL V3 record binds the old job prospectively without altering UNKNOWN or closed claims',()=>{
+test('HISTORICAL D6 CONTRACT ONLY GENERAL V3 record binds the old job prospectively without altering UNKNOWN or closed claims',()=>{
  const record=generalRecord();
  assert.equal(validateGeneralOperationalRecordV3(record,midpoint),record);
  assert.equal(digest(record),'45164416f4266036391c8c0fd0a39ab05753a3c952b74056e327a777483e2080');
@@ -165,7 +177,7 @@ test('SOURCE ONLY GENERAL V3 record binds the old job prospectively without alte
  assert.equal(record.binding.job,BINDING.job);assert.equal(record.binding.uid,BINDING.uid);
 });
 
-test('SOURCE ONLY N02 has concrete read-only targets and no future plan or runtime mutation authority',()=>{
+test('HISTORICAL D6 CONTRACT ONLY N02 has concrete read-only targets and no future plan or runtime mutation authority',()=>{
  assert.equal(inventory.id,INVENTORY_ID);assert.equal(inventory.scope,'READ_ONLY_INVENTORY');
  for(const action of ['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION']){
   assert.equal(validateImageInventoryObjective(inventory,{objectiveId:INVENTORY_ID,source:sourceProjection(),action,now:midpoint}),true);
@@ -178,7 +190,7 @@ test('SOURCE ONLY N02 has concrete read-only targets and no future plan or runti
  assert.equal(inventory.runtimeImageMutation,false);assert.equal(inventory.businessMutation,false);
 });
 
-test('SOURCE ONLY explicit authority-window midpoint is not live freshness and expiry is rejected',()=>{
+test('HISTORICAL D6 CONTRACT ONLY explicit authority-window midpoint is not live freshness and expiry is rejected',()=>{
  for(const entry of [post,inventory]){assert.equal(entry.validFrom,window.validFrom);assert.equal(entry.expiresAt,window.expiresAt);}
  assert.equal(Date.parse(window.expiresAt)-Date.parse(window.validFrom),86400000);
  const expired=Date.parse(window.expiresAt);
@@ -186,7 +198,7 @@ test('SOURCE ONLY explicit authority-window midpoint is not live freshness and e
  assert.throws(()=>validateImageInventoryObjective(inventory,{objectiveId:INVENTORY_ID,source:sourceProjection(),action:'READ_METADATA',now:expired}));
 });
 
-test('SOURCE ONLY existing pure guards reject a historical substitution, mutation action and changed GENERAL UID',()=>{
+test('HISTORICAL D6 CONTRACT ONLY existing pure guards reject a historical substitution, mutation action and changed GENERAL UID',()=>{
  const substituted=structuredClone(current);substituted.entries[0].status='changed';
  assert.throws(()=>validateImagePostCatalogueV2(substituted,POST_ID));
  assert.throws(()=>validateImageInventoryObjective(inventory,{objectiveId:INVENTORY_ID,source:sourceProjection(),action:'PATCH_API',now:midpoint}));
