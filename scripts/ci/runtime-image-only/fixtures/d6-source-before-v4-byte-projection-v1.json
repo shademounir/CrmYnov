@@ -250,15 +250,15 @@
     },
     {
       "path": "scripts/ci/runtime-image-only/journal.mjs",
-      "currentSha256": "bc69ef7bca40030af648a2a6a17ed8a129f2be0219c4b32adb7a4498eceb8b8c",
-      "currentBytes": 15375,
+      "currentSha256": "14a13c9dd262db98c9a767592f636d67ffeb3180eeea5db61986876d84b7f5bb",
+      "currentBytes": 15386,
       "historicalSha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0",
       "historicalBytes": 7582,
       "edits": [
         {
           "offset": 7582,
-          "removeBytes": 7793,
-          "removeSha256": "fcf6e9b426d3bab9e70788107c37dd1fa229ba33cdccc97cb21d0b60064e87f7",
+          "removeBytes": 7804,
+          "removeSha256": "b46bf6eaf87513c34b45c607f54abc77cd37a7105b615ffefbf21721ce338e40",
           "insertUtf8": "",
           "insertBytes": 0
         }

@@ -2,7 +2,11 @@
 // Historical output-only provenance is retained and raw-inverted by the mapper.
 import test from 'node:test';
 // Match the default UTF-16/code-unit order without locale-dependent hashes.
-const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
+const codeUnitOrder=(left,right)=>{
+ if(left<right){return -1;}
+ if(left>right){return 1;}
+ return 0;
+};
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';

@@ -3,7 +3,11 @@
 // protected authority and real transport provenance checks. Plain JSON is never admission.
 import assert from 'node:assert/strict';
 // Match the default UTF-16/code-unit order without locale-dependent hashes.
-const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
+const codeUnitOrder=(left,right)=>{
+ if(left<right){return -1;}
+ if(left>right){return 1;}
+ return 0;
+};
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import {imageJournalDigest as digest,inspectApiSheetReaderTransactionV1 as inspect,consumeApiSheetReaderTransactionV1 as consume,recordApiSheetReaderOperationV1 as recordOperation,finishApiSheetReaderTransactionV1 as finish,persistApiSheetReaderProofV1 as persistProof,inspectApiSheetReaderProofDirectoryV1 as inspectProofDirectory} from './journal.mjs';

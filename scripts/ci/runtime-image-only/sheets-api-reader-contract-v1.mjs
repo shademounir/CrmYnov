@@ -2,7 +2,11 @@
 // Real evidence, protection, scope/SDK/journal hooks and guarded executor remain required.
 import assert from 'node:assert/strict';
 // Match the default UTF-16/code-unit order without locale-dependent hashes.
-const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
+const codeUnitOrder=(left,right)=>{
+ if(left<right){return -1;}
+ if(left>right){return 1;}
+ return 0;
+};
 import {imageJournalDigest as digest} from './journal.mjs';
 import {imageServiceConfiguration,validateImageOnlyResourceState} from './served-state.mjs';
 import {validateImageInventoryPublicProjection as publicData} from './operational-cli-v2.mjs';

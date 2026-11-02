@@ -142,4 +142,8 @@ export function persistApiSheetReaderProofV1(journalDir,proofDir,input,proof,now
 }
 
 // Match the default UTF-16/code-unit order without locale-dependent hashes.
-const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
+const codeUnitOrder=(left,right)=>{
+ if(left<right){return -1;}
+ if(left>right){return 1;}
+ return 0;
+};

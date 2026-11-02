@@ -45,7 +45,7 @@ const historicalSourceFixtures={
 const projectionPath='scripts/ci/runtime-image-only/fixtures/d6-source-before-v4-byte-projection-v1.json';
 let historicalProjection;
 before(()=>{
-const projectionRaw=readBytes(projectionPath);assert.equal(sha(projectionRaw),'90e56d6356178ca25e9b364b8797dac50485cc00b50e66dd5f936496ae269bcd');
+const projectionRaw=readBytes(projectionPath);assert.equal(sha(projectionRaw),'f67e69dbdcf428d4adf165a388fb8661c1b08256895819108244f251fd57ff55');
 historicalProjection=JSON.parse(projectionRaw);
 assert.equal(historicalProjection.kind,'TEST_ONLY_EXACT_HISTORICAL_D6_SOURCE_BYTE_PROJECTION_V1');
 assert.deepEqual(historicalProjection.oldSourceIdentity,sourceIdentity);assert.equal(historicalProjection.rows.length,14);
