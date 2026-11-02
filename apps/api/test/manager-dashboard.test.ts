@@ -93,12 +93,15 @@ test("serializes reporting filters and channels deterministically without mutati
   assert.deepEqual(["PHONE_CALL", "PHYSICAL_VISIT", "WEB_FORM", "PARTNER", "UNKNOWN"].map(sourceChannel), ["PHONE", "IN_PERSON", "DIGITAL", "PARTNER", "OTHER"]);
 });
 
-test("Manager unassigned card drills into only OPEN dossiers of the same creation cohort and fence, including observed zero", () => {
+test("Manager unassigned card drills into only OPEN dossiers of the same creation cohort and fence, including observed zero", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-01T12:00:00.000Z") });
   const audit = new AuditService(), leads = new LeadService(audit);
-  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "campus-a", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", educationLevel: "BAC", createdAt: "2026-10-01T12:00:00.000Z" };
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "campus-a", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", educationLevel: "BAC" };
   for (const [id, status] of [["open", "PROSPECT"], ["closed", "CLOSED_LOST"], ["enrolled", "ENROLLED"]] as const) leads.registerLocalLead({ ...base, id, leadCode: id, status });
   leads.registerLocalLead({ ...base, id: "other-source", leadCode: "OTHER", source: "TEST" });
   leads.registerLocalLead({ ...base, id: "foreign", leadCode: "FOREIGN", campus: "campus-b" });
+  assert.equal(leads.reportingSnapshot(manager)[0]?.createdAt, "2026-10-01T12:00:00.000Z");
+  t.mock.timers.setTime(Date.parse("2026-10-20T12:00:00.000Z"));
   const service = new ManagerDashboardService(
     dependency<CommercialFunnelService>("funnel", { cohort: { totalUniqueLeads: 3 }, currentState: { QUALIFIED: 0 }, attainment: { enrolled: 1 }, rates: { enrolled: 0.3333 }, breakdowns: { source: [], campaign: [], program: [], campus: [] } }),
     dependency<CommercialPerformanceService>("performance", {}), dependency<SourceEffectivenessService>("sources", {}),

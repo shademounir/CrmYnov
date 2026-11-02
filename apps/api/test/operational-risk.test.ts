@@ -67,13 +67,16 @@ test("reports explicit workload, reactivity, approval and source alerts without 
   const event = audit.list().find((item) => item.eventType === "OPERATIONAL_RISK_VIEWED"); assert.equal(event?.after?.definitionVersion, "operational-risk-v1");
 });
 
-test("load gap compares only current active primary owners of the same authorized cohort, never links a different Lead population", () => {
+test("load gap compares only current active primary owners of the same authorized cohort, never links a different Lead population", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-01T00:00:00.000Z") });
   const { leads, service } = setup();
-  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "BAC", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z" };
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "BAC", source: "WEB_FORM" };
   for (let index = 0; index < 4; index += 1) leads.registerLocalLead({ ...base, id: `visible-${index}`, leadCode: `VISIBLE-${index}`, assignedToId: index < 3 ? "owner-a" : "owner-b", collaboratorIds: ["secondary-zero"] });
   leads.registerLocalLead({ ...base, id: "closed", leadCode: "CLOSED", assignedToId: "owner-c", status: "CLOSED_LOST" });
   leads.registerLocalLead({ ...base, source: "TEST", id: "outside-source", leadCode: "OUTSIDE", assignedToId: "owner-b" });
   leads.registerLocalLead({ ...base, id: "outside-permission", leadCode: "FENCED", assignedToId: "owner-b" });
+  assert.equal(leads.reportingSnapshot(manager)[0]?.createdAt, "2026-10-01T00:00:00.000Z");
+  t.mock.timers.setTime(Date.parse("2026-10-20T12:00:00.000Z"));
   const scoped = { ...manager, permissionLeadIds: new Set(["visible-0", "visible-1", "visible-2", "visible-3", "closed", "outside-source"]) };
   const report = service.read({ campus: "CAMPUS", source: "WEB_FORM", loadGap: "1", from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z" }, scoped, "gap", new Date("2026-10-20T12:00:00Z"));
   const alert = report.alerts.find(item => item.code === "load_gap")!;
@@ -164,14 +167,17 @@ test("applies the consolidated period and campus scope and rejects invalid bound
   assert.throws(() => service.read({ from: "2026-09-01", to: "2026-08-01" }, manager, "corr-order"), hasCode("operational_period_invalid"));
 });
 
-test("unassigned and capacity drilldowns retain the authorized active creation cohort rather than closed or outside dossiers", () => {
+test("unassigned and capacity drilldowns retain the authorized active creation cohort rather than closed or outside dossiers", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-01T00:00:00.000Z") });
   const { leads, assignments, service } = setup();
-  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM", createdAt: "2026-10-01T00:00:00.000Z" };
+  const base = { firstName: "Synthetic", lastName: "Fixture", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", educationLevel: "Bac", source: "WEB_FORM" };
   for (const id of ["one", "two"]) leads.registerLocalLead({ ...base, id, leadCode: id, status: "CONTACTED", assignedToId: adviser.userId });
   leads.registerLocalLead({ ...base, id: "unassigned-open", leadCode: "U-OPEN" });
   leads.registerLocalLead({ ...base, id: "unassigned-closed", leadCode: "U-CLOSED", status: "CLOSED_LOST" });
   leads.registerLocalLead({ ...base, id: "assigned-closed", leadCode: "A-CLOSED", status: "ENROLLED", assignedToId: adviser.userId });
   leads.registerLocalLead({ ...base, source: "TEST", id: "outside", leadCode: "OUTSIDE", assignedToId: adviser.userId });
+  assert.equal(leads.reportingSnapshot(manager)[0]?.createdAt, "2026-10-01T00:00:00.000Z");
+  t.mock.timers.setTime(Date.parse("2026-10-20T12:00:00.000Z"));
   assignments.configure([{ id: "capacity", scope: "GLOBAL", strategy: "ROUND_ROBIN", enabled: true, candidates: [{ userId: adviser.userId, active: true, capacity: 1, activeLeadCount: 2 }] }], manager, "fixture");
   const filters = { from: "2026-10-01T00:00:00.000Z", to: "2026-11-01T00:00:00.000Z", campus: "CAMPUS", campaign: "COHORT", program: "PROGRAM", source: "WEB_FORM", channel: "DIGITAL" };
   const report = service.read(filters, manager, "scoped", new Date("2026-10-20T12:00:00Z"));
