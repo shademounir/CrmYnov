@@ -87,6 +87,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
         status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,...(readerProfile?{responseFinalUrl,responseRedirected}:{}),
         authorityRecordSha256:binding.authorityRecordSha256,resourceBindingSha256:binding.resourceBindingSha256}));
     }
+    function recordFailedResponse(){if(ticket&&!recorded){if(readerProfile){recorded=true;}try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}}
     try{
       assert(!terminal);assert(['GET','POST','PATCH'].includes(method));assert(method!=='GET'||requestBody===undefined);const a=authority(action);
       const request={method,url,...(requestBody===undefined?{}:{body:requestBody})};plainJson(request);const requestSha256=digest(request);requestProjection={method,url,sha256:requestSha256,...(requestBody===undefined?{}:{bodySha256:digest(requestBody)})};
@@ -106,7 +107,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
         return result.value;
       })(),new Promise((resolve,reject)=>{rejectDeadline=reject;armTimer();})]);
     }catch(error){
-      if(controller){controller.abort();}if(ticket&&!recorded){if(readerProfile){recorded=true;}try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}
+      if(controller){controller.abort();}recordFailedResponse();
       const code=CODES.has(error?.message)?error.message:'IMAGE_OPERATIONAL_NATIVE_UNKNOWN_NO_RETRY';retainObservation(code);stop(code);fail(code);
     }finally{cancel(timer);}
   }
@@ -198,6 +199,7 @@ export async function createApiSheetReaderNativeTransportV1({binding,dossier,sou
  binding=structuredClone(binding);dossier=structuredClone(dossier);source=structuredClone(source);assert.equal(typeof journalDirectory,'string');assert.equal(createHash('sha256').update(journalDirectory).digest('hex'),dossier.journalDirectorySha256,'API_READER_PINNED_JOURNAL_DIRECTORY_REQUIRED');
  const state=sessionBudget.inspect();assert(!state.stopped&&state.pendingOrdinal===null&&state.remainingRequests>0&&state.remainingMs>0);
  const journalBinding=readerJournalBindingV1(initial,dossier,source),initialJournal=inspectJournal(journalDirectory,journalBinding);assert.equal(initialJournal.state,mode==='DISPATCH'?'UNUSED':'KNOWN_OPERATION_OBSERVE_ONLY');
+ function journal(){return inspectJournal(journalDirectory,journalBinding);}
  let patchCalled=false,apiObserved=null;
  const readerProfile={
   validatePlan(plan){assert.deepEqual(plan,dossier.plan);readerPatchRequestV1(dossier,initial,source,validateBinding,binding,clock());},
@@ -208,13 +210,12 @@ export async function createApiSheetReaderNativeTransportV1({binding,dossier,sou
     return{project:PROJECT,apiResource:READER_API,rows};
    }
    function permissionsReady(){const result=permissionEvidence(),n=now();for(const row of result.rows){assert.deepEqual(row.returned.toSorted((a,b)=>a.localeCompare(b,'en')),row.requested.toSorted((a,b)=>a.localeCompare(b,'en')));const begin=iso(row.requestStartedAt),end=iso(row.responseReceivedAt);assert(begin<=end&&end<=n&&end-begin<=15000&&n-begin<600000);}return result;}
-   function journal(){return inspectJournal(journalDirectory,journalBinding);}
    async function service(name,uid){return shaped(async()=>{const v=await exchange(RUN+name,'READ_METADATA');assert.equal(v.name,name);assert.equal(v.uid,uid);return v;});}
    const api={
     async getApi(){const value=await service(READER_API,READER_API_UID);apiObserved=structuredClone(value);return value;},
     async getApiCurrentObservation(){const projection=await api.getApi(),o=observations.at(-1);assert(o.status===200&&o.responseFinalUrl===RUN+READER_API&&o.responseRedirected===false);return{schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:o.requestStartedAt,responseReceivedAt:o.responseObservedAt,request:{method:'GET',url:o.request.url},response:{status:o.status,finalUrl:o.responseFinalUrl,redirected:o.responseRedirected,bodySha256:o.responseSha256,hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection}};},
     async getWeb(){return service(READER_WEB,READER_WEB_UID);},
-    async getApiReadyRevision(){return shaped(async()=>{assert(apiObserved&&apiObserved.uid===READER_API_UID);const prefix=READER_API+'/revisions/',raw=apiObserved.latestReadyRevision;assert.equal(typeof raw,'string');const revision=raw.startsWith(prefix)?raw.slice(prefix.length):raw;assert(revision.startsWith('crm-prod-api-'));opaque(revision);const name=prefix+revision,v=await exchange(RUN+name,'READ_METADATA');assert.equal(v.name,name);return v;});},
+    async getApiReadyRevision(){return shaped(async()=>{assert(apiObserved?.uid===READER_API_UID);const prefix=READER_API+'/revisions/',raw=apiObserved.latestReadyRevision;assert.equal(typeof raw,'string');const revision=raw.startsWith(prefix)?raw.slice(prefix.length):raw;assert(revision.startsWith('crm-prod-api-'));opaque(revision);const name=prefix+revision,v=await exchange(RUN+name,'READ_METADATA');assert.equal(v.name,name);return v;});},
     async listJobs(token=''){return shaped(()=>listPage('READER_JOBS',RUN+LOCATION+'/jobs',token,{pageSize:'100',showDeleted:'true'}));},
     async listSchedulers(token=''){return shaped(()=>listPage('READER_SCHEDULERS',SCHEDULER+LOCATION+'/jobs',token,{pageSize:'100'}));},
     async testProjectPermissions(){return shaped(()=>permissions('PROJECT','https://cloudresourcemanager.googleapis.com/v1/projects/'+PROJECT+':testIamPermissions',API_READER_PROJECT_PERMISSIONS_V1));},

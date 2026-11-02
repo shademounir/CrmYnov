@@ -1,7 +1,7 @@
 // Concrete repository data contract, not live authority, a native PRE, or an activation test.
 // Only repository-relative public files are read. Actual dossier assembly was checked
 // separately before these catalogue bytes were copied into the candidate.
-import test from 'node:test';
+import test,{before} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -43,8 +43,10 @@ const historicalSourceFixtures={
  'scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs':{path:'scripts/ci/runtime-image-only/fixtures/c389-operational-forward-cli-v2.mjs.fixture.txt',sha256:'0f247ca4adb761dcec0ff19f8eea689fe282602464b8904f0380d0a085119ac3'},
 };
 const projectionPath='scripts/ci/runtime-image-only/fixtures/d6-source-before-v4-byte-projection-v1.json';
-const projectionRaw=readBytes(projectionPath);assert.equal(sha(projectionRaw),'ba43588faa90d24772462205942426c94a5030b289907fac6341aeda6449acd1');
-const historicalProjection=JSON.parse(projectionRaw);
+let historicalProjection;
+before(()=>{
+const projectionRaw=readBytes(projectionPath);assert.equal(sha(projectionRaw),'90e56d6356178ca25e9b364b8797dac50485cc00b50e66dd5f936496ae269bcd');
+historicalProjection=JSON.parse(projectionRaw);
 assert.equal(historicalProjection.kind,'TEST_ONLY_EXACT_HISTORICAL_D6_SOURCE_BYTE_PROJECTION_V1');
 assert.deepEqual(historicalProjection.oldSourceIdentity,sourceIdentity);assert.equal(historicalProjection.rows.length,14);
 assert.equal(new Set(historicalProjection.rows.map(row=>row.path)).size,14);
@@ -52,6 +54,7 @@ assert.equal(historicalProjection.sourceManifestSha256,'24b980d476acb9a2805c5147
 assert.equal(historicalProjection.retainedSourceReceiptSha256,'393041464b983b5f31811be70a1d4a093a3a4733fbf48bb6ff280cfc1b2a0117');
 assert.equal(historicalProjection.nativeAuthority,false);assert.equal(historicalProjection.sourceExecutionPerformed,false);
 assert.equal(historicalProjection.trimEnd,false);assert.equal(historicalProjection.lineEndingNormalization,false);
+});
 function projectHistoricalDriverSourceBytes(relative,currentBytes){
  const row=historicalProjection.rows.find(value=>value.path===relative);if(!row){return currentBytes;}
  assert(Buffer.isBuffer(currentBytes));assert.equal(currentBytes.length,row.currentBytes);assert.equal(sha(currentBytes),row.currentSha256,'CLOSED_CURRENT_V4_WHOLE_SOURCE_REQUIRED');

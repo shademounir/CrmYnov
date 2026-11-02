@@ -2,6 +2,8 @@
 // Future R2/R4 must issue instance-bound handles inside this closure, only after
 // protected authority and real transport provenance checks. Plain JSON is never admission.
 import assert from 'node:assert/strict';
+// Match the default UTF-16/code-unit order without locale-dependent hashes.
+const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import {imageJournalDigest as digest,inspectApiSheetReaderTransactionV1 as inspect,consumeApiSheetReaderTransactionV1 as consume,recordApiSheetReaderOperationV1 as recordOperation,finishApiSheetReaderTransactionV1 as finish,persistApiSheetReaderProofV1 as persistProof,inspectApiSheetReaderProofDirectoryV1 as inspectProofDirectory} from './journal.mjs';
@@ -18,7 +20,7 @@ const API_RIGHTS=Object.freeze(['run.services.get','run.services.update']);
 const sessions=new WeakMap(),observations=new WeakMap(),closedErrors=new WeakMap();
 const PORT_NAMES=['authenticate','authorize','permissions','current','preservation','patch','operation','served','close'];
 const operationPrefix='projects/crmynov-prod-n7x4q2/locations/europe-west1/operations/';
-function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);const ds=Object.getOwnPropertyDescriptors(value);assert(Reflect.ownKeys(ds).every(k=>typeof k==='string'&&Object.hasOwn(ds[k],'value')));assert.deepEqual(Object.keys(ds).toSorted(),keys.toSorted());}
+function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);const ds=Object.getOwnPropertyDescriptors(value);assert(Reflect.ownKeys(ds).every(k=>typeof k==='string'&&Object.hasOwn(ds[k],'value')));assert.deepEqual(Object.keys(ds).toSorted(codeUnitOrder),keys.toSorted(codeUnitOrder));}
 function instant(value){assert.equal(typeof value,'string');const n=Date.parse(value);assert(Number.isSafeInteger(n)&&new Date(n).toISOString()===value);return n;}
 function fail(code){const error=new Error('READER_CONFIG_REFUSED');closedErrors.set(error,code);throw error;}
 function checked(condition,code){if(!condition){fail(code);}}
@@ -82,11 +84,11 @@ function rollback(input){
 function journalState(session){try{return inspect(session.input.journalDirectory,session.input.binding).state;}catch{return 'JOURNAL_STATE_UNAVAILABLE_NO_RETRY';}}
 function result(session,value){return{schemaVersion:1,kind:'READER_CONFIG_OPERATION_SEQUENCE_RESULT_V1',...value,syntheticOnly:session.syntheticOnly,nativeAcceptance:false,operationalAuthorityAcquired:false,sheetsActivated:false,automaticRetryAllowed:false};}
 function releaseSession(session,output){
- try{const closing=session.adapters.close();if(closing!==undefined){void new Promise(resolve=>resolve(closing)).catch(()=>{});throw new Error('READER_SYNCHRONOUS_TOKEN_RELEASE_REQUIRED');}}
+ try{const closing=session.adapters.close();if(closing!==undefined){void Promise.resolve(closing).catch(()=>{});throw new Error('READER_SYNCHRONOUS_TOKEN_RELEASE_REQUIRED');}}
  catch{if(output){output.tokenCloseFailed=true;}}
 }
 function verifiedProofRef(ref,input,proof){
- exact(ref,['path','sha256']);assert.match(ref.sha256,H);const directory=fs.realpathSync(input.proofDirectory),file=fs.realpathSync(ref.path);assert.equal(file,ref.path);assert(file.startsWith(directory+String.fromCharCode(92))||file.startsWith(directory+'/'));
+ exact(ref,['path','sha256']);assert.match(ref.sha256,H);const directory=fs.realpathSync(input.proofDirectory),file=fs.realpathSync(ref.path);assert.equal(file,ref.path);assert(file.startsWith(directory+String.fromCodePoint(92))||file.startsWith(directory+'/'));
  const stat=fs.lstatSync(ref.path);assert(stat.isFile()&&!stat.isSymbolicLink()&&stat.size>0&&stat.size<=1048576);const bytes=fs.readFileSync(ref.path);assert.equal(createHash('sha256').update(bytes).digest('hex'),ref.sha256);
  const row=JSON.parse(bytes);assert.equal(row.sha256,digest(row.payload));assert.equal(row.payload.kind,'API_SHEETS_READER_CONFIG_OPERATION_PROOF_V1');assert.deepEqual(row.payload.binding,input.binding);assert.deepEqual(row.payload.proof,proof);return ref;
 }
@@ -117,7 +119,7 @@ async function observe(session,name){
  return result(session,{state:'KNOWN_OPERATION_OBSERVE_ONLY',guard:'READER_OBSERVATION_LIMIT',operation:name});
 }
 export async function runApiSheetReaderOperationV1({capability}){
- const session=sessions.get(capability);checked(session&&session.mode==='DISPATCH','READER_OPAQUE_SESSION_REQUIRED');checked(!session.used,'READER_CAPABILITY_ALREADY_USED');session.used=true;let output;
+ const session=sessions.get(capability);checked(session?.mode==='DISPATCH','READER_OPAQUE_SESSION_REQUIRED');checked(!session.used,'READER_CAPABILITY_ALREADY_USED');session.used=true;let output;
  try{
   session.phase='INPUTS';bindingInput(session.input);checked(journalState(session)==='UNUSED','READER_MUTATION_NOT_UNUSED');await admission(session);
   session.phase='PERSIST_INTENT';session.persistence.consume(session.input.journalDirectory,session.input.binding,digest(session.input.plan.patch),current(session));
@@ -128,7 +130,7 @@ export async function runApiSheetReaderOperationV1({capability}){
  return output;
 }
 export async function observeApiSheetReaderOperationV1({capability}){
- const session=sessions.get(capability);checked(session&&session.mode==='OBSERVE_ONLY','READER_OPAQUE_OBSERVER_REQUIRED');checked(!session.used,'READER_CAPABILITY_ALREADY_USED');session.used=true;let output;
+ const session=sessions.get(capability);checked(session?.mode==='OBSERVE_ONLY','READER_OPAQUE_OBSERVER_REQUIRED');checked(!session.used,'READER_CAPABILITY_ALREADY_USED');session.used=true;let output;
  try{session.phase='INPUTS';bindingInput(session.input);const saved=inspect(session.input.journalDirectory,session.input.binding);checked(saved.state==='KNOWN_OPERATION_OBSERVE_ONLY','READER_KNOWN_OPERATION_REQUIRED');await authenticateAndAuthorize(session);output=await observe(session,saved.rows[1].payload.details.operation);}
  catch(error){output=result(session,{state:'STOP',phase:session.phase,guard:closedErrors.get(error)??'READER_'+session.phase+'_REFUSED',journalState:journalState(session)});}
  finally{releaseSession(session,output);sessions.delete(capability);}return output;
@@ -202,12 +204,12 @@ function readerAuthorityProjectionV1(authority,{input,source,originalEnd,now}){
   return{objectiveId:a.id,objectiveSha256:r.authorityRecordSha256,planSha256:r.planSha256,sourceHead:source.commit,sourceTree:source.tree,scope:a.scope,action:r.action,resource:API,account:ACCOUNT,validFrom:new Date(Math.max(readerEntryTimeV1(a.validFrom),readerEntryTimeV1(r.verifiedAt))).toISOString(),expiresAt:new Date(expiresAt).toISOString()};
 }
 function readerBudgetRawManifestV1(directory){
-  assert.equal(fs.realpathSync(directory),readerPathV1.resolve(directory));const names=fs.readdirSync(directory).toSorted();assert(names.length>0&&names.length<=402&&names.every(name=>name==='BINDING.json'||/^\d{4}\.json$/u.test(name)));
+  assert.equal(fs.realpathSync(directory),readerPathV1.resolve(directory));const names=fs.readdirSync(directory).toSorted(codeUnitOrder);assert(names.length>0&&names.length<=402&&names.every(name=>name==='BINDING.json'||/^\d{4}\.json$/u.test(name)));
   const files=names.map(name=>{const file=readerPathV1.join(directory,name),before=fs.lstatSync(file);assert(before.isFile()&&!before.isSymbolicLink()&&before.size<=16384);const bytes=fs.readFileSync(file),after=fs.lstatSync(file);assert.equal(after.size,before.size);assert.equal(after.mtimeMs,before.mtimeMs);return{name,sha256:createHash('sha256').update(bytes).digest('hex')};});return{directory,files,fileManifestSha256:digest(files)};
 }
 function readerClosedOriginalBudgetV1({directory,binding,prior,rawIntegrity,plan,limits}){
   assert.equal(fs.realpathSync(directory),readerPathV1.resolve(directory));assert(fs.lstatSync(directory).isDirectory()&&!fs.lstatSync(directory).isSymbolicLink());
-  const files=fs.readdirSync(directory).toSorted();assert(files.length>=4&&files.length<=402);assert(files.every(name=>name==='BINDING.json'||/^\d{4}\.json$/u.test(name)),'READER_ORIGINAL_BUDGET_MUST_BE_CLOSED');
+  const files=fs.readdirSync(directory).toSorted(codeUnitOrder);assert(files.length>=4&&files.length<=402);assert(files.every(name=>name==='BINDING.json'||/^\d{4}\.json$/u.test(name)),'READER_ORIGINAL_BUDGET_MUST_BE_CLOSED');
   const hash=bytes=>createHash('sha256').update(bytes).digest('hex'),manifest=[];
   function read(name){const file=readerPathV1.join(directory,name),stat=fs.lstatSync(file);assert(stat.isFile()&&!stat.isSymbolicLink()&&stat.size<=16384);const bytes=fs.readFileSync(file);manifest.push({name,sha256:hash(bytes)});return JSON.parse(bytes);}
   const descriptor=read('BINDING.json');exact(descriptor,['schemaVersion','kind','binding','limits','bindingSha256']);assert.equal(descriptor.schemaVersion,2);assert.equal(descriptor.kind,'IMAGE_NATIVE_SESSION_BINDING_V2');assert.deepEqual(descriptor.binding,binding);assert.deepEqual(descriptor.limits,limits);assert.equal(descriptor.bindingSha256,digest(binding));
@@ -218,8 +220,9 @@ function readerClosedOriginalBudgetV1({directory,binding,prior,rawIntegrity,plan
     else{exact(value,['bindingSha256','previousSha256','at','kind','code']);assert.equal(value.kind,'STOP');assert(/^[A-Z][A-Z0-9_]{0,63}$/u.test(value.code));stopped=true;stopCode=value.code;}
   }
   assert(stopped&&pending===null&&patches===1,'READER_CLOSED_ONE_PATCH_ORIGINAL_REQUIRED');for(const [key,value]of Object.entries({bindingSha256:descriptor.bindingSha256,requestsReserved:requests,totalResponseBytes:bytes,firstNativeAt:first,pendingOrdinal:null,stopped:true,stopCode,lastRecordSha256:previous})){assert.deepEqual(prior[key],value,'READER_ORIGINAL_BUDGET_PROOF_MISMATCH');}
-  const observedRaw=readerBudgetRawManifestV1(directory);assert.equal(readerPathV1.resolve(rawIntegrity.directory),readerPathV1.resolve(directory));assert.equal(rawIntegrity.fileManifestSha256,digest(rawIntegrity.files));assert.deepEqual(observedRaw,rawIntegrity,'READER_ORIGINAL_RAW_BUDGET_BYTES_CHANGED');const fingerprint=digest(manifest);return{fingerprint,files:manifest,assertUnchanged(){assert.deepEqual(fs.readdirSync(directory).toSorted(),files);for(const row of manifest){assert.equal(hash(fs.readFileSync(readerPathV1.join(directory,row.name))),row.sha256,'READER_ORIGINAL_MUTATION_BUDGET_CHANGED');}}};
+  const observedRaw=readerBudgetRawManifestV1(directory);assert.equal(readerPathV1.resolve(rawIntegrity.directory),readerPathV1.resolve(directory));assert.equal(rawIntegrity.fileManifestSha256,digest(rawIntegrity.files));assert.deepEqual(observedRaw,rawIntegrity,'READER_ORIGINAL_RAW_BUDGET_BYTES_CHANGED');const fingerprint=digest(manifest);return{fingerprint,files:manifest,assertUnchanged(){assert.deepEqual(fs.readdirSync(directory).toSorted(codeUnitOrder),files);for(const row of manifest){assert.equal(hash(fs.readFileSync(readerPathV1.join(directory,row.name))),row.sha256,'READER_ORIGINAL_MUTATION_BUDGET_CHANGED');}}};
 }
+function closeReaderSequenceV1({capability,sdk,budget,oldBudget,output}){if(capability){sessions.delete(capability);}try{sdk?.close();if(budget&&!budget.inspect().stopped){budget.stop('API_READER_ENTRY_CLOSED_NO_RETRY');}oldBudget?.assertUnchanged();if(oldBudget&&output.originalMutationBudget){output.originalMutationBudget.preservedReadOnly=true;}}catch{output={...output,observedStateBeforeCleanup:output?.state,state:'STOP',secondaryGuard:'READER_LOCAL_CLEANUP_OR_ORIGINAL_BUDGET_CHANGED_NO_RETRY'};if(output.originalMutationBudget){output.originalMutationBudget.preservedReadOnly=false;}}return output;}
 async function readerOfficialSequenceV1(prepared,deps,syntheticOnly){
   const {dossier,source,jiraBytes,objectiveId,journalDirectory,proofDirectory}=prepared;const {clock}=deps;let sdk,native,budget,output,original,sessionBinding,capability,session,oldBudget,permissionObservation=null,knownOperation=null,stage='INPUTS';const mode=prepared.mode??'DISPATCH';
   const sourceAndInputs=()=>{deps.assertSource(source);prepared.assertInputs();};
@@ -255,7 +258,7 @@ async function readerOfficialSequenceV1(prepared,deps,syntheticOnly){
     const after=inspect(journalDirectory,journalBinding),operationFile=readerPathV1.join(journalDirectory,dossier.stage+'-2.json'),registeredOperationReceipt=after.rows.length>=2?{path:operationFile,sha256:createHash('sha256').update(fs.readFileSync(operationFile)).digest('hex')}:null;if(after.rows.length>=2){knownOperation=operationName(after.rows[1].payload.details.operation);}
     output={...output,scope:dossier.scope,entryMode:mode,runtimePrerequisiteCoverage:runtime.coverage,sessionBinding,originalAuthorityReceipt:original.receipt,budgetDirectory,originalMutationBudget:oldBudget?{fingerprint:oldBudget.fingerprint,files:oldBudget.files,preservedReadOnly:false}:null,priorEntryReceipt:prepared.priorEntryReceipt??null,knownOperation,registeredOperationReceipt,originalSessionResumedOrExtended:false,separateObserveOnlyEntryImplemented:true,knownOperationRequiresSeparatelyQualifiedReadOnlySession:output.journalState==='KNOWN_OPERATION_OBSERVE_ONLY'||output.state==='KNOWN_OPERATION_OBSERVE_ONLY'};
   }catch{output={schemaVersion:1,kind:'READER_CONFIG_OPERATIONAL_ENTRY_RESULT_V1',state:'STOP',phase:session?.phase??stage,guard:'READER_OPERATIONAL_ADMISSION_REFUSED',syntheticOnly,nativeAcceptance:false,operationalAuthorityAcquired:false,sheetsActivated:false,automaticRetryAllowed:false,originalSessionResumedOrExtended:false};}
-  finally{if(capability){sessions.delete(capability);}try{sdk?.close();if(budget&&!budget.inspect().stopped){budget.stop('API_READER_ENTRY_CLOSED_NO_RETRY');}oldBudget?.assertUnchanged();if(oldBudget&&output.originalMutationBudget){output.originalMutationBudget.preservedReadOnly=true;}}catch{output={...output,observedStateBeforeCleanup:output?.state,state:'STOP',secondaryGuard:'READER_LOCAL_CLEANUP_OR_ORIGINAL_BUDGET_CHANGED_NO_RETRY'};if(output.originalMutationBudget){output.originalMutationBudget.preservedReadOnly=false;}}}
+  finally{output=closeReaderSequenceV1({capability,sdk,budget,oldBudget,output});}
   let rawBudget=null;try{if(budget&&output.budgetDirectory){rawBudget=readerBudgetRawManifestV1(output.budgetDirectory);}}catch{output={...output,state:'STOP',secondaryGuard:'READER_TERMINAL_RAW_BUDGET_RECEIPT_FAILED_NO_RETRY'};}
   return{...output,sdkAuthentication:sdk?.report()??null,nativeSessionBudget:budget?.inspect()??null,nativeBudgetRawIntegrity:rawBudget,nativePermissionObservation:permissionObservation,nativeExchangeObservations:native?.observations()??[],sdkAbsenceNotMeasuredZero:!sdk,runPosts:0,sqlQueries:0,webPatchRequests:0,jobOrSchedulerMutations:0};
 }

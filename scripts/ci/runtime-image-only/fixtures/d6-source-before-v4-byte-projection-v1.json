@@ -74,8 +74,8 @@
     },
     {
       "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v2.mjs",
-      "currentSha256": "18c3dc3ac7f31c23b565a06176104318ba203463a62e1fc2e5ed0c2ae83a8d0c",
-      "currentBytes": 18936,
+      "currentSha256": "902f4e66000aee00493f505fb24c673a2ed3c1ee173c02eb72e5ae234ae4baae",
+      "currentBytes": 19225,
       "historicalSha256": "0729d7a63ed650d80c08b963348a87be719ccafc5a8d323e454a1b5804354584",
       "historicalBytes": 17393,
       "edits": [
@@ -88,55 +88,48 @@
         },
         {
           "offset": 11758,
-          "removeBytes": 103,
-          "removeSha256": "37c4b420290f406e4f5c5b7afd488510f6e481599fc58896770b52438ae14e74",
+          "removeBytes": 995,
+          "removeSha256": "ba74e9e069833c5d69e061577a878bb8a7a037044bcf2417fecfb52a0ef8286d",
           "insertUtf8": "async function dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase}) {\n",
           "insertBytes": 96
         },
         {
-          "offset": 11889,
-          "removeBytes": 107,
-          "removeSha256": "ae68d9e1730f07d25a3d11b80a999cb0c55e573d37ba0d9f0b7660e2c6cb5d5c",
-          "insertUtf8": "  phase('AUTHORITY');await authorizeFresh();phase('VALIDATION');let job;\n",
-          "insertBytes": 73
+          "offset": 12781,
+          "removeBytes": 248,
+          "removeSha256": "6677945e351bfaa79707c9de6a485b0404b09f72be7d6269110242951a7da648",
+          "insertUtf8": "  phase('AUTHORITY');await authorizeFresh();phase('VALIDATION');let job;\n  if(stage==='CREATE')await transport.requireAbsent(e.jobName);\n  else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);noExecution(job);await transport.listExecutions(e.jobName);}\n",
+          "insertBytes": 388
         },
         {
-          "offset": 12060,
-          "removeBytes": 450,
-          "removeSha256": "7485e96bba9dd764bbba4492dae4320b3d8c43662b2db16ac5968d6a5ae4453a",
-          "insertUtf8": "  else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);noExecution(job);await transport.listExecutions(e.jobName);}\n",
-          "insertBytes": 251
+          "offset": 13110,
+          "removeBytes": 129,
+          "removeSha256": "922a6f75aa82c75e80b49fa38f7a7842cf9df54e6c09a45a06462f54942686f0",
+          "insertUtf8": "  if(stage==='CREATE')await transport.requireAbsent(e.jobName);\n  else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);noExecution(latest);await transport.listExecutions(e.jobName);job=latest;}\n",
+          "insertBytes": 297
         },
         {
-          "offset": 12655,
-          "removeBytes": 295,
-          "removeSha256": "9bae122ccf57f1e9b222585f4d7d01127c5f78578fd112f648a866ded6d8fd07",
-          "insertUtf8": "  else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);noExecution(latest);await transport.listExecutions(e.jobName);job=latest;}\n",
-          "insertBytes": 233
-        },
-        {
-          "offset": 13049,
+          "offset": 13338,
           "removeBytes": 125,
           "removeSha256": "0812551d91a6f8c50f1435ca56aefda141368fd54989dc87241db5a18f9ff0eb",
           "insertUtf8": "  const now=clock();phase('AUTHORITY');assertAuthorityCurrent(authority,now);return {job,now};\n",
           "insertBytes": 95
         },
         {
-          "offset": 16295,
+          "offset": 16584,
           "removeBytes": 151,
           "removeSha256": "eb9de2b408283829d5ffda57e19c9d128d5e2f7c38cdab9f1654d134571f959e",
           "insertUtf8": "export async function dispatchReadOnlyOnce({dossier,stage,authorizeFresh,transport,journal,clock=Date.now,diagnostic:contextInput,saveDiagnostic}) {\n",
           "insertBytes": 149
         },
         {
-          "offset": 17256,
+          "offset": 17545,
           "removeBytes": 149,
           "removeSha256": "bdf806b490ea0efc34b88351ead29e0d20b11e0c2a5a0d735af1b5036993efdf",
           "insertUtf8": "    const {job,now}=await dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase:value=>{state.dispatchPhase=value;}});\n",
           "insertBytes": 142
         },
         {
-          "offset": 17770,
+          "offset": 18059,
           "removeBytes": 1166,
           "removeSha256": "69cf9cf870c2f00301b5a7394167abba17e6f0c31686109d3749a46990d0df6d",
           "insertUtf8": "",
@@ -204,17 +197,24 @@
     },
     {
       "path": "scripts/ci/runtime-image-only/cli.mjs",
-      "currentSha256": "f56b8aca4917334e8ad6f678bb86e4ad229b1a4450ebccf95b2ba659160ef38c",
-      "currentBytes": 7569,
+      "currentSha256": "6044d41e3f8fb4e5723e5ba84c46f1ce97cc11ca1a1a8ac332e649daf68954d1",
+      "currentBytes": 7927,
       "historicalSha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19",
       "historicalBytes": 7060,
       "edits": [
         {
-          "offset": 2919,
-          "removeBytes": 509,
-          "removeSha256": "5721650ef92788d8777f7361daf4720cf65134a8a9a5232ff07db134492de06e",
+          "offset": 2860,
+          "removeBytes": 1225,
+          "removeSha256": "25f6a15dc8c434477574af541c9a5f162aa6e7fe696683e3090d0ed71ce3db16",
           "insertUtf8": "",
           "insertBytes": 0
+        },
+        {
+          "offset": 4144,
+          "removeBytes": 109,
+          "removeSha256": "8a0bac81a666a3055d0ea40b781644723fd7ccfbe882b8b10a8f93a526da9e70",
+          "insertUtf8": "  if(args[0]==='inventory-v2'){const {runImageInventoryV2}=await import('./operational-cli-v2.mjs');return runImageInventoryV2(args);}\n  if(args[0]==='post-create-v2'){const {runImagePostResourcePreparationV2}=await import('./operational-forward-cli-v2.mjs');return runImagePostResourcePreparationV2(args);}\n  if(args[0]==='forward-v2'){const {runImageForwardOperationalV2}=await import('./operational-forward-cli-v2.mjs');return runImageForwardOperationalV2(args);}\n",
+          "insertBytes": 467
         }
       ]
     },
@@ -250,15 +250,15 @@
     },
     {
       "path": "scripts/ci/runtime-image-only/journal.mjs",
-      "currentSha256": "38e1a59c4834da1bf1fec4ffee0151a4cc304dc5e19c5622639383f72f8b6c72",
-      "currentBytes": 15164,
+      "currentSha256": "bc69ef7bca40030af648a2a6a17ed8a129f2be0219c4b32adb7a4498eceb8b8c",
+      "currentBytes": 15375,
       "historicalSha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0",
       "historicalBytes": 7582,
       "edits": [
         {
           "offset": 7582,
-          "removeBytes": 7582,
-          "removeSha256": "ba33c46baf7aec6560c9d3d760dd3ecad5ce23b6992862b61c9280eba477bd43",
+          "removeBytes": 7793,
+          "removeSha256": "fcf6e9b426d3bab9e70788107c37dd1fa229ba33cdccc97cb21d0b60064e87f7",
           "insertUtf8": "",
           "insertBytes": 0
         }
@@ -419,8 +419,8 @@
     },
     {
       "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
-      "currentSha256": "a0a208adb68b020a9ea3e43981a1144ce7a9591b31ddaf5e67cfbbfc608d3b5e",
-      "currentBytes": 31743,
+      "currentSha256": "08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346",
+      "currentBytes": 31790,
       "historicalSha256": "efeada75721c1569c02b9771e617a078af5c041e7c79024b4265045d2a34b309",
       "historicalBytes": 20130,
       "edits": [
@@ -488,37 +488,44 @@
           "insertBytes": 120
         },
         {
-          "offset": 12430,
+          "offset": 11067,
+          "removeBytes": 212,
+          "removeSha256": "3079828a3d52c33919a5a0541c4b93ce08616108e7d0bc52c81c435bc5bfb04c",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 12642,
           "removeBytes": 182,
           "removeSha256": "2bf89b4f3a9aba5623cec62d8d92c1abbf22a3937fa11dddc70716698c643a97",
           "insertUtf8": "",
           "insertBytes": 0
         },
         {
-          "offset": 13005,
+          "offset": 13217,
           "removeBytes": 195,
           "removeSha256": "b7d862eef5fc7fad645f15cf7a02cf831bbf25572ed35c7fa3c8c1874893a75a",
           "insertUtf8": "        sessionBudget.recordResponse(ticket,{responseBytes});recorded=true;\n",
           "insertBytes": 76
         },
         {
-          "offset": 13495,
-          "removeBytes": 216,
-          "removeSha256": "dca3dd032d63234bd4644c3000de8d9b7e2d36984816eee9d1e56b4b2e6f03fa",
+          "offset": 13707,
+          "removeBytes": 65,
+          "removeSha256": "9760c6826029c4d2adce2c5f9330e75a880491481ee8a923742957de5ba347d1",
           "insertUtf8": "      if(controller){controller.abort();}if(ticket&&!recorded){try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}\n",
           "insertBytes": 183
         },
         {
-          "offset": 17057,
+          "offset": 17118,
           "removeBytes": 146,
           "removeSha256": "224d8ff8693120bcd0705d45a59d0d332746e4c44b87c75a2d7c4cc679721d04",
           "insertUtf8": "",
           "insertBytes": 0
         },
         {
-          "offset": 21710,
-          "removeBytes": 10033,
-          "removeSha256": "01e7be2128566fd9743b7aec0816d3e0d14807c56ec3b7d77473619f017bdbf6",
+          "offset": 21771,
+          "removeBytes": 10019,
+          "removeSha256": "02fb9b9e77b10f41cf41c96a895cd0a5ac8d4f586ca847faa6aed86c5ad2f64e",
           "insertUtf8": "",
           "insertBytes": 0
         }

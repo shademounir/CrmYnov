@@ -79,7 +79,7 @@ function readerExactV1(value,keys){
  assert(value&&Object.getPrototypeOf(value)===Object.prototype,'READER_PLAIN_DATA_REQUIRED');
  const descriptors=Object.getOwnPropertyDescriptors(value);
  assert(Reflect.ownKeys(descriptors).every(key=>typeof key==='string'&&Object.hasOwn(descriptors[key],'value')),'READER_ACCESSOR_REFUSED');
- assert.deepEqual(Object.keys(descriptors).toSorted(),keys.toSorted(),'READER_EXACT_FIELDS_REQUIRED');
+ assert.deepEqual(Object.keys(descriptors).toSorted(codeUnitOrder),keys.toSorted(codeUnitOrder),'READER_EXACT_FIELDS_REQUIRED');
 }
 function readerBindingV1(input){
  readerExactV1(input,['objectiveId','objectiveSha256','planSha256','sourceHead','sourceTree','scope','stage','resource']);
@@ -128,7 +128,7 @@ export function finishApiSheetReaderTransactionV1(dir,input,operation,receiptSha
 // It is not authority or a substitute for actual R4 transport-origin admission.
 export function inspectApiSheetReaderProofDirectoryV1(proofDir,input){
  const target=directory(proofDir);
- const expected=readerBindingV1(input),prefix=input.stage+'-PROOF-',names=fs.readdirSync(target).toSorted();
+ const expected=readerBindingV1(input),prefix=input.stage+'-PROOF-',names=fs.readdirSync(target).toSorted(codeUnitOrder);
  assert(names.length<200&&names.every((name,index)=>name===prefix+String(index+1).padStart(4,'0')+'.json'),'READER_PROOF_DIRECTORY_REFUSED');
  for(const name of names){const file=path.join(target,name),stat=fs.lstatSync(file);assert(stat.isFile()&&!stat.isSymbolicLink()&&stat.size>0&&stat.size<=1048576);const old=load(file);assert.deepEqual(old.payload.binding,expected);}
  return{directory:target,nextOrdinal:names.length+1,prefix};
@@ -140,3 +140,6 @@ export function persistApiSheetReaderProofV1(journalDir,proofDir,input,proof,now
  const payload={schemaVersion:1,kind:'API_SHEETS_READER_CONFIG_OPERATION_PROOF_V1',binding:readerBindingV1(input),proof,observedAt:new Date(now).toISOString()};
  assert(Buffer.byteLength(JSON.stringify(payload))<=1000000);return writeExclusive(path.join(state.directory,state.prefix+String(state.nextOrdinal).padStart(4,'0')+'.json'),{payload,sha256:imageJournalDigest(payload)});
 }
+
+// Match the default UTF-16/code-unit order without locale-dependent hashes.
+const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};

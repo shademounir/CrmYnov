@@ -1,6 +1,8 @@
 // STRICT SYNTHETIC: portable repository test, no operational entry.
 // Historical output-only provenance is retained and raw-inverted by the mapper.
 import test from 'node:test';
+// Match the default UTF-16/code-unit order without locale-dependent hashes.
+const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -9,7 +11,8 @@ import * as J from './journal.mjs';
 const {imageJournalDigest:digest}=J;
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const originalRef={sha256:'11d759e869649e96ca1b6276cf9b716e4955f8408d8c8654b255dae8690baacb'};
-const inputsContractBytes=fs.readFileSync(new URL('./sheets-api-reader-contract-v1.mjs',import.meta.url));
+import {preSonarReaderContractBytesV1} from './source-before-sonar-v1.test-fixture.mjs';
+const inputsContractBytes=preSonarReaderContractBytesV1(fs.readFileSync(new URL('./sheets-api-reader-contract-v1.mjs',import.meta.url)));
 assert.equal(sha(inputsContractBytes),'afaf72194869b558c598c5e651efded2de4017d160e541884989fdfaa35f1750');
 const inheritedReaderBytes=inputsContractBytes.subarray(0,9004);
 assert.equal(sha(inheritedReaderBytes),'f7197e8ebc73809d656f0b25b1d38099f1a216bc234a0e3b081d99f347271daf');
@@ -19,7 +22,7 @@ const correction=" assert.deepEqual(revision.containers,plan.patch.body.template
 assert.equal(adapted.split(correction).length,2);let reversed=adapted.replace(correction,'');
 const metadataCorrection=[
  " assert.equal(typeof service.latestReadyRevision,'string');const prefix=RESOURCE+'/revisions/',ready=service.latestReadyRevision.startsWith(prefix)?service.latestReadyRevision.slice(prefix.length):service.latestReadyRevision;",
- " assert.match(ready,/^crm-prod-api-[a-z0-9-]+$/u);assert.match(service.generation,/^[1-9]\\d*$/u);assert.equal(service.observedGeneration,service.generation);",
+ String.raw` assert.match(ready,/^crm-prod-api-[a-z0-9-]+$/u);assert.match(service.generation,/^[1-9]\d*$/u);assert.equal(service.observedGeneration,service.generation);`,
  " assert(Array.isArray(service.trafficStatuses)&&service.trafficStatuses.length===1);const traffic=service.trafficStatuses[0];assert.equal(traffic.type,'TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST');assert.equal(traffic.percent,100);assert.equal(typeof traffic.revision,'string');",
  " assert.equal(traffic.revision.startsWith(prefix)?traffic.revision.slice(prefix.length):traffic.revision,ready,'READER_BASELINE_READY_REVISION_REQUIRED');"
 ].join('\n')+'\n';
@@ -62,7 +65,7 @@ for(const direction of ['ENABLE_READER','DISABLE_READER']){
  test('SYNTHETIC '+direction+' draft/validate change exactly one existing literal value, preserving realistic containers/refs',()=>{
   const f=fixture(direction),before=copy(f.before);assert.deepEqual(validate(f.plan,f.before),f.plan);assert.deepEqual(f.before,before);
   const containers=copy(f.plan.patch.body.template.containers);env(containers[0],FLAG).value=env(f.before.template.containers[0],FLAG).value;assert.deepEqual(containers,f.before.template.containers);
-  assert.deepEqual(Object.keys(f.plan.patch.body).sort(),['etag','name','template']);assert.equal(f.plan.patch.updateMask,'template.containers');assert.equal(f.plan.nativeAuthority,false);assert.equal(f.plan.ingestionActivation,false);
+  assert.deepEqual(Object.keys(f.plan.patch.body).sort(codeUnitOrder),['etag','name','template']);assert.equal(f.plan.patch.updateMask,'template.containers');assert.equal(f.plan.nativeAuthority,false);assert.equal(f.plan.ingestionActivation,false);
  });
  test('SYNTHETIC '+direction+' served accepts genuine new etag/generation/revision metadata without granting source/Google/SQL authority',()=>{
   const f=servedFixture(direction),before=copy(f),r=served(f);assert.deepEqual(f,before);assert.equal(r.readerEnabled,direction==='ENABLE_READER');
@@ -90,7 +93,7 @@ for(const [name,mutate]of [
  ['extra raw payload',f=>f.observation.response.rawPayload='synthetic-not-retained'],['wrong schema',f=>f.observation.schemaVersion=1],['wrong observation kind',f=>f.observation.kind='SHAPE_ONLY'],
  ['age600000',f=>{f.observation.requestStartedAt=new Date(f.now-600000).toISOString();f.observation.responseReceivedAt=new Date(f.now-599999).toISOString();}],
  ['exchange15001',f=>{f.observation.requestStartedAt=new Date(f.now-15001).toISOString();f.observation.responseReceivedAt=ISO;}],['future end',f=>f.observation.responseReceivedAt=new Date(f.now+1).toISOString()],
- ['end before start',f=>f.observation.responseReceivedAt=new Date(f.now-101).toISOString()],['noncanonical time',f=>f.observation.requestStartedAt='2026-10-30T23:30:00Z'],['NaN clock',f=>f.now=NaN]
+ ['end before start',f=>f.observation.responseReceivedAt=new Date(f.now-101).toISOString()],['noncanonical time',f=>f.observation.requestStartedAt='2026-10-30T23:30:00Z'],['NaN clock',f=>f.now=Number.NaN]
 ]){test('fresh CAS refuses '+name,()=>{const f=casFixture();mutate(f);assert.throws(()=>cas(f));});}
 for(const [name,mutate]of [
  ['UID',s=>s.uid='synthetic-other-uid'],['etag',s=>s.etag+='-new'],['image',s=>s.template.containers[0].image+='-other'],['other env',s=>env(s.template.containers[0],'LOG_LEVEL').value='debug'],

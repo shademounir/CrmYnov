@@ -1,6 +1,8 @@
 // SOURCE PROPOSAL ONLY. Pure semantics; not an authority, transport or native entry.
 // Real evidence, protection, scope/SDK/journal hooks and guarded executor remain required.
 import assert from 'node:assert/strict';
+// Match the default UTF-16/code-unit order without locale-dependent hashes.
+const codeUnitOrder=(left,right)=>{if(left<right)return -1;if(left>right)return 1;return 0;};
 import {imageJournalDigest as digest} from './journal.mjs';
 import {imageServiceConfiguration,validateImageOnlyResourceState} from './served-state.mjs';
 import {validateImageInventoryPublicProjection as publicData} from './operational-cli-v2.mjs';
@@ -19,7 +21,7 @@ function exact(value,keys){
  assert(value&&Object.getPrototypeOf(value)===Object.prototype);
  const descriptors=Object.getOwnPropertyDescriptors(value);
  assert(Reflect.ownKeys(descriptors).every(key=>typeof key==='string'&&Object.hasOwn(descriptors[key],'value')));
- assert.deepEqual(Object.keys(descriptors).toSorted(),[...keys].toSorted());
+ assert.deepEqual(Object.keys(descriptors).toSorted(codeUnitOrder),[...keys].toSorted(codeUnitOrder));
 }
 function instant(value){assert.equal(typeof value,'string');const n=Date.parse(value);assert(Number.isSafeInteger(n)&&new Date(n).toISOString()===value);return n;}
 function literal(container,name,value){
@@ -96,7 +98,7 @@ const INPUTS_BUCKET='crm-prod-sheet-private-n7x4q2';
 const INPUTS_MOUNT='/var/run/crm-sheet-private';
 const INPUTS_VOLUME='sheet-private';
 const INPUTS_NAMES=['CRM_GOOGLE_SHEETS_AUTH_MODE','CRM_GOOGLE_SHEETS_IMPERSONATE_SERVICE_ACCOUNT','CRM_GOOGLE_SHEETS_ALLOWLIST_FILE','CRM_GOOGLE_SHEETS_ALLOWLIST_SHA256'];
-const INPUTS_ADC_OVERRIDES=['CRM_GOOGLE_SHEETS_CREDENTIALS_FILE','GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH','GCE_METADATA_HOST','GCE_METADATA_IP','GCE_METADATA_ROOT'];
+const INPUTS_ADC_OVERRIDES=new Set(['CRM_GOOGLE_SHEETS_CREDENTIALS_FILE','GOOGLE_APPLICATION_CREDENTIALS','CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE','GOOGLE_GHA_CREDS_PATH','GCE_METADATA_HOST','GCE_METADATA_IP','GCE_METADATA_ROOT']);
 function inputsReferenceV1(ref){
  exact(ref,['path','sha256']);assert.equal(typeof ref.path,'string');
  assert(/^(?:[A-Za-z]:[\\/]|\/)/u.test(ref.path)&&ref.path.length<=4096&&!/[\u0000-\u001f\u007f]/u.test(ref.path));
@@ -126,7 +128,7 @@ function inputsConfigurationV1(service){
  const execution=config.template.executionEnvironment;assert(execution===undefined||execution==='EXECUTION_ENVIRONMENT_GEN2','INPUTS_GEN1_NOT_ALLOWED');
  const container=config.template.containers[0],names=container.env.map(row=>row.name);
  assert.equal(new Set(names).size,names.length,'INPUTS_DUPLICATE_ENV');
- assert(!names.some(name=>INPUTS_ADC_OVERRIDES.includes(name)),'INPUTS_ADC_OVERRIDE_NOT_ALLOWED');
+ assert(!names.some(name=>INPUTS_ADC_OVERRIDES.has(name)),'INPUTS_ADC_OVERRIDE_NOT_ALLOWED');
  for(const name of INPUTS_NAMES){const rows=container.env.filter(row=>row.name===name);if(rows.length){exact(rows[0],['name','value']);}}
  assert(config.template.volumes===undefined||Array.isArray(config.template.volumes));assert(container.volumeMounts===undefined||Array.isArray(container.volumeMounts));
  for(const rows of [config.template.volumes??[],container.volumeMounts??[]])assert.equal(new Set(rows.map(row=>row.name)).size,rows.length,'INPUTS_DUPLICATE_MOUNT');

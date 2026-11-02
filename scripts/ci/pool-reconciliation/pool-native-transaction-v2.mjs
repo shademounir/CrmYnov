@@ -140,14 +140,25 @@ function noExecution(job){
   const latest=job.latestCreatedExecution;
   assert(latest===undefined||(latest!==null&&Object.getPrototypeOf(latest)===Object.prototype&&Reflect.ownKeys(latest).length===0),'NO_LATEST_EXECUTION_FIELDS_ALLOWED');
 }
+async function initialRunPreflight({e,origin,clock,journal,transport}){
+  if(origin){origin.check(clock());}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');}
+  const job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,origin?origin.uid:journal.inspect('CREATE').uid);
+  if(origin){assert.equal(job.etag,origin.etag,'POST_ORIGIN_PREFLIGHT_ETAG_DRIFT');assertNoReadOnlyExecutionMetadataV1(job);}else{noExecution(job);}
+  await transport.listExecutions(e.jobName);return job;
+}
+async function currentRunPreflight(job,e,origin,transport){
+  const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);
+  if(origin){assertNoReadOnlyExecutionMetadataV1(latest);}else{noExecution(latest);}
+  await transport.listExecutions(e.jobName);return latest;
+}
 async function dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase,origin}) {
   const e=target.objective;
   if(origin){origin.check(clock());}phase('AUTHORITY');await authorizeFresh();phase('VALIDATION');let job;
-  if(stage==='CREATE')await transport.requireAbsent(e.jobName);
-  else{if(origin){origin.check(clock());}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');}job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,origin?origin.uid:journal.inspect('CREATE').uid);if(origin){assert.equal(job.etag,origin.etag,'POST_ORIGIN_PREFLIGHT_ETAG_DRIFT');}if(origin){assertNoReadOnlyExecutionMetadataV1(job);}else{noExecution(job);}await transport.listExecutions(e.jobName);}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}
+  else{job=await initialRunPreflight({e,origin,clock,journal,transport});}
   phase('AUTHORITY');const authority=await authorizeFresh();phase('VALIDATION');
-  if(stage==='CREATE')await transport.requireAbsent(e.jobName);
-  else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);if(origin){assertNoReadOnlyExecutionMetadataV1(latest);}else{noExecution(latest);}await transport.listExecutions(e.jobName);job=latest;}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}
+  else{job=await currentRunPreflight(job,e,origin,transport);}
   if(job){assert.equal(typeof job.etag,'string');assert(job.etag.length>0&&job.etag.length<=256);}
   const now=clock();phase('AUTHORITY');assertAuthorityCurrent(authority,now);if(origin){origin.check(now);}return {job,now};
 }
