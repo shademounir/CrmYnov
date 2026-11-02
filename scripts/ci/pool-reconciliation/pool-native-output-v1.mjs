@@ -164,3 +164,10 @@ export function validatePoolNativeJob(job,objective){requirePool(objective);retu
 export function validatePoolNativeExecution(job,execution,objective){requirePool(objective);return validateReadOnlyNativeExecution(job,execution,objective);}
 export function verifyPoolOutputClaims(input){requirePool(input.objective);return verifyReadOnlyOutputClaims(input);}
 export function poolOutputReadRequests(objective,execution,now){requirePool(objective);return readOnlyOutputReadRequests(objective,execution,now);}
+// Additive metadata compatibility only; original V1 exports/prefix stay exact.
+// Omitted or empty latest metadata is not proof of historical absence.
+function nativeMetadataOwnV1(value,key){assert(value&&typeof value==='object');const descriptor=Object.getOwnPropertyDescriptor(value,key);assert(!descriptor||Object.hasOwn(descriptor,'value'),'NATIVE_METADATA_ACCESSOR_REFUSED');return descriptor?.value;}
+export function assertNoReadOnlyExecutionMetadataV1(job){
+ const count=nativeMetadataOwnV1(job,'executionCount');assert(count===undefined||count===0,'NO_NATIVE_EXECUTION_REQUIRED');const latest=nativeMetadataOwnV1(job,'latestCreatedExecution');
+ assert(latest===undefined||(latest!==null&&Object.getPrototypeOf(latest)===Object.prototype&&Reflect.ownKeys(latest).length===0),'NO_LATEST_EXECUTION_FIELDS_ALLOWED');return job;
+}

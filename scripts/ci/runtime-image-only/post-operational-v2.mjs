@@ -8,7 +8,7 @@ import {POOL_DRIVER_INPUTS,readPoolPrivateFile} from '../pool-reconciliation/poo
 import {READONLY_RUNTIME_FILES,validateLocalReadOnlyDossier} from '../pool-reconciliation/pool-job-dossier-v1.mjs';
 import {QUERY_CONTRACT_SHA256,QUERIES} from '../pool-reconciliation/general-preservation-read-only-collector-v1.mjs';
 import {POOL_IMAGE,validateReadOnlyNativeJob,validateReadOnlyNativeExecution,readOnlyOutputReadRequests} from '../pool-reconciliation/pool-native-output-v1.mjs';
-import {createReadOnlyNativeTransport,dispatchReadOnlyOnce,openReadOnlyTransactionJournal,observeReadOnlyOperation} from '../pool-reconciliation/pool-native-transaction-v2.mjs';
+import {createReadOnlyNativeTransport,dispatchReadOnlyOnce,dispatchPostProspectiveRunOnceV1,simulatePostProspectiveRunOnceV1,openReadOnlyTransactionJournal,observeReadOnlyOperation} from '../pool-reconciliation/pool-native-transaction-v2.mjs';
 import {createReadOnlyOutputReader} from '../pool-reconciliation/pool-output-reader-v1.mjs';
 import {diagnosticOf,projectDiagnostic} from '../pool-reconciliation/readonly-native-diagnostics-v1.mjs';
 import {createGeneralOperationalBudgetV3,validateHistoricalReadOnlyEntriesV3,retainGeneralNativeResponsesV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
@@ -19,10 +19,11 @@ import {GRANT_PATH,grantDigest,validateGrant} from '../../pr-policy/delegation.m
 import {GITHUB_CODE_REVIEW_POLICY_PATH,validateProtectedCodeReviewPolicy} from '../../pr-policy/github-code-review.mjs';
 import {approvedMerge,verifySource} from './protected-gates.mjs';
 import {READONLY_CATALOGUE_PATH_V2,validateImageCatalogueReviewV2,resolveImageCatalogueReviewV2} from './catalogue-origin-v2.mjs';
-import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,readImageOperationalSource,imageExternalDirectory} from './local-source.mjs';
+import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,readImageOperationalSource,readImageOperationalSourceV4,imageExternalDirectory} from './local-source.mjs';
 import {OPERATIONAL_HUMAN_SHA256} from './late-binding-v2.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
 import {validateImageInventoryPublicProjection} from './operational-cli-v2.mjs';
+import {validateImageDossierPublicProjectionV3} from './dossier-public-projection-v3.mjs';
 import {validatePlannedImageServedState} from './plan-mode.mjs';
 const H=/^[a-f0-9]{64}$/u,S=/^[a-f0-9]{40}$/u,UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const PROJECT='crmynov-prod-n7x4q2',REGION='europe-west1',PARENT='projects/'+PROJECT+'/locations/'+REGION,RUN='https://run.googleapis.com/v2/',LOG='https://logging.googleapis.com/v2/entries:list';
@@ -115,14 +116,14 @@ function publicPostDiagnostic(error,stage){
 class PostDispatchRefusal extends Error{constructor(result){super('POST_NATIVE_DISPATCH_REFUSED');Object.defineProperty(this,'nativeDiagnostic',{value:projectDiagnostic(result.diagnostic)});}}
 function requirePostDispatch(result){if(result.state!=='OPERATION'||result.diagnosticAvailable===true||result.operationReferencePersistence==='FAILED'){throw new PostDispatchRefusal(result);}return result;}
 function assertSharedPostBudget(sharedBudget,commonSessionBindingSha256){const state=sharedBudget.inspect();assert.equal(state.bindingSha256,commonSessionBindingSha256,'POST_SESSION_BOUNDARY_REFUSED');assert(!state.stopped&&state.remainingMs>0&&state.remainingRequests>0&&state.remainingResponseBytes>0,'POST_SESSION_BOUNDARY_REFUSED');return state;}
-async function readPostBody(response,{deadline,controller,clock,check,onBytes,remainingResponseBytes}){
+async function readPostBody(response,{deadline,controller,clock,check,onBytes,remainingResponseBytes,privateProfile}){
   assert.equal(response.redirected,false);assert(/^application\/json(?:\s*;|$)/iu.test(response.headers.get('content-type')??''));assert(response.body);const reader=response.body.getReader(),chunks=[];let bytes=0;
-  try{while(true){check();assert(clock()<deadline&&!controller.signal.aborted,'POST_NATIVE_DEADLINE');const part=await reader.read();check();assert(clock()<deadline&&!controller.signal.aborted,'POST_NATIVE_DEADLINE');if(part.done){break;}bytes+=part.value.byteLength;onBytes(bytes);assert(bytes<=1048576&&bytes<=remainingResponseBytes(),'POST_NATIVE_BODY_BOUND');chunks.push(part.value);}}finally{try{await reader.cancel();}finally{reader.releaseLock();}}
+  try{while(true){check();assert(clock()<deadline&&!controller.signal.aborted,'POST_NATIVE_DEADLINE');const part=await reader.read();if(privateProfile===POST_DELIVERED_BYTES_PROFILE&&!part.done){bytes+=part.value.byteLength;onBytes(bytes);}check();assert(clock()<deadline&&!controller.signal.aborted,'POST_NATIVE_DEADLINE');if(part.done){break;}if(privateProfile!==POST_DELIVERED_BYTES_PROFILE){bytes+=part.value.byteLength;onBytes(bytes);}assert(bytes<=1048576&&bytes<=remainingResponseBytes(),'POST_NATIVE_BODY_BOUND');chunks.push(part.value);}}finally{try{await reader.cancel();}finally{reader.releaseLock();}}
   return{bytes:Buffer.concat(chunks,bytes),size:bytes};
 }
 // The CREATE route uses only this exact job, identity-only parent inventory,
 // and the one durably discovered CREATE operation. No arbitrary job GET/RUN.
-export function createImagePostCreateBudgetV2({dossier,journal,sharedBudget,commonSessionBindingSha256,getAuthority,assertCurrent,fetchImpl=fetch,clock=Date.now}){
+function createImagePostBudgetCoreV3({dossier,journal,sharedBudget,commonSessionBindingSha256,getAuthority,assertCurrent,fetchImpl=fetch,clock=Date.now},privateProfile){
   const job=dossier.objective.jobName,jobPath='/v2/'+job,parentPath='/v2/'+PARENT+'/jobs',pages=new Map();
   function allowed(url,init){
     const u=new URL(url),method=init.method??'GET';assert.equal(u.username+u.password+u.hash,'');assert.equal(init.redirect,'error');assert(['GET','POST'].includes(method));
@@ -142,7 +143,7 @@ export function createImagePostCreateBudgetV2({dossier,journal,sharedBudget,comm
     try{
       assertCurrent();allowed(url,init);assertSharedPostBudget(sharedBudget,commonSessionBindingSha256);const request={method:init.method??'GET',url,...(init.body===undefined?{}:{body:JSON.parse(init.body)})};ticket=sharedBudget.reserveRequest({method:request.method,resource:url,requestSha256:digest(request)});
       const deadline=Math.min(ticket.deadlineAt,Date.parse(getAuthority().receipt.expiresAt));assert(clock()<deadline,'POST_NATIVE_DEADLINE');
-      const work=(async()=>{const response=await fetchImpl(url,{...init,signal:controller.signal}),result=await readPostBody(response,{deadline,controller,clock,check:assertCurrent,onBytes:n=>{readBytes=n;},remainingResponseBytes:()=>sharedBudget.inspect().remainingResponseBytes});sharedBudget.recordResponse(ticket,{responseBytes:readBytes});recorded=true;assert([200,404].includes(response.status),'POST_NATIVE_HTTP_REFUSED');return new Response(result.bytes,{status:response.status,headers:response.headers});})();
+      const work=(async()=>{const response=await fetchImpl(url,{...init,signal:controller.signal}),result=await readPostBody(response,{deadline,controller,clock,privateProfile,check:assertCurrent,onBytes:n=>{readBytes=n;},remainingResponseBytes:()=>sharedBudget.inspect().remainingResponseBytes});sharedBudget.recordResponse(ticket,{responseBytes:readBytes});recorded=true;assert([200,404].includes(response.status),'POST_NATIVE_HTTP_REFUSED');return new Response(result.bytes,{status:response.status,headers:response.headers});})();
       return await Promise.race([work,new Promise((resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('POST_NATIVE_DEADLINE'));},deadline-clock());})]);
     }catch(error){controller.abort();if(ticket&&!recorded){try{sharedBudget.recordResponse(ticket,{responseBytes:readBytes});}catch{/* Unknown/pending state is terminal. */}}try{sharedBudget.stop('POST_CREATE_NATIVE_STOP');}catch{/* Never retry persistence. */}throw error;}
     finally{clearTimeout(timer);init.signal?.removeEventListener('abort',abort);}
@@ -186,31 +187,34 @@ function completionFromPost({objectiveId,entrySha256,objectiveOriginSha256,dossi
   assert(Date.parse(execution.createTime)>=Date.parse(claim.at)-1000);assert(Date.parse(execution.startTime)>=Date.parse(claim.afterImageObservedAt));
   return{objectiveId,authorityRecordSha256:entrySha256,objectiveOriginSha256,job,execution,taskNetwork:taskNetwork??null,operation:{name:operation.name,done:true,response:{name:operation.response.name,uid:operation.response.uid}},authority:claim.authority,observedAt};
 }
-async function openPostPort(input,deps){
+async function openPostPort(input,deps,prospective=null){
   const {mode,objectiveId,dossier,jiraBytes,journalDirectory,initialize,sharedBudget,runtimeContract,save,assertSessionCurrent}=input;
   assert(['PREPARE_POST_RESOURCE','EXECUTE_POST'].includes(mode));assert.equal(initialize,mode==='PREPARE_POST_RESOURCE');for(const fn of [input.accessToken,save,assertSessionCurrent]){assert.equal(typeof fn,'function');}
-  const target=structuredClone(dossier),source=deps.readSource();validateImagePostDossierV2(target,deps.readRuntimeSource);let authority,closed=false,tokenProvider=input.accessToken,journal,images;
+  if(prospective){validateImageDossierPublicProjectionV3(input.dossier,deps.readRuntimeSource);}const target=structuredClone(dossier),source=deps.readSource();validateImagePostDossierV2(target,deps.readRuntimeSource);let authority,closed=false,tokenProvider=input.accessToken,journal,images,originCapability;
+  if(prospective){assert.equal(mode,'EXECUTE_POST');assert.equal(initialize,false);prospective.requireSource(source);}
   const phase=mode==='PREPARE_POST_RESOURCE'?'POST_RESOURCE_PREPARATION':'POST_EXECUTION';let activeStage;
   const guard=()=>{assert(!closed);assertSessionCurrent();assertAuthorityCurrent(authority,deps.clock());assert.deepEqual(deps.readSource(),source,'POST_SOURCE_CHANGED');assert.equal(authority.entry.phase,'POST');assertSharedPostBudget(sharedBudget,runtimeContract.commonSessionBindingSha256);};
   async function fresh(action){assert(!closed);const a=await deps.authorize({objectiveId,dossier:target,jiraBytes,localSource:source,readSource:deps.readRuntimeSource,action,clock:deps.clock});assert.equal(a.receipt.authorityRecordSha256,runtimeContract.authorityRecordSha256);assert(a.receipt.authorizedActions.includes(action));authority=a;guard();return a;}
   await fresh(mode==='PREPARE_POST_RESOURCE'?'CREATE':'RUN');validatePostRuntimeContract(runtimeContract,{authority,dossier:target,source,sharedBudget,phase});assert.equal(sha(journalDirectory),authority.entry.journalDirectorySha256);
   let savedOrdinal=0;const keep=async(name,value)=>{validateImageInventoryPublicProjection(value);return save('POST-'+String(savedOrdinal++).padStart(4,'0')+'-'+name,value);};
-  const rawJournal=deps.openPostJournal({directory:journalDirectory,initialize,dossier:target,entry:authority.entry,openJournal:deps.openJournal});
+  const rawJournal=prospective?prospective.openRunJournal({dossier:target,entry:authority.entry}):deps.openPostJournal({directory:journalDirectory,initialize,dossier:target,entry:authority.entry,openJournal:deps.openJournal});
   journal=Object.freeze({inspect:rawJournal.inspect,close:rawJournal.close,append(stage,payload){
     if(stage==='RUN'&&payload.state==='INTENT'){
       guard();assert(images,'POST_IMAGES_REQUIRED_BEFORE_RUN');const ready=validateImagePostServedContextV2(images,source,deps.clock());assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');
+      if(prospective){prospective.consumeOrigin(originCapability,{objective:target.objective,source,authorityRecordSha256:authority.receipt.authorityRecordSha256,sharedBudget,now:deps.clock()});}
       deps.writeRunClaim(postBindingFile(journalDirectory),{schemaVersion:2,kind:'PERMANENT_POST_SINGLE_RUN_CAPABILITY_V2',job:target.objective.jobName,objectiveSha256:target.objective.objectiveSha256,authorityRecordSha256:authority.receipt.authorityRecordSha256,commonSessionBindingSha256:runtimeContract.commonSessionBindingSha256,
-        at:payload.at,uid:payload.uid,etag:payload.etag,afterImageObservedAt:ready.afterImageObservedAt,imageReadinessSha256:digest(ready),authority:{validFrom:authority.entry.validFrom,expiresAt:authority.receipt.expiresAt},canRetry:false});
+        at:payload.at,uid:payload.uid,etag:payload.etag,afterImageObservedAt:ready.afterImageObservedAt,imageReadinessSha256:digest(ready),...(prospective?{prospectiveOriginSha256:prospective.originProofSha256(originCapability),createHistoryState:'UNKNOWN',createHistoryReclassified:false}:{}),authority:{validFrom:authority.entry.validFrom,expiresAt:authority.receipt.expiresAt},canRetry:false});
     }
     return rawJournal.append(stage,payload);
   }});
-  const createFetch=createImagePostCreateBudgetV2({dossier:target,journal,sharedBudget,commonSessionBindingSha256:runtimeContract.commonSessionBindingSha256,getAuthority:()=>authority,assertCurrent:guard,fetchImpl:deps.fetchImpl,clock:deps.clock});
-  let outputBudget,runBinding;const fetchForPhase=(url,init)=>outputBudget?outputBudget.fetch(url,init):createFetch(url,init);
+  const accountingBudget=prospective?prospective.onceAccountingBudget(sharedBudget):sharedBudget;
+  const createFetch=createImagePostBudgetCoreV3({dossier:target,journal,sharedBudget:accountingBudget,commonSessionBindingSha256:runtimeContract.commonSessionBindingSha256,getAuthority:()=>authority,assertCurrent:guard,fetchImpl:deps.fetchImpl,clock:deps.clock},prospective?POST_DELIVERED_BYTES_PROFILE:null);
+  let outputBudget,runBinding;const fetchForPhase=async(url,init)=>{if(prospective){prospective.beforeFetch(url,init);}const start=deps.clock(),response=await (outputBudget?outputBudget.fetch(url,init):createFetch(url,init));if(prospective){await prospective.retainFrame(url,init,response,start,deps.clock());}return response;};
   const rawNative=createReadOnlyNativeTransport({purpose:PURPOSE,accessToken:async options=>{guard();return tokenProvider(options);},getAuthority:()=>authority,fetchImpl:fetchForPhase,clock:deps.clock,diagnostic:{objectiveId,objectiveSha256:target.objective.objectiveSha256,stage:mode==='PREPARE_POST_RESOURCE'?'CREATE':'RUN'},saveDiagnostic:d=>keep('POST-NATIVE-DIAGNOSTIC',{diagnostic:d})});
   const capture=retainGeneralNativeResponsesV3(rawNative,deps.clock),native={...capture.native,async run(name,etag,options){assert(runBinding);runBinding.expectedEtag=etag;return capture.native.run(name,etag,options);},async operation(name){const value=await capture.native.operation(name);if(outputBudget&&value.done===true&&!value.error){outputBudget.discoverExecution(value.response?.name);}return value;}};
   function configureRunBudget(){
-    const created=journal.inspect('CREATE');assert.equal(created?.state,'RECONCILED');assert(UUID.test(created.uid));runBinding={project:PROJECT,region:REGION,job:target.objective.jobName,uid:created.uid,objective:target.objective,knownCreateOperation:created.operation,wallNow:deps.clock};
-    outputBudget=createGeneralOperationalBudgetV3({binding:runBinding,sharedBudget,assertCurrent:guard,save:keep,fetchImpl:deps.fetchImpl,clock:deps.clock,leaseRemainingMs:()=>Date.parse(authority.receipt.expiresAt)-deps.clock()});
+    const created=prospective?prospective.checkOrigin(originCapability,{objective:target.objective,source,authorityRecordSha256:authority.receipt.authorityRecordSha256,sharedBudget,now:deps.clock()}):journal.inspect('CREATE');if(!prospective){assert.equal(created?.state,'RECONCILED');}assert(UUID.test(created.uid));runBinding={project:PROJECT,region:REGION,job:target.objective.jobName,uid:created.uid,objective:target.objective,knownCreateOperation:prospective?null:created.operation,wallNow:deps.clock};
+    outputBudget=createGeneralOperationalBudgetV3({binding:runBinding,sharedBudget:accountingBudget,assertCurrent:guard,save:keep,fetchImpl:deps.fetchImpl,clock:deps.clock,leaseRemainingMs:()=>Date.parse(authority.receipt.expiresAt)-deps.clock()});
     const run=journal.inspect('RUN');if(run?.operation){outputBudget.discoverOperation(run.operation);}if(run?.execution){outputBudget.discoverExecution(run.execution);}
   }
   async function permissionTests(requireJob){
@@ -241,11 +245,11 @@ async function openPostPort(input,deps){
   async function boundedAction(stage,handler){activeStage=stage;try{guard();return await handler();}catch(error){try{sharedBudget.stop('POST_OPERATIONAL_STOP');}catch{/* No retry. */}const result={state:'POST_OPERATIONAL_STOP_V2',phase,diagnostic:publicPostDiagnostic(error,activeStage),canRetry:false};await keep('POST-STOP',result);return result;}}
   return Object.freeze({
     inspect:stage=>journal.inspect(stage),
-    observeUnusedResource:()=>boundedAction('POST_UNUSED_RESOURCE',async()=>{assert.equal(mode,'EXECUTE_POST');assert.equal(journal.inspect('RUN'),null);assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');await fresh('READ_METADATA');const created=journal.inspect('CREATE');assert.equal(created?.state,'RECONCILED');const start=deps.clock(),job=await native.getJob(target.objective.jobName),end=deps.clock();validateReadOnlyNativeJob(job,target.objective);assert.equal(job.uid,created.uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);const observation={schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:new Date(start).toISOString(),responseReceivedAt:new Date(end).toISOString(),request:{method:'GET',url:RUN+target.objective.jobName},response:{status:200,finalUrl:RUN+target.objective.jobName,redirected:false,bodySha256:digest(job),hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection:job}},ref=await keep('POST-UNUSED-RESOURCE-native-GET',observation);return{state:'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2',jobObservation:ref,uid:job.uid,authorityRecordSha256:authority.receipt.authorityRecordSha256,runInvocations:0,claimCreated:false,canRetry:false};}),
+    observeUnusedResource:()=>boundedAction('POST_UNUSED_RESOURCE',async()=>{assert.equal(mode,'EXECUTE_POST');assert.equal(journal.inspect('RUN'),null);assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');await fresh('READ_METADATA');if(prospective){const ready=await prospective.observeCurrent({native,dossier:target,source,authority,sharedBudget,runtimeContract,keep});originCapability=ready.capability;return ready.result;}const created=journal.inspect('CREATE');assert.equal(created?.state,'RECONCILED');const start=deps.clock(),job=await native.getJob(target.objective.jobName),end=deps.clock();validateReadOnlyNativeJob(job,target.objective);assert.equal(job.uid,created.uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);const observation={schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:new Date(start).toISOString(),responseReceivedAt:new Date(end).toISOString(),request:{method:'GET',url:RUN+target.objective.jobName},response:{status:200,finalUrl:RUN+target.objective.jobName,redirected:false,bodySha256:digest(job),hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection:job}},ref=await keep('POST-UNUSED-RESOURCE-native-GET',observation);return{state:'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2',jobObservation:ref,uid:job.uid,authorityRecordSha256:authority.receipt.authorityRecordSha256,runInvocations:0,claimCreated:false,canRetry:false};}),
     prepareResource:()=>boundedAction('POST_CREATE',async()=>{assert.equal(mode,'PREPARE_POST_RESOURCE');activeStage='POST_CREATE_PERMISSIONS';await permissionTests(false);activeStage='POST_CREATE_DISPATCH';requirePostDispatch(await dispatchReadOnlyOnce({dossier:target,stage:'CREATE',authorizeFresh:()=>fresh('CREATE'),transport:native,journal,clock:deps.clock}));activeStage='POST_CREATE_OBSERVATION';await untilReconciled('CREATE');await fresh('READ_METADATA');const started=deps.clock(),job=await native.getJob(target.objective.jobName),ended=deps.clock();validateReadOnlyNativeJob(job,target.objective);assert.equal(job.uid,journal.inspect('CREATE').uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);const origin={entry:Object.fromEntries(Object.entries(authority.entry).filter(([key])=>!['authorityRecordSha256','objectiveId'].includes(key))),catalogRevision:authority.receipt.catalogRevision},objectiveOrigin=await keep('POST-PROTECTED-OBJECTIVE-ORIGIN',origin);
       const jobObservation=await keep('POST-JOB-native-GET',{schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:new Date(started).toISOString(),responseReceivedAt:new Date(ended).toISOString(),request:{method:'GET',url:RUN+target.objective.jobName},response:{status:200,finalUrl:RUN+target.objective.jobName,redirected:false,bodySha256:digest(job),hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection:job}});return{state:'FIN_POST_RESOURCE_READY_UNUSED_V2',postJob:{dossier:target,uid:job.uid,objectiveId,authorityRecordSha256:authority.receipt.authorityRecordSha256,objectiveOrigin,jobObservation},createOperation:journal.inspect('CREATE').operation,canRetry:false,runInvocations:0};}),
-    executePost:({imageContext,privateKeyFile})=>boundedAction('POST_RUN',async()=>{assert.equal(mode,'EXECUTE_POST');assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');images=structuredClone(imageContext);validateImagePostServedContextV2(images,source,deps.clock());const row=images.candidate.readOnlyPostJob;assert(row&&row.objectiveId===objectiveId&&row.dossier.objective.jobName===target.objective.jobName);assert.equal(row.authorityRecordSha256,authority.receipt.authorityRecordSha256);const origin=deps.readPublicReference(row.objectiveOrigin);exact(origin,['entry','catalogRevision']);assert.equal(digest(origin.entry),authority.receipt.authorityRecordSha256);activeStage='POST_RUN_PERMISSIONS';await permissionTests(true);configureRunBudget();activeStage='POST_RUN_DISPATCH';const result=requirePostDispatch(await dispatchReadOnlyOnce({dossier:target,stage:'RUN',authorizeFresh:()=>fresh('RUN'),transport:native,journal,clock:deps.clock}));outputBudget.discoverOperation(result.operation);activeStage='POST_RUN_OBSERVATION';await untilReconciled('RUN');outputBudget.discoverExecution(journal.inspect('RUN').execution);activeStage='POST_OUTPUT_READ_AND_VERIFY';return checkedOutput(privateKeyFile);}),
-    close(){closed=true;tokenProvider=undefined;journal.close();},
+    executePost:({imageContext,privateKeyFile})=>boundedAction('POST_RUN',async()=>{assert.equal(mode,'EXECUTE_POST');assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');images=structuredClone(imageContext);validateImagePostServedContextV2(images,source,deps.clock());const row=images.candidate.readOnlyPostJob;assert(row&&row.objectiveId===objectiveId&&row.dossier.objective.jobName===target.objective.jobName);assert.equal(row.authorityRecordSha256,authority.receipt.authorityRecordSha256);const origin=deps.readPublicReference(row.objectiveOrigin);exact(origin,['entry','catalogRevision']);assert.equal(digest(origin.entry),authority.receipt.authorityRecordSha256);activeStage='POST_RUN_PERMISSIONS';await permissionTests(true);configureRunBudget();activeStage='POST_RUN_DISPATCH';const dispatchInput={dossier:target,stage:'RUN',authorizeFresh:()=>fresh('RUN'),transport:native,journal,clock:deps.clock};const result=requirePostDispatch(await (prospective?prospective.dispatch({...dispatchInput,originCapability,operationalSource:source,authorityRecordSha256:authority.receipt.authorityRecordSha256,sharedBudget}):dispatchReadOnlyOnce(dispatchInput)));outputBudget.discoverOperation(result.operation);activeStage='POST_RUN_OBSERVATION';await untilReconciled('RUN');outputBudget.discoverExecution(journal.inspect('RUN').execution);activeStage='POST_OUTPUT_READ_AND_VERIFY';return checkedOutput(privateKeyFile);}),
+    close(){closed=true;tokenProvider=undefined;if(prospective){prospective.release(originCapability);}originCapability=undefined;journal.close();},
   });
 }
 export async function openImagePostOperationalV2(input){
@@ -256,3 +260,119 @@ export async function simulateImagePostOperationalV2({syntheticOnly,input,depend
 export async function prepareImagePostResourceV2(input){const port=await openImagePostOperationalV2({...input,mode:'PREPARE_POST_RESOURCE',initialize:true});try{return await port.prepareResource();}finally{port.close();}}
 export async function runImagePostReadOnlyV2({imageContext,privateKeyFile,...input}){const port=await openImagePostOperationalV2({...input,mode:'EXECUTE_POST',initialize:false});try{return await port.executePost({imageContext,privateKeyFile});}finally{port.close();}}
 export async function observeImagePostUnusedResourceV2(input){const port=await openImagePostOperationalV2({...input,mode:'EXECUTE_POST',initialize:false});try{return await port.observeUnusedResource();}finally{port.close();}}
+
+// Prospective current-resource admission is distinct from the historical CREATE
+// journal. The public proof validator is not an issuer; only this private map
+// can carry a transport-observed origin into the single original RUN guard.
+const prospectivePostOrigins=new WeakMap(),prospectivePostAuthorities=new WeakMap();
+const POST_CURRENT_MODE='PROSPECTIVE_QUALIFIED_CURRENT_RESOURCE_WITH_CREATE_HISTORY_UNKNOWN';
+const POST_CURRENT_MODULE='scripts/ci/runtime-image-only/post-prospective-origin-v1.mjs';
+const POST_CURRENT_ROOT='C:/Crm Ynov/output/casablanca-pilot-20261022';
+const POST_CURRENT_RUN_DIRECTORY=POST_CURRENT_ROOT+'/post-prospective-run-native-20261031-v1';
+const POST_CURRENT_GLOBAL_CLAIM=POST_CURRENT_ROOT+'/rc48-post-operational-native-20261030-v1/POST-RUN-CAPABILITY.json';
+const POST_CURRENT_BASELINE_PATHS=Object.freeze({
+ n02Bytes:POST_CURRENT_ROOT+'/image-inventory-native-20261031-v1/N02-INVENTORY-native-FIN.json',
+ pureValidationBytes:POST_CURRENT_ROOT+'/post-create-native-entry-20261031-v1/N02-POST-CANDIDATE-PURE-VALIDATION.json',
+ unknownObservationBytes:POST_CURRENT_ROOT+'/post-create-native-entry-20261031-v1/LOCAL-POST-JOURNAL-READONLY.json',
+ dossierBytes:POST_CURRENT_ROOT+'/initial-cutover-catalogue-assembly-20261030-v1/POST-DOSSIER.json'
+});
+function requireProspectiveSource(source,readSource){
+ assert.deepEqual(readSource(),source,'POST_SOURCE_CHANGED');assert.equal(source.clean,true);
+ const row=source.files.filter(value=>value.path===POST_CURRENT_MODULE);assert.equal(row.length,1);assert(H.test(row[0].sha256));
+ const bytes=readPoolPrivateFile(path.resolve(import.meta.dirname,'post-prospective-origin-v1.mjs'));assert.equal(sha(bytes),row[0].sha256,'POST_CURRENT_MODULE_SOURCE_PIN');
+ return source;
+}
+function requireProspectiveOrigin(capability,{objective,source,authorityRecordSha256,sharedBudget,now,syntheticOnly}){
+ const value=prospectivePostOrigins.get(capability);assert(value&&value.syntheticOnly===syntheticOnly,'OPAQUE_POST_CURRENT_RESOURCE_ORIGIN_REQUIRED');
+ assert(!value.closed&&!value.consumed,'POST_CURRENT_ORIGIN_CONSUMED');assert.equal(objective.objectiveSha256,value.proof.objectiveSha256);assert.equal(objective.jobName,value.proof.job);
+ assert.equal(digest(source),value.sourceSha256);assert.equal(authorityRecordSha256,value.proof.authorityRecordSha256);
+ assert.equal(value.sharedBudget,sharedBudget,'POST_CURRENT_SAME_COMMON_BUDGET_REQUIRED');assert.equal(sharedBudget.inspect().bindingSha256,value.proof.commonSessionBindingSha256);
+ assert(Number.isSafeInteger(now)&&now>=Date.parse(value.proof.observedAt)&&now<Date.parse(value.proof.expiresAt),'POST_CURRENT_ORIGIN_EXPIRED');
+ return {uid:value.proof.uid,etag:value.proof.etag,proofSha256:value.proofSha256,proofRef:value.proofRef};
+}
+export function requirePostProspectiveOriginCapabilityV1(capability,input){return requireProspectiveOrigin(capability,input);}
+function singleAccountingBudget(sharedBudget){
+ const tickets=new WeakMap();return Object.freeze({...sharedBudget,
+  reserveRequest(input){const ticket=sharedBudget.reserveRequest(input);tickets.set(ticket,{attempted:false});return ticket;},
+  recordResponse(ticket,input){const state=tickets.get(ticket);assert(state&&!state.attempted,'POST_BUDGET_ACCOUNTING_ALREADY_ATTEMPTED');state.attempted=true;return sharedBudget.recordResponse(ticket,input);}
+ });
+}
+function prospectiveRunJournal({directory,dossier,entry,write,syntheticOnly}){
+ assert(path.isAbsolute(directory));assert.equal(fs.realpathSync(directory),path.resolve(directory));assert(!fs.lstatSync(directory).isSymbolicLink());assert.equal(fs.readdirSync(directory).length,0,'NEW_PROSPECTIVE_RUN_JOURNAL_REQUIRED');
+ const binding={schemaVersion:1,kind:'POST_PROSPECTIVE_RUN_JOURNAL_BINDING_V1',mode:POST_CURRENT_MODE,job:dossier.objective.jobName,objectiveSha256:dossier.objective.objectiveSha256,dossierSha256:digest(dossier),authorityRecordSha256:entry.authorityRecordSha256,oldCreateHistoryState:'UNKNOWN',oldCreateJournalSha256:'c2f5e2b8b2b338e78e3ad182aa95a354df00d80a9cf44b023a7bc16a27b987e2',syntheticOnly};
+ write(path.join(directory,'BINDING.json'),binding);let closed=false,rows=[];
+ function inspect(stage){assert(!closed);assert.equal(stage,'RUN','PROSPECTIVE_JOURNAL_HAS_NO_CREATE_STAGE');return rows.length?structuredClone(rows.at(-1).payload):null;}
+ function append(stage,payload){const old=inspect(stage),allowed={INTENT:['UNKNOWN','OPERATION'],OPERATION:['FAILED','RECONCILED']};assert(old?allowed[old.state]?.includes(payload.state):payload.state==='INTENT','NO_REPLAY_OR_ILLEGAL_TRANSITION');assert.equal(payload.canRetry,false);assert.equal(payload.job,binding.job);assert.equal(payload.objectiveSha256,binding.objectiveSha256);if(old?.operation){assert.equal(payload.operation,old.operation);}if(payload.operation){assert.match(payload.operation,/^projects\/crmynov-prod-n7x4q2\/locations\/europe-west1\/operations\/[A-Za-z0-9_-]+$/u);}
+  const row={schemaVersion:1,kind:'POST_PROSPECTIVE_RUN_EVENT_V1',bindingSha256:digest(binding),ordinal:rows.length,previousSha256:rows.length?digest(rows.at(-1)):null,payload:structuredClone(payload)};
+  const file=path.join(directory,String(row.ordinal).padStart(4,'0')+'-'+payload.state+'.json');const ref=write(file,row),bytes=readPoolPrivateFile(ref.path);assert.equal(sha(bytes),ref.sha256);assert.deepEqual(JSON.parse(bytes),row);rows.push(row);
+ }
+ return Object.freeze({inspect,append,close(){closed=true;rows=[];}});
+}
+function currentPostDependencies(input,sourceReader){
+ const directory=imageExternalDirectory(input.journalDirectory);assert.equal(directory,input.journalDirectory);
+ return {readSource:sourceReader,readRuntimeSource:file=>readPoolPrivateFile(path.resolve(import.meta.dirname,'../pool-reconciliation',file)),
+ authorize:args=>cachedProspectivePostAuthority(input.authorityCapability,{...args,journalDirectory:directory}),
+ clock:Date.now,fetchImpl:async(url,options)=>{const response=await fetch(url,options);assert.equal(response.url,url,'POST_ACTUAL_RESPONSE_URL_REQUIRED');assert.equal(response.redirected,false);return response;},
+ runClaimExists:fs.existsSync,writeRunClaim:durablePublic,readRunClaim:file=>JSON.parse(readPoolPrivateFile(file,65536)),
+ readPublicReference:ref=>{exact(ref,['path','sha256']);const bytes=readPoolPrivateFile(ref.path);assert.equal(sha(bytes),ref.sha256);const value=JSON.parse(bytes);validateImageInventoryPublicProjection(value);return value;},
+ readPrivateKey:file=>readPoolPrivateFile(file,16384).toString('utf8'),pause:ms=>new Promise(resolve=>setTimeout(resolve,ms))};
+}
+function cachedProspectivePostAuthority(capability,args){
+ const value=prospectivePostAuthorities.get(capability);assert(value&&!value.syntheticOnly,'OPAQUE_REAL_POST_V4_AUTHORITY_REQUIRED');
+ assert.equal(args.objectiveId,value.objectiveId);assert.equal(args.journalDirectory,value.journalDirectory);assert.equal(digest(args.dossier),value.dossierSha256);assert.equal(sha(args.jiraBytes),value.jiraSha256);
+ requireProspectiveSource(value.source,readImageOperationalSourceV4);assertAuthorityCurrent(value.authority,Date.now());assert(value.authority.receipt.authorizedActions.includes(args.action));
+ validateNativeJiraReadObservation(value.jiraBytes,{expectedSha256:value.jiraSha256,actor:value.authority.receipt.actor,grantSha256:value.authority.receipt.grantDigest,now:Date.now()});return structuredClone(value.authority);
+}
+export async function acquireImagePostProspectiveAuthorityV1({mode,objectiveId,dossier,jiraBytes,journalDirectory}){
+ assert.equal(mode,POST_CURRENT_MODE);validateImageDossierPublicProjectionV3(dossier,file=>readPoolPrivateFile(path.resolve(import.meta.dirname,'../pool-reconciliation',file)));const source=readImageOperationalSourceV4(),directory=imageExternalDirectory(journalDirectory);
+ requireProspectiveSource(source,readImageOperationalSourceV4);assert.equal(path.resolve(postBindingFile(directory)),path.resolve(POST_CURRENT_GLOBAL_CLAIM));
+ const authority=await authorizeImagePostReadOnlyV2({github:createReadOnlyGithubReader(),objectiveId,dossier,localSource:source,jiraBytes,action:'RUN',readSource:file=>readPoolPrivateFile(path.resolve(import.meta.dirname,'../pool-reconciliation',file))});
+ const actions=authority.receipt.authorizedActions;assert(['RUN','OBSERVE_RUN','READ_OUTPUT','READ_METADATA','TEST_PERMISSIONS'].every(action=>actions.includes(action)));assert(!actions.includes('CREATE')&&!actions.includes('OBSERVE_CREATE'),'PROSPECTIVE_POST_NO_CREATE_AUTHORITY');
+ assert.equal(sha(directory),authority.entry.journalDirectorySha256);requireProspectiveSource(source,readImageOperationalSourceV4);
+ const capability=Object.freeze({kind:'PRIVATE_POST_V4_AUTHORITY_CAPABILITY_V1',nativeAuthority:false});prospectivePostAuthorities.set(capability,{objectiveId,journalDirectory:directory,dossierSha256:digest(dossier),jiraSha256:sha(jiraBytes),jiraBytes:Buffer.from(jiraBytes),source,authority});return{authorityCapability:capability,authority:structuredClone(authority),source:structuredClone(source)};
+}
+export function releaseImagePostProspectiveAuthorityV1(capability){const value=prospectivePostAuthorities.get(capability);if(value){value.jiraBytes=undefined;prospectivePostAuthorities.delete(capability);}}
+function prospectivePostProfile({module,baselineBytes,runDirectory,dependencies,syntheticOnly}){
+ let frames=[],retaining=false,collectionAttempted=false;const baseline=module.validatePostProspectiveBaselineV1(baselineBytes);
+ function checkOrigin(cap,input){return requireProspectiveOrigin(cap,{...input,syntheticOnly});}
+ return Object.freeze({
+  requireSource(source){if(!syntheticOnly){requireProspectiveSource(source,dependencies.readSource);}assert(source.files.some(row=>row.path===POST_CURRENT_MODULE));},
+  openRunJournal:args=>prospectiveRunJournal({...args,directory:runDirectory,write:dependencies.writeRunClaim,syntheticOnly}),
+  onceAccountingBudget:singleAccountingBudget,checkOrigin,
+  consumeOrigin(cap,input){const checked=checkOrigin(cap,input),value=prospectivePostOrigins.get(cap);value.consumed=true;return checked;},
+  originProofSha256:cap=>{const value=prospectivePostOrigins.get(cap);assert(value);return value.proofSha256;},
+  beforeFetch(url,init){if(!retaining){return;}assert.equal(init.method??'GET','GET');const root=RUN+baseline.job;if(frames.length===0){assert.equal(url,root);return;}const last=frames.at(-1),lists=frames.filter(row=>row.request.url.startsWith(root+'/executions?'));if(lists.length===0){assert.equal(url,root+'/executions?pageSize=100&showDeleted=true');return;}const token=last.response.projection.nextPageToken??'';if(token){assert(lists.length<20,'POST_ORIGIN_EXECUTION_PAGE_BOUND_BEFORE_HTTP');assert.equal(url,root+'/executions?pageSize=100&showDeleted=true&pageToken='+encodeURIComponent(token));}else{assert.equal(url,root);assert(last.request.url.startsWith(root+'/executions?'));}},
+  async retainFrame(url,init,response,start,end){const executionPage=url.startsWith(RUN+baseline.job+'/executions?');if(!retaining&&!executionPage){return;}assert.equal(init.method??'GET','GET');assert.equal(response.status,200);assert.equal(response.redirected,false);const projection=await response.clone().json();if(executionPage){module.validatePostProspectiveEmptyExecutionPageV1(projection);}if(!retaining){return;}assert(frames.length<22);const final=dependencies.clock();assert(final>=end);frames.push({schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:new Date(start).toISOString(),responseReceivedAt:new Date(final).toISOString(),request:{method:'GET',url},response:{status:response.status,finalUrl:url,redirected:false,bodySha256:digest(projection),hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection}});},
+  async observeCurrent({native,dossier,source,authority,sharedBudget,runtimeContract,keep}){
+   assert(!retaining&&!collectionAttempted&&frames.length===0,'ONE_CURRENT_ORIGIN_COLLECTION_ONLY');collectionAttempted=true;retaining=true;try{await native.getJob(dossier.objective.jobName);await native.listExecutions(dossier.objective.jobName);await native.getJob(dossier.objective.jobName);}finally{retaining=false;}
+   const proof=module.validatePostProspectiveCurrentFramesV1({baseline,dossier,frames,source,authorityRecordSha256:authority.receipt.authorityRecordSha256,authorityExpiresAt:authority.receipt.expiresAt,commonSessionBindingSha256:runtimeContract.commonSessionBindingSha256,now:dependencies.clock()});
+   const proofRef=await keep('CURRENT-RESOURCE-ORIGIN-native-READS',{proof,frames,syntheticOnly,providerCryptographicAttestation:false});
+   const retained=dependencies.readPublicReference(proofRef);assert.deepEqual(retained,{proof,frames,syntheticOnly,providerCryptographicAttestation:false});
+   const capability=Object.freeze({kind:'PRIVATE_POST_CURRENT_RESOURCE_ORIGIN_V1',nativeAuthority:false});prospectivePostOrigins.set(capability,{proof,proofSha256:digest(proof),proofRef,sourceSha256:digest(source),sharedBudget,syntheticOnly,consumed:false,closed:false});
+   const last=frames.at(-1),jobObservation=await keep('CURRENT-RESOURCE-LAST-native-GET',last);frames=[];
+   return{capability,result:{state:'FIN_POST_PROSPECTIVE_CURRENT_RESOURCE_OBSERVED_V1',jobObservation,originProof:proofRef,uid:proof.uid,authorityRecordSha256:authority.receipt.authorityRecordSha256,historicalCreateState:'UNKNOWN',historicalAttributionProved:false,runInvocations:0,claimCreated:false,canRetry:false}};
+  },
+  dispatch:input=>syntheticOnly?simulatePostProspectiveRunOnceV1({syntheticOnly:true,...input}):dispatchPostProspectiveRunOnceV1(input),
+  release(cap){const value=prospectivePostOrigins.get(cap);if(value){value.closed=true;prospectivePostOrigins.delete(cap);}frames=[];}
+ });
+}
+export async function openImagePostProspectiveOperationalV1(input){
+ exact(input,['mode','objectiveId','dossier','jiraBytes','journalDirectory','initialize','authorityCapability','sharedBudget','runtimeContract','accessToken','save','assertSessionCurrent']);
+ assert.equal(input.mode,'EXECUTE_POST');assert.equal(input.initialize,false);const cached=prospectivePostAuthorities.get(input.authorityCapability);assert(cached&&!cached.syntheticOnly);assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);
+ requireProspectiveSource(cached.source,readImageOperationalSourceV4);const dependencies=currentPostDependencies(input,readImageOperationalSourceV4);
+ // Import occurs only after the real issued authority and complete V4 source
+ // (including this new module's actual bytes) have been checked.
+ const module=await import('./post-prospective-origin-v1.mjs'),baselineBytes=Object.fromEntries(Object.entries(POST_CURRENT_BASELINE_PATHS).map(([key,file])=>[key,readPoolPrivateFile(file,1048576)]));
+ assert.equal(path.resolve(postBindingFile(input.journalDirectory)),path.resolve(POST_CURRENT_GLOBAL_CLAIM));
+ const profile=prospectivePostProfile({module,baselineBytes,runDirectory:imageExternalDirectory(POST_CURRENT_RUN_DIRECTORY),dependencies,syntheticOnly:false});
+ return openPostPort(input,dependencies,profile);
+}
+export async function simulateImagePostProspectiveOperationalV1({syntheticOnly,input,dependencies,module,baselineBytes,runDirectory}){
+ assert.equal(syntheticOnly,true);return openPostPort(input,dependencies,prospectivePostProfile({module,baselineBytes,runDirectory,dependencies,syntheticOnly:true}));
+}
+
+
+// Private delivery accounting applies only to the prospective port. The old
+// exported CREATE factory always supplies the unchanged null profile.
+const POST_DELIVERED_BYTES_PROFILE=Symbol('PRIVATE_PROSPECTIVE_DELIVERED_BYTES');
+export function createImagePostCreateBudgetV2(input){return createImagePostBudgetCoreV3(input,null);}

@@ -10,7 +10,8 @@ import {BINDING,CONSUMER_PINS} from '../pool-reconciliation/general-prospective-
 import {GENERAL_OPERATIONAL_DIRECTORY,GENERAL_OPERATIONAL_BINDING,GENERAL_OPERATIONAL_AUTHORITY_ID,GENERAL_OPERATIONAL_CAPABILITY_ID,validateHistoricalReadOnlyEntriesV3,validateGeneralOperationalRecordV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
 import {QUERY_CONTRACT_SHA256,QUERIES} from '../pool-reconciliation/general-preservation-read-only-collector-v1.mjs';
 import {POOL_IMAGE} from '../pool-reconciliation/pool-native-output-v1.mjs';
-import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,IMAGE_OPERATIONAL_DRIVER_INPUTS_V3} from '../runtime-image-only/local-source.mjs';
+import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,IMAGE_OPERATIONAL_DRIVER_INPUTS_V3,IMAGE_OPERATIONAL_DRIVER_INPUTS_V4} from '../runtime-image-only/local-source.mjs';
+import {verifySource} from '../runtime-image-only/protected-gates.mjs';
 import {OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from '../runtime-image-only/late-binding-v2.mjs';
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operational-v2.mjs';
@@ -34,14 +35,37 @@ const midpoint=Date.parse(window.validFrom)+(Date.parse(window.expiresAt)-Date.p
 const review=relative=>({kind:'PROTECTED_CATALOGUE_PATH_HISTORY',path:relative});
 const sourceProjection=()=>({commit:sourceIdentity.mergeCommit,tree:sourceIdentity.tree,clean:true,files:inventory.driver.files});
 // These two exact RAW, non-executable fixtures retain PR273/c389 source bytes.
-// The other77 source bytes still equal this checkout; this is not a new common
-// native snapshot or a claim that the future V3 driver uses the c389 closure.
+// The other77 historical members are checked through closed, exact D6 inverses
+// where V4 legitimately changed them. This is not current source admission,
+// a common native snapshot, or a retarget of either historical closure.
 const historicalSourceFixtures={
  'scripts/ci/runtime-image-only/local-source.mjs':{path:'scripts/ci/runtime-image-only/fixtures/c389-local-source.mjs.fixture.txt',sha256:'e208f43237b89d53158576931e8b4c13acbb0577070c29c39233d1e0fd04237d'},
  'scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs':{path:'scripts/ci/runtime-image-only/fixtures/c389-operational-forward-cli-v2.mjs.fixture.txt',sha256:'0f247ca4adb761dcec0ff19f8eea689fe282602464b8904f0380d0a085119ac3'},
 };
+const projectionPath='scripts/ci/runtime-image-only/fixtures/d6-source-before-v4-byte-projection-v1.json';
+const projectionRaw=readBytes(projectionPath);assert.equal(sha(projectionRaw),'ba43588faa90d24772462205942426c94a5030b289907fac6341aeda6449acd1');
+const historicalProjection=JSON.parse(projectionRaw);
+assert.equal(historicalProjection.kind,'TEST_ONLY_EXACT_HISTORICAL_D6_SOURCE_BYTE_PROJECTION_V1');
+assert.deepEqual(historicalProjection.oldSourceIdentity,sourceIdentity);assert.equal(historicalProjection.rows.length,14);
+assert.equal(new Set(historicalProjection.rows.map(row=>row.path)).size,14);
+assert.equal(historicalProjection.sourceManifestSha256,'24b980d476acb9a2805c5147cd156a9f096ed64cf6cc2a34663ffc4b2f0d5bfa');
+assert.equal(historicalProjection.retainedSourceReceiptSha256,'393041464b983b5f31811be70a1d4a093a3a4733fbf48bb6ff280cfc1b2a0117');
+assert.equal(historicalProjection.nativeAuthority,false);assert.equal(historicalProjection.sourceExecutionPerformed,false);
+assert.equal(historicalProjection.trimEnd,false);assert.equal(historicalProjection.lineEndingNormalization,false);
+function projectHistoricalDriverSourceBytes(relative,currentBytes){
+ const row=historicalProjection.rows.find(value=>value.path===relative);if(!row){return currentBytes;}
+ assert(Buffer.isBuffer(currentBytes));assert.equal(currentBytes.length,row.currentBytes);assert.equal(sha(currentBytes),row.currentSha256,'CLOSED_CURRENT_V4_WHOLE_SOURCE_REQUIRED');
+ assert(row.edits.length>0&&row.edits.length<=80);let inverse=Buffer.from(currentBytes),limit=currentBytes.length;
+ for(const edit of [...row.edits].reverse()){
+  assert(Number.isSafeInteger(edit.offset)&&Number.isSafeInteger(edit.removeBytes)&&edit.offset>=0&&edit.removeBytes>=0&&edit.offset+edit.removeBytes<=limit);
+  assert.equal(sha(inverse.subarray(edit.offset,edit.offset+edit.removeBytes)),edit.removeSha256,'EXACT_HISTORICAL_INVERSE_RANGE_REQUIRED');
+  const inserted=Buffer.from(edit.insertUtf8);assert.equal(inserted.length,edit.insertBytes);
+  inverse=Buffer.concat([inverse.subarray(0,edit.offset),inserted,inverse.subarray(edit.offset+edit.removeBytes)]);limit=edit.offset;
+ }
+ assert.equal(inverse.length,row.historicalBytes);assert.equal(sha(inverse),row.historicalSha256,'EXACT_RETAINED_D6_PREIMAGE_REQUIRED');return inverse;
+}
 function historicalSourceBytes(relative){
- const pin=historicalSourceFixtures[relative];if(!pin){return readBytes(relative);}
+ const pin=historicalSourceFixtures[relative];if(!pin){return projectHistoricalDriverSourceBytes(relative,readBytes(relative));}
  const bytes=readBytes(pin.path);assert.equal(sha(bytes),pin.sha256);return bytes;
 }
 
@@ -63,7 +87,7 @@ function assertSourceClosure(driver){
  assert.equal(files.length,80);
  assert.deepEqual(files.map(file=>file.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V3);
  assert.equal(digest(files),"24b980d476acb9a2805c5147cd156a9f096ed64cf6cc2a34663ffc4b2f0d5bfa");
- for(const file of files){assert.equal(sha(readBytes(file.path)),file.sha256,file.path);}
+ for(const file of files){assert.equal(sha(projectHistoricalDriverSourceBytes(file.path,readBytes(file.path))),file.sha256,file.path);}
  assert(!files.some(file=>file.path===readonlyPath||file.path===imagePath));
 }
 
@@ -92,10 +116,22 @@ test('SOURCE ONLY current catalogues retain seven exact historical entries and o
  assert.deepEqual(validateHistoricalReadOnlyEntriesV3(current),{historicalCount:7,historicalEntriesSha256:'27c33fb80406e3d41a6f23b04585dc6d782c3290787491996d0589ae2bb57adc'});
 });
 
-test('SOURCE ONLY all additive descriptors use the exact protected S01 source closure without catalogue cycles',()=>{
+test('SOURCE ONLY all additive descriptors use the exact protected S01 source closure without catalogue cycles',async()=>{
  assertHistoricalSourceClosure();
  for(const driver of [post.driver,inventory.driver,general.driver]){assertSourceClosure(driver);}
  assert.deepEqual(post.driver,inventory.driver);assert.deepEqual(general.driver,inventory.driver);
+ const currentV4Files=IMAGE_OPERATIONAL_DRIVER_INPUTS_V4.map(relative=>({path:relative,sha256:sha(readBytes(relative))}));
+ let providerReads=0;const neverProvider={get(){providerReads++;throw new Error('SYNTHETIC_PROVIDER_MUST_NOT_BE_CALLED');}};
+ for(const driver of [post.driver,inventory.driver,general.driver]){
+  await assert.rejects(verifySource(neverProvider,{commit:driver.mergeCommit,tree:driver.tree,clean:true,files:currentV4Files},{driver}),error=>{
+   assert.equal(error.code,'ERR_ASSERTION');assert.equal(error.operator,'deepStrictEqual');
+   const {files:actualFiles,...actualIdentity}=error.actual,{files:expectedFiles,...expectedIdentity}=error.expected;
+   assert.deepEqual(actualIdentity,{commit:driver.mergeCommit,tree:driver.tree,clean:true});assert.deepEqual(actualIdentity,expectedIdentity);
+   assert.deepEqual(actualFiles,currentV4Files);assert.deepEqual(expectedFiles,driver.files);assert.notDeepEqual(actualFiles,expectedFiles);return true;
+  });
+ }
+ assert.equal(providerReads,0,'CURRENT_V4_CANNOT_REUSE_HISTORICAL_AUTHORITY');
+ for(const row of historicalProjection.rows){const corrupt=Buffer.from(readBytes(row.path));corrupt[0]^=1;assert.throws(()=>projectHistoricalDriverSourceBytes(row.path,corrupt),/CLOSED_CURRENT_V4_WHOLE_SOURCE_REQUIRED/u);}
 });
 
 test('SOURCE ONLY POST pins actual assembled dossier metadata and the existing thirteen-SELECT contract',()=>{

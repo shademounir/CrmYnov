@@ -11,10 +11,10 @@ import {imageJournalDigest as digest,createImageSessionBudget} from './journal.m
 import {readPoolPrivateFile} from '../pool-reconciliation/pool-operational-driver-v1.mjs';
 import {createReadOnlyGithubReader} from '../pool-reconciliation/pool-driver-github-v1.mjs';
 import {openOfficialSdkOperationalSession} from '../readonly-probe/official-sdk-auth-preflight-v1.mjs';
-import {readImageOperationalSource,imageExternalDirectory} from './local-source.mjs';
+import {readImageOperationalSource,readImageOperationalSourceV4,imageExternalDirectory} from './local-source.mjs';
 import {validateImageDossierPublicProjectionV3} from './dossier-public-projection-v3.mjs';
-import {validateImagePostDossierV2,acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2,runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2,observeImagePostUnusedResourceV2} from './post-operational-v2.mjs';
-import {runGeneralOperationalPreV3,releaseVerifiedGeneralPreV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
+import {validateImagePostDossierV2,acquireImagePostProspectiveAuthorityV1,releaseImagePostProspectiveAuthorityV1,openImagePostProspectiveOperationalV1,acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2,runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2,observeImagePostUnusedResourceV2} from './post-operational-v2.mjs';
+import {runGeneralOperationalPreV3,runGeneralOperationalPreSourceV4,releaseVerifiedGeneralPreV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';
 import {validateProspectiveConsumerInputs} from '../pool-reconciliation/general-prospective-pre-session-v1.mjs';
 import {validateImagePreparationV2,validateImageIndependentEvidenceV2,bindImageLivePostReadinessV2} from './preparation-v2.mjs';
 import {createImageOnlyExecutor} from './executor.mjs';
@@ -359,11 +359,11 @@ export function parseImageForwardArgumentsV2(args){
   const keys=new Set(['--input','--jira-evidence','--journal-dir','--output-dir']);assert(Array.isArray(args)&&args[0]==='forward-v2'&&args.length===9,'EXPLICIT_FORWARD_V2_REQUIRED');const result={};
   for(let i=1;i<args.length;i+=2){assert(keys.has(args[i])&&!Object.hasOwn(result,args[i]));const value=args[i+1];assert(typeof value==='string'&&path.isAbsolute(value)&&value.length<=4096&&!/[\u0000-\u001f\u007f]/u.test(value));result[args[i]]=value;}return result;
 }
-function forwardInputs(value){
+function forwardInputs(value,sourceVersion=3){
   exact(value,['schemaVersion','kind','objectiveId','dossier','plan','candidate','baseline','postReadiness','sessionBinding','general','post','roleObservationsFile']);
-  assert.equal(value.schemaVersion,2);assert.equal(value.kind,'RC48_FORWARD_OPERATIONAL_INPUT_V2');assert.match(value.objectiveId,/^rc48-image-only-[a-z0-9-]{8,80}$/u);
+  assert.equal(value.schemaVersion,sourceVersion===4?4:2);assert.equal(value.kind,sourceVersion===4?'RC48_FORWARD_OPERATIONAL_INPUT_V4':'RC48_FORWARD_OPERATIONAL_INPUT_V2');assert.match(value.objectiveId,/^rc48-image-only-[a-z0-9-]{8,80}$/u);
   const loaded={};for(const key of ['dossier','plan','candidate','baseline','postReadiness','sessionBinding']){loaded[key]=readImageForwardPublicReferenceV2(value[key]);}
-  exact(value.general,['record','dossier','privateKeyFile','consumerReferences']);exact(value.post,['objectiveId','dossier','privateKeyFile','journalDirectory']);
+  exact(value.general,['record','dossier','privateKeyFile','consumerReferences']);exact(value.post,['objectiveId','dossier','privateKeyFile','journalDirectory',...(sourceVersion===4?['originMode']:[])]);if(sourceVersion===4){assert.equal(value.post.originMode,'PROSPECTIVE_QUALIFIED_CURRENT_RESOURCE_WITH_CREATE_HISTORY_UNKNOWN');}
   const refs=value.general.consumerReferences;exact(refs,['historicalBaseline','cutoverIndex','configuration','decision','currentComparison']);
   const verified=Object.fromEntries(Object.entries(refs).map(([key,ref])=>[key,verifiedPublicBytes(ref)]));
   const consumerInputs={historicalBaselineBytes:verified.historicalBaseline,cutoverIndexBytes:verified.cutoverIndex,evidence:{}};
@@ -473,19 +473,20 @@ function emptyOutputAndBudget(directory,output,binding,applicationOrigins){
 function publicPreparation(x,source,phase,general,expiry){return makeImageForwardPreparationV2({phase,objectiveId:x.descriptor.objectiveId,dossier:x.dossier,plan:x.plan,source,postReadiness:x.liveReadinessRef??x.descriptor.postReadiness,general,now:Date.now(),expiresAt:expiry});}
 // One closed adapter over the existing executor, GENERAL and separate POST.
 // JSON contains only pinned inputs/paths, never callbacks or alternate tools.
-export async function runImageForwardOperationalV2(args){
-  let stage='FORWARD_INPUTS',sdk,budget,postAuthority,postResult,generalResult,save,result;
+async function runImageForwardOperationalCoreV4(args,sourceVersion){
+  let stage='FORWARD_INPUTS',sdk,budget,postAuthority,postResult,generalResult,save,result,prospectivePort;
+  const sourceReader=sourceVersion===4?readImageOperationalSourceV4:readImageOperationalSource,sourceGuard=source=>assert.deepEqual(sourceReader(),source,'OPERATIONAL_SOURCE_CHANGED');
   try{
     assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);
-    const options=parseImageForwardArgumentsV2(args),source=readImageOperationalSource(),x=forwardInputs(publicJson(options['--input']));
+    if(sourceVersion===4){assert.equal(args[0],'forward-v4','EXPLICIT_FORWARD_V4_REQUIRED');}const options=parseImageForwardArgumentsV2(sourceVersion===4?['forward-v2',...args.slice(1)]:args),source=sourceReader(),x=forwardInputs(publicJson(options['--input']),sourceVersion);
     const directory=imageExternalDirectory(options['--journal-dir']),output=imageExternalDirectory(options['--output-dir']),jiraBytes=readPoolPrivateFile(options['--jira-evidence'],65536),github=createReadOnlyGithubReader();assert.notEqual(directory,output);assert.equal(fs.readdirSync(output).length,0,'FORWARD_REQUIRES_NEW_EMPTY_OUTPUT');save=publicSaver(output);
     readImageForwardPublicReferenceV2(x.descriptor.general.dossier);
     assert.equal(digest(x.generalRecord),x.dossier.pendingGeneral.prospectiveAuthoritySha256);
     assert.equal(digest(x.postDossier),digest(x.candidate.readOnlyPostJob.dossier));
     stage='FORWARD_GOVERNANCE';const authority=await authorizeImageOnlyDriver({github,objectiveId:x.descriptor.objectiveId,dossier:x.dossier,plan:x.plan,candidate:x.candidate,baseline:x.baseline,localSource:source,jiraBytes,action:'READ_METADATA',preparationPhase:'BACKUP_READY',readEvidence:readPoolPrivateFile});
     assert.equal(authority.entry.journalDirectorySha256,hash(directory));
-    const lease=makeImageForwardLocalLeaseV2({authority,dossier:x.dossier,plan:x.plan,candidate:x.candidate,baseline:x.baseline,source,jiraBytes,assertSource:fixedSourceGuard});
-    postAuthority=await acquireImagePostAuthorityV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,preparationPhase:'POST_EXECUTION'});assert.deepEqual(postAuthority.source,source);
+    const lease=makeImageForwardLocalLeaseV2({authority,dossier:x.dossier,plan:x.plan,candidate:x.candidate,baseline:x.baseline,source,jiraBytes,assertSource:sourceVersion===4?sourceGuard:fixedSourceGuard});
+    postAuthority=sourceVersion===4?await acquireImagePostProspectiveAuthorityV1({mode:x.descriptor.post.originMode,objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory}):await acquireImagePostAuthorityV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,preparationPhase:'POST_EXECUTION'});assert.deepEqual(postAuthority.source,source);
     const binding=x.sessionBinding;validateSessionBinding(binding,authority,source,'RC48_SERVICE_IMAGE_ONLY_V1',authority.entry.resourceBindings);
     let phase='BACKUP_READY',currentAuthority=lease.current('READ_METADATA',phase,Date.now()),preparation,completionContext,backupFin;
     const expiry=new Date(Math.min(Date.parse(authority.receipt.expiresAt),Date.parse(postAuthority.authority.receipt.expiresAt),Date.parse(binding.windowEnd))).toISOString();
@@ -495,7 +496,7 @@ export async function runImageForwardOperationalV2(args){
     bindImageLivePostReadinessV2(x.postReadiness,x.dossier.postReadiness,readPoolPrivateFile);
     budget=makeReservedBffBudgetV3(emptyOutputAndBudget(directory,output,binding,[x.postReadiness.recipe.apiOrigin,x.postReadiness.recipe.webOrigin]),{sessionBindingSha256:digest(binding),leaseExpiresAt:expiry,actorCount:x.postReadiness.recipe.actors.length});
     save('FORWARD-EXTERNAL-BFF-RESERVATION',bffAllocationReportV3(budget));
-    const guard=()=>{fixedSourceGuard(source);lease.current('READ_METADATA',phase,Date.now());assertAuthorityCurrent(postAuthority.authority,Date.now());const s=budget.inspect();assert(!s.stopped&&s.remainingMs>0);};
+    const guard=()=>{(sourceVersion===4?sourceGuard:fixedSourceGuard)(source);lease.current('READ_METADATA',phase,Date.now());assertAuthorityCurrent(postAuthority.authority,Date.now());const s=budget.inspect();assert(!s.stopped&&s.remainingMs>0);};
     save('FORWARD-ENTRY-START',{schemaVersion:2,kind:'SOURCE_BOUND_FORWARD_ENTRY_START_V2',objectiveId:x.descriptor.objectiveId,source,binding,dossierSha256:digest(x.dossier),planSha256:digest(x.plan),at:new Date().toISOString(),runCapabilityNotYetArmed:true});
     stage='FORWARD_AUTHENTICATION';sdk=await openOfficialSdkOperationalSession({operationContract:{schemaVersion:2,kind:'OFFICIAL_SDK_OPERATIONAL_RESOURCE_SESSION_V2',...binding,sourceTree:source.tree,googleAccount:'casablancaynovcampus@gmail.com'},getAuthority:()=>lease.current('READ_METADATA','BACKUP_READY',Date.now()),assertCurrent:guard});assert.equal(sdk.report().authenticationChainValidated,true,'FORWARD_SDK_AUTHENTICATION_REFUSED');
     const observed={},native=createImageOperationalTransport({binding,plan:x.plan,accessToken:sdk.accessToken,getAuthority:()=>currentAuthority,sessionBudget:budget}),transport=watchedTransport(native,observed);
@@ -505,13 +506,13 @@ export async function runImageForwardOperationalV2(args){
       assertLocalState:async()=>guard(),
       prepareBackupReady:async()=>{currentAuthority=lease.current('TEST_PERMISSIONS',phase,Date.now());await transport.testProjectPermissions();await transport.testServicePermissions('api');await transport.testServicePermissions('web');await transport.testJobPermissions();transport.assertGeneralPermissionsReady();
         const runtimeContract=makeImagePostRuntimeContractV2({authority:postAuthority.authority,dossier:x.postDossier,source,sharedBudget:budget,preparationPhase:'POST_EXECUTION'});
-        const fresh=await observeImagePostUnusedResourceV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard});
-        assert.equal(fresh.state,'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2');assert.equal(fresh.uid,x.candidate.readOnlyPostJob.uid);
+        const postInput={objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard};if(sourceVersion===4){prospectivePort=await openImagePostProspectiveOperationalV1({...postInput,mode:'EXECUTE_POST',initialize:false});}const fresh=sourceVersion===4?await prospectivePort.observeUnusedResource():await observeImagePostUnusedResourceV2(postInput);
+        assert.equal(fresh.state,sourceVersion===4?'FIN_POST_PROSPECTIVE_CURRENT_RESOURCE_OBSERVED_V1':'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2');assert.equal(fresh.uid,x.candidate.readOnlyPostJob.uid);
         const jobRead=readImageForwardPublicReferenceV2(fresh.jobObservation);
         const live={...x.postReadiness,preparedAt:new Date().toISOString(),expiresAt:new Date(Math.min(Date.parse(expiry),Date.parse(jobRead.requestStartedAt)+600000)).toISOString(),postJobObservationRef:fresh.jobObservation};delete live.staticPostContractSha256;
         x.postReadiness=bindImageLivePostReadinessV2(live,x.dossier.postReadiness,readPoolPrivateFile);x.liveReadinessRef=save('POST-LIVE-READY-BINDING',x.postReadiness);preparation=publicPreparation(x,source,phase,null,expiry);return qualify(currentAuthority,Date.now());},
       runGeneral:async value=>{
-        backupFin=value.backupFin;generalResult=await runGeneralOperationalPreV3({root:path.resolve(import.meta.dirname,'../../..'),record:x.generalRecord,humanAuthorityBytes:readPoolPrivateFile('C:/Crm Ynov/output/casablanca-pilot-20261022/crm-operational-continuation-20261030-v1/HUMAN-ADDITIVE-OPERATIONAL-AUTHORITY.json'),dossierBytes:x.generalDossierBytes,jiraBytes,consumerInputs:x.consumerInputs,evidenceDirectory:x.generalRecord.evidenceDirectory,sharedBudget:budget,accessToken:sdk.accessToken,permissionEvidence:()=>transport.permissionEvidence(),
+        backupFin=value.backupFin;generalResult=await (sourceVersion===4?runGeneralOperationalPreSourceV4:runGeneralOperationalPreV3)({root:path.resolve(import.meta.dirname,'../../..'),record:x.generalRecord,humanAuthorityBytes:readPoolPrivateFile('C:/Crm Ynov/output/casablanca-pilot-20261022/crm-operational-continuation-20261030-v1/HUMAN-ADDITIVE-OPERATIONAL-AUTHORITY.json'),dossierBytes:x.generalDossierBytes,jiraBytes,consumerInputs:x.consumerInputs,evidenceDirectory:x.generalRecord.evidenceDirectory,sharedBudget:budget,accessToken:sdk.accessToken,permissionEvidence:()=>transport.permissionEvidence(),
           verifyCutoverReady:({recordSha256})=>{guard();qualify(currentAuthority,Date.now());return{schemaVersion:3,kind:'SOURCE_BOUND_IMAGE_GENERAL_PRE_READY_V3',generalAuthorityRecordSha256:recordSha256,imageAuthorityRecordSha256:authority.receipt.authorityRecordSha256,staticDossierSha256:digest(x.dossier),imagePlanSha256:digest(x.plan),backupFin:backupFin.backup,postReadinessSha256:x.liveReadinessRef.sha256,verifiedAt:new Date().toISOString(),expiresAt:expiry,commonSessionBindingSha256:digest(binding)};},
           readPrivateKey:()=>readPoolPrivateFile(x.descriptor.general.privateKeyFile,16384).toString('utf8')});return generalResult;
       },
@@ -522,7 +523,7 @@ export async function runImageForwardOperationalV2(args){
         assert.equal(new Date(Math.max(Date.parse(apiAt),Date.parse(webAt))).toISOString(),webFin.servedObservedAt);
         const imageContext={plan:x.plan,candidate:x.candidate,baseline:x.baseline,imageAuthority:lease.current('READ_METADATA',phase,Date.now()),api:{...observed.api,observedAt:apiAt},web:{...observed.web,observedAt:webAt}};
         const runtimeContract=makeImagePostRuntimeContractV2({authority:postAuthority.authority,dossier:x.postDossier,source,sharedBudget:budget,preparationPhase:'POST_EXECUTION'});
-        postResult=await runImagePostReadOnlyV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard,imageContext,privateKeyFile:x.descriptor.post.privateKeyFile});
+        postResult=sourceVersion===4?await prospectivePort.executePost({imageContext,privateKeyFile:x.descriptor.post.privateKeyFile}):await runImagePostReadOnlyV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard,imageContext,privateKeyFile:x.descriptor.post.privateKeyFile});
         assert.equal(postResult.afterImageObservedAt,afterImageObservedAt);return postResult;
       },
       verifyPost:async({afterImageObservedAt})=>{
@@ -543,7 +544,32 @@ export async function runImageForwardOperationalV2(args){
     stage='FORWARD_SEQUENCE';result=await runImageForwardSequenceV2({objectiveId:x.descriptor.objectiveId,planSha256:digest(x.plan),staticDossierSha256:digest(x.dossier),source:projectionSource(source),sessionBindingSha256:digest(binding),sdkSession:sdk,sharedBudget:budget,executor,adapter});
   }catch{result={schemaVersion:2,kind:'RC48_FORWARD_ENTRY_STOP_V2',state:'FORWARD_ENTRY_STOPPED_NO_AUTOMATIC_RETRY',guardStage:stage,runReplayAuthorized:false,sheetsActivated:false,canRetry:false};}
   finally{
-    result=cleanupEntry(result,{sdk,budget,postAuthority,postResult,generalResult,stopCode:'FORWARD_ENTRY_CLOSED'});
+    if(sourceVersion===4){try{prospectivePort?.close();}finally{releaseImagePostProspectiveAuthorityV1(postAuthority?.authorityCapability);}}result=cleanupEntry(result,{sdk,budget,postAuthority,postResult,generalResult,stopCode:'FORWARD_ENTRY_CLOSED'});
   }
   return entryTerminal(result,{sdk,budget,save,name:'FORWARD-ENTRY-FIN'});
+}
+
+// Explicit V4 source selection; the legacy V2 command never selects V4.
+export async function runImageForwardOperationalV2(args){return runImageForwardOperationalCoreV4(args,3);}
+export async function runImageForwardOperationalV4(args){return runImageForwardOperationalCoreV4(args,4);}
+
+
+// Explicit reader-only direction. It never falls back to an IMAGE/POST/N02 mode.
+export function parseApiSheetReaderConfigArgumentsV1(args){
+  assert(Array.isArray(args)&&['reader-config-v1','reader-observe-v1'].includes(args[0]));const observing=args[0]==='reader-observe-v1',base=['--objective-id','--dossier','--jira-evidence','--journal-dir','--proof-dir','--output-dir'],allowed=observing?[...base,'--prior-entry','--prior-entry-sha256']:base,result={};
+  assert(args.length===(observing?17:13),'EXPLICIT_READER_ARGUMENTS_REQUIRED');
+  for(let index=1;index<args.length;index+=2){const key=args[index],value=args[index+1];assert(allowed.includes(key)&&!Object.hasOwn(result,key));assert(typeof value==='string'&&value.length>0&&value.length<=4096&&!/[\u0000-\u001f\u007f]/u.test(value));result[key]=value;}
+  for(const key of allowed){assert(Object.hasOwn(result,key));}assert.match(result['--objective-id'],/^rc48-api-sheets-reader-config-[a-z0-9-]{8,64}$/u);
+  for(const key of Object.keys(result).filter(key=>!['--objective-id','--prior-entry-sha256'].includes(key))){assert(path.isAbsolute(result[key]));}if(observing){assert(H.test(result['--prior-entry-sha256']));}
+  return result;
+}
+export async function runApiSheetReaderConfigurationV1(args){
+  let save,result;
+  try{
+    assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);const options=parseApiSheetReaderConfigArgumentsV1(args),{runApiSheetReaderOfficialEntryV1,validateApiSheetReaderLocalDirectoriesV1}=await import('./sheets-api-reader-operation-v1.mjs');validateApiSheetReaderLocalDirectoriesV1({journalDirectory:options['--journal-dir'],proofDirectory:options['--proof-dir'],outputDirectory:options['--output-dir']});const output=imageExternalDirectory(options['--output-dir']);
+    for(const key of ['--journal-dir','--proof-dir']){assert.notEqual(path.resolve(options[key]),output,'READER_OUTPUT_MUST_BE_DISTINCT');}assert.equal(fs.readdirSync(output).length,0,'READER_NEW_EMPTY_OUTPUT_REQUIRED');save=publicSaver(output);
+    const mode=args[0]==='reader-observe-v1'?'OBSERVE_ONLY':'DISPATCH';save('READER-ENTRY-START',{schemaVersion:1,kind:'LOCAL_READER_CONFIG_ENTRY_START_V1',entryMode:mode,objectiveId:options['--objective-id'],at:new Date().toISOString(),runAuthorized:false,sqlAuthorized:false,ingestionActivationAuthorized:false});
+    result=await runApiSheetReaderOfficialEntryV1({mode,objectiveId:options['--objective-id'],dossierFile:options['--dossier'],jiraEvidenceFile:options['--jira-evidence'],journalDirectory:options['--journal-dir'],proofDirectory:options['--proof-dir'],priorEntryReceipt:mode==='OBSERVE_ONLY'?{path:options['--prior-entry'],sha256:options['--prior-entry-sha256']}:null});
+  }catch{result={schemaVersion:1,kind:'READER_CONFIG_ENTRY_REFUSAL_V1',state:'STOP',guard:'READER_ENTRY_INPUTS_OR_ADMISSION_REFUSED',sdkAuthentication:null,authenticationNotMeasuredWhenReportAbsent:true,nativeAcceptance:false,automaticRetryAllowed:false,sheetsActivated:false};}
+  return entryTerminal(result,{save,name:'READER-ENTRY-FIN'});
 }

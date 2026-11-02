@@ -1,0 +1,704 @@
+{
+  "schemaVersion": 1,
+  "kind": "TEST_ONLY_EXACT_HISTORICAL_D6_SOURCE_BYTE_PROJECTION_V1",
+  "nativeAuthority": false,
+  "sourceExecutionPerformed": false,
+  "oldSourceIdentity": {
+    "pr": 278,
+    "head": "e6cdff6529cbd7bb7cc8af0cdf07de6346a84108",
+    "mergeCommit": "d6b9124d013a739ccce239815f2035a19440e6b1",
+    "tree": "d4049a88fa2caac070e83ded35edb7bed1ebf906"
+  },
+  "sourceManifestSha256": "24b980d476acb9a2805c5147cd156a9f096ed64cf6cc2a34663ffc4b2f0d5bfa",
+  "historicalC389ManifestSha256": "cd76dd409cdabf7153ba6bd9dee9dd0e5c064b15fef7f1cec7f3a699f8bfa20d",
+  "historicalRawFixtureCount": 2,
+  "inverseMethod": "BOUNDED_LITERAL_BYTE_RANGES_VERIFIED_AGAINST_ACTUAL_IMMUTABLE_QUALIFIED_D6_PREIMAGES",
+  "unchangedManifestMembersReadAsCurrentBytes": 66,
+  "projectedHistoricalMembers": 14,
+  "currentFullRawPinBeforeAnyInverse": true,
+  "trimEnd": false,
+  "lineEndingNormalization": false,
+  "rows": [
+    {
+      "path": "scripts/ci/pool-reconciliation/general-operational-pre-v3.mjs",
+      "currentSha256": "2139efeb48114b61ac7614e22ea1dbcbc65372e9716bc5693acc15ce3597a8f7",
+      "currentBytes": 37527,
+      "historicalSha256": "9fd8d443ff3aa87c6bd26dc9e6e43f5bb4d65b3f520988b2ba91a402829668f6",
+      "historicalBytes": 37134,
+      "edits": [
+        {
+          "offset": 1472,
+          "removeBytes": 112,
+          "removeSha256": "b6943c457db60911e3ac928dfcea002fc546bd87114df19dcce7cde94f44e0df",
+          "insertUtf8": "import {readImageOperationalSource} from '../runtime-image-only/local-source.mjs';\n",
+          "insertBytes": 83
+        },
+        {
+          "offset": 31519,
+          "removeBytes": 71,
+          "removeSha256": "9a0ca83aeeaad95ad6b2e677659df11bf90f03277143c73216b496cabf1e62cf",
+          "insertUtf8": "export async function runGeneralOperationalPreV3(input){\n",
+          "insertBytes": 57
+        },
+        {
+          "offset": 33506,
+          "removeBytes": 659,
+          "removeSha256": "b551d7940ff6ad92083a6d276694981c6e33b79d1c6cd8a598bd5451cf2b01a3",
+          "insertUtf8": "  for(const fn of [input.accessToken,input.permissionEvidence,input.verifyCutoverReady,input.readPrivateKey]){assert.equal(typeof fn,'function');}canonicalDirectory(input.root);canonicalDirectory(input.evidenceDirectory);assert.equal(path.resolve(input.evidenceDirectory),path.resolve(record.evidenceDirectory));assert(!fs.existsSync(path.join(input.evidenceDirectory,'prospective-'+record.capabilityId+'-CLAIM.json')),'GENERAL_V3_CAPABILITY_ALREADY_CONSUMED');const source={...readImageOperationalSource(),head:record.source.head,pr:record.source.pr};assert.deepEqual(source,{...record.source,clean:true});\n",
+          "insertBytes": 608
+        },
+        {
+          "offset": 37228,
+          "removeBytes": 299,
+          "removeSha256": "0c20cb197e78fdb83f61a3465ec9704e2bb72eabca1ea59b26776d94e6255168",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
+      "currentSha256": "68df9b59b155809707420fba7bdd37350c65829bc0d5ba242746b4cec60062fe",
+      "currentBytes": 20039,
+      "historicalSha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada",
+      "historicalBytes": 19204,
+      "edits": [
+        {
+          "offset": 19204,
+          "removeBytes": 835,
+          "removeSha256": "0091873b58f2faf64b5cd41bc321215d8dc15d1413666641d91d3567aed6a5f0",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v2.mjs",
+      "currentSha256": "18c3dc3ac7f31c23b565a06176104318ba203463a62e1fc2e5ed0c2ae83a8d0c",
+      "currentBytes": 18936,
+      "historicalSha256": "0729d7a63ed650d80c08b963348a87be719ccafc5a8d323e454a1b5804354584",
+      "historicalBytes": 17393,
+      "edits": [
+        {
+          "offset": 203,
+          "removeBytes": 189,
+          "removeSha256": "98f789433b0860544962e1428918ac74ed4ebf09b19e17e4713b08d88a51e161",
+          "insertUtf8": "import {validateReadOnlyNativeJob,validateReadOnlyObjective,readOnlyPurposeConfiguration,readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';\n",
+          "insertBytes": 153
+        },
+        {
+          "offset": 11758,
+          "removeBytes": 103,
+          "removeSha256": "37c4b420290f406e4f5c5b7afd488510f6e481599fc58896770b52438ae14e74",
+          "insertUtf8": "async function dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase}) {\n",
+          "insertBytes": 96
+        },
+        {
+          "offset": 11889,
+          "removeBytes": 107,
+          "removeSha256": "ae68d9e1730f07d25a3d11b80a999cb0c55e573d37ba0d9f0b7660e2c6cb5d5c",
+          "insertUtf8": "  phase('AUTHORITY');await authorizeFresh();phase('VALIDATION');let job;\n",
+          "insertBytes": 73
+        },
+        {
+          "offset": 12060,
+          "removeBytes": 450,
+          "removeSha256": "7485e96bba9dd764bbba4492dae4320b3d8c43662b2db16ac5968d6a5ae4453a",
+          "insertUtf8": "  else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);noExecution(job);await transport.listExecutions(e.jobName);}\n",
+          "insertBytes": 251
+        },
+        {
+          "offset": 12655,
+          "removeBytes": 295,
+          "removeSha256": "9bae122ccf57f1e9b222585f4d7d01127c5f78578fd112f648a866ded6d8fd07",
+          "insertUtf8": "  else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);noExecution(latest);await transport.listExecutions(e.jobName);job=latest;}\n",
+          "insertBytes": 233
+        },
+        {
+          "offset": 13049,
+          "removeBytes": 125,
+          "removeSha256": "0812551d91a6f8c50f1435ca56aefda141368fd54989dc87241db5a18f9ff0eb",
+          "insertUtf8": "  const now=clock();phase('AUTHORITY');assertAuthorityCurrent(authority,now);return {job,now};\n",
+          "insertBytes": 95
+        },
+        {
+          "offset": 16295,
+          "removeBytes": 151,
+          "removeSha256": "eb9de2b408283829d5ffda57e19c9d128d5e2f7c38cdab9f1654d134571f959e",
+          "insertUtf8": "export async function dispatchReadOnlyOnce({dossier,stage,authorizeFresh,transport,journal,clock=Date.now,diagnostic:contextInput,saveDiagnostic}) {\n",
+          "insertBytes": 149
+        },
+        {
+          "offset": 17256,
+          "removeBytes": 149,
+          "removeSha256": "bdf806b490ea0efc34b88351ead29e0d20b11e0c2a5a0d735af1b5036993efdf",
+          "insertUtf8": "    const {job,now}=await dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase:value=>{state.dispatchPhase=value;}});\n",
+          "insertBytes": 142
+        },
+        {
+          "offset": 17770,
+          "removeBytes": 1166,
+          "removeSha256": "69cf9cf870c2f00301b5a7394167abba17e6f0c31686109d3749a46990d0df6d",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/readonly-probe/official-sdk-auth-preflight-v1.mjs",
+      "currentSha256": "9c2ce713663755cbef8f1e95ec232d69ac94410be13ade15313b5f69dcbca03f",
+      "currentBytes": 26083,
+      "historicalSha256": "73b39c141d449de841ea7f628d6980b72aee2641a2221645228f6bd4c2cc1936",
+      "historicalBytes": 22855,
+      "edits": [
+        {
+          "offset": 16299,
+          "removeBytes": 223,
+          "removeSha256": "6cbb400be68138fabe09a0eb7fb9da09a0724c7876d4d9ad34998a5101e3d437",
+          "insertUtf8": "function operationalAuthority(contract,getAuthority,assertCurrent,clock){\n",
+          "insertBytes": 74
+        },
+        {
+          "offset": 19624,
+          "removeBytes": 224,
+          "removeSha256": "e4cb17d3d2cc8c2b918bc353943c31c0c56a1122743395790189d8d4999105a5",
+          "insertUtf8": "  assert(OPERATIONAL_SCOPE.has(input.scope));assert.equal(input.project,'crmynov-prod-n7x4q2');assert.equal(input.region,'europe-west1');assert.equal(input.googleAccount,AUTH_ACCOUNT);\n",
+          "insertBytes": 185
+        },
+        {
+          "offset": 20059,
+          "removeBytes": 450,
+          "removeSha256": "0483583ffe04778531a96137ba1d82454b1e10f7f4c6bc50f38359906222fd1e",
+          "insertUtf8": "  let contract,leaseExpiresAt;const {getAuthority,assertCurrent}=input;\n  try{assert.equal(typeof getAuthority,'function');assert.equal(typeof assertCurrent,'function');contract=operationalContract(input.operationContract);leaseExpiresAt=operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock);}\n",
+          "insertBytes": 317
+        },
+        {
+          "offset": 20569,
+          "removeBytes": 140,
+          "removeSha256": "ce576a231ac0a8fc825a14718f95136f1b93a42b20382b563591f34ee7e92fdc",
+          "insertUtf8": "  const guard=()=>{operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock);},started=dependencies.clock();\n",
+          "insertBytes": 128
+        },
+        {
+          "offset": 20839,
+          "removeBytes": 97,
+          "removeSha256": "0c83d324f375480421d7cf28b13ff9168c219da427c76b28d3250e5804501fb5",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 22630,
+          "removeBytes": 272,
+          "removeSha256": "1975debdfca38af72a3d362adb0a83832e2189f9a0e88f3207afe0004a43c9f5",
+          "insertUtf8": "export async function openOfficialSdkOperationalSession({operationContract,getAuthority,assertCurrent}){\n  return operationalSession({operationContract,getAuthority,assertCurrent},{environment:process.env,platform:process.platform,clock:epoch,\n",
+          "insertBytes": 244
+        },
+        {
+          "offset": 23049,
+          "removeBytes": 3032,
+          "removeSha256": "aaa7ab187bf4edb5b25ad26ed7630eb7858afd42640b9d2500a9457cfd464b93",
+          "insertUtf8": "export async function simulateOfficialSdkOperationalSession({syntheticOnly,operationContract,getAuthority,assertCurrent,...dependencies}){\n  assert.equal(syntheticOnly,true);return operationalSession({operationContract,getAuthority,assertCurrent},dependencies);\n",
+          "insertBytes": 262
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/cli.mjs",
+      "currentSha256": "f56b8aca4917334e8ad6f678bb86e4ad229b1a4450ebccf95b2ba659160ef38c",
+      "currentBytes": 7569,
+      "historicalSha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19",
+      "historicalBytes": 7060,
+      "edits": [
+        {
+          "offset": 2919,
+          "removeBytes": 509,
+          "removeSha256": "5721650ef92788d8777f7361daf4720cf65134a8a9a5232ff07db134492de06e",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/journal-budget-v2.mjs",
+      "currentSha256": "c52659869a242303e9dfc9cf91b7fd908ee5643c97c4b5630cf24908620dd054",
+      "currentBytes": 10027,
+      "historicalSha256": "2584bd09969bf5d950d0db479b02abf8d8da9514121d0dbc558f0261cde9d89e",
+      "historicalBytes": 9083,
+      "edits": [
+        {
+          "offset": 406,
+          "removeBytes": 39,
+          "removeSha256": "7c9a610566394ee26189f2e28f0071a599b91c107e8f442da97ae79ed327deeb",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 2918,
+          "removeBytes": 237,
+          "removeSha256": "908c7808b6a43dd62d88c1222c73edd63a43a2f1d3982ee31e29788a2992f769",
+          "insertUtf8": " assert(['READ_ONLY_INVENTORY','RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1','POST_PRESERVATION_READ_ONLY_V2'].includes(binding.scope));\n",
+          "insertBytes": 153
+        },
+        {
+          "offset": 9107,
+          "removeBytes": 918,
+          "removeSha256": "20d0dd8a106d4a97dd3f85d1e77fad88f89f3c8aec89afe220bdfa6b93c58eae",
+          "insertUtf8": " return Object.freeze({inspect:()=>locked(inspectUnlocked),reserveRequest,recordResponse,stop});\n",
+          "insertBytes": 97
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/journal.mjs",
+      "currentSha256": "38e1a59c4834da1bf1fec4ffee0151a4cc304dc5e19c5622639383f72f8b6c72",
+      "currentBytes": 15164,
+      "historicalSha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0",
+      "historicalBytes": 7582,
+      "edits": [
+        {
+          "offset": 7582,
+          "removeBytes": 7582,
+          "removeSha256": "ba33c46baf7aec6560c9d3d760dd3ecad5ce23b6992862b61c9280eba477bd43",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/local-source.mjs",
+      "currentSha256": "590313227a34da379806b85ef7b1365fe6c150e7b1dc73b78fd2d3abcb80e455",
+      "currentBytes": 4718,
+      "historicalSha256": "87a7cad4d3b0530315cc54889f6ad6af03075c1e56a88ec66e311ba7ac7d2003",
+      "historicalBytes": 3834,
+      "edits": [
+        {
+          "offset": 3834,
+          "removeBytes": 884,
+          "removeSha256": "2059af1d51bfb284d5dab2af043c147ec51d57d064d0b707b8905083ec217952",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/operational-cli-v2.mjs",
+      "currentSha256": "848bce3858cafcc40d7c80d46e564f5ee0e606a63958ffd03cf0eb6f1928455d",
+      "currentBytes": 21031,
+      "historicalSha256": "0b582649afb0025311c5be33e0366c1de925d224514c418beb68512945d629a4",
+      "historicalBytes": 20600,
+      "edits": [
+        {
+          "offset": 17974,
+          "removeBytes": 66,
+          "removeSha256": "12f922f2e669ee78b53a7c62eadeecb8050f1efd65a3dd040f7a1a212c4d76e2",
+          "insertUtf8": "export async function runImageInventoryV2(args){\n",
+          "insertBytes": 49
+        },
+        {
+          "offset": 18047,
+          "removeBytes": 437,
+          "removeSha256": "b9450ad4500fa6eca56850025d6122888a1a3368a0882e9af781ba5a2c19bc9a",
+          "insertUtf8": "    assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);const options=parseImageInventoryArguments(args);\n    assert.equal(typeof localSource.readImageOperationalSource,'function');const sourceReader=localSource.readImageOperationalSource;\n",
+          "insertBytes": 292
+        },
+        {
+          "offset": 20762,
+          "removeBytes": 269,
+          "removeSha256": "beeb92b42dd485b765f671bc8d260ea1b7d6b34f6fc32ef0baaa0ada56c93347",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs",
+      "currentSha256": "b7640d87244457b4096236be3e7282cdb69691a86c5ea6618c33a7142d501cd3",
+      "currentBytes": 79167,
+      "historicalSha256": "48cb81d4f44088df9336b9882b3e412d978b5d1c205d51b26b5ac4718cb25e70",
+      "historicalBytes": 74118,
+      "edits": [
+        {
+          "offset": 939,
+          "removeBytes": 115,
+          "removeSha256": "94dacc9c9feeee58a4081b307adcb777cc55f9ad09de63f4f2263a9841654f5b",
+          "insertUtf8": "import {readImageOperationalSource,imageExternalDirectory} from './local-source.mjs';\n",
+          "insertBytes": 86
+        },
+        {
+          "offset": 1145,
+          "removeBytes": 620,
+          "removeSha256": "08ce5f34d6b2921d576c2e5c937ac095cb66d1d6472337470cbc941f54b2ad60",
+          "insertUtf8": "import {validateImagePostDossierV2,acquireImagePostAuthorityV2,releaseImagePostAuthorityV2,imagePostResourceBindingsV2,makeImagePostSdkSessionV2,makeImagePostRuntimeContractV2,prepareImagePostResourceV2,runImagePostReadOnlyV2,withVerifiedImagePostV2,releaseVerifiedImagePostV2,observeImagePostUnusedResourceV2} from './post-operational-v2.mjs';\nimport {runGeneralOperationalPreV3,releaseVerifiedGeneralPreV3} from '../pool-reconciliation/general-operational-pre-v3.mjs';\n",
+          "insertBytes": 471
+        },
+        {
+          "offset": 41569,
+          "removeBytes": 47,
+          "removeSha256": "2bb0750b2d1831c613b7853d9a0c14e621987cd6187d32a65445d2802c1ecb7b",
+          "insertUtf8": "function forwardInputs(value){\n",
+          "insertBytes": 31
+        },
+        {
+          "offset": 41784,
+          "removeBytes": 243,
+          "removeSha256": "20b1e186f298db987a675bc01772d7eb9790a92e1157f3ee244fc87cd95e38a9",
+          "insertUtf8": "  assert.equal(value.schemaVersion,2);assert.equal(value.kind,'RC48_FORWARD_OPERATIONAL_INPUT_V2');assert.match(value.objectiveId,/^rc48-image-only-[a-z0-9-]{8,80}$/u);\n",
+          "insertBytes": 169
+        },
+        {
+          "offset": 42198,
+          "removeBytes": 332,
+          "removeSha256": "88a55d392082e5f0ae321c1c2dda4282555957664bcc4389f21cec8d701f1755",
+          "insertUtf8": "  exact(value.general,['record','dossier','privateKeyFile','consumerReferences']);exact(value.post,['objectiveId','dossier','privateKeyFile','journalDirectory']);\n",
+          "insertBytes": 163
+        },
+        {
+          "offset": 62008,
+          "removeBytes": 362,
+          "removeSha256": "961e182586f9efef452b1297a65976b6dffaa516d9e89a6e735b2029dd7e6fb4",
+          "insertUtf8": "export async function runImageForwardOperationalV2(args){\n  let stage='FORWARD_INPUTS',sdk,budget,postAuthority,postResult,generalResult,save,result;\n",
+          "insertBytes": 150
+        },
+        {
+          "offset": 62486,
+          "removeBytes": 277,
+          "removeSha256": "aa89bcd0acf6371d3d5eb9646c470508f86241a66f39c011eb6e81470b060a92",
+          "insertUtf8": "    const options=parseImageForwardArgumentsV2(args),source=readImageOperationalSource(),x=forwardInputs(publicJson(options['--input']));\n",
+          "insertBytes": 138
+        },
+        {
+          "offset": 63767,
+          "removeBytes": 696,
+          "removeSha256": "25ec6a2a32ad525aa0fd849c687e65725f03c5649739ac8df6289f1d01bb1ba3",
+          "insertUtf8": "    const lease=makeImageForwardLocalLeaseV2({authority,dossier:x.dossier,plan:x.plan,candidate:x.candidate,baseline:x.baseline,source,jiraBytes,assertSource:fixedSourceGuard});\n    postAuthority=await acquireImagePostAuthorityV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,preparationPhase:'POST_EXECUTION'});assert.deepEqual(postAuthority.source,source);\n",
+          "insertBytes": 440
+        },
+        {
+          "offset": 65922,
+          "removeBytes": 249,
+          "removeSha256": "088de2f841c08e216b81dc1b3f1304fb24214bc6f967bc64103a719879e36716",
+          "insertUtf8": "    const guard=()=>{fixedSourceGuard(source);lease.current('READ_METADATA',phase,Date.now());assertAuthorityCurrent(postAuthority.authority,Date.now());const s=budget.inspect();assert(!s.stopped&&s.remainingMs>0);};\n",
+          "insertBytes": 217
+        },
+        {
+          "offset": 68109,
+          "removeBytes": 765,
+          "removeSha256": "4d607f8507c94389524710339d96f3b2c3b04233e85c46082bb5c31a672f6934",
+          "insertUtf8": "        const fresh=await observeImagePostUnusedResourceV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard});\n        assert.equal(fresh.state,'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2');assert.equal(fresh.uid,x.candidate.readOnlyPostJob.uid);\n",
+          "insertBytes": 469
+        },
+        {
+          "offset": 69524,
+          "removeBytes": 611,
+          "removeSha256": "793684dc268d2ea93434ad2fbd9c5e0dea9114e9463cbdcf52935123336e08a5",
+          "insertUtf8": "        backupFin=value.backupFin;generalResult=await runGeneralOperationalPreV3({root:path.resolve(import.meta.dirname,'../../..'),record:x.generalRecord,humanAuthorityBytes:readPoolPrivateFile('C:/Crm Ynov/output/casablanca-pilot-20261022/crm-operational-continuation-20261030-v1/HUMAN-ADDITIVE-OPERATIONAL-AUTHORITY.json'),dossierBytes:x.generalDossierBytes,jiraBytes,consumerInputs:x.consumerInputs,evidenceDirectory:x.generalRecord.evidenceDirectory,sharedBudget:budget,accessToken:sdk.accessToken,permissionEvidence:()=>transport.permissionEvidence(),\n",
+          "insertBytes": 558
+        },
+        {
+          "offset": 72049,
+          "removeBytes": 505,
+          "removeSha256": "cf6eedeaf7107cc17ea41506fbca3c651b7302b3e5a919f70d0d46b59d7c0a9d",
+          "insertUtf8": "        postResult=await runImagePostReadOnlyV2({objectiveId:x.descriptor.post.objectiveId,dossier:x.postDossier,jiraBytes,journalDirectory:x.descriptor.post.journalDirectory,authorityCapability:postAuthority.authorityCapability,sharedBudget:budget,runtimeContract,accessToken:sdk.accessToken,save,assertSessionCurrent:guard,imageContext,privateKeyFile:x.descriptor.post.privateKeyFile});\n",
+          "insertBytes": 389
+        },
+        {
+          "offset": 75461,
+          "removeBytes": 254,
+          "removeSha256": "a89856c606b33c3e46654670e6480181c81a29589124e8db91613f02075d348d",
+          "insertUtf8": "    result=cleanupEntry(result,{sdk,budget,postAuthority,postResult,generalResult,stopCode:'FORWARD_ENTRY_CLOSED'});\n",
+          "insertBytes": 117
+        },
+        {
+          "offset": 75796,
+          "removeBytes": 3371,
+          "removeSha256": "1b61a560aeb08316387825d6baf8eadd60a86a0da06ecc7601e5afd7a475cf3c",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
+      "currentSha256": "a0a208adb68b020a9ea3e43981a1144ce7a9591b31ddaf5e67cfbbfc608d3b5e",
+      "currentBytes": 31743,
+      "historicalSha256": "efeada75721c1569c02b9771e617a078af5c041e7c79024b4265045d2a34b309",
+      "historicalBytes": 20130,
+      "edits": [
+        {
+          "offset": 3224,
+          "removeBytes": 182,
+          "removeSha256": "a7f81e82101f7f72c9515393e40e5c0a59d5d4e6f2b6c334811845f627ba38c0",
+          "insertUtf8": "export function createImageOperationalTransport({binding,plan,accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout}){\n",
+          "insertBytes": 175
+        },
+        {
+          "offset": 3935,
+          "removeBytes": 535,
+          "removeSha256": "b95245a2db407cd874fdc7396e1249c10aeaf255f6f609e1a10ceed3ddab5dbb",
+          "insertUtf8": "  const inventory=binding.scope==='READ_ONLY_INVENTORY';assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));\n  if(inventory){assert.equal(plan,undefined);}else{plan=structuredClone(plan);assert.equal(imagePlanScope(plan),binding.scope);assert(isImageRollback(plan)?plan.patches.length>=1&&plan.patches.length<=2:plan.patches.length===2);}\n",
+          "insertBytes": 394
+        },
+        {
+          "offset": 5261,
+          "removeBytes": 243,
+          "removeSha256": "f39c2d83ac8d14e1f193205173e9ef5da2c33c831094258b9ca521161c41a688",
+          "insertUtf8": "      assert(!terminal);const n=now(),a=getAuthority();assert.equal(a?.entry?.schemaVersion,2);assert.equal(a.receipt?.schemaVersion,2);\n",
+          "insertBytes": 137
+        },
+        {
+          "offset": 7264,
+          "removeBytes": 377,
+          "removeSha256": "4edad34f595379effa8d026e25e1e466213d12739917498ab8c0936020098f33",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 8244,
+          "removeBytes": 331,
+          "removeSha256": "14ea7ce17ddeb6933c66a146c9bb02989cf7b8d9483d5c525e4841417b8cf2b9",
+          "insertUtf8": "        const result=await reader.read();exchangeBoundary();if(controller.signal.aborted){fail('IMAGE_OPERATIONAL_DEADLINE');}\n        if(result.done){break;}assert(result.value instanceof Uint8Array);length+=result.value.byteLength;onBytes(length);\n",
+          "insertBytes": 250
+        },
+        {
+          "offset": 9213,
+          "removeBytes": 235,
+          "removeSha256": "c6bf083dd0a7c450dd12853173bc923abb637264a31d6dc6c226277eda765738",
+          "insertUtf8": "    let ticket,responseBytes=0,recorded=false,requestStartedAt,controller,timer,deadline,responseStatus=null,responseDigest=null,requestProjection,observationRecorded=false,rejectDeadline;\n",
+          "insertBytes": 189
+        },
+        {
+          "offset": 9815,
+          "removeBytes": 213,
+          "removeSha256": "d029f429ee655c58099cb22ff837a49133f11e2b7a12da016734be9980eafb3a",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 10392,
+          "removeBytes": 231,
+          "removeSha256": "ea9082675b1779744565501525da6531adbd2c878fe3af63deadd0ef1757203c",
+          "insertUtf8": "      observations.push(Object.freeze({schemaVersion:2,kind:'EXPURGATED_IMAGE_NATIVE_EXCHANGE_OBSERVATION_V2',sessionId:binding.sessionId,ordinal:ticket.ordinal,\n",
+          "insertBytes": 162
+        },
+        {
+          "offset": 10765,
+          "removeBytes": 180,
+          "removeSha256": "53159ba4a960807f016557b4e46364db0c6301e9d077b331ff740d04af4c8438",
+          "insertUtf8": "        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,\n",
+          "insertBytes": 120
+        },
+        {
+          "offset": 12430,
+          "removeBytes": 182,
+          "removeSha256": "2bf89b4f3a9aba5623cec62d8d92c1abbf22a3937fa11dddc70716698c643a97",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 13005,
+          "removeBytes": 195,
+          "removeSha256": "b7d862eef5fc7fad645f15cf7a02cf831bbf25572ed35c7fa3c8c1874893a75a",
+          "insertUtf8": "        sessionBudget.recordResponse(ticket,{responseBytes});recorded=true;\n",
+          "insertBytes": 76
+        },
+        {
+          "offset": 13495,
+          "removeBytes": 216,
+          "removeSha256": "dca3dd032d63234bd4644c3000de8d9b7e2d36984816eee9d1e56b4b2e6f03fa",
+          "insertUtf8": "      if(controller){controller.abort();}if(ticket&&!recorded){try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}\n",
+          "insertBytes": 183
+        },
+        {
+          "offset": 17057,
+          "removeBytes": 146,
+          "removeSha256": "224d8ff8693120bcd0705d45a59d0d332746e4c44b87c75a2d7c4cc679721d04",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 21710,
+          "removeBytes": 10033,
+          "removeSha256": "01e7be2128566fd9743b7aec0816d3e0d14807c56ec3b7d77473619f017bdbf6",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/post-operational-v2.mjs",
+      "currentSha256": "6478c245620ef0936dfc18c3b441a85d925686e61b852bad19368ada321917df",
+      "currentBytes": 68979,
+      "historicalSha256": "d41fba329d92da4061a15bd8f2965491b7cba184a38748c3a7c51e45a802e300",
+      "historicalBytes": 51138,
+      "edits": [
+        {
+          "offset": 793,
+          "removeBytes": 244,
+          "removeSha256": "1fc1478c6513615c5c8da92f003c9db12321509085c898274ad734e45f34cbc7",
+          "insertUtf8": "import {createReadOnlyNativeTransport,dispatchReadOnlyOnce,openReadOnlyTransactionJournal,observeReadOnlyOperation} from '../pool-reconciliation/pool-native-transaction-v2.mjs';\n",
+          "insertBytes": 178
+        },
+        {
+          "offset": 2117,
+          "removeBytes": 150,
+          "removeSha256": "a17bdaee5199583d7aceab5ca7dc51f7dcf91f39a16d58d6239e73a864e96685",
+          "insertUtf8": "import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V2,readImageOperationalSource,imageExternalDirectory} from './local-source.mjs';\n",
+          "insertBytes": 121
+        },
+        {
+          "offset": 2472,
+          "removeBytes": 91,
+          "removeSha256": "61d5d471abc19cab8208bb872b7bddedcb56d3472ad05b5ef0f9dd6334a45ab1",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 19893,
+          "removeBytes": 119,
+          "removeSha256": "75927e5172ad20e6144a361a1e972439597649e46af57a29edab0d1e8bda3df0",
+          "insertUtf8": "async function readPostBody(response,{deadline,controller,clock,check,onBytes,remainingResponseBytes}){\n",
+          "insertBytes": 104
+        },
+        {
+          "offset": 20226,
+          "removeBytes": 614,
+          "removeSha256": "668d976218bcaed883bcc517bf048fab8517ae71ce10a19a284c7305b3020f2c",
+          "insertUtf8": "  try{while(true){check();assert(clock()<deadline&&!controller.signal.aborted,'POST_NATIVE_DEADLINE');const part=await reader.read();check();assert(clock()<deadline&&!controller.signal.aborted,'POST_NATIVE_DEADLINE');if(part.done){break;}bytes+=part.value.byteLength;onBytes(bytes);assert(bytes<=1048576&&bytes<=remainingResponseBytes(),'POST_NATIVE_BODY_BOUND');chunks.push(part.value);}}finally{try{await reader.cancel();}finally{reader.releaseLock();}}\n",
+          "insertBytes": 456
+        },
+        {
+          "offset": 21054,
+          "removeBytes": 170,
+          "removeSha256": "f0a2a2f8aed4103e1b0390e06f111463fb809d887f1255cd4b2247aeaa6a63e2",
+          "insertUtf8": "export function createImagePostCreateBudgetV2({dossier,journal,sharedBudget,commonSessionBindingSha256,getAuthority,assertCurrent,fetchImpl=fetch,clock=Date.now}){\n",
+          "insertBytes": 164
+        },
+        {
+          "offset": 24474,
+          "removeBytes": 534,
+          "removeSha256": "dc036cac6ce8b0781fef5d947f15a2f6e2bddb4c72a3fc6fe248a12e27f247cb",
+          "insertUtf8": "      const work=(async()=>{const response=await fetchImpl(url,{...init,signal:controller.signal}),result=await readPostBody(response,{deadline,controller,clock,check:assertCurrent,onBytes:n=>{readBytes=n;},remainingResponseBytes:()=>sharedBudget.inspect().remainingResponseBytes});sharedBudget.recordResponse(ticket,{responseBytes:readBytes});recorded=true;assert([200,404].includes(response.status),'POST_NATIVE_HTTP_REFUSED');return new Response(result.bytes,{status:response.status,headers:response.headers});})();\n",
+          "insertBytes": 519
+        },
+        {
+          "offset": 33257,
+          "removeBytes": 58,
+          "removeSha256": "5f34a5f9ccfe8770638ec8ee3a67ca65df8d65fa67e8879a5a5965abc0459ded",
+          "insertUtf8": "async function openPostPort(input,deps){\n",
+          "insertBytes": 41
+        },
+        {
+          "offset": 33672,
+          "removeBytes": 428,
+          "removeSha256": "c78c6695a66133bba9eaaddcb8cf157b97e93e28b88ce92a1e3cee265edf8c34",
+          "insertUtf8": "  const target=structuredClone(dossier),source=deps.readSource();validateImagePostDossierV2(target,deps.readRuntimeSource);let authority,closed=false,tokenProvider=input.accessToken,journal,images;\n",
+          "insertBytes": 198
+        },
+        {
+          "offset": 35275,
+          "removeBytes": 227,
+          "removeSha256": "6c810ce5e9706b51c433633f81636ab45055f266543a95594c9c3bd562c17700",
+          "insertUtf8": "  const rawJournal=deps.openPostJournal({directory:journalDirectory,initialize,dossier:target,entry:authority.entry,openJournal:deps.openJournal});\n",
+          "insertBytes": 148
+        },
+        {
+          "offset": 35889,
+          "removeBytes": 196,
+          "removeSha256": "31e853ef40ea294e279160d35bd9c76cfa9df14bb714fa98ecea6d686920e534",
+          "insertUtf8": "",
+          "insertBytes": 0
+        },
+        {
+          "offset": 36419,
+          "removeBytes": 398,
+          "removeSha256": "0fa5352803ea288cadf1441be7d69ce7fe18b792f8a0f34f33aa8a436c2820d9",
+          "insertUtf8": "        at:payload.at,uid:payload.uid,etag:payload.etag,afterImageObservedAt:ready.afterImageObservedAt,imageReadinessSha256:digest(ready),authority:{validFrom:authority.entry.validFrom,expiresAt:authority.receipt.expiresAt},canRetry:false});\n",
+          "insertBytes": 243
+        },
+        {
+          "offset": 36875,
+          "removeBytes": 737,
+          "removeSha256": "ec437d640dc46e7c05a646696c0ec5c2a9213e9f87ca9c4ebf9e9115716b4c5a",
+          "insertUtf8": "  const createFetch=createImagePostCreateBudgetV2({dossier:target,journal,sharedBudget,commonSessionBindingSha256:runtimeContract.commonSessionBindingSha256,getAuthority:()=>authority,assertCurrent:guard,fetchImpl:deps.fetchImpl,clock:deps.clock});\n  let outputBudget,runBinding;const fetchForPhase=(url,init)=>outputBudget?outputBudget.fetch(url,init):createFetch(url,init);\n",
+          "insertBytes": 376
+        },
+        {
+          "offset": 38450,
+          "removeBytes": 757,
+          "removeSha256": "34ac637f50b471ee8bb3fe8cbc8fd4277f542a4774c67b1366014342b1f3b654",
+          "insertUtf8": "    const created=journal.inspect('CREATE');assert.equal(created?.state,'RECONCILED');assert(UUID.test(created.uid));runBinding={project:PROJECT,region:REGION,job:target.objective.jobName,uid:created.uid,objective:target.objective,knownCreateOperation:created.operation,wallNow:deps.clock};\n    outputBudget=createGeneralOperationalBudgetV3({binding:runBinding,sharedBudget,assertCurrent:guard,save:keep,fetchImpl:deps.fetchImpl,clock:deps.clock,leaseRemainingMs:()=>Date.parse(authority.receipt.expiresAt)-deps.clock()});\n",
+          "insertBytes": 523
+        },
+        {
+          "offset": 45865,
+          "removeBytes": 1479,
+          "removeSha256": "525c00a8df95300af20a71b332b6744fcfce6549568ad5a99df27f4239f4c65b",
+          "insertUtf8": "    observeUnusedResource:()=>boundedAction('POST_UNUSED_RESOURCE',async()=>{assert.equal(mode,'EXECUTE_POST');assert.equal(journal.inspect('RUN'),null);assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');await fresh('READ_METADATA');const created=journal.inspect('CREATE');assert.equal(created?.state,'RECONCILED');const start=deps.clock(),job=await native.getJob(target.objective.jobName),end=deps.clock();validateReadOnlyNativeJob(job,target.objective);assert.equal(job.uid,created.uid);assert.equal(job.executionCount??0,0);assert.equal(job.latestCreatedExecution,undefined);const observation={schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:new Date(start).toISOString(),responseReceivedAt:new Date(end).toISOString(),request:{method:'GET',url:RUN+target.objective.jobName},response:{status:200,finalUrl:RUN+target.objective.jobName,redirected:false,bodySha256:digest(job),hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection:job}},ref=await keep('POST-UNUSED-RESOURCE-native-GET',observation);return{state:'FIN_POST_UNUSED_RESOURCE_OBSERVED_V2',jobObservation:ref,uid:job.uid,authorityRecordSha256:authority.receipt.authorityRecordSha256,runInvocations:0,claimCreated:false,canRetry:false};}),\n",
+          "insertBytes": 1287
+        },
+        {
+          "offset": 49079,
+          "removeBytes": 1616,
+          "removeSha256": "79a3d027b3a7ba86691d0833fb7b272fb8f21cde741f1bda330f025fba1e4091",
+          "insertUtf8": "    executePost:({imageContext,privateKeyFile})=>boundedAction('POST_RUN',async()=>{assert.equal(mode,'EXECUTE_POST');assert(!deps.runClaimExists(postBindingFile(journalDirectory)),'POST_RUN_CAPABILITY_ALREADY_CONSUMED');images=structuredClone(imageContext);validateImagePostServedContextV2(images,source,deps.clock());const row=images.candidate.readOnlyPostJob;assert(row&&row.objectiveId===objectiveId&&row.dossier.objective.jobName===target.objective.jobName);assert.equal(row.authorityRecordSha256,authority.receipt.authorityRecordSha256);const origin=deps.readPublicReference(row.objectiveOrigin);exact(origin,['entry','catalogRevision']);assert.equal(digest(origin.entry),authority.receipt.authorityRecordSha256);activeStage='POST_RUN_PERMISSIONS';await permissionTests(true);configureRunBudget();activeStage='POST_RUN_DISPATCH';const result=requirePostDispatch(await dispatchReadOnlyOnce({dossier:target,stage:'RUN',authorizeFresh:()=>fresh('RUN'),transport:native,journal,clock:deps.clock}));outputBudget.discoverOperation(result.operation);activeStage='POST_RUN_OBSERVATION';await untilReconciled('RUN');outputBudget.discoverExecution(journal.inspect('RUN').execution);activeStage='POST_OUTPUT_READ_AND_VERIFY';return checkedOutput(privateKeyFile);}),\n    close(){closed=true;tokenProvider=undefined;journal.close();},\n",
+          "insertBytes": 1328
+        },
+        {
+          "offset": 53270,
+          "removeBytes": 15709,
+          "removeSha256": "221468bd727205fb8daae7896ab60b6e6ce01706258ecb7ed23a5f5e2109ca76",
+          "insertUtf8": "",
+          "insertBytes": 0
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/post-readiness-v2.mjs",
+      "currentSha256": "921cae8ea6b2dbee203498a52a81742de2c853c1a014034fc060f2b717d6cc9a",
+      "currentBytes": 16787,
+      "historicalSha256": "d619321293dedf57bac8fb6e1abba5c0b029b30ed817d0ddd567078f2f87bc11",
+      "historicalBytes": 16827,
+      "edits": [
+        {
+          "offset": 454,
+          "removeBytes": 128,
+          "removeSha256": "fece759100b68e9576013ab28ed143933a8ff65bb0ebb1e6a125f53bd7c560f3",
+          "insertUtf8": "import {validateReadOnlyNativeJob} from '../pool-reconciliation/pool-native-output-v1.mjs';\n",
+          "insertBytes": 92
+        },
+        {
+          "offset": 5701,
+          "removeBytes": 1129,
+          "removeSha256": "aa4687fbce672a4f2368aea7a3ec13f72e4e039f5e7712a5ac1e3545269bfe16",
+          "insertUtf8": " exact(value,['schemaVersion','kind','requestStartedAt','responseReceivedAt','request','response']);assert.equal(value.schemaVersion,2);assert.equal(value.kind,'NATIVE_GCP_JSON_GET_OBSERVATION_V2');const start=time(value.requestStartedAt),end=time(value.responseReceivedAt);assert(start<=end&&end<=now&&end-start<=15000&&now-start<=600000,'POST_V2_CURRENT_JOB_READ_REQUIRED');exact(value.request,['method','url']);const url='https://run.googleapis.com/v2/'+d.objective.jobName;assert.deepEqual(value.request,{method:'GET',url});exact(value.response,['status','finalUrl','redirected','bodySha256','hashMeaning','projection']);assert.equal(value.response.status,200);assert.equal(value.response.finalUrl,url);assert.equal(value.response.redirected,false);assert.equal(value.response.hashMeaning,'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES');const j=value.response.projection;assert.equal(value.response.bodySha256,digest(j),'POST_V2_PARSED_JOB_DIGEST');validateReadOnlyNativeJob(j,d.objective);assert(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(j.uid));assert.equal(j.executionCount??0,0,'POST_V2_UNUSED_JOB_REQUIRED');assert.equal(j.latestCreatedExecution,undefined);return{uid:j.uid,startedAt:start};\n",
+          "insertBytes": 1205
+        }
+      ]
+    },
+    {
+      "path": "scripts/ci/runtime-image-only/preparation-jobs.mjs",
+      "currentSha256": "bf1aed7500e6e3c2c8399f070d2755f94a7e5b887bb45681e0da6ed1521fc7e9",
+      "currentBytes": 11312,
+      "historicalSha256": "9836bf803913b531a7da107c3acf31f7802b41fe4677ec77f383a5d4bcb8da5a",
+      "historicalBytes": 11428,
+      "edits": [
+        {
+          "offset": 318,
+          "removeBytes": 160,
+          "removeSha256": "4ec555d3e73e89a3ced8516502795a466bee35b9eb3a2dc6736d5e06734ac7d8",
+          "insertUtf8": "import {validateReadOnlyNativeJob,validateReadOnlyNativeExecution} from '../pool-reconciliation/pool-native-output-v1.mjs';\n",
+          "insertBytes": 124
+        },
+        {
+          "offset": 11254,
+          "removeBytes": 56,
+          "removeSha256": "54367fca94f7b65125528b8b564d917f3063215d6b843deebd0b72447a57e16d",
+          "insertUtf8": "  assert.equal(job.executionCount??0,0,'PROSPECTIVE_COLLECTOR_REQUIRES_BOUND_COMPLETION_NOT_COUNT_TWO');assert.equal(job.latestCreatedExecution,undefined,'UNUSED_PROSPECTIVE_COLLECTOR_REQUIRED');return true;\n",
+          "insertBytes": 208
+        }
+      ]
+    }
+  ],
+  "retainedSourceReceiptSha256": "393041464b983b5f31811be70a1d4a093a3a4733fbf48bb6ff280cfc1b2a0117",
+  "retainedSourceReceiptMeaning": "PUBLIC_METADATA_PIN_ONLY_NO_CI_FILESYSTEM_DEPENDENCY"
+}

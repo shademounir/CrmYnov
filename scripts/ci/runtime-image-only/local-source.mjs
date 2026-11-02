@@ -32,3 +32,16 @@ export function imageExternalDirectory(p){
  assert(path.isAbsolute(p));const resolved=fs.realpathSync(p);assert.equal(resolved,path.resolve(p));assert(fs.statSync(p).isDirectory()&&!fs.lstatSync(p).isSymbolicLink());
  const relative=path.relative(root,resolved);assert(relative.startsWith('..'+path.sep)||path.isAbsolute(relative),'IMAGE_RECEIPTS_OUTSIDE_SOURCE');return resolved;
 }
+
+// Distinct full graph for the next protected source. Historical exported lists/
+// getters above remain literal and semantic history, not a claim of old RAW bytes.
+export const IMAGE_OPERATIONAL_DRIVER_INPUTS_V4=Object.freeze([...new Set([
+ ...IMAGE_OPERATIONAL_DRIVER_INPUTS_V3,
+ 'scripts/ci/runtime-image-only/sheets-api-reader-contract-v1.mjs',
+ 'scripts/ci/runtime-image-only/api-sheets-reader-authority-v1.mjs',
+ 'scripts/ci/runtime-image-only/sheets-api-reader-operation-v1.mjs',
+ 'scripts/ci/runtime-image-only/post-prospective-origin-v1.mjs',
+])].sort((a,b)=>a.localeCompare(b,'en')));
+export function readImageOperationalSourceV4(){
+ const legacy=readImageLocalSource();const files=IMAGE_OPERATIONAL_DRIVER_INPUTS_V4.map(relative=>({path:relative,sha256:createHash('sha256').update(readPoolPrivateFile(path.join(root,relative))).digest('hex')}));return{...legacy,files};
+}
