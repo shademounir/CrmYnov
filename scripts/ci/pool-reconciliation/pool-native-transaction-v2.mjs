@@ -1,7 +1,7 @@
 // Additive V2 of the existing executor. V1 journals, state guards and validators are reused unchanged.
 import assert from 'node:assert/strict';
 import {digest} from './controlled-pool-contract-v1.mjs';
-import {validateReadOnlyNativeJob,validateReadOnlyObjective,readOnlyPurposeConfiguration,readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';
+import {validateReadOnlyNativeJob,assertNoReadOnlyExecutionMetadataV1,validateReadOnlyObjective,readOnlyPurposeConfiguration,readOnlyTaskNetworkRequest} from './pool-native-output-v1.mjs';
 import {assertAuthorityCurrent,createAuthorityBoundFetch} from '../readonly-probe/probe-driver-authority-v1.mjs';
 import {diagnosticContext,sanitizedDiagnostic,ReadOnlyNativeDiagnosticError,diagnosticOf,permittedNetworkCode,permittedGoogleCode,NATIVE_OPERATION_PATTERN,commandResult} from './readonly-native-diagnostics-v1.mjs';
 export {openReadOnlyTransactionJournal,observeReadOnlyOperation} from './pool-native-transaction-v1.mjs';
@@ -140,16 +140,27 @@ function noExecution(job){
   const latest=job.latestCreatedExecution;
   assert(latest===undefined||(latest!==null&&Object.getPrototypeOf(latest)===Object.prototype&&Reflect.ownKeys(latest).length===0),'NO_LATEST_EXECUTION_FIELDS_ALLOWED');
 }
-async function dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase}) {
+async function initialRunPreflight({e,origin,clock,journal,transport}){
+  if(origin){origin.check(clock());}else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');}
+  const job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,origin?origin.uid:journal.inspect('CREATE').uid);
+  if(origin){assert.equal(job.etag,origin.etag,'POST_ORIGIN_PREFLIGHT_ETAG_DRIFT');assertNoReadOnlyExecutionMetadataV1(job);}else{noExecution(job);}
+  await transport.listExecutions(e.jobName);return job;
+}
+async function currentRunPreflight(job,e,origin,transport){
+  const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);
+  if(origin){assertNoReadOnlyExecutionMetadataV1(latest);}else{noExecution(latest);}
+  await transport.listExecutions(e.jobName);return latest;
+}
+async function dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase,origin}) {
   const e=target.objective;
-  phase('AUTHORITY');await authorizeFresh();phase('VALIDATION');let job;
-  if(stage==='CREATE')await transport.requireAbsent(e.jobName);
-  else{assert.equal(journal.inspect('CREATE')?.state,'RECONCILED');job=await transport.getJob(e.jobName);validateReadOnlyNativeJob(job,e);assert.equal(job.uid,journal.inspect('CREATE').uid);noExecution(job);await transport.listExecutions(e.jobName);}
+  if(origin){origin.check(clock());}phase('AUTHORITY');await authorizeFresh();phase('VALIDATION');let job;
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}
+  else{job=await initialRunPreflight({e,origin,clock,journal,transport});}
   phase('AUTHORITY');const authority=await authorizeFresh();phase('VALIDATION');
-  if(stage==='CREATE')await transport.requireAbsent(e.jobName);
-  else{const latest=await transport.getJob(e.jobName);validateReadOnlyNativeJob(latest,e);assert.equal(latest.uid,job.uid);assert.equal(latest.etag,job.etag);noExecution(latest);await transport.listExecutions(e.jobName);job=latest;}
+  if(stage==='CREATE'){await transport.requireAbsent(e.jobName);}
+  else{job=await currentRunPreflight(job,e,origin,transport);}
   if(job){assert.equal(typeof job.etag,'string');assert(job.etag.length>0&&job.etag.length<=256);}
-  const now=clock();phase('AUTHORITY');assertAuthorityCurrent(authority,now);return {job,now};
+  const now=clock();phase('AUTHORITY');assertAuthorityCurrent(authority,now);if(origin){origin.check(now);}return {job,now};
 }
 async function invokeAndRecord(input){
   const {e,job,stage,transport,journal,context,state,clock,saveDiagnostic,target}=input;
@@ -189,7 +200,7 @@ async function finishDispatchFailure(error,{e,stage,journal,context,state,clock,
   try{journal.append(stage,result);return commandResult(result);}
   catch{return commandResult({...result,journalOutcomePersistence:'FAILED'});}
 }
-export async function dispatchReadOnlyOnce({dossier,stage,authorizeFresh,transport,journal,clock=Date.now,diagnostic:contextInput,saveDiagnostic}) {
+async function dispatchReadOnlyCoreV3({dossier,stage,authorizeFresh,transport,journal,clock=Date.now,diagnostic:contextInput,saveDiagnostic,origin}) {
   const target=structuredClone(dossier),e=target.objective;
   const context=diagnosticContext({...contextInput,objectiveSha256:e?.objectiveSha256,stage});
   const state={began:clock(),consumed:false,referenceAttempted:false,referencePersisted:false,finalAppendAttempted:false,dispatchPhase:'VALIDATION'};
@@ -198,9 +209,21 @@ export async function dispatchReadOnlyOnce({dossier,stage,authorizeFresh,transpo
   try {
     validateReadOnlyObjective(e);assert(['CREATE','RUN'].includes(stage));assert.equal(typeof authorizeFresh,'function');assert.equal(journal.inspect(stage),null,'CONSUMED_INTENT');
     assert.deepEqual(target.job,{labels:{'crmynov-probe-objective':e.objectiveSha256.slice(0,63)},template:{taskCount:1,parallelism:1,template:e.taskTemplate}},'REVIEWED_CREATE_BODY');
-    const {job,now}=await dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,phase:value=>{state.dispatchPhase=value;}});
+    const {job,now}=await dispatchPreflight({target,stage,authorizeFresh,transport,journal,clock,origin,phase:value=>{state.dispatchPhase=value;}});
     state.dispatchPhase='JOURNAL_PERSISTENCE';
     journal.append(stage,record(e,'INTENT',{at:new Date(now).toISOString(),correlationId:context.correlationId,...(job?{uid:job.uid,etag:job.etag}:{bodySha256:digest(target.job)})}));state.consumed=true;
     return await invokeAndRecord({...input,job});
   } catch(error) {return finishDispatchFailure(error,input);}
 }
+
+// Original public dispatcher can never select the new origin branch.
+export async function dispatchReadOnlyOnce(input){return dispatchReadOnlyCoreV3({...input,origin:null});}
+async function dispatchPostProspectiveCoreV1(input,syntheticOnly){
+ const {originCapability,operationalSource,authorityRecordSha256,sharedBudget,...steps}=input;
+ assert.equal(steps.stage,'RUN','POST_PROSPECTIVE_RUN_ONLY');
+ const {requirePostProspectiveOriginCapabilityV1}=await import('../runtime-image-only/post-operational-v2.mjs');
+ const check=now=>requirePostProspectiveOriginCapabilityV1(originCapability,{objective:steps.dossier.objective,source:operationalSource,authorityRecordSha256,sharedBudget,now,syntheticOnly});
+ const row=check((steps.clock??Date.now)());return dispatchReadOnlyCoreV3({...steps,origin:{uid:row.uid,etag:row.etag,check}});
+}
+export async function dispatchPostProspectiveRunOnceV1(input){return dispatchPostProspectiveCoreV1(input,false);}
+export async function simulatePostProspectiveRunOnceV1({syntheticOnly,...input}){assert.equal(syntheticOnly,true);return{...await dispatchPostProspectiveCoreV1(input,true),syntheticOnly:true,nativeAuthority:false};}

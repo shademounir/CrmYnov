@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {POOL_DRIVER_INPUTS} from '../pool-operational-driver-v1.mjs';
+import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V4} from '../../runtime-image-only/local-source.mjs';
+import {verifySource} from '../../runtime-image-only/protected-gates.mjs';
+
 const root=new URL('../../../../',import.meta.url);
 const current=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-261-20261028.json',root)));
 const historical=JSON.parse(fs.readFileSync(new URL('scripts/ci/pool-reconciliation/tests/fixtures/readonly-concrete-objectives-259-20261028.json',root)));
@@ -20,7 +23,7 @@ test('current catalogue preserves exactly the same three PRE identities without 
   assert.equal(new Set(current.entries.map(e=>e.dossierSha256)).size,3);
   assert.equal(new Set(current.entries.map(e=>e.journalDirectorySha256)).size,3);
 });
-for(const scope of scopes)test(scope+' binds actual protected260 driver and real conversion container, not native acceptance',()=>{
+for(const scope of scopes)test(scope+' binds actual protected260 driver and real conversion container, not native acceptance',async()=>{
   const entry=current.entries.find(e=>e.scope===scope),prior=historical.entries.find(e=>e.scope===scope);
   assert.deepEqual({...entry,driver:prior.driver,objectiveReview:prior.objectiveReview,validFrom:prior.validFrom},prior);
   assert.deepEqual(entry.objectiveReview,{pr:objectiveReviewPr});assert.equal(entry.validFrom,validFrom);
@@ -30,6 +33,28 @@ for(const scope of scopes)test(scope+' binds actual protected260 driver and real
   for(const key of ['pr','head','mergeCommit','tree'])assert.equal(entry.driver[key],expectedDriver[key]);
   assert.equal(entry.driver.files.length,38);assert.deepEqual(entry.driver.files.map(f=>f.path),POOL_DRIVER_INPUTS);
   assert.deepEqual(entry.driver.files,expectedFiles);
-  for(const file of entry.driver.files)assert.equal(sha256(fs.readFileSync(new URL(file.path,root))),file.sha256);
+  for(const file of entry.driver.files)assert.equal(sha256(historicalDriverBytesV4(file.path)),file.sha256);
   assert.equal(entry.businessMutation,false);
+  await rejectCurrentV4FilesUnderHistoricalIdentityV4(entry);
 });
+
+// Closed historical comparison only: never accept an arbitrary append or retarget
+// an old objective. The full current V4 bytes are pinned before the old prefix.
+const historicalPoolPath='scripts/ci/pool-reconciliation/pool-native-output-v1.mjs';
+function historicalDriverBytesV4(file){
+ const bytes=fs.readFileSync(new URL(file,root));if(file!==historicalPoolPath)return bytes;
+ assert.equal(bytes.length,20039);assert.equal(createHash('sha256').update(bytes).digest('hex'),'68df9b59b155809707420fba7bdd37350c65829bc0d5ba242746b4cec60062fe');
+ const historical=bytes.subarray(0,19204);assert.equal(createHash('sha256').update(historical).digest('hex'),'483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada');return historical;
+}
+async function rejectCurrentV4FilesUnderHistoricalIdentityV4(entry){
+ let calls=0;const github={get(){calls++;throw new Error('UNEXPECTED_SYNTHETIC_GITHUB_CALL');}};
+ // Deliberately inconsistent negative-test data, never an observed source,
+ // approved catalogue, native-origin claim, or authority.
+ const source={commit:entry.driver.mergeCommit,tree:entry.driver.tree,clean:true,files:IMAGE_OPERATIONAL_DRIVER_INPUTS_V4.map(file=>({path:file,sha256:createHash('sha256').update(fs.readFileSync(new URL(file,root))).digest('hex')}))};
+ await assert.rejects(verifySource(github,source,entry),error=>{
+  assert.equal(error.code,'ERR_ASSERTION');assert.equal(error.operator,'deepStrictEqual');
+  const {files:actualFiles,...actualIdentity}=error.actual,{files:expectedFiles,...expectedIdentity}=error.expected;
+  assert.deepEqual(actualIdentity,{commit:entry.driver.mergeCommit,tree:entry.driver.tree,clean:true});assert.deepEqual(expectedIdentity,actualIdentity);
+  assert.deepEqual(actualFiles,source.files);assert.deepEqual(expectedFiles,entry.driver.files);assert.notDeepEqual(actualFiles,expectedFiles);return true;
+ });assert.equal(calls,0,'CURRENT_V4_FILES_CANNOT_REUSE_HISTORICAL_IDENTITY_BEFORE_ANY_GET');
+}

@@ -4,6 +4,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {imageJournalDigest as digest} from './journal.mjs';
 export const IMAGE_SESSION_LIMITS_V2=Object.freeze({durationMs:900000,maxRequests:200,maxExchangeMs:15000,maxResponseBytes:1048576,maxTotalResponseBytes:20971520});
+const budgetInstancesV3=new WeakMap();
 const H=/^[a-f0-9]{64}$/u,S=/^[a-f0-9]{40}$/u,U=/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 function exact(v,keys){assert(v&&Object.getPrototypeOf(v)===Object.prototype);assert(Object.values(Object.getOwnPropertyDescriptors(v)).every(d=>Object.hasOwn(d,'value')));assert.deepEqual(Object.keys(v).toSorted((a,b)=>a.localeCompare(b,'en')),keys.toSorted((a,b)=>a.localeCompare(b,'en')));}
 function time(v){assert.equal(typeof v,'string');const n=Date.parse(v);assert(Number.isSafeInteger(n)&&new Date(n).toISOString()===v);return n;}
@@ -23,7 +24,7 @@ export function createImageSessionBudget({directory,binding,limits=IMAGE_SESSION
  assert(path.isAbsolute(directory)&&fs.realpathSync(directory)===path.resolve(directory)&&fs.lstatSync(directory).isDirectory());
  exact(binding,['sessionId','authorityRecordSha256','resourceBindingSha256','scope','windowStart','windowEnd','sourceCommit','project','region']);
  assert(U.test(binding.sessionId)&&H.test(binding.authorityRecordSha256)&&H.test(binding.resourceBindingSha256)&&S.test(binding.sourceCommit));
- assert(['READ_ONLY_INVENTORY','RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1','POST_PRESERVATION_READ_ONLY_V2'].includes(binding.scope));
+ assert(['READ_ONLY_INVENTORY','RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1','POST_PRESERVATION_READ_ONLY_V2','RC48_API_SHEETS_READER_CONFIG_ONLY_V1','RC48_API_SHEETS_READER_CONFIG_ROLLBACK_V1'].includes(binding.scope));
  assert.equal(binding.project,'crmynov-prod-n7x4q2');assert.equal(binding.region,'europe-west1');assert.deepEqual(limits,IMAGE_SESSION_LIMITS_V2);
  applicationOrigins=applicationOriginsFor(binding.scope,applicationOrigins);
  const start=time(binding.windowStart),end=time(binding.windowEnd);assert(end>start&&end-start<=limits.durationMs);binding=structuredClone(binding);
@@ -63,5 +64,14 @@ export function createImageSessionBudget({directory,binding,limits=IMAGE_SESSION
   if(code){const next=records();append(next,'STOP',{code},now);throw new Error(code);}return inspectUnlocked();
  });}
  function stop(code){assert(/^[A-Z][A-Z0-9_]{0,63}$/u.test(code));return locked(()=>{const s=records();if(!s.stopped){append(s,'STOP',{code},current(s));}return inspectUnlocked();});}
- return Object.freeze({inspect:()=>locked(inspectUnlocked),reserveRequest,recordResponse,stop});
+ const instance=Object.freeze({inspect:()=>locked(inspectUnlocked),reserveRequest,recordResponse,stop});budgetInstancesV3.set(instance,{bindingSha256,inspect:()=>locked(inspectUnlocked)});return instance;
+}
+
+// A scope-bound live instance, not a caller JSON/boolean attestation.
+export function requireImageSessionBudgetInstanceV3(instance,binding){
+ exact(binding,['sessionId','authorityRecordSha256','resourceBindingSha256','scope','windowStart','windowEnd','sourceCommit','project','region']);
+ assert(Object.values(binding).every(value=>typeof value==='string'),'BUDGET_BINDING_SCALARS_REQUIRED');
+ const issued=budgetInstancesV3.get(instance);assert(issued,'OPAQUE_EXISTING_SESSION_BUDGET_REQUIRED');
+ assert.equal(issued.bindingSha256,digest(binding),'SAME_SESSION_BUDGET_BINDING_REQUIRED');
+ const current=issued.inspect();assert.equal(current.bindingSha256,issued.bindingSha256);return Object.freeze(current);
 }

@@ -189,7 +189,8 @@ function operationalPostResources(value){
   assert.equal(value.image,'europe-west1-docker.pkg.dev/crmynov-prod-n7x4q2/crm-ynov-prod/api@sha256:d2b2f6b0cf0ed9d9eb1cb15b70924af38be7ca4c4a824b6b406bb62caf88cd8f');assert.equal(value.role,'crm_runtime');assert.equal(value.selectCount,13);
   const canonical='{'+Object.keys(value).sort(alphabetical).map(key=>JSON.stringify(key)+':'+JSON.stringify(value[key])).join(',')+'}';return createHash('sha256').update(canonical).digest('hex');
 }
-function operationalAuthority(contract,getAuthority,assertCurrent,clock){
+function operationalAuthority(contract,getAuthority,assertCurrent,clock,readerGuard){
+  if(READER_SDK_SCOPES_V1.has(contract.scope)){assert(readerGuard);return readerGuard.check(contract,getAuthority,assertCurrent,clock);}
   assertCurrent();const now=clock();assert(Number.isSafeInteger(now));const authority=getAuthority(),entry=authority?.entry,receipt=authority?.receipt;
   assert(entry?.schemaVersion===2&&receipt?.schemaVersion===2);assert.equal(entry.googleAccount,AUTH_ACCOUNT);
   assert.equal(entry.scope,contract.scope);assert.equal(entry.project,contract.project);assert.equal(entry.region,contract.region);
@@ -214,15 +215,16 @@ function operationalContract(input){
   assert.match(input.sessionId,/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u);
   for(const key of ['authorityRecordSha256','resourceBindingSha256']){assert.match(input[key],/^[a-f0-9]{64}$/u);}
   for(const key of ['sourceCommit','sourceTree']){assert.match(input[key],/^[a-f0-9]{40}$/u);}
-  assert(OPERATIONAL_SCOPE.has(input.scope));assert.equal(input.project,'crmynov-prod-n7x4q2');assert.equal(input.region,'europe-west1');assert.equal(input.googleAccount,AUTH_ACCOUNT);
+  assert(OPERATIONAL_SCOPE.has(input.scope)||READER_SDK_SCOPES_V1.has(input.scope));assert.equal(input.project,'crmynov-prod-n7x4q2');assert.equal(input.region,'europe-west1');assert.equal(input.googleAccount,AUTH_ACCOUNT);
   const start=operationalTime(input.windowStart),end=operationalTime(input.windowEnd);assert(end>start&&end-start<=900000);return structuredClone(input);
 }
 async function operationalSession(input,dependencies){
-  let contract,leaseExpiresAt;const {getAuthority,assertCurrent}=input;
-  try{assert.equal(typeof getAuthority,'function');assert.equal(typeof assertCurrent,'function');contract=operationalContract(input.operationContract);leaseExpiresAt=operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock);}
+  let contract,leaseExpiresAt,readerGuard;const {getAuthority,assertCurrent}=input;
+  try{assert.equal(typeof getAuthority,'function');assert.equal(typeof assertCurrent,'function');contract=operationalContract(input.operationContract);if(READER_SDK_SCOPES_V1.has(contract.scope)){readerGuard=await prepareReaderSdkGuardV1(input.readerContext);}leaseExpiresAt=operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock,readerGuard);}
   catch{throw new Error('SDK_OPERATION_CONTRACT_REFUSED');}
-  const guard=()=>{operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock);},started=dependencies.clock();
+  const guard=()=>{operationalAuthority(contract,getAuthority,assertCurrent,dependencies.clock,readerGuard);},started=dependencies.clock();
   const auth=await performAuth({...dependencies,guard,leaseExpiresAt,requestDeadline:started+15000,retainOperationalToken:true});
+  if(readerGuard&&auth.report.authenticationChainValidated){readerGuard.finishAuthentication();}
   let token=auth.retainedToken;auth.retainedToken=undefined;let closed=false,last=dependencies.clock();
   const authentication=auth.report;
   function close(){token=undefined;closed=true;}
@@ -246,11 +248,44 @@ async function operationalSession(input,dependencies){
   if(!authentication.authenticationChainValidated){close();}
   return Object.freeze({accessToken,close,report});
 }
-export async function openOfficialSdkOperationalSession({operationContract,getAuthority,assertCurrent}){
-  return operationalSession({operationContract,getAuthority,assertCurrent},{environment:process.env,platform:process.platform,clock:epoch,
+export async function openOfficialSdkOperationalSession({operationContract,getAuthority,assertCurrent,readerContext}){
+  return operationalSession({operationContract,getAuthority,assertCurrent,readerContext},{environment:process.env,platform:process.platform,clock:epoch,
     invoke:execFile,schedule:setTimeout,cancel:clearTimeout});
 }
 // Pure test surface: fake processes only, never an operational authority issuer.
-export async function simulateOfficialSdkOperationalSession({syntheticOnly,operationContract,getAuthority,assertCurrent,...dependencies}){
-  assert.equal(syntheticOnly,true);return operationalSession({operationContract,getAuthority,assertCurrent},dependencies);
+export async function simulateOfficialSdkOperationalSession({syntheticOnly,operationContract,getAuthority,assertCurrent,readerContext,...dependencies}){
+  assert.equal(syntheticOnly,true);return operationalSession({operationContract,getAuthority,assertCurrent,readerContext},dependencies);
+}
+
+// Reader config is a separate purpose. This never changes the historical
+// AUTH_ONLY path, scope guards, process commands or Windows5/3/6 envelope.
+const READER_SDK_SCOPES_V1=new Set(['RC48_API_SHEETS_READER_CONFIG_ONLY_V1','RC48_API_SHEETS_READER_CONFIG_ROLLBACK_V1']);
+const READER_SESSION_BINDING_FIELDS_V1=['sessionId','authorityRecordSha256','resourceBindingSha256','scope','windowStart','windowEnd','sourceCommit','project','region'];
+async function prepareReaderSdkGuardV1(context){
+  operationalData(context,['dossier','source','sessionBudget']);
+  // Validate original descriptors before cloning can evaluate/normalize accessors.
+  const {validateImageInventoryPublicProjection}=await import('../runtime-image-only/operational-cli-v2.mjs');
+  validateImageInventoryPublicProjection(context.dossier);validateImageInventoryPublicProjection(context.source);
+  const readerDossier=structuredClone(context.dossier),readerSource=structuredClone(context.source),sessionBudget=context.sessionBudget;
+  // Fixed source imports only, selected by a closed purpose before any SDK call.
+  const {validateApiSheetReaderSessionBindingV1}=await import('../runtime-image-only/api-sheets-reader-authority-v1.mjs');
+  const {requireImageSessionBudgetInstanceV3}=await import('../runtime-image-only/journal-budget-v2.mjs');
+  let authenticated=false;
+  return Object.freeze({
+    check(contract,getAuthority,assertCurrent,clock){
+      assertCurrent();const now=clock();assert(Number.isSafeInteger(now));
+      const authority=getAuthority(),binding=Object.fromEntries(READER_SESSION_BINDING_FIELDS_V1.map(key=>[key,contract[key]]));
+      validateApiSheetReaderSessionBindingV1(binding,{authority,dossier:readerDossier,source:readerSource,now});
+      assert.equal(contract.sourceTree,readerSource.tree);assert.equal(contract.googleAccount,AUTH_ACCOUNT);assert.equal(context.sessionBudget,sessionBudget,'READER_BUDGET_INSTANCE_CHANGED');
+      const state=requireImageSessionBudgetInstanceV3(sessionBudget,binding),pending=state.pendingOrdinal!==null;
+      assert(!state.stopped&&state.remainingMs>0&&state.remainingResponseBytes>0,'READER_SHARED_BUDGET_UNAVAILABLE');
+      assert(!pending||authenticated,'READER_AUTH_CANNOT_START_WITH_PENDING_REQUEST');
+      assert(state.remainingRequests>0||(authenticated&&pending),'READER_NO_UNRESERVED_REQUEST_CAPACITY');
+      // The200th already-reserved request may obtain its token. No201st request
+      // is created here; R4 still owns exact action/path and ticket consumption.
+      const end=Math.min(operationalTime(contract.windowEnd),operationalTime(authority.receipt.expiresAt),state.deadlineAt);
+      assert(now<end);return end;
+    },
+    finishAuthentication(){authenticated=true;}
+  });
 }

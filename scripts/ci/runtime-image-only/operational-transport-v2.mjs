@@ -20,13 +20,14 @@ function opaque(v){assert.equal(typeof v,'string');assert.match(v,/^[A-Za-z0-9_-
 function page(v){assert.equal(typeof v,'string');assert(v.length<=8192&&!/[\u0000-\u001f\u007f]/u.test(v));return v;}
 function plainJson(v,depth=0){assert(depth<=64);if(v===null||typeof v==='boolean'||typeof v==='string'){return;}if(typeof v==='number'){assert(Number.isFinite(v));return;}assert(v&&typeof v==='object');if(Array.isArray(v)){for(const item of v){plainJson(item,depth+1);}return;}assert(Object.getPrototypeOf(v)===Object.prototype);for(const [key,d]of Object.entries(Object.getOwnPropertyDescriptors(v))){assert(key!=='__proto__'&&key!=='constructor'&&key!=='prototype'&&Object.hasOwn(d,'value'));plainJson(d.value,depth+1);}}
 function fail(code){throw new Error(code);}
-export function createImageOperationalTransport({binding,plan,accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout}){
+function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout},readerProfile){
   exact(binding,BINDING);binding=structuredClone(binding);assert.match(binding.sessionId,/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u);
   assert.equal(binding.project,PROJECT);assert.equal(binding.region,REGION);assert.match(binding.sourceCommit,/^[a-f0-9]{40}$/u);
   for(const k of ['authorityRecordSha256','resourceBindingSha256']){assert.match(binding[k],/^[a-f0-9]{64}$/u);}
   const windowStart=iso(binding.windowStart),windowEnd=iso(binding.windowEnd);assert(windowEnd>windowStart&&windowEnd-windowStart<=900000);
-  const inventory=binding.scope==='READ_ONLY_INVENTORY';assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));
-  if(inventory){assert.equal(plan,undefined);}else{plan=structuredClone(plan);assert.equal(imagePlanScope(plan),binding.scope);assert(isImageRollback(plan)?plan.patches.length>=1&&plan.patches.length<=2:plan.patches.length===2);}
+  const inventory=binding.scope==='READ_ONLY_INVENTORY';
+  if(readerProfile){assert(API_READER_SCOPES_V1.includes(binding.scope));plan=structuredClone(plan);readerProfile.validatePlan(plan);}
+  else{assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));if(inventory){assert.equal(plan,undefined);}else{plan=structuredClone(plan);assert.equal(imagePlanScope(plan),binding.scope);assert(isImageRollback(plan)?plan.patches.length>=1&&plan.patches.length<=2:plan.patches.length===2);}}
   const planSha256=plan?digest(plan):null;for(const fn of [accessToken,getAuthority,fetchImpl,clock,schedule,cancel]){assert.equal(typeof fn,'function');}
   for(const name of ['inspect','reserveRequest','recordResponse','stop']){assert.equal(typeof sessionBudget?.[name],'function');}
   assert.equal(sessionBudget.inspect().bindingSha256,digest(binding),'SESSION_BUDGET_BINDING_MISMATCH');
@@ -35,7 +36,7 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
   function stop(code){terminal=true;try{sessionBudget.stop(code);}catch{/* Never replace a refusal with raw persistence output. */}}
   function authority(action){
     try{
-      assert(!terminal);const n=now(),a=getAuthority();assert.equal(a?.entry?.schemaVersion,2);assert.equal(a.receipt?.schemaVersion,2);
+      assert(!terminal);const n=now(),a=getAuthority();if(readerProfile){readerProfile.assertAuthority(a,action,n);assert(n>=windowStart&&n<windowEnd);return a;}assert.equal(a?.entry?.schemaVersion,2);assert.equal(a.receipt?.schemaVersion,2);
       assert.equal(a.entry.scope,binding.scope);assert.equal(a.entry.googleAccount,ACCOUNT);assert.equal(a.entry.project,PROJECT);assert.equal(a.entry.region,REGION);
       assert.equal(a.entry.authorityRecordSha256,binding.authorityRecordSha256);assert.equal(a.receipt.authorityRecordSha256,binding.authorityRecordSha256);
       assert.equal(a.entry.resourceBindingSha256,binding.resourceBindingSha256);assert.equal(a.receipt.resourceBindingSha256,binding.resourceBindingSha256);assert.equal(digest(a.entry.resourceBindings),binding.resourceBindingSha256);
@@ -47,6 +48,12 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
       assert.deepEqual(a.entry.resourceBindings,IMAGE_OPERATIONAL_RESOURCES_V2);return a;
     }catch{fail('IMAGE_OPERATIONAL_AUTHORITY_REFUSED');}
   }
+  function accountReaderChunkBeforeBoundaryV3(result,length,onBytes){
+    if(readerProfile&&!result.done){assert(result.value instanceof Uint8Array);length+=result.value.byteLength;onBytes(length);}return length;
+  }
+  function accountLegacyChunkAfterBoundaryV3(result,length,onBytes){
+    if(!readerProfile){length+=result.value.byteLength;onBytes(length);}return length;
+  }
   async function body(response,exchangeBoundary,controller,onBytes){
     assert.equal(typeof response?.headers?.get,'function');const declared=response.headers.get('content-length');
     if(declared!==null){assert.match(declared,/^(?:0|[1-9]\d*)$/u);if(Number(declared)>IMAGE_SESSION_LIMITS_V2.maxResponseBytes){fail('IMAGE_OPERATIONAL_RESPONSE_BOUND');}}
@@ -54,8 +61,8 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
     try{
       while(true){
         exchangeBoundary();if(controller.signal.aborted){fail('IMAGE_OPERATIONAL_DEADLINE');}
-        const result=await reader.read();exchangeBoundary();if(controller.signal.aborted){fail('IMAGE_OPERATIONAL_DEADLINE');}
-        if(result.done){break;}assert(result.value instanceof Uint8Array);length+=result.value.byteLength;onBytes(length);
+        const result=await reader.read();length=accountReaderChunkBeforeBoundaryV3(result,length,onBytes);exchangeBoundary();if(controller.signal.aborted){fail('IMAGE_OPERATIONAL_DEADLINE');}
+        if(result.done){break;}assert(result.value instanceof Uint8Array);length=accountLegacyChunkAfterBoundaryV3(result,length,onBytes);
         if(length>IMAGE_SESSION_LIMITS_V2.maxResponseBytes||length>sessionBudget.inspect().remainingResponseBytes){fail('IMAGE_OPERATIONAL_RESPONSE_BOUND');}
         chunks.push(result.value);
       }
@@ -65,20 +72,22 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
     }finally{try{await reader.cancel();}catch{/* Deadline is already terminal; never retry cleanup. */}reader.releaseLock();}
   }
   async function exchange(url,action,requestBody,method='GET'){
-    let ticket,responseBytes=0,recorded=false,requestStartedAt,controller,timer,deadline,responseStatus=null,responseDigest=null,requestProjection,observationRecorded=false,rejectDeadline;
+    let ticket,responseBytes=0,recorded=false,requestStartedAt,controller,timer,deadline,responseStatus=null,responseDigest=null,responseFinalUrl=null,responseRedirected=null,requestProjection,observationRecorded=false,rejectDeadline;
     function armTimer(){cancel(timer);const remaining=deadline-now();if(remaining<=0){fail('IMAGE_OPERATIONAL_DEADLINE');}timer=schedule(()=>{controller.abort();rejectDeadline(new Error('IMAGE_OPERATIONAL_DEADLINE'));},remaining);}
     function exchangeBoundary(){
       const current=authority(action),n=now(),next=Math.min(deadline,iso(current.receipt.expiresAt));
+      if(readerProfile){const state=sessionBudget.inspect();assert(!state.stopped&&state.remainingMs>0);assert.equal(state.pendingOrdinal,recorded?null:ticket.ordinal,'API_READER_SAME_PENDING_REQUEST_REQUIRED');}
       if(n>=next||controller.signal.aborted){fail('IMAGE_OPERATIONAL_DEADLINE');}if(next<deadline){deadline=next;if(rejectDeadline){armTimer();}}
     }
     function retainObservation(outcome){
       if(!ticket||observationRecorded){return;}observationRecorded=true;
       const began=Number.isSafeInteger(requestStartedAt)?requestStartedAt:lastClock??windowStart;
-      observations.push(Object.freeze({schemaVersion:2,kind:'EXPURGATED_IMAGE_NATIVE_EXCHANGE_OBSERVATION_V2',sessionId:binding.sessionId,ordinal:ticket.ordinal,
+      observations.push(Object.freeze({schemaVersion:2,kind:readerProfile?'EXPURGATED_API_READER_NATIVE_EXCHANGE_OBSERVATION_V1':'EXPURGATED_IMAGE_NATIVE_EXCHANGE_OBSERVATION_V2',sessionId:binding.sessionId,ordinal:ticket.ordinal,
         request:requestProjection,requestStartedAt:new Date(began).toISOString(),responseObservedAt:new Date(lastClock??began).toISOString(),
-        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,
+        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,...(readerProfile?{responseFinalUrl,responseRedirected}:{}),
         authorityRecordSha256:binding.authorityRecordSha256,resourceBindingSha256:binding.resourceBindingSha256}));
     }
+    function recordFailedResponse(){if(ticket&&!recorded){if(readerProfile){recorded=true;}try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}}
     try{
       assert(!terminal);assert(['GET','POST','PATCH'].includes(method));assert(method!=='GET'||requestBody===undefined);const a=authority(action);
       const request={method,url,...(requestBody===undefined?{}:{body:requestBody})};plainJson(request);const requestSha256=digest(request);requestProjection={method,url,sha256:requestSha256,...(requestBody===undefined?{}:{bodySha256:digest(requestBody)})};
@@ -88,15 +97,17 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
         let token=await accessToken({signal:controller.signal});assert.equal(typeof token,'string');assert(token.length>0&&token.length<=8192&&!/\s/u.test(token));exchangeBoundary();let response;
         try{response=await fetchImpl(url,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(requestBody===undefined?{}:{'content-type':'application/json'})},...(requestBody===undefined?{}:{body:JSON.stringify(requestBody)})});}finally{token=undefined;}
         exchangeBoundary();assert(Number.isSafeInteger(response.status)&&response.status>=100&&response.status<=599);responseStatus=response.status;
+        if(readerProfile){if(response.url!==url){fail('IMAGE_OPERATIONAL_RESPONSE_HEADERS_REFUSED');}responseFinalUrl=url;responseRedirected=response.redirected===false?false:null;}
         if(response.redirected!==false||typeof response.headers?.get!=='function'||!/^application\/(?:[a-z0-9.+-]+\+)?json(?:\s*;|$)/iu.test(response.headers.get('content-type')??'')){fail('IMAGE_OPERATIONAL_RESPONSE_HEADERS_REFUSED');}
         const result=await body(response,exchangeBoundary,controller,n=>{responseBytes=n;});responseBytes=result.bytes;responseDigest=digest(result.value);
-        sessionBudget.recordResponse(ticket,{responseBytes});recorded=true;
+        // Reader accounting is one attempt, including an fsync-then-throw ambiguity.
+        if(readerProfile){recorded=true;}sessionBudget.recordResponse(ticket,{responseBytes});recorded=true;
         if(response.status!==200){fail('IMAGE_OPERATIONAL_HTTP_REFUSED');}exchangeBoundary();
         retainObservation('HTTP_200_RECEIVED_NOT_SEMANTIC_ACCEPTANCE');
         return result.value;
       })(),new Promise((resolve,reject)=>{rejectDeadline=reject;armTimer();})]);
     }catch(error){
-      if(controller){controller.abort();}if(ticket&&!recorded){try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}
+      if(controller){controller.abort();}recordFailedResponse();
       const code=CODES.has(error?.message)?error.message:'IMAGE_OPERATIONAL_NATIVE_UNKNOWN_NO_RETRY';retainObservation(code);stop(code);fail(code);
     }finally{cancel(timer);}
   }
@@ -128,6 +139,7 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
     assert(!terminal);const evidence=permissionEvidence();assert(evidence.allDeclaredRequestedPermissionsReturned,'ACTUAL_DECLARED_PERMISSIONS_MISSING');const n=now();
     for(const row of evidence.rows){const at=iso(row.observation.observedAt);assert(at<=n&&n-at<600000,'NATIVE_PERMISSION_OBSERVATION_EXPIRED');}return evidence;
   }
+  if(readerProfile){return readerProfile.api({exchange,shaped,listPage,collection,permissions,permissionReads,authority,now,observations,stop});}
   const api={
     async getService(kind){return shaped(async()=>{const name=service(kind),value=await exchange(RUN+name,'READ_METADATA');assert.equal(value.name,name);const expected=getAuthority().entry.resourceBindings.services.find(s=>s.name===name);assert.equal(value.uid,expected.uid);return value;});},
     async getRevision(kind,revision){return shaped(async()=>{const name=service(kind);assert.equal(typeof revision,'string');assert(revision.startsWith('crm-prod-'+kind+'-'));opaque(revision);const full=name+'/revisions/'+revision,value=await exchange(RUN+full,'READ_METADATA');assert.equal(value.name,full);return value;});},
@@ -153,4 +165,72 @@ export function createImageOperationalTransport({binding,plan,accessToken,getAut
   };
   api.collectJobs=()=>collection(api.listJobs,'jobs');api.collectSchedulers=()=>collection(api.listSchedulers,'jobs');api.collectBackups=()=>collection(api.listBackups,'items');api.collectExecutions=()=>collection(api.listExecutions,'executions');
   return Object.freeze(api);
+}
+
+// Closed additive reader entry. The legacy public entry always selects null.
+// No caller-supplied profile/URL/authority Boolean can enter the reader branch.
+export function createImageOperationalTransport(input){return imageOperationalTransportCoreV4(input,null);}
+export const API_READER_SCOPES_V1=Object.freeze(['RC48_API_SHEETS_READER_CONFIG_ONLY_V1','RC48_API_SHEETS_READER_CONFIG_ROLLBACK_V1']);
+export const API_READER_PROJECT_PERMISSIONS_V1=Object.freeze(['artifactregistry.repositories.downloadArtifacts','cloudscheduler.jobs.list','iam.serviceAccounts.actAs','run.jobs.list','run.operations.get','run.revisions.get','run.services.get','run.services.update']);
+export const API_READER_SERVICE_PERMISSIONS_V1=Object.freeze(['run.services.get','run.services.update']);
+const READER_API='projects/crmynov-prod-n7x4q2/locations/europe-west1/services/crm-prod-api',READER_WEB=READER_API.replace('crm-prod-api','crm-prod-web');
+const READER_API_UID='a45fd6a6-f0d7-40e2-a9e5-da8a6f5fba81',READER_WEB_UID='a133df26-0ae0-4a0c-80c2-e42f387db4db';
+const READER_OPERATIONS='projects/crmynov-prod-n7x4q2/locations/europe-west1/operations/';
+function readerJournalBindingV1(authority,dossier,source){return{objectiveId:authority.entry.id,objectiveSha256:authority.receipt.authorityRecordSha256,planSha256:digest(dossier.plan),sourceHead:source.commit,sourceTree:source.tree,scope:dossier.scope,stage:dossier.stage,resource:READER_API};}
+function readerOperationNameV1(value){assert.equal(typeof value,'string');assert(value.startsWith(READER_OPERATIONS));opaque(value.slice(READER_OPERATIONS.length));return value;}
+function readerPatchRequestV1(dossier,authority,source,validateBinding,binding,now){
+ validateBinding(binding,{authority,dossier,source,now});const p=dossier.plan.patch;assert(p.method==='PATCH'&&p.resource===READER_API&&p.updateMask==='template.containers'&&p.expectedEtag===dossier.before.etag);exact(p.body,['name','etag','template']);exact(p.body.template,['containers']);assert(p.body.name===READER_API&&p.body.etag===p.expectedEtag);
+ assert.equal(dossier.plan.direction,dossier.direction);assert.equal(dossier.plan.scope,binding.scope);assert.equal(authority.entry.direction,dossier.direction);assert.equal(authority.receipt.action,dossier.action);
+ return{url:RUN+READER_API+'?'+new URLSearchParams({updateMask:'template.containers'}),action:dossier.action,body:structuredClone(p.body)};
+}
+// R2 validates issued in-process governance; R3 validates the real durable budget.
+// These literal imports are reader-only. Old IMAGE/N02/POST paths load neither R2
+// nor a new provider adapter, and acquire no permission to change flags.
+export async function createApiSheetReaderNativeTransportV1({binding,dossier,source,journalDirectory,mode='DISPATCH',accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout}){
+ exact(binding,BINDING);assert(API_READER_SCOPES_V1.includes(binding.scope));assert(['DISPATCH','OBSERVE_ONLY'].includes(mode));assert.equal(typeof getAuthority,'function');
+ const {validateApiSheetReaderSessionBindingV1:validateBinding}=await import('./api-sheets-reader-authority-v1.mjs');
+ const {requireImageSessionBudgetInstanceV3:requireBudget}=await import('./journal-budget-v2.mjs');
+ const {inspectApiSheetReaderTransactionV1:inspectJournal}=await import('./journal.mjs');
+ const {createHash}=await import('node:crypto');
+ const {validateImageInventoryPublicProjection:publicData}=await import('./operational-cli-v2.mjs');
+ publicData({binding,dossier,source});
+ assert.equal(typeof validateBinding,'function');assert.equal(typeof requireBudget,'function');assert.equal(typeof inspectJournal,'function');
+ const initial=getAuthority();validateBinding(binding,{authority:initial,dossier,source,now:clock()});requireBudget(sessionBudget,binding);
+ binding=structuredClone(binding);dossier=structuredClone(dossier);source=structuredClone(source);assert.equal(typeof journalDirectory,'string');assert.equal(createHash('sha256').update(journalDirectory).digest('hex'),dossier.journalDirectorySha256,'API_READER_PINNED_JOURNAL_DIRECTORY_REQUIRED');
+ const state=sessionBudget.inspect();assert(!state.stopped&&state.pendingOrdinal===null&&state.remainingRequests>0&&state.remainingMs>0);
+ const journalBinding=readerJournalBindingV1(initial,dossier,source),initialJournal=inspectJournal(journalDirectory,journalBinding);assert.equal(initialJournal.state,mode==='DISPATCH'?'UNUSED':'KNOWN_OPERATION_OBSERVE_ONLY');
+ function journal(){return inspectJournal(journalDirectory,journalBinding);}
+ let patchCalled=false,apiObserved=null;
+ const readerProfile={
+  validatePlan(plan){assert.deepEqual(plan,dossier.plan);readerPatchRequestV1(dossier,initial,source,validateBinding,binding,clock());},
+  assertAuthority(authority,action,now){const state=requireBudget(sessionBudget,binding);assert(!state.stopped&&state.remainingMs>0);validateBinding(binding,{authority,dossier,source,now});assert.deepEqual(readerJournalBindingV1(authority,dossier,source),journalBinding);assert(['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION',dossier.action].includes(action));if(action===dossier.action){assert.equal(mode,'DISPATCH');}assert.equal(authority.receipt.runAuthorized,false);assert.equal(authority.receipt.ingestionActivationAuthorized,false);},
+  api({exchange,shaped,listPage,collection,permissions,permissionReads,authority,now,observations,stop}){
+   function permissionEvidence(){
+    const rows=[['PROJECT',API_READER_PROJECT_PERMISSIONS_V1],['API',API_READER_SERVICE_PERMISSIONS_V1]].map(([key,requested])=>{const r=permissionReads.get(key);assert(r,'API_READER_PERMISSION_OBSERVATION_MISSING');const o=r.requestObservation;assert(o.status===200);return{key,requestStartedAt:o.requestStartedAt,responseReceivedAt:o.responseObservedAt,requested:[...requested],returned:[...r.returned]};});
+    return{project:PROJECT,apiResource:READER_API,rows};
+   }
+   function permissionsReady(){const result=permissionEvidence(),n=now();for(const row of result.rows){assert.deepEqual(row.returned.toSorted((a,b)=>a.localeCompare(b,'en')),row.requested.toSorted((a,b)=>a.localeCompare(b,'en')));const begin=iso(row.requestStartedAt),end=iso(row.responseReceivedAt);assert(begin<=end&&end<=n&&end-begin<=15000&&n-begin<600000);}return result;}
+   async function service(name,uid){return shaped(async()=>{const v=await exchange(RUN+name,'READ_METADATA');assert.equal(v.name,name);assert.equal(v.uid,uid);return v;});}
+   const api={
+    async getApi(){const value=await service(READER_API,READER_API_UID);apiObserved=structuredClone(value);return value;},
+    async getApiCurrentObservation(){const projection=await api.getApi(),o=observations.at(-1);assert(o.status===200&&o.responseFinalUrl===RUN+READER_API&&o.responseRedirected===false);return{schemaVersion:2,kind:'NATIVE_GCP_JSON_GET_OBSERVATION_V2',requestStartedAt:o.requestStartedAt,responseReceivedAt:o.responseObservedAt,request:{method:'GET',url:o.request.url},response:{status:o.status,finalUrl:o.responseFinalUrl,redirected:o.responseRedirected,bodySha256:o.responseSha256,hashMeaning:'CANONICAL_PARSED_JSON_NOT_WIRE_BYTES',projection}};},
+    async getWeb(){return service(READER_WEB,READER_WEB_UID);},
+    async getApiReadyRevision(){return shaped(async()=>{assert(apiObserved?.uid===READER_API_UID);const prefix=READER_API+'/revisions/',raw=apiObserved.latestReadyRevision;assert.equal(typeof raw,'string');const revision=raw.startsWith(prefix)?raw.slice(prefix.length):raw;assert(revision.startsWith('crm-prod-api-'));opaque(revision);const name=prefix+revision,v=await exchange(RUN+name,'READ_METADATA');assert.equal(v.name,name);return v;});},
+    async listJobs(token=''){return shaped(()=>listPage('READER_JOBS',RUN+LOCATION+'/jobs',token,{pageSize:'100',showDeleted:'true'}));},
+    async listSchedulers(token=''){return shaped(()=>listPage('READER_SCHEDULERS',SCHEDULER+LOCATION+'/jobs',token,{pageSize:'100'}));},
+    async testProjectPermissions(){return shaped(()=>permissions('PROJECT','https://cloudresourcemanager.googleapis.com/v1/projects/'+PROJECT+':testIamPermissions',API_READER_PROJECT_PERMISSIONS_V1));},
+    async testApiPermissions(){return shaped(()=>permissions('API',RUN+READER_API+':testIamPermissions',API_READER_SERVICE_PERMISSIONS_V1));},
+    permissionEvidence,
+    async patchReaderConfig(){return shaped(async()=>{assert(mode==='DISPATCH'&&!patchCalled,'API_READER_PATCH_ALREADY_ENTERED_OR_OBSERVE_ONLY');patchCalled=true;permissionsReady();const a=authority(dossier.action),current=journal();assert.equal(current.state,'INTENT_ONLY_UNKNOWN_DO_NOT_RETRY');assert.equal(current.rows[0].payload.details.requestSha256,digest(dossier.plan.patch));const request=readerPatchRequestV1(dossier,a,source,validateBinding,binding,now()),op=await exchange(request.url,request.action,request.body,'PATCH');readerOperationNameV1(op.name);return op;});},
+    async getKnownOperation(name){return shaped(async()=>{readerOperationNameV1(name);const known=journal();assert.equal(known.state,'KNOWN_OPERATION_OBSERVE_ONLY');assert.equal(known.rows[1].payload.details.operation,name);const v=await exchange(RUN+name,'OBSERVE_OPERATION');assert.equal(v.name,name);return v;});},
+    observations:()=>structuredClone(observations),
+    close(){stop('API_READER_TRANSPORT_CLOSED');}
+   };
+   api.collectJobs=()=>collection(api.listJobs,'jobs');api.collectSchedulers=()=>collection(api.listSchedulers,'jobs');return Object.freeze(api);
+  }
+ };
+ // Recheck the original callback, but never substitute a different issued t1.
+ // R5 fresh authority is separate and cannot reset or extend the t0 session.
+ const originalGetAuthority=getAuthority,originalAuthority=()=>{const current=originalGetAuthority();assert.equal(current,initial,'API_READER_ORIGINAL_ISSUED_AUTHORITY_REQUIRED');return initial;};
+ return imageOperationalTransportCoreV4({binding,plan:dossier.plan,accessToken,getAuthority:originalAuthority,sessionBudget,fetchImpl,clock,schedule,cancel},readerProfile);
 }

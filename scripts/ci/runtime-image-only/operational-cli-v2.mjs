@@ -166,10 +166,10 @@ function readJson(file,max=1048576){const bytes=readPoolPrivateFile(file,max);co
 function savePublic(dir,name,value){
   try{validateImageInventoryPublicProjection(value);assert(['N02-STOP','N02-INVENTORY-native-FIN'].includes(name));const bytes=Buffer.from(JSON.stringify(value,null,2)+'\n'),file=path.join(dir,name+'.json'),fd=fs.openSync(file,'wx',0o600);try{let offset=0;while(offset<bytes.length){const count=fs.writeSync(fd,bytes,offset,bytes.length-offset);assert(count>0);offset+=count;}fs.fsyncSync(fd);}finally{fs.closeSync(fd);}return{path:file,sha256:byteHash(fs.readFileSync(file))};}catch{refuse('N02_PERSISTENCE_REFUSED');}
 }
-export async function runImageInventoryV2(args){
+async function runImageInventorySourceCoreV4(args,sourceVersion){
   try{
-    assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);const options=parseImageInventoryArguments(args);
-    assert.equal(typeof localSource.readImageOperationalSource,'function');const sourceReader=localSource.readImageOperationalSource;
+    assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);if(sourceVersion===4){assert.equal(args[0],'inventory-v4');}const options=parseImageInventoryArguments(sourceVersion===4?['inventory-v2',...args.slice(1)]:args);
+    const sourceReader=sourceVersion===4?localSource.readImageOperationalSourceV4:localSource.readImageOperationalSource;assert.equal(typeof sourceReader,'function');
     const journalDirectory=localSource.imageExternalDirectory(options['--journal-dir']),output=localSource.imageExternalDirectory(options['--output-dir']);assert.notEqual(journalDirectory,output);
     validateImageInventoryDirectoryState(fs.readdirSync(journalDirectory),fs.readdirSync(output));
     const inputs={objectiveId:options['--objective-id'],dossier:readJson(options['--inventory-dossier']),binding:readJson(options['--session-binding']),journalDirectory};
@@ -185,3 +185,7 @@ export async function runImageInventoryV2(args){
 }
 // Explicit fake-port seam; never an authority or native receipt source.
 export async function simulateImageInventoryV2({syntheticOnly,...steps}){assert.equal(syntheticOnly,true);const persist=steps.persist;const result=await performInventory({...steps,persist:(name,value)=>persist(name,{...value,syntheticOnly:true,nativeAuthority:false})});return{...result,syntheticOnly:true,nativeAuthority:false};}
+
+// Distinct command and fixed getter. No caller-supplied source reader.
+export async function runImageInventoryV2(args){return runImageInventorySourceCoreV4(args,3);}
+export async function runImageInventorySourceV4(args){return runImageInventorySourceCoreV4(args,4);}

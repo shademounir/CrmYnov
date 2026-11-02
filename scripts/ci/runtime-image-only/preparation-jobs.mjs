@@ -2,7 +2,7 @@
 // thirteen job identities stay mandatory; no create/run/update capability here.
 import assert from 'node:assert/strict';
 import {READONLY_RUNTIME_FILES,validateLocalReadOnlyDossier} from '../pool-reconciliation/pool-job-dossier-v1.mjs';
-import {validateReadOnlyNativeJob,validateReadOnlyNativeExecution} from '../pool-reconciliation/pool-native-output-v1.mjs';
+import {assertNoReadOnlyExecutionMetadataV1,validateReadOnlyNativeJob,validateReadOnlyNativeExecution} from '../pool-reconciliation/pool-native-output-v1.mjs';
 const purposes=new Set(['GENERAL_PRESERVATION_READ_ONLY_V1','SCHEMA_LEDGER_READ_ONLY_V1']),H=/^[a-f0-9]{64}$/u,U=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u,alphabetical=(a,b)=>a.localeCompare(b,'en');
 function exact(value,keys){assert(value&&Object.getPrototypeOf(value)===Object.prototype);assert.deepEqual(Object.keys(value).sort(alphabetical),[...keys].sort(alphabetical));}
 export function validateImagePreparationJobs(candidate){
@@ -70,5 +70,5 @@ function validatePreparedReadOnlyJobV2(job,row,observedAt,completionContext){
   }
   const completed=completionFor(completionContext,row);
   if(completed){validateImageCollectorCompletionV2(job,row,completed,observedAt);return true;}
-  assert.equal(job.executionCount??0,0,'PROSPECTIVE_COLLECTOR_REQUIRES_BOUND_COMPLETION_NOT_COUNT_TWO');assert.equal(job.latestCreatedExecution,undefined,'UNUSED_PROSPECTIVE_COLLECTOR_REQUIRED');return true;
+  assertNoReadOnlyExecutionMetadataV1(job);return true;
 }

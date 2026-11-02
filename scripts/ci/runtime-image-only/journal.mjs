@@ -68,3 +68,82 @@ export function inspectImageStagesV2(dir,input){
   const imageMutationUnresolved=transactions.some(t=>['INTENT_ONLY_UNKNOWN_DO_NOT_RETRY','KNOWN_OPERATION_OBSERVE_ONLY'].includes(t.state));
   return{transactions,imageMutationUnresolved,nativeAcceptance:false,automaticMutationRetryAllowed:false};
 }
+
+// Additive config-only domain. Historical IMAGE exports and bytes above remain closed.
+const readerProfilesV1=Object.freeze({
+ API_READER_CONFIG:Object.freeze({scope:'RC48_API_SHEETS_READER_CONFIG_ONLY_V1',prefix:/^rc48-api-sheets-reader-config-[a-z0-9-]{8,64}$/u}),
+ API_READER_CONFIG_ROLLBACK:Object.freeze({scope:'RC48_API_SHEETS_READER_CONFIG_ROLLBACK_V1',prefix:/^rc48-api-sheets-reader-rollback-[a-z0-9-]{8,64}$/u})
+});
+const readerResourceV1='projects/crmynov-prod-n7x4q2/locations/europe-west1/services/crm-prod-api';
+function readerExactV1(value,keys){
+ assert(value&&Object.getPrototypeOf(value)===Object.prototype,'READER_PLAIN_DATA_REQUIRED');
+ const descriptors=Object.getOwnPropertyDescriptors(value);
+ assert(Reflect.ownKeys(descriptors).every(key=>typeof key==='string'&&Object.hasOwn(descriptors[key],'value')),'READER_ACCESSOR_REFUSED');
+ assert.deepEqual(Object.keys(descriptors).toSorted(codeUnitOrder),keys.toSorted(codeUnitOrder),'READER_EXACT_FIELDS_REQUIRED');
+}
+function readerBindingV1(input){
+ readerExactV1(input,['objectiveId','objectiveSha256','planSha256','sourceHead','sourceTree','scope','stage','resource']);
+ assert(Object.hasOwn(readerProfilesV1,input.stage),'READER_STAGE_REFUSED');const profile=readerProfilesV1[input.stage];
+ assert.equal(input.scope,profile.scope,'READER_SCOPE_REFUSED');assert.match(input.objectiveId,profile.prefix);
+ assert.equal(input.resource,readerResourceV1);for(const key of ['objectiveSha256','planSha256']){assert.match(input[key],shaPattern);}
+ for(const key of ['sourceHead','sourceTree']){assert.match(input[key],/^[a-f0-9]{40}$/u);}return structuredClone(input);
+}
+function readerOperationV1(name){
+ assert.equal(typeof name,'string');assert.match(name,/^projects\/crmynov-prod-n7x4q2\/locations\/europe-west1\/operations\/[A-Za-z0-9_-]{1,256}$/u,'READER_EXACT_OPERATION_REQUIRED');return name;
+}
+function readerAppendV1(dir,input,ordinal,state,details,previousSha256,now){
+ assert(Number.isSafeInteger(now)&&now>0);const prior=inspectApiSheetReaderTransactionV1(dir,input);assert.equal(ordinal,prior.rows.length+1);assert.equal(previousSha256,prior.rows.at(-1)?.sha256??null);assert(now>=(prior.rows.length?Date.parse(prior.rows.at(-1).payload.at):1),'READER_APPEND_TIME_REGRESSION');
+ const payload={binding:readerBindingV1(input),state,at:new Date(now).toISOString(),details,previousSha256};
+ return writeExclusive(recordPath(dir,input.stage,ordinal),{payload,sha256:imageJournalDigest(payload)});
+}
+export function inspectApiSheetReaderTransactionV1(dir,input){
+ const expected=readerBindingV1(input),names=fs.readdirSync(directory(dir));
+ assert(names.every(name=>[1,2,3].some(n=>name===input.stage+'-'+n+'.json')),'READER_JOURNAL_DOMAIN_NOT_EMPTY_OR_DISTINCT');
+ const files=[1,2,3].map(n=>recordPath(dir,input.stage,n)),present=files.map(file=>fs.existsSync(file));assert(!present[1]||present[0],'READER_ORPHAN_OPERATION');assert(!present[2]||present[1],'READER_ORPHAN_FIN');
+ const states=['CONFIG_INTENT_CONSUMED_BEFORE_PATCH','CONFIG_OPERATION_RECORDED','CONFIG_FIN_OBSERVED'],rows=[];let previous=null,lastAt=0;
+ for(let index=0;index<files.length;index++){
+  if(!present[index]){continue;}const stat=fs.lstatSync(files[index]);assert(stat.isFile()&&!stat.isSymbolicLink()&&stat.size>0&&stat.size<=65536,'READER_REGULAR_BOUNDED_JOURNAL_REQUIRED');
+  const row=load(files[index]);readerExactV1(row,['payload','sha256']);readerExactV1(row.payload,['binding','state','at','details','previousSha256']);assert.deepEqual(row.payload.binding,expected,'READER_DIFFERENT_BINDING');
+  assert.equal(row.payload.previousSha256,previous);assert.equal(row.payload.state,states[index]);const at=Date.parse(row.payload.at);assert(Number.isSafeInteger(at)&&new Date(at).toISOString()===row.payload.at&&at>=lastAt,'READER_JOURNAL_TIME_INVALID');
+  if(index===0){readerExactV1(row.payload.details,['requestSha256']);assert.match(row.payload.details.requestSha256,shaPattern);}
+  else if(index===1){readerExactV1(row.payload.details,['operation']);readerOperationV1(row.payload.details.operation);}
+  else{readerExactV1(row.payload.details,['operation','receiptSha256','outcome']);assert.equal(row.payload.details.operation,rows[1].payload.details.operation);assert.match(row.payload.details.receiptSha256,shaPattern);assert(['SUCCEEDED','FAILED'].includes(row.payload.details.outcome));}
+  previous=row.sha256;lastAt=at;rows.push(row);
+ }
+ return {state:['UNUSED','INTENT_ONLY_UNKNOWN_DO_NOT_RETRY','KNOWN_OPERATION_OBSERVE_ONLY','FIN_NO_REPLAY'][rows.length],rows,automaticMutationRetryAllowed:false};
+}
+export function consumeApiSheetReaderTransactionV1(dir,input,requestSha256,now){
+ assert.match(requestSha256,shaPattern);assert.equal(inspectApiSheetReaderTransactionV1(dir,input).state,'UNUSED','READER_TRANSACTION_ALREADY_CONSUMED');
+ return readerAppendV1(dir,input,1,'CONFIG_INTENT_CONSUMED_BEFORE_PATCH',{requestSha256},null,now);
+}
+export function recordApiSheetReaderOperationV1(dir,input,operation,now){
+ readerOperationV1(operation);const current=inspectApiSheetReaderTransactionV1(dir,input);assert.equal(current.state,'INTENT_ONLY_UNKNOWN_DO_NOT_RETRY','READER_INTENT_REQUIRED');
+ return readerAppendV1(dir,input,2,'CONFIG_OPERATION_RECORDED',{operation},current.rows.at(-1).sha256,now);
+}
+export function finishApiSheetReaderTransactionV1(dir,input,operation,receiptSha256,outcome,now){
+ const current=inspectApiSheetReaderTransactionV1(dir,input);assert.equal(current.state,'KNOWN_OPERATION_OBSERVE_ONLY');assert.equal(operation,current.rows[1].payload.details.operation);assert.match(receiptSha256,shaPattern);assert(['SUCCEEDED','FAILED'].includes(outcome));
+ return readerAppendV1(dir,input,3,'CONFIG_FIN_OBSERVED',{operation,receiptSha256,outcome},current.rows.at(-1).sha256,now);
+}
+// Controlled local saver: reuses the historical wx/write-loop/fsync primitive.
+// It is not authority or a substitute for actual R4 transport-origin admission.
+export function inspectApiSheetReaderProofDirectoryV1(proofDir,input){
+ const target=directory(proofDir);
+ const expected=readerBindingV1(input),prefix=input.stage+'-PROOF-',names=fs.readdirSync(target).toSorted(codeUnitOrder);
+ assert(names.length<200&&names.every((name,index)=>name===prefix+String(index+1).padStart(4,'0')+'.json'),'READER_PROOF_DIRECTORY_REFUSED');
+ for(const name of names){const file=path.join(target,name),stat=fs.lstatSync(file);assert(stat.isFile()&&!stat.isSymbolicLink()&&stat.size>0&&stat.size<=1048576);const old=load(file);assert.deepEqual(old.payload.binding,expected);}
+ return{directory:target,nextOrdinal:names.length+1,prefix};
+}
+export function persistApiSheetReaderProofV1(journalDir,proofDir,input,proof,now){
+ const current=inspectApiSheetReaderTransactionV1(journalDir,input);assert.equal(current.state,'KNOWN_OPERATION_OBSERVE_ONLY');
+ const state=inspectApiSheetReaderProofDirectoryV1(proofDir,input);assert.notEqual(fs.realpathSync(journalDir),fs.realpathSync(state.directory),'READER_PROOF_DIRECTORY_MUST_BE_DISTINCT');
+ assert(Number.isSafeInteger(now)&&now>=Date.parse(current.rows.at(-1).payload.at));assert.equal(proof.scope,input.scope);assert.equal(proof.planSha256,input.planSha256);assert.equal(proof.operation,current.rows[1].payload.details.operation);
+ const payload={schemaVersion:1,kind:'API_SHEETS_READER_CONFIG_OPERATION_PROOF_V1',binding:readerBindingV1(input),proof,observedAt:new Date(now).toISOString()};
+ assert(Buffer.byteLength(JSON.stringify(payload))<=1000000);return writeExclusive(path.join(state.directory,state.prefix+String(state.nextOrdinal).padStart(4,'0')+'.json'),{payload,sha256:imageJournalDigest(payload)});
+}
+
+// Match the default UTF-16/code-unit order without locale-dependent hashes.
+const codeUnitOrder=(left,right)=>{
+ if(left<right){return -1;}
+ if(left>right){return 1;}
+ return 0;
+};
