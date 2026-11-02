@@ -1419,17 +1419,17 @@
         "READ_METADATA",
         "TEST_PERMISSIONS"
       ],
-      "validFrom": "2026-10-30T16:54:24.466Z",
-      "expiresAt": "2026-10-31T16:54:24.466Z",
+      "validFrom": "2026-11-02T12:32:37.722Z",
+      "expiresAt": "2026-11-03T12:32:37.722Z",
       "dossierSha256": "60355bd69eb83c092d97b8469eca367569b410e5eb31da64af11ac0be292dd06",
       "humanAuthorityReceiptSha256": "64b91382c47403e88dedfa3a3c9241a3231a99d636312ae2a888619c65729fe6",
       "journalDirectorySha256": "560698225c76f8e5f26994ffd0be2721854ca031a12f8ee23ef04741de467722",
       "googleAccount": "casablancaynovcampus@gmail.com",
       "driver": {
-        "pr": 278,
-        "head": "e6cdff6529cbd7bb7cc8af0cdf07de6346a84108",
-        "mergeCommit": "d6b9124d013a739ccce239815f2035a19440e6b1",
-        "tree": "d4049a88fa2caac070e83ded35edb7bed1ebf906",
+        "pr": 280,
+        "head": "d3136c7523c5036626649e9701629e2eecdc737d",
+        "mergeCommit": "ba019e155bce3618279315898d5af22a0a3397d4",
+        "tree": "b82ad20e4661928d21230caa86d1f01256a13181",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -1453,7 +1453,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/general-operational-pre-v3.mjs",
-            "sha256": "9fd8d443ff3aa87c6bd26dc9e6e43f5bb4d65b3f520988b2ba91a402829668f6"
+            "sha256": "2139efeb48114b61ac7614e22ea1dbcbc65372e9716bc5693acc15ce3597a8f7"
           },
           {
             "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
@@ -1481,7 +1481,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
-            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+            "sha256": "68df9b59b155809707420fba7bdd37350c65829bc0d5ba242746b4cec60062fe"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
@@ -1489,7 +1489,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v2.mjs",
-            "sha256": "0729d7a63ed650d80c08b963348a87be719ccafc5a8d323e454a1b5804354584"
+            "sha256": "902f4e66000aee00493f505fb24c673a2ed3c1ee173c02eb72e5ae234ae4baae"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
@@ -1545,7 +1545,7 @@
           },
           {
             "path": "scripts/ci/readonly-probe/official-sdk-auth-preflight-v1.mjs",
-            "sha256": "73b39c141d449de841ea7f628d6980b72aee2641a2221645228f6bd4c2cc1936"
+            "sha256": "9c2ce713663755cbef8f1e95ec232d69ac94410be13ade15313b5f69dcbca03f"
           },
           {
             "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
@@ -1612,6 +1612,10 @@
             "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
           },
           {
+            "path": "scripts/ci/runtime-image-only/api-sheets-reader-authority-v1.mjs",
+            "sha256": "ef7ab713997f91e518f05d00260432bb7167c2e34f2a4efc440afcfe84d973d4"
+          },
+          {
             "path": "scripts/ci/runtime-image-only/authority.mjs",
             "sha256": "607ae557d36fd9ce05dfddfc245327049a31e100133ebdc927a2d13975db068e"
           },
@@ -1621,7 +1625,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/cli.mjs",
-            "sha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19"
+            "sha256": "6044d41e3f8fb4e5723e5ba84c46f1ce97cc11ca1a1a8ac332e649daf68954d1"
           },
           {
             "path": "scripts/ci/runtime-image-only/dossier-public-projection-v3.mjs",
@@ -1637,11 +1641,11 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/journal-budget-v2.mjs",
-            "sha256": "2584bd09969bf5d950d0db479b02abf8d8da9514121d0dbc558f0261cde9d89e"
+            "sha256": "c52659869a242303e9dfc9cf91b7fd908ee5643c97c4b5630cf24908620dd054"
           },
           {
             "path": "scripts/ci/runtime-image-only/journal.mjs",
-            "sha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0"
+            "sha256": "14a13c9dd262db98c9a767592f636d67ffeb3180eeea5db61986876d84b7f5bb"
           },
           {
             "path": "scripts/ci/runtime-image-only/late-binding-v2.mjs",
@@ -1649,15 +1653,15 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/local-source.mjs",
-            "sha256": "87a7cad4d3b0530315cc54889f6ad6af03075c1e56a88ec66e311ba7ac7d2003"
+            "sha256": "590313227a34da379806b85ef7b1365fe6c150e7b1dc73b78fd2d3abcb80e455"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-cli-v2.mjs",
-            "sha256": "0b582649afb0025311c5be33e0366c1de925d224514c418beb68512945d629a4"
+            "sha256": "848bce3858cafcc40d7c80d46e564f5ee0e606a63958ffd03cf0eb6f1928455d"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs",
-            "sha256": "48cb81d4f44088df9336b9882b3e412d978b5d1c205d51b26b5ac4718cb25e70"
+            "sha256": "b7640d87244457b4096236be3e7282cdb69691a86c5ea6618c33a7142d501cd3"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-forward-sequence-v2.mjs",
@@ -1669,7 +1673,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
-            "sha256": "efeada75721c1569c02b9771e617a078af5c041e7c79024b4265045d2a34b309"
+            "sha256": "08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346"
           },
           {
             "path": "scripts/ci/runtime-image-only/plan-mode.mjs",
@@ -1681,7 +1685,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/post-operational-v2.mjs",
-            "sha256": "d41fba329d92da4061a15bd8f2965491b7cba184a38748c3a7c51e45a802e300"
+            "sha256": "6478c245620ef0936dfc18c3b441a85d925686e61b852bad19368ada321917df"
           },
           {
             "path": "scripts/ci/runtime-image-only/post-preservation-v2.mjs",
@@ -1692,8 +1696,12 @@
             "sha256": "c560ae1a53a328442474eae488cb300b2c5b873da681fba7b67122dccbf87341"
           },
           {
+            "path": "scripts/ci/runtime-image-only/post-prospective-origin-v1.mjs",
+            "sha256": "9d3704b45040e42ee5a9ac106298d5796253c1476c1b73359503cc988c4e3381"
+          },
+          {
             "path": "scripts/ci/runtime-image-only/post-readiness-v2.mjs",
-            "sha256": "d619321293dedf57bac8fb6e1abba5c0b029b30ed817d0ddd567078f2f87bc11"
+            "sha256": "921cae8ea6b2dbee203498a52a81742de2c853c1a014034fc060f2b717d6cc9a"
           },
           {
             "path": "scripts/ci/runtime-image-only/post-startup-permissions.mjs",
@@ -1701,7 +1709,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/preparation-jobs.mjs",
-            "sha256": "9836bf803913b531a7da107c3acf31f7802b41fe4677ec77f383a5d4bcb8da5a"
+            "sha256": "bf1aed7500e6e3c2c8399f070d2755f94a7e5b887bb45681e0da6ed1521fc7e9"
           },
           {
             "path": "scripts/ci/runtime-image-only/preparation-origins.mjs",
@@ -1734,6 +1742,14 @@
           {
             "path": "scripts/ci/runtime-image-only/served-state.mjs",
             "sha256": "b5a418172904398accd174f8e14f8f945686aa592d18cea3d0279b0c17b2d0f4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/sheets-api-reader-contract-v1.mjs",
+            "sha256": "f4bbed67fa96059d4b0351458ba66eaab74cd95ace723abadaaff9f1aa4b145e"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/sheets-api-reader-operation-v1.mjs",
+            "sha256": "6a5516ddd72e88682a19ae666248b982fb37df21c3179014d0210ceeb8b35786"
           },
           {
             "path": "scripts/ci/runtime-image-only/transport.mjs",
@@ -1789,13 +1805,13 @@
       "status": "approved",
       "scope": "GENERAL_PRESERVATION_READ_ONLY_V1",
       "ticket": "CRMY-63",
-      "authorityRecordSha256": "45164416f4266036391c8c0fd0a39ab05753a3c952b74056e327a777483e2080",
+      "authorityRecordSha256": "09b75018923f5c5ada3bd021fe3168e7fdfd76d9dbf583337671d5761d91f1b7",
       "humanAuthorityReceiptSha256": "64b91382c47403e88dedfa3a3c9241a3231a99d636312ae2a888619c65729fe6",
       "driver": {
-        "pr": 278,
-        "head": "e6cdff6529cbd7bb7cc8af0cdf07de6346a84108",
-        "mergeCommit": "d6b9124d013a739ccce239815f2035a19440e6b1",
-        "tree": "d4049a88fa2caac070e83ded35edb7bed1ebf906",
+        "pr": 280,
+        "head": "d3136c7523c5036626649e9701629e2eecdc737d",
+        "mergeCommit": "ba019e155bce3618279315898d5af22a0a3397d4",
+        "tree": "b82ad20e4661928d21230caa86d1f01256a13181",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -1819,7 +1835,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/general-operational-pre-v3.mjs",
-            "sha256": "9fd8d443ff3aa87c6bd26dc9e6e43f5bb4d65b3f520988b2ba91a402829668f6"
+            "sha256": "2139efeb48114b61ac7614e22ea1dbcbc65372e9716bc5693acc15ce3597a8f7"
           },
           {
             "path": "scripts/ci/pool-reconciliation/general-preservation-read-only-collector-v1.mjs",
@@ -1847,7 +1863,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-output-v1.mjs",
-            "sha256": "483b2f21c903d7d04e9b7e9ee3316934e89cc9cae272c111911c674be30f9ada"
+            "sha256": "68df9b59b155809707420fba7bdd37350c65829bc0d5ba242746b4cec60062fe"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v1.mjs",
@@ -1855,7 +1871,7 @@
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-native-transaction-v2.mjs",
-            "sha256": "0729d7a63ed650d80c08b963348a87be719ccafc5a8d323e454a1b5804354584"
+            "sha256": "902f4e66000aee00493f505fb24c673a2ed3c1ee173c02eb72e5ae234ae4baae"
           },
           {
             "path": "scripts/ci/pool-reconciliation/pool-observation-reconciliation-v1.mjs",
@@ -1911,7 +1927,7 @@
           },
           {
             "path": "scripts/ci/readonly-probe/official-sdk-auth-preflight-v1.mjs",
-            "sha256": "73b39c141d449de841ea7f628d6980b72aee2641a2221645228f6bd4c2cc1936"
+            "sha256": "9c2ce713663755cbef8f1e95ec232d69ac94410be13ade15313b5f69dcbca03f"
           },
           {
             "path": "scripts/ci/readonly-probe/probe-driver-authority-v1.mjs",
@@ -1978,6 +1994,10 @@
             "sha256": "0fa0efcc6b40258acdd8879fcc96318a7faa3d985bd45cf16dcf0e54f993e6dc"
           },
           {
+            "path": "scripts/ci/runtime-image-only/api-sheets-reader-authority-v1.mjs",
+            "sha256": "ef7ab713997f91e518f05d00260432bb7167c2e34f2a4efc440afcfe84d973d4"
+          },
+          {
             "path": "scripts/ci/runtime-image-only/authority.mjs",
             "sha256": "607ae557d36fd9ce05dfddfc245327049a31e100133ebdc927a2d13975db068e"
           },
@@ -1987,7 +2007,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/cli.mjs",
-            "sha256": "199740e7f77d6e53bb59e0d049a379e9e3e00938495bb1468851d0faa9028c19"
+            "sha256": "6044d41e3f8fb4e5723e5ba84c46f1ce97cc11ca1a1a8ac332e649daf68954d1"
           },
           {
             "path": "scripts/ci/runtime-image-only/dossier-public-projection-v3.mjs",
@@ -2003,11 +2023,11 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/journal-budget-v2.mjs",
-            "sha256": "2584bd09969bf5d950d0db479b02abf8d8da9514121d0dbc558f0261cde9d89e"
+            "sha256": "c52659869a242303e9dfc9cf91b7fd908ee5643c97c4b5630cf24908620dd054"
           },
           {
             "path": "scripts/ci/runtime-image-only/journal.mjs",
-            "sha256": "679c98cfdea698c6a4063680b1b113226837b03fdc0267b9b06e3e55cb4407d0"
+            "sha256": "14a13c9dd262db98c9a767592f636d67ffeb3180eeea5db61986876d84b7f5bb"
           },
           {
             "path": "scripts/ci/runtime-image-only/late-binding-v2.mjs",
@@ -2015,15 +2035,15 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/local-source.mjs",
-            "sha256": "87a7cad4d3b0530315cc54889f6ad6af03075c1e56a88ec66e311ba7ac7d2003"
+            "sha256": "590313227a34da379806b85ef7b1365fe6c150e7b1dc73b78fd2d3abcb80e455"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-cli-v2.mjs",
-            "sha256": "0b582649afb0025311c5be33e0366c1de925d224514c418beb68512945d629a4"
+            "sha256": "848bce3858cafcc40d7c80d46e564f5ee0e606a63958ffd03cf0eb6f1928455d"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-forward-cli-v2.mjs",
-            "sha256": "48cb81d4f44088df9336b9882b3e412d978b5d1c205d51b26b5ac4718cb25e70"
+            "sha256": "b7640d87244457b4096236be3e7282cdb69691a86c5ea6618c33a7142d501cd3"
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-forward-sequence-v2.mjs",
@@ -2035,7 +2055,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
-            "sha256": "efeada75721c1569c02b9771e617a078af5c041e7c79024b4265045d2a34b309"
+            "sha256": "08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346"
           },
           {
             "path": "scripts/ci/runtime-image-only/plan-mode.mjs",
@@ -2047,7 +2067,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/post-operational-v2.mjs",
-            "sha256": "d41fba329d92da4061a15bd8f2965491b7cba184a38748c3a7c51e45a802e300"
+            "sha256": "6478c245620ef0936dfc18c3b441a85d925686e61b852bad19368ada321917df"
           },
           {
             "path": "scripts/ci/runtime-image-only/post-preservation-v2.mjs",
@@ -2058,8 +2078,12 @@
             "sha256": "c560ae1a53a328442474eae488cb300b2c5b873da681fba7b67122dccbf87341"
           },
           {
+            "path": "scripts/ci/runtime-image-only/post-prospective-origin-v1.mjs",
+            "sha256": "9d3704b45040e42ee5a9ac106298d5796253c1476c1b73359503cc988c4e3381"
+          },
+          {
             "path": "scripts/ci/runtime-image-only/post-readiness-v2.mjs",
-            "sha256": "d619321293dedf57bac8fb6e1abba5c0b029b30ed817d0ddd567078f2f87bc11"
+            "sha256": "921cae8ea6b2dbee203498a52a81742de2c853c1a014034fc060f2b717d6cc9a"
           },
           {
             "path": "scripts/ci/runtime-image-only/post-startup-permissions.mjs",
@@ -2067,7 +2091,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/preparation-jobs.mjs",
-            "sha256": "9836bf803913b531a7da107c3acf31f7802b41fe4677ec77f383a5d4bcb8da5a"
+            "sha256": "bf1aed7500e6e3c2c8399f070d2755f94a7e5b887bb45681e0da6ed1521fc7e9"
           },
           {
             "path": "scripts/ci/runtime-image-only/preparation-origins.mjs",
@@ -2100,6 +2124,14 @@
           {
             "path": "scripts/ci/runtime-image-only/served-state.mjs",
             "sha256": "b5a418172904398accd174f8e14f8f945686aa592d18cea3d0279b0c17b2d0f4"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/sheets-api-reader-contract-v1.mjs",
+            "sha256": "f4bbed67fa96059d4b0351458ba66eaab74cd95ace723abadaaff9f1aa4b145e"
+          },
+          {
+            "path": "scripts/ci/runtime-image-only/sheets-api-reader-operation-v1.mjs",
+            "sha256": "6a5516ddd72e88682a19ae666248b982fb37df21c3179014d0210ceeb8b35786"
           },
           {
             "path": "scripts/ci/runtime-image-only/transport.mjs",
