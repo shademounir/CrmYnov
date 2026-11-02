@@ -14,6 +14,51 @@ const GENERAL=LOCATION+'/jobs/crm-prod-preservation-pre-20261028-147f390728';
 const BINDING=['sessionId','authorityRecordSha256','resourceBindingSha256','scope','windowStart','windowEnd','sourceCommit','project','region'];
 const SERVICE_PERMISSIONS=IMAGE_SERVICE_PERMISSIONS_V2,JOB_PERMISSIONS=IMAGE_GENERAL_JOB_PERMISSIONS_V2;
 const CODES=new Set(['IMAGE_OPERATIONAL_AUTHORITY_REFUSED','IMAGE_OPERATIONAL_REQUEST_REFUSED','IMAGE_OPERATIONAL_DEADLINE','IMAGE_OPERATIONAL_RESPONSE_BOUND','IMAGE_OPERATIONAL_HTTP_REFUSED','IMAGE_OPERATIONAL_JSON_REFUSED','IMAGE_OPERATIONAL_RESPONSE_HEADERS_REFUSED','IMAGE_OPERATIONAL_NATIVE_UNKNOWN_NO_RETRY','IMAGE_OPERATIONAL_RESPONSE_SHAPE_REFUSED','IMAGE_OPERATIONAL_PAGINATION_REFUSED','IMAGE_OPERATIONAL_PERMISSIONS_MISSING','IMAGE_SESSION_CAPACITY_EXHAUSTED','IMAGE_SESSION_EXPIRED','RESPONSE_BYTES_LIMIT','REQUEST_DEADLINE_EXCEEDED','SESSION_STOPPED_OR_REQUEST_UNKNOWN_NO_RETRY']);
+// Passive, closed projection only: no messages, arbitrary metadata, credentials,
+// response headers, admission decisions or scheduled retries.
+const REFUSAL_REASONS = new Set(['RATE_LIMIT_EXCEEDED', 'QUOTA_EXCEEDED', 'RESOURCE_QUOTA_EXCEEDED', 'USER_PROJECT_DENIED', 'SERVICE_DISABLED', 'CONSUMER_INVALID', 'IAM_PERMISSION_DENIED', 'ACCESS_TOKEN_EXPIRED', 'ACCESS_TOKEN_SCOPE_INSUFFICIENT']);
+const REFUSAL_STATUSES = new Set(['RESOURCE_EXHAUSTED', 'PERMISSION_DENIED', 'UNAUTHENTICATED', 'UNAVAILABLE', 'INTERNAL', 'INVALID_ARGUMENT', 'NOT_FOUND', 'FAILED_PRECONDITION']);
+const REFUSAL_DOMAINS = new Set(['googleapis.com', 'cloudresourcemanager.googleapis.com']);
+const REFUSAL_METRICS = new Set(['cloudresourcemanager.googleapis.com/read_requests', 'cloudresourcemanager.googleapis.com/write_requests']);
+const REFUSAL_LIMITS = new Set(['ReadRequestsPerMinutePerProject', 'ReadRequestsPerMinutePerUser', 'ReadRequestsPerSecondPerProject', 'ReadRequestsPerSecondPerUser']);
+function refusalOwn(value, key) {
+  if (!value || typeof value !== 'object') { return undefined; }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && Object.hasOwn(descriptor, 'value') ? descriptor.value : undefined;
+}
+function refusalKnown(value, allowed) { return typeof value === 'string' && allowed.has(value) ? value : null; }
+function refusalConsumer(value) {
+  return typeof value === 'string' && /^projects\/[1-9]\d{5,19}$/u.test(value) ? value : null;
+}
+function refusalErrorInfos(details) {
+  const result = [];
+  if (!Array.isArray(details) || details.length > 16) { return result; }
+  for (let index = 0; index < details.length; index++) {
+    const row = refusalOwn(details, String(index));
+    if (refusalOwn(row, '@type') === 'type.googleapis.com/google.rpc.ErrorInfo') { result.push(row); }
+  }
+  return result;
+}
+export function projectHttpRefusalDiagnosticV1(value) {
+  const error = refusalOwn(value, 'error'), details = refusalOwn(error, 'details');
+  const candidates = refusalErrorInfos(details);
+  // Duplicate ErrorInfo is ambiguous. Never merge identities or guess a cause.
+  const info = candidates.length === 1 ? candidates[0] : null;
+  const metadata = refusalOwn(info, 'metadata'), reason = refusalOwn(info, 'reason'), domain = refusalOwn(info, 'domain');
+  const acceptedDomain = refusalKnown(domain, REFUSAL_DOMAINS);
+  return Object.freeze({
+    schemaVersion: 1, kind: 'EXPURGATED_HTTP_REFUSAL_DIAGNOSTIC_V1',
+    status: refusalKnown(refusalOwn(error, 'status'), REFUSAL_STATUSES),
+    errorInfoAmbiguous: candidates.length > 1, domain: acceptedDomain,
+    reason: acceptedDomain ? refusalKnown(reason, REFUSAL_REASONS) : null,
+    consumer: acceptedDomain ? refusalConsumer(refusalOwn(metadata, 'consumer')) : null,
+    service: acceptedDomain && refusalOwn(metadata, 'service') === 'cloudresourcemanager.googleapis.com' ? 'cloudresourcemanager.googleapis.com' : null,
+    quotaMetric: acceptedDomain ? refusalKnown(refusalOwn(metadata, 'quota_metric'), REFUSAL_METRICS) : null,
+    quotaLimit: acceptedDomain ? refusalKnown(refusalOwn(metadata, 'quota_limit'), REFUSAL_LIMITS) : null,
+    unknownFieldsWithheld: true, rawMessageRetained: false,
+    permissionResult: false, retryAuthorized: false
+  });
+}
 function exact(v,keys){assert(v&&Object.getPrototypeOf(v)===Object.prototype);const d=Object.getOwnPropertyDescriptors(v);assert(Reflect.ownKeys(d).every(k=>typeof k==='string'&&Object.hasOwn(d[k],'value')));assert.deepEqual(Object.keys(d).toSorted((a,b)=>a.localeCompare(b,'en')),keys.toSorted((a,b)=>a.localeCompare(b,'en')));}
 function iso(v){assert.equal(typeof v,'string');const n=Date.parse(v);assert(Number.isSafeInteger(n)&&new Date(n).toISOString()===v);return n;}
 function opaque(v){assert.equal(typeof v,'string');assert.match(v,/^[A-Za-z0-9_-]{1,256}$/u);return v;}
@@ -72,7 +117,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
     }finally{try{await reader.cancel();}catch{/* Deadline is already terminal; never retry cleanup. */}reader.releaseLock();}
   }
   async function exchange(url,action,requestBody,method='GET'){
-    let ticket,responseBytes=0,recorded=false,requestStartedAt,controller,timer,deadline,responseStatus=null,responseDigest=null,responseFinalUrl=null,responseRedirected=null,requestProjection,observationRecorded=false,rejectDeadline;
+    let ticket,responseBytes=0,recorded=false,requestStartedAt,controller,timer,deadline,responseStatus=null,responseDigest=null,responseFinalUrl=null,responseRedirected=null,requestProjection,observationRecorded=false,rejectDeadline,refusalDiagnostic=null;
     function armTimer(){cancel(timer);const remaining=deadline-now();if(remaining<=0){fail('IMAGE_OPERATIONAL_DEADLINE');}timer=schedule(()=>{controller.abort();rejectDeadline(new Error('IMAGE_OPERATIONAL_DEADLINE'));},remaining);}
     function exchangeBoundary(){
       const current=authority(action),n=now(),next=Math.min(deadline,iso(current.receipt.expiresAt));
@@ -84,7 +129,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
       const began=Number.isSafeInteger(requestStartedAt)?requestStartedAt:lastClock??windowStart;
       observations.push(Object.freeze({schemaVersion:2,kind:readerProfile?'EXPURGATED_API_READER_NATIVE_EXCHANGE_OBSERVATION_V1':'EXPURGATED_IMAGE_NATIVE_EXCHANGE_OBSERVATION_V2',sessionId:binding.sessionId,ordinal:ticket.ordinal,
         request:requestProjection,requestStartedAt:new Date(began).toISOString(),responseObservedAt:new Date(lastClock??began).toISOString(),
-        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,...(readerProfile?{responseFinalUrl,responseRedirected}:{}),
+        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,...(readerProfile?{responseFinalUrl,responseRedirected}:{}),...(refusalDiagnostic?{refusalDiagnostic}:{}),
         authorityRecordSha256:binding.authorityRecordSha256,resourceBindingSha256:binding.resourceBindingSha256}));
     }
     function recordFailedResponse(){if(ticket&&!recorded){if(readerProfile){recorded=true;}try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}}
@@ -102,7 +147,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
         const result=await body(response,exchangeBoundary,controller,n=>{responseBytes=n;});responseBytes=result.bytes;responseDigest=digest(result.value);
         // Reader accounting is one attempt, including an fsync-then-throw ambiguity.
         if(readerProfile){recorded=true;}sessionBudget.recordResponse(ticket,{responseBytes});recorded=true;
-        if(response.status!==200){fail('IMAGE_OPERATIONAL_HTTP_REFUSED');}exchangeBoundary();
+        if(response.status!==200){refusalDiagnostic=projectHttpRefusalDiagnosticV1(result.value);fail('IMAGE_OPERATIONAL_HTTP_REFUSED');}exchangeBoundary();
         retainObservation('HTTP_200_RECEIVED_NOT_SEMANTIC_ACCEPTANCE');
         return result.value;
       })(),new Promise((resolve,reject)=>{rejectDeadline=reject;armTimer();})]);

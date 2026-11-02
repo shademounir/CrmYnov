@@ -1,4 +1,4 @@
-// Current concrete source-only data, not live freshness or execution admission.
+// Historical PR280/V4 concrete source-only data, not candidate source admission.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,7 +11,14 @@ import {OPERATIONAL_HUMAN_SHA256} from '../runtime-image-only/late-binding-v2.mj
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operational-v2.mjs';
 const root=new URL('../../../',import.meta.url);
-const read=p=>fs.readFileSync(new URL(p,root));
+const read=p=>{
+ const actual=fs.readFileSync(new URL(p,root));
+ if(p!=='scripts/ci/runtime-image-only/operational-transport-v2.mjs'){return actual;}
+ const raw=fs.readFileSync(new URL('scripts/ci/runtime-image-only/fixtures/pre-http-diagnostic-transport.json',root));
+ assert.equal(sha(raw),'7cf36c27f939528e3c5e476ecebe384765fef5e51cfee236101b75ff9f017f2b');
+ const fixture=JSON.parse(raw);assert.equal(fixture.nativeAuthority,false);assert.equal(fixture.sourceExecutionPerformed,false);
+ const old=Buffer.from(fixture.sourceUtf8);assert.equal(sha(old),'08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346');return old;
+};
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const roPath='docs/governance/readonly-probe-objectives-v1.json',imagePath='docs/governance/runtime-image-only-objectives-v1.json';
 const raw=read(roPath),imageRaw=read(imagePath),ro=JSON.parse(raw),images=JSON.parse(imageRaw);
@@ -60,4 +67,11 @@ test('V4 inventory is distinct and read-only; old N02 objective remains exact',(
  const selected=images.entries.filter(e=>e.id===inventory.id);assert.equal(selected.length,1);assert.equal(selected[0],inventory);
  assert.throws(()=>validateImageInventoryObjective(inventory,{objectiveId:inventory.id,source,action:'PATCH_API',now}));
  assert.throws(()=>validateImageInventoryObjective(inventory,{objectiveId:inventory.id,source,action:'READ_METADATA',now:Date.parse(window.expiresAt)}));
+});
+
+test('protected V4 catalogue does not admit the changed diagnostic transport',()=>{
+ const actualFiles=IMAGE_OPERATIONAL_DRIVER_INPUTS_V4.map(path=>({path,sha256:sha(fs.readFileSync(new URL(path,root)))}));
+ const actualTransport=actualFiles.find(r=>r.path==='scripts/ci/runtime-image-only/operational-transport-v2.mjs');
+ assert.notEqual(actualTransport.sha256,inventory.driver.files.find(r=>r.path===actualTransport.path).sha256);
+ assert.throws(()=>validateImageInventoryObjective(inventory,{objectiveId:inventory.id,source:{...source,files:actualFiles},action:'READ_METADATA',now}));
 });
