@@ -24,6 +24,14 @@ const fixturePath='scripts/ci/pool-reconciliation/tests/fixtures/readonly-probe-
 // The current catalogues and their additive relation are tested in the V4 suite.
 const readBytes=relative=>{
  const actual=fs.readFileSync(new URL(relative,root));
+ // Exact protected PR280 bytes precede the additive HTTP diagnostic change.
+ // Historical D6 inverses must still receive their original V4 preimage.
+ if(relative==='scripts/ci/runtime-image-only/operational-transport-v2.mjs'){
+  const raw=fs.readFileSync(new URL('scripts/ci/runtime-image-only/fixtures/pre-http-diagnostic-transport.json',root));
+  assert.equal(createHash('sha256').update(raw).digest('hex'),'7cf36c27f939528e3c5e476ecebe384765fef5e51cfee236101b75ff9f017f2b');
+  const fixture=JSON.parse(raw);assert.equal(fixture.nativeAuthority,false);assert.equal(fixture.sourceExecutionPerformed,false);
+  const historical=Buffer.from(fixture.sourceUtf8);assert.equal(createHash('sha256').update(historical).digest('hex'),'08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346');return historical;
+ }
  if(relative===readonlyPath){
   const historicalBytes=fs.readFileSync(new URL('scripts/ci/runtime-image-only/fixtures/pre-v4-readonly.json',root));
   assert.equal(createHash('sha256').update(historicalBytes).digest('hex'),'09009dedca366cb334a9f24f8e85a760e01158660e8f3be50b067222fc6a4849');
