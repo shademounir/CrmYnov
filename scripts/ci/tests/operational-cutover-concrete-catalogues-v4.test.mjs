@@ -21,7 +21,7 @@ const read=p=>{
 };
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const roPath='docs/governance/readonly-probe-objectives-v1.json',imagePath='docs/governance/runtime-image-only-objectives-v1.json';
-const raw=read(roPath),imageRaw=read(imagePath),ro=JSON.parse(raw),images=JSON.parse(imageRaw);
+const raw=read('scripts/ci/runtime-image-only/fixtures/pre-v5-readonly.json'),imageRaw=read('scripts/ci/runtime-image-only/fixtures/pre-v5-image.json'),ro=JSON.parse(raw),images=JSON.parse(imageRaw);
 const oldRaw=read('scripts/ci/runtime-image-only/fixtures/pre-v4-readonly.json');
 const old=JSON.parse(oldRaw),oldImages=JSON.parse(read('scripts/ci/runtime-image-only/fixtures/pre-v4-image.json'));
 const post=ro.entries[7],inventory=images.entries[1],descriptor=ro.operationalPreAuthoritiesV3[0];
@@ -31,7 +31,7 @@ const identity={pr:280,head:'d3136c7523c5036626649e9701629e2eecdc737d',mergeComm
 const source={commit:identity.mergeCommit,tree:identity.tree,clean:true,files:inventory.driver.files};
 const record=(driver,w)=>({schemaVersion:3,kind:'GENERAL_OPERATIONAL_PROSPECTIVE_PRE_AUTHORITY_V3',authorityId:GENERAL_OPERATIONAL_AUTHORITY_ID,capabilityId:GENERAL_OPERATIONAL_CAPABILITY_ID,humanAuthorityReceiptSha256:OPERATIONAL_HUMAN_SHA256,binding:structuredClone(GENERAL_OPERATIONAL_BINDING),...w,source:{commit:driver.mergeCommit,tree:driver.tree,head:driver.head,pr:driver.pr,files:driver.files},evidenceDirectory:GENERAL_OPERATIONAL_DIRECTORY,directorySha256:sha(GENERAL_OPERATIONAL_DIRECTORY),consumerSha256:digest(CONSUMER_PINS),oldUnknownUnchanged:true,closedClaimsRemainClosed:true});
 const without=(v,keys)=>Object.fromEntries(Object.entries(v).filter(([k])=>!keys.includes(k)));
-test('V4 current raw data has exact assembly hashes and preserved historical prefix',()=>{
+test('V4 retained raw fixture has exact assembly hashes and preserved historical prefix',()=>{
  assert.equal(sha(raw),'77eab75994182c4b08f90288971c34bf69a34b4b828e5a78526f7e2463d0b09b');
  assert.equal(sha(imageRaw),'541f77f786e2ed893cab402dca946212f5b0b4830346b3c8e8b72e07b52a42c7');
  assert.equal(sha(oldRaw),'09009dedca366cb334a9f24f8e85a760e01158660e8f3be50b067222fc6a4849');

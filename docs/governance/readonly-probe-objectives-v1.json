@@ -1426,10 +1426,10 @@
       "journalDirectorySha256": "560698225c76f8e5f26994ffd0be2721854ca031a12f8ee23ef04741de467722",
       "googleAccount": "casablancaynovcampus@gmail.com",
       "driver": {
-        "pr": 280,
-        "head": "d3136c7523c5036626649e9701629e2eecdc737d",
-        "mergeCommit": "ba019e155bce3618279315898d5af22a0a3397d4",
-        "tree": "b82ad20e4661928d21230caa86d1f01256a13181",
+        "pr": 282,
+        "head": "dde62dd3bd478310d64714bcf5a79b7d5f7221f9",
+        "mergeCommit": "c4dfed68baa4b750256285032761f0f09aea5a8e",
+        "tree": "b1ada64f5833e1afeaa8e03bbb58d081bf15f13c",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -1673,7 +1673,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
-            "sha256": "08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346"
+            "sha256": "53b70afca2b57e8952c26d03d8897c744ff94ad4fd49c88da73ef650124526e4"
           },
           {
             "path": "scripts/ci/runtime-image-only/plan-mode.mjs",
@@ -1805,13 +1805,13 @@
       "status": "approved",
       "scope": "GENERAL_PRESERVATION_READ_ONLY_V1",
       "ticket": "CRMY-63",
-      "authorityRecordSha256": "09b75018923f5c5ada3bd021fe3168e7fdfd76d9dbf583337671d5761d91f1b7",
+      "authorityRecordSha256": "9a50c33855084326cff3a707d78a44f04d65beaa5f2d1235c5dc0e8f439c4b81",
       "humanAuthorityReceiptSha256": "64b91382c47403e88dedfa3a3c9241a3231a99d636312ae2a888619c65729fe6",
       "driver": {
-        "pr": 280,
-        "head": "d3136c7523c5036626649e9701629e2eecdc737d",
-        "mergeCommit": "ba019e155bce3618279315898d5af22a0a3397d4",
-        "tree": "b82ad20e4661928d21230caa86d1f01256a13181",
+        "pr": 282,
+        "head": "dde62dd3bd478310d64714bcf5a79b7d5f7221f9",
+        "mergeCommit": "c4dfed68baa4b750256285032761f0f09aea5a8e",
+        "tree": "b1ada64f5833e1afeaa8e03bbb58d081bf15f13c",
         "files": [
           {
             "path": "docs/governance/github-code-review-policy.json",
@@ -2055,7 +2055,7 @@
           },
           {
             "path": "scripts/ci/runtime-image-only/operational-transport-v2.mjs",
-            "sha256": "08a3f9d941904dda24aa72d06125ea9cc514f4e849bb6c70bf275b15e3f4c346"
+            "sha256": "53b70afca2b57e8952c26d03d8897c744ff94ad4fd49c88da73ef650124526e4"
           },
           {
             "path": "scripts/ci/runtime-image-only/plan-mode.mjs",
