@@ -418,8 +418,8 @@
         "iamMutation": false
       },
       "journalDirectorySha256": "7fed2808d92d8fe5e97919adc8b422a3a916182f3e28de68bd08c56d2dde2cad",
-      "validFrom": "2026-11-02T12:32:37.722Z",
-      "expiresAt": "2026-11-03T12:32:37.722Z",
+      "validFrom": "2026-11-03T15:30:00.000Z",
+      "expiresAt": "2026-11-04T15:30:00.000Z",
       "driver": {
         "pr": 280,
         "head": "d3136c7523c5036626649e9701629e2eecdc737d",
