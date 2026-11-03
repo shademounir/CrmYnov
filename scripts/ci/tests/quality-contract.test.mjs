@@ -25,6 +25,8 @@ test("Playwright uses locked synthetic dependencies and read-only failure eviden
   const workflow = await readFile(workflowUrl, "utf8");
   const job = workflow.match(/\n  playwright:[\s\S]+?(?=\n  build:)/)?.[0] ?? "";
   assert.match(job, /needs: trusted-source/);
+  assert.match(job, /runs-on: ubuntu-24\.04/);
+  assert.doesNotMatch(job, /runs-on: ubuntu-latest/);
   assert.match(job, /npm ci --ignore-scripts/);
   assert.match(
     job,

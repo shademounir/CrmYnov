@@ -168,7 +168,9 @@ jobs:
   playwright:
     name: playwright
     needs: trusted-source
-    runs-on: ubuntu-latest
+    # Playwright 1.55.1 supports Ubuntu 24.04, while GitHub's ubuntu-latest
+    # moved to 26.04 where the locked Chromium runtime is explicitly refused.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out reviewed code
