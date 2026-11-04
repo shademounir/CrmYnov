@@ -29,11 +29,11 @@ const record=driver=>({schemaVersion:3,kind:'GENERAL_OPERATIONAL_PROSPECTIVE_PRE
 
 test('V5 raw catalogues preserve V4 and bind exact protected PR282 bytes',()=>{
   assert.equal(sha(raw),'3c07c113c46afdd4f7df2e6d369a339887fd2815dc73c541f248a09ea6a4f331');
-  assert.equal(sha(imageRaw),'529cc79addddff1eed389488b2f240d7de5792d5eaede9bc6d55d9c4d8509f98');
+  assert.equal(sha(imageRaw),'1b03a1d77f8587b432859f66ea744f4b3e07911aceb6ac4c74d0a314ad6f5e96');
   assert.equal(sha(v4Raw),'77eab75994182c4b08f90288971c34bf69a34b4b828e5a78526f7e2463d0b09b');
   assert.equal(sha(v4ImageRaw),'541f77f786e2ed893cab402dca946212f5b0b4830346b3c8e8b72e07b52a42c7');
   assert(raw.subarray(0,65280).equals(v4Raw.subarray(0,65280)));assert.deepEqual(readonly.entries.slice(0,7),v4.entries.slice(0,7));assert.deepEqual(images.entries.slice(0,2),v4Images.entries);
-  assert.equal(readonly.entries.length,8);assert.equal(images.entries.length,3);validateHistoricalReadOnlyEntriesV3(readonly);
+  assert.equal(readonly.entries.length,8);assert.equal(images.entries.length,4);validateHistoricalReadOnlyEntriesV3(readonly);
   for(const driver of [post.driver,descriptor.driver,inventory.driver]){
     const {files,...actualIdentity}=driver;assert.deepEqual(actualIdentity,identity);assert.equal(files.length,84);assert.deepEqual(files.map(row=>row.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V4);
     for(const row of files)assert.equal(sha(read(row.path)),row.sha256,row.path);
