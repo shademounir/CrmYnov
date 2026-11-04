@@ -12,11 +12,6 @@ import {validateImageCatalogueReviewV2,resolveImageCatalogueReviewV2} from './ca
 const REPO='shademounir/CrmYnov',API='/repos/'+REPO+'/',CATALOG='docs/governance/runtime-image-only-objectives-v1.json',H=/^[a-f0-9]{64}$/u,S=/^[a-f0-9]{40}$/u;
 const actions=new Set(['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION']);
 const byteHash=bytes=>createHash('sha256').update(bytes).digest('hex');
-export function buildImageInventoryMarkerV2({objectiveId,entry,source,grantDigest:grantSha,humanAuthorityReceiptSha256,jiraBytes,expiresAt}){
-  assert.equal(typeof objectiveId,'string');assert.equal(typeof entry?.id,'string');assert.equal(entry.id,objectiveId);assert(source&&typeof source.commit==='string');
-  assert.equal(typeof grantSha,'string');assert.equal(typeof humanAuthorityReceiptSha256,'string');assert(Buffer.isBuffer(jiraBytes)||jiraBytes instanceof Uint8Array);assert.equal(typeof expiresAt,'string');
-  return {schemaVersion:2,executor:'Codex',scope:'READ_ONLY_INVENTORY',objectiveId,authorityRecordSha256:digest(entry),driverCommit:source.commit,grantDigest:grantSha,humanAuthorityReceiptSha256,resourceBindingSha256:digest(entry.resourceBindings),productionRuntimeMutation:false,productionBusinessMutation:false,runAuthorized:false,actions:['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION'],jiraEvidenceVersion:1,jiraObservationSha256:byteHash(jiraBytes),expiresAt};
-}
 export function validateImageInventoryObjective(entry,{objectiveId,source,action,now}){
  assert.equal(entry.schemaVersion,2);assert.equal(entry.kind,'RC48_NATIVE_INVENTORY_OBJECTIVE_V2');assert.equal(entry.id,objectiveId);assert.match(entry.id,/^rc48-image-only-inventory-[a-z0-9-]{8,64}$/u);
  assert.equal(entry.status,'approved');assert.equal(entry.scope,'READ_ONLY_INVENTORY');assert.equal(entry.preparationMode,'READ_ONLY_INVENTORY');assert.equal(entry.ticket,'CRMY-63');
