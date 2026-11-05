@@ -15,6 +15,8 @@ test("Sonar test conventions include helpers without reclassifying API productio
   assert.ok(properties["sonar.tests"].split(",").includes("apps"));
   assert.ok(properties["sonar.sources"].split(",").includes("apps"));
   assert.ok(patterns.includes("apps/**/test/**/*.ts"));
+  assert.ok(isTest("scripts/ci/runtime-image-only/inventory-authority-v2.test.mjs"));
+  assert.ok(!isTest("scripts/ci/runtime-image-only/inventory-marker-builder-v2.mjs"));
   for (const directory of ["apps/api/test", "apps/web/test", "apps/api/src"]) {
     const files = await readdir(new URL(`${directory}/`, root), { recursive: true });
     for (const file of files.filter((path) => path.endsWith(".ts"))) {
