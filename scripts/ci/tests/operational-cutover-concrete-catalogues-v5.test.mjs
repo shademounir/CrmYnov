@@ -14,8 +14,9 @@ import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operation
 const root=new URL('../../../',import.meta.url);
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const read=relative=>fs.readFileSync(new URL(relative,root));
-const roPath='docs/governance/readonly-probe-objectives-v1.json',imagePath='docs/governance/runtime-image-only-objectives-v1.json';
-const raw=read(roPath),imageRaw=read(imagePath),readonly=JSON.parse(raw),images=JSON.parse(imageRaw);
+const roPath='docs/governance/readonly-probe-objectives-v1.json';
+// Preserve the exact protected V5 catalogue bytes while later objectives append.
+const raw=read(roPath),imageRaw=read('scripts/ci/runtime-image-only/fixtures/pre-v6-image.json'),readonly=JSON.parse(raw),images=JSON.parse(imageRaw);
 const v4Raw=read('scripts/ci/runtime-image-only/fixtures/pre-v5-readonly.json'),v4ImageRaw=read('scripts/ci/runtime-image-only/fixtures/pre-v5-image.json'),v4=JSON.parse(v4Raw),v4Images=JSON.parse(v4ImageRaw);
 const post=readonly.entries[7],descriptor=readonly.operationalPreAuthoritiesV3[0],inventory=images.entries[2],v4Inventory=images.entries[1];
 const window={validFrom:'2026-11-02T12:32:37.722Z',expiresAt:'2026-11-03T12:32:37.722Z'};
