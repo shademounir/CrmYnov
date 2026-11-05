@@ -25,3 +25,21 @@ test('canonical inventory marker builder refuses an objective/source mismatch',(
   input.objectiveId='different-objective';
   assert.throws(()=>buildImageInventoryMarkerV2(input),{name:'AssertionError'});
 });
+
+for (const [name,mutate] of [
+  ['missing objective',input=>{input.objectiveId=undefined;}],
+  ['missing entry',input=>{input.entry=undefined;}],
+  ['non-string entry id',input=>{input.entry.id=42;}],
+  ['missing source',input=>{input.source=undefined;}],
+  ['non-string source commit',input=>{input.source.commit=42;}],
+  ['non-string grant digest',input=>{input.grantDigest=42;}],
+  ['non-string human authority hash',input=>{input.humanAuthorityReceiptSha256=42;}],
+  ['non-byte Jira evidence',input=>{input.jiraBytes='not bytes';}],
+  ['non-string expiry',input=>{input.expiresAt=42;}],
+]) {
+  test(`canonical inventory marker builder refuses ${name}`,()=>{
+    const input=validInput();
+    mutate(input);
+    assert.throws(()=>buildImageInventoryMarkerV2(input),{name:'AssertionError'});
+  });
+}
