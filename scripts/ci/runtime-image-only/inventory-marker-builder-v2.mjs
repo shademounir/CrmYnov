@@ -10,6 +10,9 @@ export function buildImageInventoryMarkerV2({objectiveId,entry,source,grantDiges
   assert.equal(typeof entry?.id,'string');
   assert.equal(entry.id,objectiveId);
   assert(source&&typeof source.commit==='string');
+  assert.equal(source.commit,entry.driver?.mergeCommit,'marker source must be the protected inventory driver');
+  assert.equal(source.tree,entry.driver.tree,'marker source tree must match the protected inventory driver');
+  assert.deepEqual(source.files,entry.driver.files,'marker source files must match the protected inventory driver');
   assert.equal(typeof grantDigest,'string');
   assert.equal(typeof humanAuthorityReceiptSha256,'string');
   assert(Buffer.isBuffer(jiraBytes)||jiraBytes instanceof Uint8Array);

@@ -28,6 +28,11 @@ void test('canonical inventory marker builder emits the complete V2 contract and
   const readback=validateImageInventoryMarker([comment],{entry:f.entry,source:f.localSource,jiraBytes:f.jiraBytes,grant:f.grant,actor:'shademounir',action:'READ_METADATA',now:f.now});
   assert.equal(readback.commentId,102);
 });
+test('canonical inventory marker builder refuses a post-merge checkout substituted for protected PR282 driver',()=>{
+  const f=fixture();
+  const input={objectiveId:f.entry.id,entry:f.entry,source:{...f.localSource,commit:'d73cc46ebed83814ee83c198e6e26578a85ed0b6'},grantDigest:grantDigest(f.grant),humanAuthorityReceiptSha256:OPERATIONAL_HUMAN_SHA256,jiraBytes:f.jiraBytes,expiresAt:new Date(f.now+240000).toISOString()};
+  assert.throws(()=>buildImageInventoryMarkerV2(input),/protected inventory driver/);
+});
 for(const field of ['schemaVersion','executor','scope','objectiveId','authorityRecordSha256','driverCommit','grantDigest','humanAuthorityReceiptSha256','resourceBindingSha256','productionRuntimeMutation','productionBusinessMutation','runAuthorized','actions','jiraEvidenceVersion','jiraObservationSha256','expiresAt']){
   void test('canonical inventory marker refuses missing '+field,()=>{
     const f=fixture();
