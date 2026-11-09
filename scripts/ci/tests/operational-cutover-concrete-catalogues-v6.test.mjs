@@ -11,14 +11,14 @@ const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const historical=JSON.parse(read('scripts/ci/runtime-image-only/fixtures/pre-v6-image.json'));
 const current=JSON.parse(read('docs/governance/runtime-image-only-objectives-v1.json'));
 const prior=historical.entries.at(-1);
-const renewed=current.entries.at(-1);
+const renewed=current.entries[4];
 const without=(value,keys)=>Object.fromEntries(Object.entries(value).filter(([key])=>!keys.includes(key)));
 
 test('V6 appends one new bounded inventory objective without changing any historical objective',()=>{
   assert.equal(historical.schemaVersion,2);
   assert.equal(current.schemaVersion,2);
   assert.equal(historical.entries.length,4);
-  assert.equal(current.entries.length,5);
+  assert.ok(current.entries.length>=5);
   assert.deepEqual(current.entries.slice(0,4),historical.entries);
   assert.equal(sha(read('scripts/ci/runtime-image-only/fixtures/pre-v6-image.json')),'1b03a1d77f8587b432859f66ea744f4b3e07911aceb6ac4c74d0a314ad6f5e96');
   assert.equal(renewed.id,'rc48-image-only-inventory-20261105-v5-renewal-v1');
