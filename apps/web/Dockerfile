@@ -21,8 +21,10 @@ FROM debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       libssl3t64=3.5.7-1~deb13u3 openssl-provider-legacy=3.5.7-1~deb13u3 \
+      zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
     && dpkg-query -s libssl3t64 > /libssl3t64.status \
-    && dpkg-query -s openssl-provider-legacy > /openssl-provider-legacy.status
+    && dpkg-query -s openssl-provider-legacy > /openssl-provider-legacy.status \
+    && dpkg-query -s zlib1g > /zlib1g.status
 
 FROM gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5ef534d3db0ac0c43bee379af4ae49cfbfc0ef38a46c94c52d87c68f32f34d8a AS runtime
 ENV NODE_ENV=production
@@ -31,9 +33,11 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 WORKDIR /workspace
 COPY --from=patched-openssl /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/
+COPY --from=patched-openssl /usr/lib/x86_64-linux-gnu/libz.so.1.3.1 /usr/lib/x86_64-linux-gnu/libz.so.1.3.1
 COPY --from=patched-openssl /usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so /usr/lib/x86_64-linux-gnu/ossl-modules/legacy.so
 COPY --from=patched-openssl /libssl3t64.status /var/lib/dpkg/status.d/libssl3t64
 COPY --from=patched-openssl /openssl-provider-legacy.status /var/lib/dpkg/status.d/openssl-provider-legacy
+COPY --from=patched-openssl /zlib1g.status /var/lib/dpkg/status.d/zlib1g
 COPY --from=build --chown=65532:65532 /workspace/apps/web/.next/standalone ./
 COPY --from=build --chown=65532:65532 /workspace/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build --chown=65532:65532 /workspace/apps/web/public ./apps/web/public
