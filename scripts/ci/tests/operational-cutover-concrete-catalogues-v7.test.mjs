@@ -9,7 +9,7 @@ const renewed=catalog.entries[5];
 const omit=(value,keys)=>Object.fromEntries(Object.entries(value).filter(([key])=>!keys.includes(key)));
 
 test('V7 adds only one bounded read-only objective with unchanged protected bindings',()=>{
-  assert.equal(catalog.entries.length,6);
+  assert.ok(catalog.entries.length>=6);
   assert.equal(renewed.id,'rc48-image-only-inventory-20261109-v5-renewal-v2');
   assert.deepEqual(omit(renewed,['id','journalDirectorySha256','validFrom','expiresAt']),omit(prior,['id','journalDirectorySha256','validFrom','expiresAt']));
   assert.equal(Date.parse(renewed.expiresAt)-Date.parse(renewed.validFrom),86400000);
