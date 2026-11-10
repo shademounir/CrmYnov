@@ -2,12 +2,22 @@
 // credentials, SQL, Docker, file receipts, claim or mutation invocation.
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
 import path from 'node:path';
-import {parseImageInventoryArguments,validateImageInventoryDirectoryState,validateImageInventoryPublicProjection,validateImageInventoryInputs,simulateImageInventoryV2,runImageInventoryV2} from './operational-cli-v2.mjs';
+import {parseImageInventoryArguments,parsePostMetadataArgumentsV1,validateImageInventoryDirectoryState,validateImageInventoryPublicProjection,validateImageInventoryInputs,simulateImageInventoryV2,runImageInventoryV2} from './operational-cli-v2.mjs';
 import {parseImageOnlyArguments,runImageOnlyOperationalDriver} from './cli.mjs';
 import {IMAGE_OPERATIONAL_RESOURCES_V2,OPERATIONAL_HUMAN_SHA256} from './late-binding-v2.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
 const NOW=Date.parse('2026-10-30T14:00:00.000Z'),H='a'.repeat(64),SECRET='SYNTHETIC_PRIVATE_VALUE_123456789';
 const hash=v=>createHash('sha256').update(v).digest('hex');
+test('POST exact GET entry rejects missing/relative/duplicate dossier and never falls through to native',async()=>{
+  const root=path.resolve('synthetic');
+  const args=['post-metadata-v1','--objective-id','rc48-image-only-inventory-post-metadata-synthetic','--inventory-dossier',path.join(root,'dossier.json'),'--jira-evidence',path.join(root,'jira.json'),'--session-binding',path.join(root,'binding.json'),'--journal-dir',path.join(root,'journal'),'--output-dir',path.join(root,'output'),'--post-dossier',path.join(root,'post.json')];
+  assert.equal(parsePostMetadataArgumentsV1(args)['--post-dossier'],path.join(root,'post.json'));
+  for(const bad of [args.slice(0,-2),[...args.slice(0,-1),'relative.json'],[...args,'--post-dossier',path.join(root,'post.json')]]){
+    assert.throws(()=>parsePostMetadataArgumentsV1(bad));
+    const refused=await runImageOnlyOperationalDriver(bad);
+    assert.equal(refused.stage,'INPUTS');assert.equal(refused.transportEntered,false);assert.equal(refused.canRetry,false);
+  }
+});
 function fixture(){
   const objectiveId='rc48-image-only-inventory-synthetic-0001',journalDirectory=path.resolve('synthetic','n02-journal'),source={commit:'b'.repeat(40),tree:'c'.repeat(40),clean:true,files:[{path:'scripts/ci/runtime-image-only/operational-cli-v2.mjs',sha256:H}]};
   const binding={sessionId:'local:12345678-1234-1234-1234-123456789abc',authorityRecordSha256:H,resourceBindingSha256:digest(IMAGE_OPERATIONAL_RESOURCES_V2),scope:'READ_ONLY_INVENTORY',windowStart:new Date(NOW-1000).toISOString(),windowEnd:new Date(NOW+899000).toISOString(),sourceCommit:source.commit,project:'crmynov-prod-n7x4q2',region:'europe-west1'};

@@ -10,9 +10,10 @@ import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V4} from '../runtime-image-only/local-so
 import {OPERATIONAL_HUMAN_SHA256} from '../runtime-image-only/late-binding-v2.mjs';
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operational-v2.mjs';
+import {readPr282ProtectedBytes} from './pr282-protected-preimages.mjs';
 const root=new URL('../../../',import.meta.url);
 const read=p=>{
- const actual=fs.readFileSync(new URL(p,root));
+ const actual=readPr282ProtectedBytes(p);
  if(p!=='scripts/ci/runtime-image-only/operational-transport-v2.mjs'){return actual;}
  const raw=fs.readFileSync(new URL('scripts/ci/runtime-image-only/fixtures/pre-http-diagnostic-transport.json',root));
  assert.equal(sha(raw),'7cf36c27f939528e3c5e476ecebe384765fef5e51cfee236101b75ff9f017f2b');

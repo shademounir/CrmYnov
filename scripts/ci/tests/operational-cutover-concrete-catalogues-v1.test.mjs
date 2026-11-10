@@ -15,6 +15,7 @@ import {verifySource} from '../runtime-image-only/protected-gates.mjs';
 import {OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from '../runtime-image-only/late-binding-v2.mjs';
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operational-v2.mjs';
+import {readPr282ProtectedBytes} from './pr282-protected-preimages.mjs';
 
 const root=new URL('../../../',import.meta.url);
 const readonlyPath='docs/governance/readonly-probe-objectives-v1.json';
@@ -23,7 +24,7 @@ const fixturePath='scripts/ci/pool-reconciliation/tests/fixtures/readonly-probe-
 // Exact historical D6 catalogue preimages, not current V4 source admission.
 // The current catalogues and their additive relation are tested in the V4 suite.
 const readBytes=relative=>{
- const actual=fs.readFileSync(new URL(relative,root));
+ const actual=readPr282ProtectedBytes(relative);
  // Exact protected PR280 bytes precede the additive HTTP diagnostic change.
  // Historical D6 inverses must still receive their original V4 preimage.
  if(relative==='scripts/ci/runtime-image-only/operational-transport-v2.mjs'){

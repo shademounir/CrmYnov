@@ -45,3 +45,9 @@ export const IMAGE_OPERATIONAL_DRIVER_INPUTS_V4=Object.freeze([...new Set([
 export function readImageOperationalSourceV4(){
  const legacy=readImageLocalSource();const files=IMAGE_OPERATIONAL_DRIVER_INPUTS_V4.map(relative=>({path:relative,sha256:createHash('sha256').update(readPoolPrivateFile(path.join(root,relative))).digest('hex')}));return{...legacy,files};
 }
+// V4 at its original protected SHA is still the source for forward/cutover.
+export function readPostMetadataSourceV1(){
+ const previous=readImageOperationalSourceV4(),relative='scripts/ci/runtime-image-only/post-metadata-contract-v1.mjs';
+ const files=[...previous.files,{path:relative,sha256:createHash('sha256').update(readPoolPrivateFile(path.join(root,relative))).digest('hex')}].sort((a,b)=>a.path.localeCompare(b.path,'en'));
+ return {...previous,files};
+}

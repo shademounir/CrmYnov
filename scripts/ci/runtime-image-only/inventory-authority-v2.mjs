@@ -9,6 +9,7 @@ import {GITHUB_CODE_REVIEW_POLICY_PATH,validateProtectedCodeReviewPolicy} from '
 import {imageJournalDigest as digest} from './journal.mjs';
 import {OPERATIONAL_HUMAN_SHA256,validateImageResourcesV2} from './late-binding-v2.mjs';
 import {validateImageCatalogueReviewV2,resolveImageCatalogueReviewV2} from './catalogue-origin-v2.mjs';
+import {validatePostMetadataBindingV1} from './post-metadata-contract-v1.mjs';
 const REPO='shademounir/CrmYnov',API='/repos/'+REPO+'/',CATALOG='docs/governance/runtime-image-only-objectives-v1.json',H=/^[a-f0-9]{64}$/u,S=/^[a-f0-9]{40}$/u;
 const actions=new Set(['READ_METADATA','TEST_PERMISSIONS','OBSERVE_OPERATION']);
 const byteHash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -18,6 +19,7 @@ export function validateImageInventoryObjective(entry,{objectiveId,source,action
  assert.equal(entry.project,'crmynov-prod-n7x4q2');assert.equal(entry.region,'europe-west1');assert.equal(entry.googleAccount,'casablancaynovcampus@gmail.com');
  assert.equal(entry.businessMutation,false);assert.equal(entry.runtimeImageMutation,false);assert.equal(entry.humanAuthorityReceiptSha256,OPERATIONAL_HUMAN_SHA256);
  assert.deepEqual([...entry.actions].toSorted((a,b)=>a.localeCompare(b,'en')),[...actions].toSorted((a,b)=>a.localeCompare(b,'en')));assert(actions.has(action));validateImageResourcesV2(entry.resourceBindings);
+ if(Object.hasOwn(entry,'postMetadata')){validatePostMetadataBindingV1(entry.postMetadata);assert.equal(action,'READ_METADATA','POST_METADATA_ONLY');}
  assert.equal(entry.planSha256,undefined,'INVENTORY_MUST_NOT_FABRICATE_FUTURE_PLAN');assert.equal(entry.preparationReceiptSha256,undefined);assert(H.test(entry.journalDirectorySha256));
  assert(source.clean&&source.commit===entry.driver.mergeCommit&&source.tree===entry.driver.tree);assert.deepEqual(source.files,entry.driver.files);validateImageCatalogueReviewV2(entry.objectiveReview);
  assert(Number.isSafeInteger(now)&&Date.parse(entry.validFrom)<=now&&now<Date.parse(entry.expiresAt));return true;
@@ -29,6 +31,7 @@ export function validateImageInventoryMarker(comments,{entry,source,jiraBytes,gr
  assert.equal(v.schemaVersion,2);assert.equal(v.executor,'Codex');assert.equal(v.objectiveId,entry.id);assert.equal(v.scope,'READ_ONLY_INVENTORY');
  for(const[k,value]of Object.entries({authorityRecordSha256:digest(entry),driverCommit:source.commit,grantDigest:grantDigest(grant),humanAuthorityReceiptSha256:OPERATIONAL_HUMAN_SHA256,resourceBindingSha256:digest(entry.resourceBindings)})){assert.equal(v[k],value);}
  assert.equal(v.productionRuntimeMutation,false);assert.equal(v.productionBusinessMutation,false);assert.equal(v.runAuthorized,false);assert(Array.isArray(v.actions)&&v.actions.includes(action)&&v.actions.every(a=>actions.has(a)));
+ if(Object.hasOwn(entry,'postMetadata')){validatePostMetadataBindingV1(entry.postMetadata);assert.deepEqual(v.actions,['READ_METADATA'],'POST_MARKER_MUST_AUTHORIZE_ONLY_GET');}
  assert.equal(v.jiraEvidenceVersion,1);const jira=validateNativeJiraReadObservation(jiraBytes,{expectedSha256:v.jiraObservationSha256,actor,grantSha256:grantDigest(grant),now});
  const issued=Date.parse(comment.updated_at??comment.created_at),expires=Date.parse(v.expiresAt);assert(issued<=now&&now-issued<600000&&expires>now&&expires-issued<=600000);
  return{commentId:comment.id,markerSha256:byteHash(Buffer.from(comment.body,'utf8')),markerObservedUpdatedAt:comment.updated_at??comment.created_at,jira,expiresAt:Math.min(expires,Date.parse(entry.expiresAt),Date.parse(jira.observedAt)+600000)};

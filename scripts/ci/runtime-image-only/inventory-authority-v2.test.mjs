@@ -5,6 +5,7 @@ import {scopeDigest,grantDigest} from '../../pr-policy/delegation.mjs';
 import {GITHUB_CODE_REVIEW_POLICY_PATH} from '../../pr-policy/github-code-review.mjs';
 import {authorizeImageInventory,validateImageInventoryMarker} from './inventory-authority-v2.mjs';
 import {buildImageInventoryMarkerV2} from './inventory-marker-builder-v2.mjs';
+import {POST_METADATA_V1} from './post-metadata-contract-v1.mjs';
 import {OPERATIONAL_HUMAN_SHA256,IMAGE_OPERATIONAL_RESOURCES_V2} from './late-binding-v2.mjs';
 import {imageJournalDigest as digest} from './journal.mjs';
 import {NATIVE_JIRA_BINDING} from '../pool-reconciliation/general-prospective-pre-authority-v1.mjs';
@@ -32,6 +33,15 @@ test('canonical inventory marker builder refuses a post-merge checkout substitut
   const f=fixture();
   const input={objectiveId:f.entry.id,entry:f.entry,source:{...f.localSource,commit:'d73cc46ebed83814ee83c198e6e26578a85ed0b6'},grantDigest:grantDigest(f.grant),humanAuthorityReceiptSha256:OPERATIONAL_HUMAN_SHA256,jiraBytes:f.jiraBytes,expiresAt:new Date(f.now+240000).toISOString()};
   assert.throws(()=>buildImageInventoryMarkerV2(input),/protected inventory driver/);
+});
+test('protected POST metadata objective accepts only the canonical metadata-only marker',async()=>{
+  const f=fixture();f.entry.postMetadata={...POST_METADATA_V1};f.refresh();
+  await assert.rejects(run(f),/POST_MARKER_MUST_AUTHORIZE_ONLY_GET/u);
+  const marker=buildImageInventoryMarkerV2({objectiveId:f.entry.id,entry:f.entry,source:f.localSource,grantDigest:grantDigest(f.grant),humanAuthorityReceiptSha256:OPERATIONAL_HUMAN_SHA256,jiraBytes:f.jiraBytes,expiresAt:new Date(f.now+240000).toISOString()});
+  assert.deepEqual(marker.actions,['READ_METADATA']);assert.equal(marker.runAuthorized,false);
+  f.responses.get(f.base+'issues/302/comments').find(c=>c.id===102).body='<!-- codex-runtime-inventory-authorization:v2\n'+JSON.stringify(marker)+'\n-->';
+  assert.equal((await run(f)).entry.postMetadata.uid,POST_METADATA_V1.uid);
+  await assert.rejects(authorizeImageInventory({github:f.github,objectiveId:f.entry.id,localSource:f.localSource,jiraBytes:f.jiraBytes,clock:()=>f.now,action:'TEST_PERMISSIONS'}),/POST_METADATA_ONLY/u);
 });
 for(const field of ['schemaVersion','executor','scope','objectiveId','authorityRecordSha256','driverCommit','grantDigest','humanAuthorityReceiptSha256','resourceBindingSha256','productionRuntimeMutation','productionBusinessMutation','runAuthorized','actions','jiraEvidenceVersion','jiraObservationSha256','expiresAt']){
   void test('canonical inventory marker refuses missing '+field,()=>{

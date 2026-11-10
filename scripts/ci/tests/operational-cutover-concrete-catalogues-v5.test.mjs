@@ -10,6 +10,7 @@ import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V4} from '../runtime-image-only/local-so
 import {OPERATIONAL_HUMAN_SHA256} from '../runtime-image-only/late-binding-v2.mjs';
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {validateImagePostCatalogueV2} from '../runtime-image-only/post-operational-v2.mjs';
+import {readPr282ProtectedBytes} from './pr282-protected-preimages.mjs';
 
 const root=new URL('../../../',import.meta.url);
 const sha=value=>createHash('sha256').update(value).digest('hex');
@@ -37,7 +38,7 @@ test('V5 raw catalogues preserve V4 and bind exact protected PR282 bytes',()=>{
   assert.equal(readonly.entries.length,8);assert.equal(images.entries.length,4);validateHistoricalReadOnlyEntriesV3(readonly);
   for(const driver of [post.driver,descriptor.driver,inventory.driver]){
     const {files,...actualIdentity}=driver;assert.deepEqual(actualIdentity,identity);assert.equal(files.length,84);assert.deepEqual(files.map(row=>row.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V4);
-    for(const row of files)assert.equal(sha(read(row.path)),row.sha256,row.path);
+    for(const row of files)assert.equal(sha(readPr282ProtectedBytes(row.path)),row.sha256,row.path);
   }
   assert.equal(inventory.driver.files.find(row=>row.path==='scripts/ci/runtime-image-only/operational-transport-v2.mjs').sha256,'53b70afca2b57e8952c26d03d8897c744ff94ad4fd49c88da73ef650124526e4');
 });
