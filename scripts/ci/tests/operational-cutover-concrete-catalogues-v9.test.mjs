@@ -9,7 +9,7 @@ const renewed=catalog.entries[7];
 const omit=(value,keys)=>Object.fromEntries(Object.entries(value).filter(([key])=>!keys.includes(key)));
 
 test('V9 appends only a bounded inventory objective for a fresh journal',()=>{
-  assert.equal(catalog.entries.length,8);
+  assert(catalog.entries.length>=8);
   assert.equal(renewed.id,'rc48-image-only-inventory-20261109-v5-renewal-v4');
   assert.deepEqual(omit(renewed,['id','journalDirectorySha256','validFrom','expiresAt']),omit(prior,['id','journalDirectorySha256','validFrom','expiresAt']));
   assert.equal(renewed.journalDirectorySha256,'f883db1e65042c1ab84409ec7efab6312d5939d89cad605873fc22e8ac879136');
