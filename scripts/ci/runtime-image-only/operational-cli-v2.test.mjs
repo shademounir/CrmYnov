@@ -2,6 +2,8 @@
 // credentials, SQL, Docker, file receipts, claim or mutation invocation.
 import test from 'node:test';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import {parseImageInventoryArguments,parsePostMetadataArgumentsV1,validateImageInventoryDirectoryState,validateImageInventoryPublicProjection,validateImageInventoryInputs,simulateImageInventoryV2,runImageInventoryV2} from './operational-cli-v2.mjs';
 import {parseImageOnlyArguments,runImageOnlyOperationalDriver} from './cli.mjs';
 import {IMAGE_OPERATIONAL_RESOURCES_V2,OPERATIONAL_HUMAN_SHA256} from './late-binding-v2.mjs';
@@ -17,6 +19,26 @@ test('POST exact GET entry rejects missing/relative/duplicate dossier and never 
     const refused=await runImageOnlyOperationalDriver(bad);
     assert.equal(refused.stage,'INPUTS');assert.equal(refused.transportEntered,false);assert.equal(refused.canRetry,false);
   }
+});
+test('POST metadata entry leaves a durable single-use refusal and never opens a second attempt',async t=>{
+  // The production entry itself deliberately requires this exact tool version.
+  if(process.versions.node!=='22.23.3'){t.skip('exact production Node required');return;}
+  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'crm-post-metadata-test-')));
+  const journal=path.join(root,'journal'),output=path.join(root,'output');
+  fs.mkdirSync(journal);fs.mkdirSync(output);
+  const dossier=path.join(root,'dossier.json'),binding=path.join(root,'binding.json');
+  fs.writeFileSync(dossier,'{}');fs.writeFileSync(binding,'{}');
+  t.after(()=>{
+    for(const file of [dossier,binding,path.join(output,'POST-METADATA-INTENT.json'),path.join(output,'POST-METADATA-STOP.json')]){if(fs.existsSync(file)){fs.unlinkSync(file);}}
+    for(const dir of [journal,output,root])fs.rmdirSync(dir);
+  });
+  const args=['post-metadata-v1','--objective-id','rc48-image-only-inventory-post-metadata-synthetic','--inventory-dossier',dossier,'--jira-evidence',path.join(root,'missing-jira.json'),'--session-binding',binding,'--journal-dir',journal,'--output-dir',output,'--post-dossier',path.join(root,'missing-post.json')];
+  const first=await runImageOnlyOperationalDriver(args);assert.equal(first.stage,'INPUTS');assert.equal(first.transportEntered,false);
+  const names=fs.readdirSync(output),before=names.map(n=>fs.readFileSync(path.join(output,n),'utf8'));
+  assert.deepEqual(names,['POST-METADATA-INTENT.json','POST-METADATA-STOP.json']);
+  const refused=await runImageOnlyOperationalDriver(args);assert.equal(refused.canRetry,false);assert.equal(refused.transportEntered,false);
+  assert.deepEqual(fs.readdirSync(output),names);assert.deepEqual(names.map(n=>fs.readFileSync(path.join(output,n),'utf8')),before);
+  assert.equal(fs.readdirSync(journal).length,0);
 });
 function fixture(){
   const objectiveId='rc48-image-only-inventory-synthetic-0001',journalDirectory=path.resolve('synthetic','n02-journal'),source={commit:'b'.repeat(40),tree:'c'.repeat(40),clean:true,files:[{path:'scripts/ci/runtime-image-only/operational-cli-v2.mjs',sha256:H}]};

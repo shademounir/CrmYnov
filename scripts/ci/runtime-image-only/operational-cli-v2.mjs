@@ -166,7 +166,7 @@ async function performInventory(steps){
 }
 function readJson(file,max=1048576){const bytes=readPoolPrivateFile(file,max);const value=JSON.parse(bytes);validateImageInventoryPublicProjection(value);return value;}
 function savePublic(dir,name,value){
-  try{validateImageInventoryPublicProjection(value);assert(['N02-STOP','N02-INVENTORY-native-FIN','POST-METADATA-STOP','POST-METADATA-AUTHORITY','POST-JOB-native-GET'].includes(name));const bytes=Buffer.from(JSON.stringify(value,null,2)+'\n'),file=path.join(dir,name+'.json'),fd=fs.openSync(file,'wx',0o600);try{let offset=0;while(offset<bytes.length){const count=fs.writeSync(fd,bytes,offset,bytes.length-offset);assert(count>0);offset+=count;}fs.fsyncSync(fd);}finally{fs.closeSync(fd);}return{path:file,sha256:byteHash(fs.readFileSync(file))};}catch{refuse('N02_PERSISTENCE_REFUSED');}
+  try{validateImageInventoryPublicProjection(value);assert(['N02-STOP','N02-INVENTORY-native-FIN','POST-METADATA-INTENT','POST-METADATA-STOP','POST-METADATA-AUTHORITY','POST-JOB-native-GET'].includes(name));const bytes=Buffer.from(JSON.stringify(value,null,2)+'\n'),file=path.join(dir,name+'.json'),fd=fs.openSync(file,'wx',0o600);try{let offset=0;while(offset<bytes.length){const count=fs.writeSync(fd,bytes,offset,bytes.length-offset);assert(count>0);offset+=count;}fs.fsyncSync(fd);}finally{fs.closeSync(fd);}return{path:file,sha256:byteHash(fs.readFileSync(file))};}catch{refuse('N02_PERSISTENCE_REFUSED');}
 }
 async function runImageInventorySourceCoreV4(args,sourceVersion){
   try{
@@ -201,7 +201,7 @@ export function parsePostMetadataArgumentsV1(args){
 // Same official SDK and journal as N02, but a closed single-method transport.
 // No capability here can invoke a job or even issue a second metadata GET.
 export async function runPostMetadataObservationV1(args){
-  let stage='INPUTS',output,budget,sdk,authority,attempted=false;
+  let stage='INPUTS',output,budget,sdk,authority,attempted=false,intent;
   const counts={runPosts:0,createPosts:0,sqlQueries:0,canRetry:false};
   try{
     assert.equal(process.versions.node,'22.23.3');assert(!process.env.NODE_OPTIONS&&!process.env.NODE_PATH);
@@ -209,6 +209,10 @@ export async function runPostMetadataObservationV1(args){
     const outputCandidate=localSource.imageExternalDirectory(options['--output-dir']);
     assert.notEqual(journalDirectory,outputCandidate);assert.equal(fs.readdirSync(outputCandidate).length,0);output=outputCandidate;
     assert.equal(fs.readdirSync(journalDirectory).length,0);
+    // The shared budget can reopen its own matching descriptor. A separate
+    // exclusive durable intent is required to exclude a concurrent process.
+    stage='SINGLE_USE_INTENT';intent=savePublic(output,'POST-METADATA-INTENT',{schemaVersion:1,kind:'SINGLE_USE_POST_METADATA_INTENT_V1',at:new Date().toISOString(),objectiveId:options['--objective-id'],...counts});
+    stage='INPUTS';
     const objectiveId=options['--objective-id'],dossier=readJson(options['--inventory-dossier']),binding=readJson(options['--session-binding']);
     const postDossier=readPostMetadataDossierV1(readPoolPrivateFile(options['--post-dossier']));
     const jiraBytes=readPoolPrivateFile(options['--jira-evidence'],65536);
@@ -227,14 +231,14 @@ export async function runPostMetadataObservationV1(args){
     stage='CLEANUP';sdk.close();sdk=undefined;budget.stop('POST_METADATA_FIN');budget=undefined;
     stage='REVALIDATION';const finalAuthority=await authorize();sameAuthority(authority,finalAuthority);current();
     stage='PERSISTENCE';
-    const provenance=savePublic(output,'POST-METADATA-AUTHORITY',{schemaVersion:1,kind:'PROTECTED_POST_METADATA_AUTHORITY_V1',source,binding,authority:{initial:authority.receipt,final:finalAuthority.receipt},exchange:result.exchange,...counts});
+    const provenance=savePublic(output,'POST-METADATA-AUTHORITY',{schemaVersion:1,kind:'PROTECTED_POST_METADATA_AUTHORITY_V1',source,binding,intent,authority:{initial:authority.receipt,final:finalAuthority.receipt},exchange:result.exchange,...counts});
     const fin=savePublic(output,'POST-JOB-native-GET',receipt);
     return {state:'FIN_POST_DIRECT_METADATA_ONLY',...fin,provenance,...counts};
   }catch{
     try{sdk?.close();}catch{/* Never replay after cleanup uncertainty. */}
     try{budget?.stop('POST_METADATA_STOP');}catch{/* Existing journal remains the authority boundary. */}
     const stop={schemaVersion:1,kind:'EXPURGATED_POST_METADATA_STOP_V1',state:'POST_METADATA_STOPPED',stage,transportEntered:attempted,...counts};
-    if(output){try{return {...stop,...savePublic(output,'POST-METADATA-STOP',stop)};}catch{/* Existing evidence remains untouched. */}}
+    if(intent){try{return {...stop,...savePublic(output,'POST-METADATA-STOP',stop)};}catch{/* Existing evidence remains untouched. */}}
     return stop;
   }
 }
