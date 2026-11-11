@@ -168,9 +168,11 @@ jobs:
   playwright:
     name: playwright
     needs: trusted-source
-    # Playwright 1.55.1 supports Ubuntu 24.04, while GitHub's ubuntu-latest
-    # moved to 26.04 where the locked Chromium runtime is explicitly refused.
+    # Official 1.55.1 Noble image includes Chromium and OS dependencies.
+    # Keep npm ci for the project's separately locked Playwright package.
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.55.1-noble@sha256:d8e0bdf35da90942fc8f97a65fa7f1969200ccd916ec0fd78780d80d9b81e07b
     timeout-minutes: 15
     steps:
       - name: Check out reviewed code
@@ -184,8 +186,6 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
-      - name: Install the locked Playwright Chromium runtime
-        run: npm exec --workspace=@crm/web -- playwright install --with-deps chromium
       - name: Run synthetic browser journeys
         run: npm run test:e2e:browser --workspace=@crm/web
       - name: Preserve synthetic telephony visual evidence
