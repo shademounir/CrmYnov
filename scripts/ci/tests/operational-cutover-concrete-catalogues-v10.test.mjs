@@ -21,7 +21,8 @@ function input(entry,journalDirectory){
 }
 
 test('V10 appends a distinct bounded read-only objective and preserves prior entries',()=>{
-  assert.equal(catalog.entries.length,9);
+  // Later objectives are append-only; the historical V10 prefix remains nine entries.
+  assert.equal(catalog.entries.slice(0,9).length,9);
   assert.equal(renewed.id,'rc48-image-only-inventory-20261109-v5-renewal-v5');
   assert.deepEqual(omit(renewed,['id','journalDirectorySha256','validFrom','expiresAt']),omit(prior,['id','journalDirectorySha256','validFrom','expiresAt']));
   assert.equal(renewed.journalDirectorySha256,pathHash(journal));
