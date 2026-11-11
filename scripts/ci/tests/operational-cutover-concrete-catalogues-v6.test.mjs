@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {validateImageInventoryObjective} from '../runtime-image-only/inventory-authority-v2.mjs';
 import {IMAGE_OPERATIONAL_DRIVER_INPUTS_V4} from '../runtime-image-only/local-source.mjs';
+import {readPr282ProtectedBytes} from './pr282-protected-preimages.mjs';
 
 const root=new URL('../../../',import.meta.url);
 const read=relative=>fs.readFileSync(new URL(relative,root));
@@ -43,7 +44,7 @@ test('V6 retains the exact 84-file PR282 driver closure and role-separated V5 bi
   assert.equal(renewed.adapterBinding.role,'V5_ADAPTER');
   assert.equal(driver.files.length,84);
   assert.deepEqual(driver.files.map(row=>row.path),IMAGE_OPERATIONAL_DRIVER_INPUTS_V4);
-  for(const row of driver.files)assert.equal(sha(read(row.path)),row.sha256,row.path);
+  for(const row of driver.files)assert.equal(sha(readPr282ProtectedBytes(row.path)),row.sha256,row.path);
   const source={commit:driver.mergeCommit,tree:driver.tree,clean:true,files:driver.files};
   const inside=Date.parse('2026-11-05T16:00:00.000Z');
   for(const action of renewed.actions){

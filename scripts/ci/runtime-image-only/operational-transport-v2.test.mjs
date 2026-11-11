@@ -10,6 +10,8 @@ import {imageJournalDigest as digest,createImageSessionBudget} from './journal.m
 import {IMAGE_OPERATIONAL_RESOURCES_V2} from './late-binding-v2.mjs';
 import {IMAGE_PROJECT_PERMISSIONS_V2,IMAGE_SERVICE_PERMISSIONS_V2,IMAGE_GENERAL_JOB_PERMISSIONS_V2} from './operational-permissions-v2.mjs';
 import {createImageOperationalTransport} from './transport.mjs';
+import {createPostMetadataTransportV1} from './operational-transport-v2.mjs';
+import {POST_METADATA_V1,POST_METADATA_URL_V1} from './post-metadata-contract-v1.mjs';
 const H='a'.repeat(64),SECRET='SYNTHETIC_PRIVATE_TOKEN';
 function jsonResponse(body,init={}){return new Response(body,{...init,headers:{'content-type':'application/json',...init.headers}});}
 function synthetic(t,{scope='READ_ONLY_INVENTORY',phase='BACKUP_READY',leaseMs=600000}={}){
@@ -41,6 +43,27 @@ test('READ_ONLY_INVENTORY requires no image plan and emits method-bound redacted
   assert.equal(f.calls.length,8);assert.equal(f.budget.inspect().requestsReserved,8);assert.equal(f.budget.inspect().pendingOrdinal,null);
   const rows=f.transport.observations();assert(rows.every(r=>r.status===200&&r.request.method==='GET'&&r.responseBytes>0&&r.ordinal>0));assert(!JSON.stringify(rows).includes(SECRET));assert(!JSON.stringify(rows).includes('authorization'));
   assert.equal(f.transport.run,undefined);assert.equal(f.transport.setIamPolicy,undefined);assert.equal(f.transport.loggingEntriesList,undefined);
+});
+await test('POST metadata port only exposes one exact GET and no mutation or retry',async t=>{
+  const f=synthetic(t);f.authority.entry.postMetadata={...POST_METADATA_V1};
+  const port=createPostMetadataTransportV1(f.args);assert.deepEqual(Object.keys(port),['get']);
+  f.respond(url=>Object.defineProperty(jsonResponse(JSON.stringify({uid:POST_METADATA_V1.uid})), 'url',{value:url}));
+  const {projection,exchange}=await port.get();
+  assert.equal(projection.uid,POST_METADATA_V1.uid);assert.equal(exchange.responseFinalUrl,POST_METADATA_URL_V1);assert.equal(exchange.responseRedirected,false);
+  assert.deepEqual(f.calls,[{url:POST_METADATA_URL_V1,method:'GET',body:null,redirect:'error'}]);
+  await assert.rejects(port.get(),/POST_METADATA_NO_RETRY/u);
+  assert.equal(f.calls.length,1);
+});
+await test('POST metadata scope refuses wrong bindings, legacy port use and a foreign response origin',async t=>{
+  const wrong=synthetic(t);wrong.authority.entry.postMetadata={...POST_METADATA_V1,uid:'foreign'};
+  await assert.rejects(createPostMetadataTransportV1(wrong.args).get());
+  assert.equal(wrong.calls.length,0);assert.equal(wrong.tokenCalls,0);
+  const legacy=synthetic(t);legacy.authority.entry.postMetadata={...POST_METADATA_V1};
+  await assert.rejects(legacy.transport.getService('api'));assert.equal(legacy.calls.length,0);
+  const redirect=synthetic(t);redirect.authority.entry.postMetadata={...POST_METADATA_V1};
+  redirect.respond(()=>Object.defineProperty(jsonResponse('{}'),'url',{value:'https://foreign.invalid/'}));
+  const port=createPostMetadataTransportV1(redirect.args);await assert.rejects(port.get());await assert.rejects(port.get(),/POST_METADATA_NO_RETRY/u);
+  assert.equal(redirect.calls.length,1);
 });
 test('native GET has a durable reservation already fsynced before token and fetch',async t=>{const f=synthetic(t);f.respond(()=>{assert.equal(f.budget.inspect().pendingOrdinal,1);return jsonResponse(JSON.stringify(f.f.b.services.api));});await f.transport.getService('api');assert.equal(f.budget.inspect().requestsReserved,1);assert.equal(f.budget.inspect().pendingOrdinal,null);});
 test('permission requests are exact service/job/project sets and project has no wildcard or IAM mutation',async t=>{

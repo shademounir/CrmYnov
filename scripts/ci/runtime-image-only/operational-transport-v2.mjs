@@ -7,6 +7,7 @@ import {PROJECT,LOCATION} from './plan.mjs';
 import {imagePlanScope,isImageRollback} from './plan-mode.mjs';
 import {IMAGE_PROJECT_PERMISSIONS_V2,IMAGE_SERVICE_PERMISSIONS_V2,IMAGE_GENERAL_JOB_PERMISSIONS_V2,IMAGE_PERMISSION_EVIDENCE_LIMITS_V2} from './operational-permissions-v2.mjs';
 import {IMAGE_OPERATIONAL_RESOURCES_V2} from './late-binding-v2.mjs';
+import {POST_METADATA_URL_V1,validatePostMetadataBindingV1} from './post-metadata-contract-v1.mjs';
 const REGION='europe-west1',ACCOUNT='casablancaynovcampus@gmail.com';
 const RUN='https://run.googleapis.com/v2/',SQL='https://sqladmin.googleapis.com/sql/v1beta4/',SCHEDULER='https://cloudscheduler.googleapis.com/v1/';
 const INSTANCE='crm-ynov-prod-pg17',SQL_RESOURCE='projects/'+PROJECT+'/instances/'+INSTANCE;
@@ -65,14 +66,22 @@ function opaque(v){assert.equal(typeof v,'string');assert.match(v,/^[A-Za-z0-9_-
 function page(v){assert.equal(typeof v,'string');assert(v.length<=8192&&!/[\u0000-\u001f\u007f]/u.test(v));return v;}
 function plainJson(v,depth=0){assert(depth<=64);if(v===null||typeof v==='boolean'||typeof v==='string'){return;}if(typeof v==='number'){assert(Number.isFinite(v));return;}assert(v&&typeof v==='object');if(Array.isArray(v)){for(const item of v){plainJson(item,depth+1);}return;}assert(Object.getPrototypeOf(v)===Object.prototype);for(const [key,d]of Object.entries(Object.getOwnPropertyDescriptors(v))){assert(key!=='__proto__'&&key!=='constructor'&&key!=='prototype'&&Object.hasOwn(d,'value'));plainJson(d.value,depth+1);}}
 function fail(code){throw new Error(code);}
-function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout},readerProfile){
+function validateOperationalPlan(binding,plan,readerProfile,inventory){
+  if(readerProfile){assert(API_READER_SCOPES_V1.includes(binding.scope));const copy=structuredClone(plan);readerProfile.validatePlan(copy);return copy;}
+  assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));
+  if(inventory){assert.equal(plan,undefined);return plan;}
+  const copy=structuredClone(plan);assert.equal(imagePlanScope(copy),binding.scope);
+  assert(isImageRollback(copy)?copy.patches.length>=1&&copy.patches.length<=2:copy.patches.length===2);
+  return copy;
+}
+function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout},readerProfile,postMetadataOnly=false){
   exact(binding,BINDING);binding=structuredClone(binding);assert.match(binding.sessionId,/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u);
   assert.equal(binding.project,PROJECT);assert.equal(binding.region,REGION);assert.match(binding.sourceCommit,/^[a-f0-9]{40}$/u);
   for(const k of ['authorityRecordSha256','resourceBindingSha256']){assert.match(binding[k],/^[a-f0-9]{64}$/u);}
   const windowStart=iso(binding.windowStart),windowEnd=iso(binding.windowEnd);assert(windowEnd>windowStart&&windowEnd-windowStart<=900000);
   const inventory=binding.scope==='READ_ONLY_INVENTORY';
-  if(readerProfile){assert(API_READER_SCOPES_V1.includes(binding.scope));plan=structuredClone(plan);readerProfile.validatePlan(plan);}
-  else{assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));if(inventory){assert.equal(plan,undefined);}else{plan=structuredClone(plan);assert.equal(imagePlanScope(plan),binding.scope);assert(isImageRollback(plan)?plan.patches.length>=1&&plan.patches.length<=2:plan.patches.length===2);}}
+  if(postMetadataOnly){assert(inventory&&!readerProfile);}
+  plan=validateOperationalPlan(binding,plan,readerProfile,inventory);
   const planSha256=plan?digest(plan):null;for(const fn of [accessToken,getAuthority,fetchImpl,clock,schedule,cancel]){assert.equal(typeof fn,'function');}
   for(const name of ['inspect','reserveRequest','recordResponse','stop']){assert.equal(typeof sessionBudget?.[name],'function');}
   assert.equal(sessionBudget.inspect().bindingSha256,digest(binding),'SESSION_BUDGET_BINDING_MISMATCH');
@@ -83,6 +92,8 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
     try{
       assert(!terminal);const n=now(),a=getAuthority();if(readerProfile){readerProfile.assertAuthority(a,action,n);assert(n>=windowStart&&n<windowEnd);return a;}assert.equal(a?.entry?.schemaVersion,2);assert.equal(a.receipt?.schemaVersion,2);
       assert.equal(a.entry.scope,binding.scope);assert.equal(a.entry.googleAccount,ACCOUNT);assert.equal(a.entry.project,PROJECT);assert.equal(a.entry.region,REGION);
+      if(postMetadataOnly){validatePostMetadataBindingV1(a.entry.postMetadata);assert.equal(action,'READ_METADATA');}
+      else{assert(!Object.hasOwn(a.entry,'postMetadata'),'POST_METADATA_AUTHORITY_CANNOT_USE_GENERAL_TRANSPORT');}
       assert.equal(a.entry.authorityRecordSha256,binding.authorityRecordSha256);assert.equal(a.receipt.authorityRecordSha256,binding.authorityRecordSha256);
       assert.equal(a.entry.resourceBindingSha256,binding.resourceBindingSha256);assert.equal(a.receipt.resourceBindingSha256,binding.resourceBindingSha256);assert.equal(digest(a.entry.resourceBindings),binding.resourceBindingSha256);
       assert.equal(a.receipt.driverCommit,binding.sourceCommit);assert.equal(a.entry.driver.mergeCommit,binding.sourceCommit);
@@ -129,12 +140,13 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
       const began=Number.isSafeInteger(requestStartedAt)?requestStartedAt:lastClock??windowStart;
       observations.push(Object.freeze({schemaVersion:2,kind:readerProfile?'EXPURGATED_API_READER_NATIVE_EXCHANGE_OBSERVATION_V1':'EXPURGATED_IMAGE_NATIVE_EXCHANGE_OBSERVATION_V2',sessionId:binding.sessionId,ordinal:ticket.ordinal,
         request:requestProjection,requestStartedAt:new Date(began).toISOString(),responseObservedAt:new Date(lastClock??began).toISOString(),
-        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,...(readerProfile?{responseFinalUrl,responseRedirected}:{}),...(refusalDiagnostic?{refusalDiagnostic}:{}),
+        status:responseStatus,responseBytes,responseSha256:responseDigest,responseProjectionNotRawPayload:true,outcome,...(readerProfile||postMetadataOnly?{responseFinalUrl,responseRedirected}:{}),...(refusalDiagnostic?{refusalDiagnostic}:{}),
         authorityRecordSha256:binding.authorityRecordSha256,resourceBindingSha256:binding.resourceBindingSha256}));
     }
     function recordFailedResponse(){if(ticket&&!recorded){if(readerProfile){recorded=true;}try{sessionBudget.recordResponse(ticket,{responseBytes});}catch{/* Durable pending/STOP still prevents any replay. */}}}
     try{
       assert(!terminal);assert(['GET','POST','PATCH'].includes(method));assert(method!=='GET'||requestBody===undefined);const a=authority(action);
+      if(postMetadataOnly){assert.equal(method,'GET');assert.equal(url,POST_METADATA_URL_V1);}
       const request={method,url,...(requestBody===undefined?{}:{body:requestBody})};plainJson(request);const requestSha256=digest(request);requestProjection={method,url,sha256:requestSha256,...(requestBody===undefined?{}:{bodySha256:digest(requestBody)})};
       ticket=sessionBudget.reserveRequest({method,resource:url,requestSha256});requestStartedAt=now();deadline=Math.min(ticket.deadlineAt,iso(a.receipt.expiresAt));assert(requestStartedAt<deadline);
       controller=new AbortController();
@@ -142,7 +154,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
         let token=await accessToken({signal:controller.signal});assert.equal(typeof token,'string');assert(token.length>0&&token.length<=8192&&!/\s/u.test(token));exchangeBoundary();let response;
         try{response=await fetchImpl(url,{method,redirect:'error',signal:controller.signal,headers:{authorization:'Bearer '+token,accept:'application/json',...(requestBody===undefined?{}:{'content-type':'application/json'})},...(requestBody===undefined?{}:{body:JSON.stringify(requestBody)})});}finally{token=undefined;}
         exchangeBoundary();assert(Number.isSafeInteger(response.status)&&response.status>=100&&response.status<=599);responseStatus=response.status;
-        if(readerProfile){if(response.url!==url){fail('IMAGE_OPERATIONAL_RESPONSE_HEADERS_REFUSED');}responseFinalUrl=url;responseRedirected=response.redirected===false?false:null;}
+        if(readerProfile||postMetadataOnly){if(response.url!==url){fail('IMAGE_OPERATIONAL_RESPONSE_HEADERS_REFUSED');}responseFinalUrl=url;responseRedirected=response.redirected===false?false:null;}
         if(response.redirected!==false||typeof response.headers?.get!=='function'||!/^application\/(?:[a-z0-9.+-]+\+)?json(?:\s*;|$)/iu.test(response.headers.get('content-type')??'')){fail('IMAGE_OPERATIONAL_RESPONSE_HEADERS_REFUSED');}
         const result=await body(response,exchangeBoundary,controller,n=>{responseBytes=n;});responseBytes=result.bytes;responseDigest=digest(result.value);
         // Reader accounting is one attempt, including an fsync-then-throw ambiguity.
@@ -185,6 +197,15 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
     for(const row of evidence.rows){const at=iso(row.observation.observedAt);assert(at<=n&&n-at<600000,'NATIVE_PERMISSION_OBSERVATION_EXPIRED');}return evidence;
   }
   if(readerProfile){return readerProfile.api({exchange,shaped,listPage,collection,permissions,permissionReads,authority,now,observations,stop});}
+  if(postMetadataOnly){
+    let used=false;
+    return Object.freeze({async get(){
+      assert(!used,'POST_METADATA_NO_RETRY');used=true;
+      const projection=await shaped(()=>exchange(POST_METADATA_URL_V1,'READ_METADATA'));
+      assert.equal(observations.length,1);
+      return {projection,exchange:structuredClone(observations[0])};
+    }});
+  }
   const api={
     async getService(kind){return shaped(async()=>{const name=service(kind),value=await exchange(RUN+name,'READ_METADATA');assert.equal(value.name,name);const expected=getAuthority().entry.resourceBindings.services.find(s=>s.name===name);assert.equal(value.uid,expected.uid);return value;});},
     async getRevision(kind,revision){return shaped(async()=>{const name=service(kind);assert.equal(typeof revision,'string');assert(revision.startsWith('crm-prod-'+kind+'-'));opaque(revision);const full=name+'/revisions/'+revision,value=await exchange(RUN+full,'READ_METADATA');assert.equal(value.name,full);return value;});},
@@ -215,6 +236,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
 // Closed additive reader entry. The legacy public entry always selects null.
 // No caller-supplied profile/URL/authority Boolean can enter the reader branch.
 export function createImageOperationalTransport(input){return imageOperationalTransportCoreV4(input,null);}
+export function createPostMetadataTransportV1(input){return imageOperationalTransportCoreV4(input,null,true);}
 export const API_READER_SCOPES_V1=Object.freeze(['RC48_API_SHEETS_READER_CONFIG_ONLY_V1','RC48_API_SHEETS_READER_CONFIG_ROLLBACK_V1']);
 export const API_READER_PROJECT_PERMISSIONS_V1=Object.freeze(['artifactregistry.repositories.downloadArtifacts','cloudscheduler.jobs.list','iam.serviceAccounts.actAs','run.jobs.list','run.operations.get','run.revisions.get','run.services.get','run.services.update']);
 export const API_READER_SERVICE_PERMISSIONS_V1=Object.freeze(['run.services.get','run.services.update']);
