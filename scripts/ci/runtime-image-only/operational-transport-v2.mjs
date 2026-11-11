@@ -66,6 +66,14 @@ function opaque(v){assert.equal(typeof v,'string');assert.match(v,/^[A-Za-z0-9_-
 function page(v){assert.equal(typeof v,'string');assert(v.length<=8192&&!/[\u0000-\u001f\u007f]/u.test(v));return v;}
 function plainJson(v,depth=0){assert(depth<=64);if(v===null||typeof v==='boolean'||typeof v==='string'){return;}if(typeof v==='number'){assert(Number.isFinite(v));return;}assert(v&&typeof v==='object');if(Array.isArray(v)){for(const item of v){plainJson(item,depth+1);}return;}assert(Object.getPrototypeOf(v)===Object.prototype);for(const [key,d]of Object.entries(Object.getOwnPropertyDescriptors(v))){assert(key!=='__proto__'&&key!=='constructor'&&key!=='prototype'&&Object.hasOwn(d,'value'));plainJson(d.value,depth+1);}}
 function fail(code){throw new Error(code);}
+function validateOperationalPlan(binding,plan,readerProfile,inventory){
+  if(readerProfile){assert(API_READER_SCOPES_V1.includes(binding.scope));const copy=structuredClone(plan);readerProfile.validatePlan(copy);return copy;}
+  assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));
+  if(inventory){assert.equal(plan,undefined);return plan;}
+  const copy=structuredClone(plan);assert.equal(imagePlanScope(copy),binding.scope);
+  assert(isImageRollback(copy)?copy.patches.length>=1&&copy.patches.length<=2:copy.patches.length===2);
+  return copy;
+}
 function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,sessionBudget,fetchImpl=fetch,clock=Date.now,schedule=setTimeout,cancel=clearTimeout},readerProfile,postMetadataOnly=false){
   exact(binding,BINDING);binding=structuredClone(binding);assert.match(binding.sessionId,/^local:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u);
   assert.equal(binding.project,PROJECT);assert.equal(binding.region,REGION);assert.match(binding.sourceCommit,/^[a-f0-9]{40}$/u);
@@ -73,8 +81,7 @@ function imageOperationalTransportCoreV4({binding,plan,accessToken,getAuthority,
   const windowStart=iso(binding.windowStart),windowEnd=iso(binding.windowEnd);assert(windowEnd>windowStart&&windowEnd-windowStart<=900000);
   const inventory=binding.scope==='READ_ONLY_INVENTORY';
   if(postMetadataOnly){assert(inventory&&!readerProfile);}
-  if(readerProfile){assert(API_READER_SCOPES_V1.includes(binding.scope));plan=structuredClone(plan);readerProfile.validatePlan(plan);}
-  else{assert(inventory||['RC48_SERVICE_IMAGE_ONLY_V1','RC48_SERVICE_IMAGE_ROLLBACK_V1'].includes(binding.scope));if(inventory){assert.equal(plan,undefined);}else{plan=structuredClone(plan);assert.equal(imagePlanScope(plan),binding.scope);assert(isImageRollback(plan)?plan.patches.length>=1&&plan.patches.length<=2:plan.patches.length===2);}}
+  plan=validateOperationalPlan(binding,plan,readerProfile,inventory);
   const planSha256=plan?digest(plan):null;for(const fn of [accessToken,getAuthority,fetchImpl,clock,schedule,cancel]){assert.equal(typeof fn,'function');}
   for(const name of ['inspect','reserveRequest','recordResponse','stop']){assert.equal(typeof sessionBudget?.[name],'function');}
   assert.equal(sessionBudget.inspect().bindingSha256,digest(binding),'SESSION_BUDGET_BINDING_MISMATCH');

@@ -10,17 +10,17 @@ import {IMAGE_OPERATIONAL_RESOURCES_V2,OPERATIONAL_HUMAN_SHA256} from './late-bi
 import {imageJournalDigest as digest} from './journal.mjs';
 const NOW=Date.parse('2026-10-30T14:00:00.000Z'),H='a'.repeat(64),SECRET='SYNTHETIC_PRIVATE_VALUE_123456789';
 const hash=v=>createHash('sha256').update(v).digest('hex');
-test('POST exact GET entry rejects missing/relative/duplicate dossier and never falls through to native',async()=>{
+await test('POST exact GET entry rejects missing/relative/duplicate dossier and never falls through to native',async()=>{
   const root=path.resolve('synthetic');
   const args=['post-metadata-v1','--objective-id','rc48-image-only-inventory-post-metadata-synthetic','--inventory-dossier',path.join(root,'dossier.json'),'--jira-evidence',path.join(root,'jira.json'),'--session-binding',path.join(root,'binding.json'),'--journal-dir',path.join(root,'journal'),'--output-dir',path.join(root,'output'),'--post-dossier',path.join(root,'post.json')];
   assert.equal(parsePostMetadataArgumentsV1(args)['--post-dossier'],path.join(root,'post.json'));
-  for(const bad of [args.slice(0,-2),[...args.slice(0,-1),'relative.json'],[...args,'--post-dossier',path.join(root,'post.json')]]){
+  await Promise.all([args.slice(0,-2),[...args.slice(0,-1),'relative.json'],[...args,'--post-dossier',path.join(root,'post.json')]].map(async bad=>{
     assert.throws(()=>parsePostMetadataArgumentsV1(bad));
     const refused=await runImageOnlyOperationalDriver(bad);
     assert.equal(refused.stage,'INPUTS');assert.equal(refused.transportEntered,false);assert.equal(refused.canRetry,false);
-  }
+  }));
 });
-test('POST metadata entry leaves a durable single-use refusal and never opens a second attempt',async t=>{
+await test('POST metadata entry leaves a durable single-use refusal and never opens a second attempt',async t=>{
   // The production entry itself deliberately requires this exact tool version.
   if(process.versions.node!=='22.23.3'){t.skip('exact production Node required');return;}
   const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'crm-post-metadata-test-')));

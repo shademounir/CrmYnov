@@ -44,7 +44,7 @@ test('READ_ONLY_INVENTORY requires no image plan and emits method-bound redacted
   const rows=f.transport.observations();assert(rows.every(r=>r.status===200&&r.request.method==='GET'&&r.responseBytes>0&&r.ordinal>0));assert(!JSON.stringify(rows).includes(SECRET));assert(!JSON.stringify(rows).includes('authorization'));
   assert.equal(f.transport.run,undefined);assert.equal(f.transport.setIamPolicy,undefined);assert.equal(f.transport.loggingEntriesList,undefined);
 });
-test('POST metadata port only exposes one exact GET and no mutation or retry',async t=>{
+await test('POST metadata port only exposes one exact GET and no mutation or retry',async t=>{
   const f=synthetic(t);f.authority.entry.postMetadata={...POST_METADATA_V1};
   const port=createPostMetadataTransportV1(f.args);assert.deepEqual(Object.keys(port),['get']);
   f.respond(url=>Object.defineProperty(jsonResponse(JSON.stringify({uid:POST_METADATA_V1.uid})), 'url',{value:url}));
@@ -54,7 +54,7 @@ test('POST metadata port only exposes one exact GET and no mutation or retry',as
   await assert.rejects(port.get(),/POST_METADATA_NO_RETRY/u);
   assert.equal(f.calls.length,1);
 });
-test('POST metadata scope refuses wrong bindings, legacy port use and a foreign response origin',async t=>{
+await test('POST metadata scope refuses wrong bindings, legacy port use and a foreign response origin',async t=>{
   const wrong=synthetic(t);wrong.authority.entry.postMetadata={...POST_METADATA_V1,uid:'foreign'};
   await assert.rejects(createPostMetadataTransportV1(wrong.args).get());
   assert.equal(wrong.calls.length,0);assert.equal(wrong.tokenCalls,0);
