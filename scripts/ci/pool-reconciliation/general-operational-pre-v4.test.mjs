@@ -7,6 +7,7 @@ import {byteHash, digest} from './controlled-pool-contract-v1.mjs';
 import {CONSUMER_PINS} from './general-prospective-pre-authority-v1.mjs';
 import {GENERAL_OPERATIONAL_BINDING, GENERAL_OPERATIONAL_HUMAN_SHA256} from './general-operational-pre-v3.mjs';
 import {simulateGeneralEvidenceStoreV4, simulateGeneralPrivateCapabilityV4, withVerifiedGeneralPreV4} from './general-operational-pre-v4.mjs';
+import {CUTOVER_RENEWAL_ADDITIVE_FILES_V1} from '../runtime-image-only/cutover-renewal-catalogue-v1.mjs';
 
 const root = 'C:/Crm Ynov/output/casablanca-pilot-20261022';
 const now = Date.parse('2026-11-12T12:00:00.000Z');
@@ -19,9 +20,10 @@ function record(directory) {
     humanAuthorityReceiptSha256: GENERAL_OPERATIONAL_HUMAN_SHA256,
     binding: structuredClone(GENERAL_OPERATIONAL_BINDING),
     validFrom: '2026-11-12T11:00:00.000Z', expiresAt: '2026-11-12T20:00:00.000Z',
-    source: {commit: 'a'.repeat(40), tree: 'b'.repeat(40), head: 'c'.repeat(40), pr: 999,
-      files: [...catalogue.entries[7].driver.files, {path: 'scripts/ci/pool-reconciliation/general-operational-pre-v4.mjs', sha256: 'f'.repeat(64)},
-        {path: 'scripts/ci/runtime-image-only/cutover-jira-readiness-v1.mjs', sha256: 'e'.repeat(64)}].sort((a, b) => a.path.localeCompare(b.path, 'en'))},
+    driverSource: {commit: catalogue.entries[7].driver.mergeCommit, tree: catalogue.entries[7].driver.tree,
+      head: catalogue.entries[7].driver.head, pr: 282, files: structuredClone(catalogue.entries[7].driver.files)},
+    adapterSource: {commit: 'a'.repeat(40), tree: 'b'.repeat(40), head: 'c'.repeat(40), pr: 999,
+      files: CUTOVER_RENEWAL_ADDITIVE_FILES_V1.map(path => ({path, sha256: 'f'.repeat(64)})).sort((a, b) => a.path.localeCompare(b.path, 'en'))},
     evidenceDirectory: directory, directorySha256: byteHash(directory), consumerSha256: digest(CONSUMER_PINS),
     oldUnknownUnchanged: true, closedClaimsRemainClosed: true,
   };
