@@ -63,7 +63,7 @@ export function readCutoverRenewalAdapterSourceV1() {
   return {commit: clean.commit, tree: clean.tree, clean: true, files};
 }
 
-export function validateGeneralRenewalRecordV4(record, now) {
+export function validateGeneralRenewalRecordV4(record, now, {syntheticOnly = false} = {}) {
   exact(record, generalRecordFields);
   assert.equal(record.schemaVersion, 4);
   assert.equal(record.kind, 'GENERAL_OPERATIONAL_PROSPECTIVE_PRE_AUTHORITY_V4');
@@ -71,7 +71,8 @@ export function validateGeneralRenewalRecordV4(record, now) {
   assert(UUID.test(record.capabilityId) && record.capabilityId !== '64b91382-c474-53e8-8ded-fa3a3c9241a3', 'RENEWAL_GENERAL_CAPABILITY');
   assert.equal(record.humanAuthorityReceiptSha256, GENERAL_OPERATIONAL_HUMAN_SHA256);
   assert.deepEqual(record.binding, GENERAL_OPERATIONAL_BINDING, 'RENEWAL_GENERAL_IMMUTABLE_JOB_BINDING');
-  assert(typeof record.evidenceDirectory === 'string' && /^C:\/Crm Ynov\/output\/casablanca-pilot-20261022\/general-operational-pre-native-[a-z0-9-]+$/u.test(record.evidenceDirectory), 'RENEWAL_GENERAL_DIRECTORY');
+  const productionDirectory = typeof record.evidenceDirectory === 'string' && /^C:\/Crm Ynov\/output\/casablanca-pilot-20261022\/general-operational-pre-native-[a-z0-9-]+$/u.test(record.evidenceDirectory);
+  assert(productionDirectory || syntheticOnly === true && typeof record.evidenceDirectory === 'string' && path.isAbsolute(record.evidenceDirectory), 'RENEWAL_GENERAL_DIRECTORY');
   assert.notEqual(record.evidenceDirectory, GENERAL_OPERATIONAL_DIRECTORY);
   assert.equal(record.directorySha256, byteHash(record.evidenceDirectory));
   assert.equal(record.consumerSha256, digest(CONSUMER_PINS));

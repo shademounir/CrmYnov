@@ -28,8 +28,8 @@ function durable(file, value) {
   return {path: file, sha256: byteHash(fs.readFileSync(file))};
 }
 
-function openGeneralOperationalEvidenceStoreV4({directory, record, beforeArm, now = Date.now}) {
-  validateGeneralRenewalRecordV4(record, now());
+function openGeneralOperationalEvidenceStoreV4({directory, record, beforeArm, now = Date.now, syntheticOnly = false}) {
+  validateGeneralRenewalRecordV4(record, now(), {syntheticOnly});
   assert.equal(path.resolve(directory), path.resolve(record.evidenceDirectory));
   assert(path.isAbsolute(directory) && fs.realpathSync(directory) === path.resolve(directory), 'GENERAL_V4_CANONICAL_DIRECTORY');
   assert(fs.lstatSync(directory).isDirectory() && !fs.lstatSync(directory).isSymbolicLink(), 'GENERAL_V4_DIRECTORY_TYPE');
@@ -78,7 +78,7 @@ function openGeneralOperationalEvidenceStoreV4({directory, record, beforeArm, no
 
 export function simulateGeneralEvidenceStoreV4({syntheticOnly, ...input}) {
   assert.equal(syntheticOnly, true);
-  return Object.freeze({store: openGeneralOperationalEvidenceStoreV4(input), syntheticOnly: true, nativeAuthority: false});
+  return Object.freeze({store: openGeneralOperationalEvidenceStoreV4({...input, syntheticOnly: true}), syntheticOnly: true, nativeAuthority: false});
 }
 
 function retainVerifiedGeneralPreV4(checked, sourceProofRef, capturedAt, syntheticOnly = false) {
