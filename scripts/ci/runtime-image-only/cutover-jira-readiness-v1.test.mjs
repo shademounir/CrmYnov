@@ -40,7 +40,7 @@ function verify(value, scope, observedAt = now) {
   return validateOperationalJiraComposedReadinessV1({jiraBytes, expectedSha256: byteHash(jiraBytes), actor: 'shademounir', grantSha256: 'a'.repeat(64), now: observedAt, scope, humanScopeBytes: human});
 }
 
-test('explicit human scope is hash-pinned without becoming native RUN authority', () => {
+await test('explicit human scope is hash-pinned without becoming native RUN authority', () => {
   assert.equal(byteHash(human), OPERATIONAL_JIRA_V2_HUMAN_SHA256);
   validateOperationalJiraV2HumanScope(human);
   assert.throws(() => validateOperationalJiraV2HumanScope(Buffer.from('{}')));
@@ -53,7 +53,7 @@ test('explicit human scope is hash-pinned without becoming native RUN authority'
   }
 });
 
-test('operational readiness refuses stale, mismatched, or broadened composed Jira reads', () => {
+await test('operational readiness refuses stale, mismatched, or broadened composed Jira reads', () => {
   assert.throws(() => verify(envelope(), 'RUN'));
   assert.throws(() => verify(envelope(), 'GENERAL_PRE_READINESS', now + 600000));
   const wrong = envelope(); wrong.identity.receipt.response.accountId = 'different';

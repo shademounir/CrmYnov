@@ -35,7 +35,7 @@ function fixture() {
   return {catalogue, generalRecord};
 }
 
-test('additive renewal accepts one distinct POST and GENERAL while preserving all historical bytes', () => {
+await test('additive renewal accepts one distinct POST and GENERAL while preserving all historical bytes', () => {
   const {catalogue, generalRecord} = fixture();
   const result = validateAdditiveCutoverRenewalCatalogueV1(catalogue, generalRecord, NOW);
   assert.equal(result.nativeAuthority, false);
@@ -43,7 +43,7 @@ test('additive renewal accepts one distinct POST and GENERAL while preserving al
   assert.deepEqual(catalogue.entries.slice(0, 8), old.entries);
 });
 
-test('renewal refuses historical changes, missing source modules, expiry and replayed identifiers', () => {
+await test('renewal refuses historical changes, missing source modules, expiry and replayed identifiers', () => {
   const cases = [
     f => { f.catalogue.entries[7].status = 'revoked'; },
     f => { f.catalogue.operationalPreAuthoritiesV3[0].status = 'revoked'; },
@@ -61,7 +61,7 @@ test('renewal refuses historical changes, missing source modules, expiry and rep
   }
 });
 
-test('POST renewal source gate refuses an old objective before inspecting a dossier or transport', () => {
+await test('POST renewal source gate refuses an old objective before inspecting a dossier or transport', () => {
   const {catalogue, generalRecord} = fixture();
   assert.throws(() => validatePostRenewalSourceV3({catalogue, generalRecord, objectiveId: old.entries[7].id, now: NOW}), /POST_V3_EXACT_NEW_OBJECTIVE_REQUIRED/u);
 });

@@ -39,7 +39,7 @@ function isolated(t) {
   return directory;
 }
 
-test('V4 store requires a fresh empty directory and arms a durable one-use claim before RUN intent', t => {
+await test('V4 store requires a fresh empty directory and arms a durable one-use claim before RUN intent', t => {
   const directory = isolated(t), authority = record(directory);
   assert.throws(() => validateGeneralRenewalRecordV4(authority, now), /RENEWAL_GENERAL_DIRECTORY/u);
   const store = simulateGeneralEvidenceStoreV4({syntheticOnly: true, directory, record: authority, beforeArm: () => ({ready: true}), now: () => now}).store;
@@ -55,7 +55,7 @@ test('V4 store requires a fresh empty directory and arms a durable one-use claim
   assert.throws(() => simulateGeneralEvidenceStoreV4({syntheticOnly: true, directory, record: authority, beforeArm: () => ({ready: true}), now: () => now}), /GENERAL_V4_NEW_EMPTY_DIRECTORY_REQUIRED/u);
 });
 
-test('V4 private PRE capability is single-use and never serializes checked SQL data', async () => {
+await test('V4 private PRE capability is single-use and never serializes checked SQL data', async () => {
   const checked = {secretSyntheticOnly: 'never-persist'}, sourceProofRef = {path: 'synthetic', sha256: 'f'.repeat(64)};
   const result = await simulateGeneralPrivateCapabilityV4({syntheticOnly: true, checked, sourceProofRef, capturedAt: '2026-11-12T12:00:00.000Z', consumer: value => value.checked === checked});
   assert.equal(result.result, true);
