@@ -1,0 +1,15 @@
+{
+  "kind": "DIRECT_HUMAN_JIRA_V2_GENERAL_POST_READINESS_EXTENSION_V1",
+  "recordedAt": "2026-11-12T09:40:33.000Z",
+  "source": "USER_REPLY_IN_THIS_CHAT_NOT_PROVIDER_ATTESTATION",
+  "question": "Extend the versioned and protected composed Jira V2 readiness proof, without a provider invocation ID, only to the new GENERAL PRE and POST routes with official identity, tenant and ticket reads and a 600-second freshness bound",
+  "answer": "Autoriser cette extension ciblée",
+  "permittedUse": ["GENERAL_PRE_READINESS", "POST_READINESS"],
+  "providerInvocationId": null,
+  "providerSignatureAsserted": false,
+  "commonProviderSnapshotAsserted": false,
+  "jiraReadinessIsNotRunAuthority": true,
+  "oldAuthOnlyV2BytesAndValidatorUnchanged": true,
+  "historicalGeneralAndPostEntrypointsUnchanged": true,
+  "productionRunOrDeploymentAuthorityAddedByThisReceipt": false
+}
