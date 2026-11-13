@@ -1,0 +1,2 @@
+bucket = "crmynov-runtime-tfstate-prod-n7x4q2"
+prefix = "edge/prod"
