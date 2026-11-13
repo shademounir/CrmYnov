@@ -1,0 +1,19 @@
+{
+  "pr": 294,
+  "head": "a232bde00e3fd7291b324b97058f36b318ea499d",
+  "mergeCommit": "e2535d2530ad52f58815457ee30644139fd67d49",
+  "tree": "9df7be07f729f086f9ae02a9945383d8c25d9eb8",
+  "files": [
+    {"path": "scripts/ci/pool-reconciliation/general-operational-pre-v4.mjs", "sha256": "2813204138ba8ff21fc9934ced1e23374d91cb5d310871275e3bf66d37083954"},
+    {"path": "scripts/ci/pool-reconciliation/general-operational-pre-v4.test.mjs", "sha256": "3d35994ec5462865a028f1ff60b7c9d5e7a6415f53dc5db314339545c4fdcbb5"},
+    {"path": "scripts/ci/runtime-image-only/cutover-jira-readiness-v1.mjs", "sha256": "82a0c417d0abdd7b2e6e9cb49888ec9aa207488b75dff5f90183f666dcad0612"},
+    {"path": "scripts/ci/runtime-image-only/cutover-jira-readiness-v1.test.mjs", "sha256": "4af9b7f2ab35e8464ed5359f95037487e5e97304f1eb81ef4bb953d07a7db3fe"},
+    {"path": "scripts/ci/runtime-image-only/cutover-renewal-catalogue-v1.mjs", "sha256": "10a2df85a9429bf92331980c10d38ab22d35ed5ffb3e81d995fe2b3cde618840"},
+    {"path": "scripts/ci/runtime-image-only/cutover-renewal-catalogue-v1.test.mjs", "sha256": "07584012adca617dd27095031019445e16bd02ff34eff44db778863c8e3c3d0f"},
+    {"path": "scripts/ci/runtime-image-only/fixtures/operational-jira-v2-human-scope-v1.json", "sha256": "a6841d98791e159a5fc8adea4394f50ec7ba1089ffa1202fff0a34e774c68921"},
+    {"path": "scripts/ci/runtime-image-only/post-operational-renewal-v3.mjs", "sha256": "2ba8f2d4e7eef9aaf0312f2d6d58d2ea19070970dca42ee00ed27c01d382ff51"},
+    {"path": "scripts/ci/runtime-image-only/post-preservation-v3.mjs", "sha256": "9440513aa854ee95e37814eb0124b5849fc5404af1358ad7244fd96de86ba843"},
+    {"path": "scripts/ci/runtime-image-only/post-preservation-v3.test.mjs", "sha256": "4e4af14e2c77bc759de3578636b65bac56dfdc20006fce07887925efa7100106"},
+    {"path": "scripts/ci/tests/cutover-renewal.test.mjs", "sha256": "bb94ece11dd6b74f0bf45ac64fda57506d003cb2892b1f7ed06dc1f797e9bf3d"}
+  ]
+}
