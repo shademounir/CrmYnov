@@ -305,6 +305,6 @@ test("CI extends backend-free read-only-lock validation without removing prior r
   const script = read("tests/validate-roots.ps1");
   for (const target of ["dev", "staging", "prod"]) assert.ok(script.includes(`environments\\${target}`));
   const mainWorkflow = read("../.github/workflows/main-release-gate.yml");
-  assert.match(mainWorkflow, /for root in infra\/bootstrap\/foundation infra\/bootstrap\/phase0[\s\S]*infra\/bootstrap\/state infra\/bootstrap\/wif[\s\S]*infra\/bootstrap\/dev-runtime-state infra\/environments\/dev[\s\S]*infra\/environments\/staging infra\/environments\/prod; do[\s\S]*-backend=false[\s\S]*-lockfile=readonly[\s\S]*terraform -chdir="\$root" validate -no-color/);
+  assert.match(mainWorkflow, /for root in infra\/bootstrap\/foundation infra\/bootstrap\/phase0[\s\S]*infra\/bootstrap\/state infra\/bootstrap\/wif[\s\S]*infra\/bootstrap\/dev-runtime-state infra\/environments\/dev[\s\S]*infra\/environments\/staging infra\/environments\/prod infra\/environments\/prod-edge; do[\s\S]*-backend=false[\s\S]*-lockfile=readonly[\s\S]*terraform -chdir="\$root" validate -no-color/);
   assert.match(mainWorkflow, /severity: HIGH,CRITICAL[\s\S]*exit-code: '1'/);
 });

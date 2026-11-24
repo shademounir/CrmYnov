@@ -79,6 +79,8 @@ jobs:
               -no-color
             terraform -chdir="infra/environments/$target" validate -no-color
           done
+          terraform -chdir="infra/environments/prod-edge" init -backend=false -input=false -lockfile=readonly -no-color
+          terraform -chdir="infra/environments/prod-edge" validate -no-color
 
   iac-security:
     name: iac-security
