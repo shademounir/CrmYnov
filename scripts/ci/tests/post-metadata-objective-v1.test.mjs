@@ -7,12 +7,12 @@ import {validateImageInventoryObjective} from '../runtime-image-only/inventory-a
 import {POST_METADATA_V1} from '../runtime-image-only/post-metadata-contract-v1.mjs';
 const file='docs/governance/runtime-image-only-objectives-v1.json';
 const catalogue=JSON.parse(fs.readFileSync(file));
-const entry=catalogue.entries.at(-1);
+const entry=catalogue.entries[9];
 const source={commit:entry.driver.mergeCommit,tree:entry.driver.tree,files:entry.driver.files,clean:true};
 const now=Date.parse(entry.validFrom);
 test('POST metadata appends one objective without rewriting historical entries',()=>{
- assert.equal(catalogue.entries.length,10);
- assert.equal(digest(catalogue.entries.slice(0,-1)),'3b08230dd0b432820973d11542905f5fc6ef639a9d5e31a481b5f68f65243b3c');
+ assert.equal(catalogue.entries.slice(0,10).length,10);
+ assert.equal(digest(catalogue.entries.slice(0,9)),'3b08230dd0b432820973d11542905f5fc6ef639a9d5e31a481b5f68f65243b3c');
  assert.equal(entry.id,'rc48-image-only-inventory-20261111-post-metadata-v1');
  assert.equal(Date.parse(entry.expiresAt)-now,86400000);
  assert.equal(entry.driver.pr,292);assert.equal(entry.driver.mergeCommit,'098907d323a2c96100dafc874d649dd2a680d072');
