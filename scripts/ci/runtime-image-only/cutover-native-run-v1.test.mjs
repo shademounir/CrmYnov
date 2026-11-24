@@ -65,23 +65,24 @@ function setup(t, phase, change = () => {}) {
 }
 
 for (const phase of ['GENERAL_PRE', 'POST']) {
-  test(`${phase}: versioned native dispatch calls simulated run once and durably refuses replay`, async t => {
+  void test(`${phase}: versioned native dispatch calls simulated run once and durably refuses replay`, async t => {
     const {dir, calls, input} = setup(t, phase);
     const result = await executeCutoverNativeRunV1(input);
     assert.equal(result.state, 'CUTOVER_NATIVE_RUN_OPERATION_KNOWN_V1');
     assert.equal(result.nativeOutputVerified, false); assert.equal(calls.run, 1);
-    assert.deepEqual(fs.readdirSync(dir).sort(), ['CLAIM.json', 'RUN-INTENT.json', 'RUN-OPERATION.json']);
+    assert.deepEqual(fs.readdirSync(dir).sort((left, right) => left.localeCompare(right, 'en')), ['CLAIM.json', 'RUN-INTENT.json', 'RUN-OPERATION.json']);
     await assert.rejects(executeCutoverNativeRunV1(input), /NATIVE_PHASE_ALREADY_CONSUMED/u);
     assert.equal(calls.run, 1);
   });
-  test(`${phase}: proof only, crossed authority, expiry and prior execution refuse before native run`, async t => {
-    for (const change of [({authority}) => {authority.runAuthorized = false;},
+  void test(`${phase}: proof only, crossed authority, expiry and prior execution refuse before native run`, async t => {
+    const changes = [({authority}) => {authority.runAuthorized = false;},
       ({authority}) => {authority.phase = phase === 'POST' ? 'GENERAL_PRE' : 'POST';},
       ({authority}) => {authority.expiresAt = iso(-1);},
-      ({job}) => {job.executionCount = 1;}]) {
+      ({job}) => {job.executionCount = 1;}];
+    await Promise.all(changes.map(async change => {
       const {calls, input} = setup(t, phase, change);
       await assert.rejects(executeCutoverNativeRunV1(input));
       assert.equal(calls.run, 0);
-    }
+    }));
   });
 }

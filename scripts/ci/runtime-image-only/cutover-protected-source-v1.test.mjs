@@ -5,12 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {byteHash} from '../pool-reconciliation/controlled-pool-contract-v1.mjs';
+import {POOL_OFFICIAL_GIT} from '../pool-reconciliation/pool-operational-driver-v1.mjs';
 import {simulateReadCutoverProtectedSourceV1} from './cutover-protected-source-v1.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-cutover-source-synthetic-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
-  const git = args => execFileSync('git', ['-C', root, ...args], {encoding: 'utf8', timeout: 15000}).trim();
+  const fixedGit = process.platform === 'win32' ? POOL_OFFICIAL_GIT : '/usr/bin/git';
+  assert(fs.statSync(fixedGit).isFile());
+  const git = args => execFileSync(fixedGit, ['-C', root, ...args], {encoding: 'utf8', timeout: 15000}).trim();
   git(['init', '-q']);
   for (const [name, body] of [['docs/governance/synthetic.json', '{}\n'],
     ['scripts/ci/synthetic.mjs', 'export const synthetic = true;\n']]) {
@@ -26,7 +29,7 @@ function fixture(t) {
   return {root, git, expected};
 }
 
-test('synthetic source verifier checks clean HEAD/tree/tracked paths and exact file bytes', t => {
+void test('synthetic source verifier checks clean HEAD/tree/tracked paths and exact file bytes', t => {
   const f = fixture(t);
   const result = simulateReadCutoverProtectedSourceV1({syntheticOnly: true, ...f});
   assert.equal(result.commit, f.expected.mergeCommit);

@@ -49,7 +49,7 @@ function marker(entryValue, change = value => value) {
 }
 
 for (const phase of ['GENERAL_PRE', 'POST']) {
-  test(`${phase}: own objective and exact marker accepted`, () => {
+  void test(`${phase}: own objective and exact marker accepted`, () => {
     const value = entry(phase);
     validateCutoverNativeObjectiveV1(value, {phase, objectiveId: value.id, resourceBindingSha256: value.resourceBindingSha256, expectedJob: value.job, expectedUid: value.uid, now});
     const result = validateCutoverNativeMarkerV1(marker(value), {entry: value, grant, jiraSha256: H, now});
@@ -58,7 +58,7 @@ for (const phase of ['GENERAL_PRE', 'POST']) {
     assert.equal(generated, marker(value)[0].body);
   });
 
-  test(`${phase}: crossed, stale or broadened objective and marker refused`, () => {
+  void test(`${phase}: crossed, stale or broadened objective and marker refused`, () => {
     const value = entry(phase), other = phase === 'POST' ? 'GENERAL_PRE' : 'POST';
     assert.throws(() => validateCutoverNativeObjectiveV1(value, {phase: other, objectiveId: value.id, resourceBindingSha256: value.resourceBindingSha256, expectedJob: value.job, expectedUid: value.uid, now}));
     assert.throws(() => validateCutoverNativeObjectiveV1(value, {phase, objectiveId: value.id, resourceBindingSha256: value.resourceBindingSha256, expectedJob: value.job, expectedUid: value.uid, now: now + 300000}));

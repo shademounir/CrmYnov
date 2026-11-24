@@ -67,7 +67,7 @@ function noPriorExecution(job) {
 // or POST: later native output and semantic comparison remain separate.
 export async function executeCutoverNativeRunV1({phase, entry, dossier, jiraBytes, humanScopeBytes, actor, grantSha256,
   authorize, native, journal, clock = Date.now}) {
-  assert(entry && dossier && dossier.objective && native && journal, 'CUTOVER_RUN_INPUTS_REQUIRED');
+  assert(entry && dossier?.objective && native && journal, 'CUTOVER_RUN_INPUTS_REQUIRED');
   validateReadOnlyObjective(dossier.objective);
   assert.equal(entry.phase, phase, 'CUTOVER_RUN_PHASE_CROSSED');
   assert.equal(entry.scope, dossier.objective.purpose, 'CUTOVER_RUN_PURPOSE_CROSSED');

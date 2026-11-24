@@ -69,7 +69,7 @@ function harness(phase) {
 }
 
 for (const phase of ['GENERAL_PRE', 'POST']) {
-  test(`${phase}: final boundary accepts own fresh RUN authority and reaches transport once`, async () => {
+  void test(`${phase}: final boundary accepts own fresh RUN authority and reaches transport once`, async () => {
     const h = harness(phase);
     assert.deepEqual(await runCutoverNativePhaseBoundaryV1(h.input), {state: 'SYNTHETIC_TRANSPORT_REACHED', phase});
     assert.deepEqual(h.calls, {authorize: 1, preflight: 1, arm: 1, transport: 1});
@@ -77,7 +77,7 @@ for (const phase of ['GENERAL_PRE', 'POST']) {
     assert.deepEqual(h.calls, {authorize: 1, preflight: 1, arm: 1, transport: 1});
   });
 
-  test(`${phase}: Jira readiness alone, crossed authority, expiry and prior claim refuse before transport`, async () => {
+  void test(`${phase}: Jira readiness alone, crossed authority, expiry and prior claim refuse before transport`, async () => {
     const only = harness(phase); only.authority.runAuthorized = false;
     await assert.rejects(runCutoverNativePhaseBoundaryV1(only.input), /NATIVE_PHASE_RUN_AUTHORITY_REQUIRED/u);
     assert.equal(only.calls.arm, 0); assert.equal(only.calls.transport, 0);

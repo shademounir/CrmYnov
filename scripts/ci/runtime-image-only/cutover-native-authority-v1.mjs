@@ -34,7 +34,8 @@ export function makeCutoverNativeMarkerV1({entry, grant, jiraObservationSha256, 
 
 function exact(value, keys) {
   assert(value && Object.getPrototypeOf(value) === Object.prototype, 'CUTOVER_AUTHORITY_PLAIN_OBJECT');
-  assert.deepEqual(Object.keys(value).sort(), [...keys].sort(), 'CUTOVER_AUTHORITY_EXACT_FIELDS');
+  const alphabetical = (left, right) => left.localeCompare(right, 'en');
+  assert.deepEqual(Object.keys(value).sort(alphabetical), [...keys].sort(alphabetical), 'CUTOVER_AUTHORITY_EXACT_FIELDS');
 }
 function time(value) {
   assert.equal(typeof value, 'string');
@@ -166,8 +167,10 @@ export async function authorizeCutoverNativePhaseV1({github, phase, objectiveId,
   assert(approved.files.some(file => file.filename === READONLY_CATALOGUE_PATH_V2), 'CUTOVER_AUTHORITY_OBJECTIVE_MERGE');
   const published = JSON.parse(await githubFile(github, READONLY_CATALOGUE_PATH_V2, reference.mergeCommit));
   assert.equal(digest(published.cutoverNativeAuthoritiesV1?.find(value => value.id === objectiveId)), digest(entry), 'CUTOVER_AUTHORITY_PUBLISHED_OBJECTIVE');
-  for (const source of [entry.driver, entry.adapter, entry.runner, reference]) {
-    const relation = await github.get(API + 'compare/' + source.mergeCommit + '...' + revision);
+  const sources = [entry.driver, entry.adapter, entry.runner, reference];
+  const relations = await Promise.all(sources.map(source => github.get(API + 'compare/' + source.mergeCommit + '...' + revision)));
+  for (const [index, relation] of relations.entries()) {
+    const source = sources[index];
     assert.equal(relation.merge_base_commit.sha, source.mergeCommit, 'CUTOVER_AUTHORITY_SOURCE_ANCESTRY');
     assert(['ahead', 'identical'].includes(relation.status), 'CUTOVER_AUTHORITY_SOURCE_ANCESTRY');
   }

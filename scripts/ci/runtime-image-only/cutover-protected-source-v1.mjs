@@ -23,7 +23,7 @@ function readSource(root, expected, git) {
   assert.equal(git(['show', '-s', '--format=%T', 'HEAD']), expected.tree, 'CUTOVER_SOURCE_TREE_MISMATCH');
   const files = expected.files.map(file => {
     assert(file && Object.getPrototypeOf(file) === Object.prototype &&
-      Object.keys(file).sort().join(',') === 'path,sha256' &&
+      Object.keys(file).sort((left, right) => left.localeCompare(right, 'en')).join(',') === 'path,sha256' &&
       typeof file.path === 'string' && /^(?:scripts|docs)\/[a-zA-Z0-9_./-]+\.(?:mjs|json|yml|md)$/u.test(file.path) &&
       !file.path.includes('..') && H.test(file.sha256), 'CUTOVER_SOURCE_FILE_DESCRIPTOR');
     git(['ls-files', '--error-unmatch', '--', file.path]);

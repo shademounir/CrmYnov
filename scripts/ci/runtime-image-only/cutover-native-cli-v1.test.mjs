@@ -23,7 +23,7 @@ const pinned = historical.entries.find(row => row.id === 'rc48-image-only-invent
 const pinnedAdapter = JSON.parse(fs.readFileSync(new URL('./fixtures/pr294-adapter-source-closure-v1.json', import.meta.url)));
 const hash = value => byteHash(canonicalAuthJiraBytes(value));
 
-test('native host pin refuses a different Node, a Node override or ambient Git override', () => {
+void test('native host pin refuses a different Node, a Node override or ambient Git override', () => {
   validateCutoverNativeHostV1({nodeVersion: '22.23.3', environment: {}});
   assert.throws(() => validateCutoverNativeHostV1({nodeVersion: '22.23.4', environment: {}}), /CUTOVER_NATIVE_NODE_PIN/u);
   assert.throws(() => validateCutoverNativeHostV1({nodeVersion: '22.23.3', environment: {NODE_OPTIONS: '--inspect'}}), /CUTOVER_NATIVE_NODE_OVERRIDE_REFUSED/u);
@@ -73,7 +73,7 @@ function setup(t, mode) {
   const request = {schemaVersion: 1, purpose: 'GENERAL_PRESERVATION_READ_ONLY_V1', phase: 'PRE',
     queryContractSha256: QUERY_CONTRACT_SHA256, campusId: '11111111-1111-4111-8111-111111111111'};
   const dossier = buildReadOnlyJobDossier({sources, request, jobName, nonce: H,
-    databaseBindingSha256: readOnlyDatabaseBinding('postgresql://crm_runtime:synthetic@synthetic.invalid:5432/crmynov_prod', request.purpose),
+    databaseBindingSha256: readOnlyDatabaseBinding('postgresql://crm_runtime@synthetic.invalid:5432/crmynov_prod', request.purpose),
     publicKeyPem: keys.publicKey, networkBinding: poolPrivateNetwork(), databaseSecretVersion: '1', intentAt: iso(-10000)});
   const job = {name: dossier.objective.jobName, uid: '6333afa0-3af3-4916-9aa1-e1093ce0bea0',
     labels: dossier.job.labels, template: dossier.job.template, executionCount: 0, etag: 'synthetic-etag'};
@@ -113,7 +113,7 @@ function setup(t, mode) {
 }
 
 for (const mode of ['general-pre-v4', 'post-v4']) {
-  test(`${mode}: exact final command route reaches the simulated native run once`, async t => {
+  void test(`${mode}: exact final command route reaches the simulated native run once`, async t => {
     const f = setup(t, mode);
     const result = await simulateOperationalDriverV4({syntheticOnly: true, args: f.args, dependencies: f.dependencies});
     assert.equal(result.state, 'CUTOVER_NATIVE_RUN_OPERATION_KNOWN_V1');
@@ -122,14 +122,15 @@ for (const mode of ['general-pre-v4', 'post-v4']) {
     await assert.rejects(simulateOperationalDriverV4({syntheticOnly: true, args: f.args, dependencies: f.dependencies}));
     assert.equal(f.calls.run, 1);
   });
-  test(`${mode}: final command refuses readiness-only, crossed, expired authority before transport`, async t => {
-    for (const change of [authority => {authority.runAuthorized = false;},
+  void test(`${mode}: final command refuses readiness-only, crossed, expired authority before transport`, async t => {
+    const changes = [authority => {authority.runAuthorized = false;},
       authority => {authority.phase = authority.phase === 'POST' ? 'GENERAL_PRE' : 'POST';},
-      authority => {authority.expiresAt = iso(-1); }]) {
+      authority => {authority.expiresAt = iso(-1); }];
+    await Promise.all(changes.map(async change => {
       const f = setup(t, mode), base = await f.dependencies.authorize(); change(base);
       f.dependencies.authorize = async () => base;
       await assert.rejects(simulateOperationalDriverV4({syntheticOnly: true, args: f.args, dependencies: f.dependencies}));
       assert.equal(f.calls.run, 0);
-    }
+    }));
   });
 }
